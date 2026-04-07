@@ -1,0 +1,9 @@
+/build/
+/.microide-config
+/.microide-session
+/.codex
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~

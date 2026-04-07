@@ -1,0 +1,8 @@
+anchor-A-keep
+anchor-B-old
+anchor-C-keep
+anchor-D-old-1
+anchor-D-old-2
+anchor-E-keep
+anchor-F-delete-only
+anchor-G-keep

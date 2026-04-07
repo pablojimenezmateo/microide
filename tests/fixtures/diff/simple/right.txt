@@ -1,0 +1,9 @@
+anchor-A-keep
+anchor-B-new
+anchor-C-keep
+anchor-D-new-1
+anchor-D-new-2
+anchor-D-new-3
+anchor-E-keep
+anchor-G-keep
+anchor-H-add-only

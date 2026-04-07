@@ -1,0 +1,168 @@
+# microide
+
+Initial C++/SDL3 skeleton for the MicroIDE rewrite.
+
+## Current State
+
+This scaffold provides:
+
+- CMake-based build
+- SDL3 application bootstrap
+- Linux-first single-window app shell
+- milestone-1 workspace chrome placeholders
+- event-driven rendering loop
+- filesystem-backed sidebar tree
+- startup uses the launch working directory as the project root
+- `.gitignore`-aware tree and file indexing
+- async project search with ripgrep-first execution and background fallback scanning
+- git-aware tree status markers
+- file-backed editor viewport with a pluggable text backend
+- nested shared-buffer editor split trees
+- project-local session restore for editor tabs, compare tabs, and workspace chrome
+- project-local editor preferences for tab size, indent width, and soft-tabs
+- tab-aware text layout with visual-column cursor positioning
+- editor load/save now preserves detected line endings and reports encoding plus line endings in the status bar
+- extracted text renderer and editor view renderer modules
+- optional `SDL3_ttf` text backend with debug-text fallback
+- cached file-finder overlay
+- commit picker overlay and compare tabs
+- bottom-panel logs plus a minimal command prompt
+- bottom-panel terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, and common cursor/erase repaint handling
+- terminal text selection and clipboard copy
+- SDL text input wired into command/search/finder/sidebar-edit fields, the terminal, and editor insertion
+- editor cursor movement, layout, and backspace/delete now respect UTF-8 codepoint boundaries
+- editor and built-in text prompts now render IME preedit text and advertise caret-aligned text-input areas for candidate placement
+
+The current shell draws:
+
+- compact top tab strip
+- left sidebar region
+- breadcrumb/header bar
+- editor surface
+- bottom panel host
+- status bar
+
+Current controls:
+
+- `F8`: toggle sidebar
+- `F6`: toggle centered overlay
+- `F9`: toggle bottom panel
+- `Ctrl+Tab`: switch focus between sidebar and editor
+- `Ctrl+w`: close the active tab
+- `Ctrl+f`: open buffer search
+- `Ctrl+h`: open replace-in-buffer
+- `Ctrl+Shift+f`: open temporary project-wide search in the sidebar
+- `Ctrl+a`: select the whole buffer
+- `Ctrl+c`: copy the current selection
+- `Ctrl+x`: cut the current selection
+- `Ctrl+v`: paste clipboard text into the editor
+- `Ctrl+c` in the terminal with an active terminal selection: copy the selected terminal text
+- `Ctrl+z`: undo the last edit
+- `Ctrl+y` or `Ctrl+Shift+z`: redo the last undone edit
+- `Ctrl+s`: save the current file
+- `Up` / `Down`: move in the focused area
+- `Left` / `Right`: collapse or expand directories in the sidebar
+- `Enter`: open the selected file from the sidebar
+- `d` on a file in the tree: open the compare commit picker
+- in the editor, typing inserts text
+- `Tab`, `Enter`, `Backspace`, and `Delete` edit the current file
+- `Shift` with arrows, `Home`, `End`, `Ctrl+Home`, or `Ctrl+End`: extend selection
+- while buffer search is open, type to filter matches and use `Up` / `Down` to move between them
+- `Enter` in buffer search: jump to the selected match and close search
+- while replace is open, `Tab` switches between find and replace fields
+- `Enter` in replace: replace the current match
+- `Ctrl+Enter` in replace: replace all matches
+- while sidebar search is open, use `Up` / `Down`, `j` / `k`, `Home`, and `End` to move between results
+- `Enter` or `Right` in sidebar search: open the selected result
+- `Esc` in temporary sidebar search: restore the previous sidebar tool
+- `/` in sidebar search: edit the query
+- `r` in sidebar search: rerun the current query
+- while editing the sidebar search query, `Enter` applies it and `Esc` cancels editing
+- while the compare commit picker is open, type to filter commits and use `Enter` to open a compare tab
+- in a compare tab, use `Up` / `Down`, `j` / `k`, `Home`, and `End` to move between compare rows
+- `[` / `]` in a compare tab: jump to the previous or next hunk
+- `Enter` or `o` in a compare tab: open the working-tree file at the corresponding line
+- `Esc` in a compare tab: close the compare tab
+- left click on a tab: activate that file tab
+- left click on a tab `x`: close that tab
+- middle click on a tab: close that tab
+- mouse wheel on the tab strip: scroll tab overflow
+- left click in the sidebar: toggle directories or open files
+- mouse wheel in the sidebar: scroll the active sidebar tool
+- left click in the editor: move the caret
+- left-click drag in the editor: select text
+- left-click drag in the terminal: select terminal text
+- left click a terminal tab: activate that terminal
+- left click the terminal header `+`: open a fresh terminal tab
+- left click a terminal tab `x` or middle click a terminal tab: close that terminal tab
+- mouse wheel in the editor: scroll the text viewport
+- while the overlay is open, type to filter files and use `Enter` to open the selected match
+- `PageUp` / `PageDown`: move through the editor viewport
+- `Left` / `Right` in the editor: move the cursor horizontally
+- `Home` / `End`: move to start or end of line
+- `Ctrl+Home` / `Ctrl+End`: jump to start or end of file
+- `Esc` in the terminal with an active selection: clear the terminal selection
+- `Ctrl+e`: open the bottom-panel command prompt
+
+Current commands:
+
+- `help`
+- `open <path>`
+- `tab [path]`
+- `tabswitch <tab>`
+- `tabmove <n>`
+- `compare [path] [commit-prefix]`
+- `reopen`
+- `save`
+- `quit`
+- `term [command]`
+- `find <query>`
+- `files [root]`
+- `tree [root]`
+- `search <query>`
+- `grep <query>`
+- `rg <query>`
+- `goto <line[:col]>`
+- `jump <line[:col]>`
+- `tab-size [n]`
+- `indent-width [n]`
+- `soft-tabs [on|off]`
+- `vsplit [path]`
+- `hsplit [path]`
+- `unsplit`
+- `split-next`
+- `split-prev`
+- `split-first`
+- `split-last`
+- `tree-refresh`
+- `sidebar-toggle`
+- `sidebar-show`
+- `sidebar-hide`
+- `sidebar-close`
+- `sidebar-width <n>`
+- `panel-show`
+- `panel-hide`
+- `focus <editor|sidebar|panel>`
+
+## Build
+
+Requirements:
+
+- CMake 3.28+
+- C++20 compiler
+- SDL3 development package
+- optional: SDL3_ttf development package for the real font backend
+
+Example:
+
+```bash
+cmake -S . -B build/microide
+cmake --build build/microide
+./build/microide/microide
+```
+
+If CMake fails with an SDL3 error, install the SDL3 development package for your distro and rerun configure.
+
+If `SDL3_ttf` is available at configure time, `microide` will use the `sdl3_ttf` backend and try to load a monospace font from `assets/fonts/JetBrainsMono-Regular.ttf` first, then common system font locations. If `SDL3_ttf` is not available, the app falls back to the SDL debug-text backend so the shell still runs.
+
+The build now copies `assets/` next to the executable, so a bundled font in `assets/fonts/JetBrainsMono-Regular.ttf` will work even when launching from `build/microide/`.

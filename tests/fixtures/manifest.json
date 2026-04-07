@@ -1,0 +1,119 @@
+{
+  "diff_cases": [
+    {
+      "expected": {
+        "added": 2,
+        "deleted": 1,
+        "hunks": 4,
+        "modified": 3,
+        "rows": 10,
+        "unchanged": 4
+      },
+      "left": "diff/simple/left.txt",
+      "name": "simple-text",
+      "right": "diff/simple/right.txt"
+    },
+    {
+      "expected": {
+        "added": 1,
+        "deleted": 0,
+        "hunks": 4,
+        "modified": 5,
+        "rows": 35,
+        "unchanged": 29
+      },
+      "left": "diff/code/before.cpp",
+      "name": "code-compare",
+      "right": "diff/code/after.cpp"
+    }
+  ],
+  "git_repo_seed": {
+    "base_dir": "diff/git/base",
+    "head_dir": "diff/git/head",
+    "new_files": [
+      "src/new_panel.cpp"
+    ],
+    "session_compare_expected": {
+      "added": 6,
+      "deleted": 0,
+      "hunks": 3,
+      "modified": 2,
+      "rows": 26,
+      "unchanged": 18
+    },
+    "tracked_files": [
+      "src/session.cpp"
+    ]
+  },
+  "large_files": {
+    "code": {
+      "bytes": 205999,
+      "language": "cpp",
+      "line_count": 6691,
+      "longest_line": 83,
+      "notable_blocks": [
+        1,
+        15,
+        90,
+        180
+      ],
+      "path": "large/code/large_sample.cpp"
+    },
+    "plain": {
+      "bytes": 462496,
+      "line_count": 4099,
+      "longest_line": 424,
+      "notable_lines": [
+        1,
+        64,
+        128,
+        512,
+        1024,
+        2048,
+        4096
+      ],
+      "path": "large/plain/large_story.txt",
+      "search_tokens": [
+        "NEEDLE_0257",
+        "NEEDLE_1285",
+        "NEEDLE_3855"
+      ]
+    }
+  },
+  "notes": [
+    "Fixtures are generated and committed so tests can use stable paths.",
+    "Diff expectations are computed with the same line-oriented semantics as CompareModel.cpp."
+  ],
+  "syntax_cases": [
+    {
+      "bytes": 1202,
+      "expected_categories": [
+        "preprocessor",
+        "comment",
+        "string",
+        "number",
+        "type",
+        "statement",
+        "operator"
+      ],
+      "language": "cpp",
+      "line_count": 50,
+      "longest_line": 76,
+      "path": "syntax/cpp_stress.cpp"
+    },
+    {
+      "bytes": 638,
+      "expected_categories": [
+        "diff-header",
+        "context",
+        "insert",
+        "delete"
+      ],
+      "language": "patch",
+      "line_count": 21,
+      "longest_line": 70,
+      "path": "syntax/unified_diff.patch"
+    }
+  ],
+  "version": 1
+}

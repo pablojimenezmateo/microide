@@ -1,0 +1,62 @@
+#pragma once
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace microide::project {
+
+class IgnoreMatcher;
+
+enum class GitFileStatus {
+  Clean,
+  Modified,
+  Added,
+  Deleted,
+  Untracked,
+};
+
+struct TreeEntry {
+  std::filesystem::path path;
+  std::string label;
+  int depth = 0;
+  bool is_directory = false;
+  bool expanded = false;
+  GitFileStatus git_status = GitFileStatus::Clean;
+};
+
+class DirectoryTree {
+ public:
+  bool SetRoot(const std::filesystem::path& root);
+  void Refresh();
+  void MoveSelection(int delta);
+  void SetSelectedIndex(std::size_t index);
+  bool SelectPath(const std::filesystem::path& path);
+  void ExpandSelection();
+  void CollapseSelection();
+  std::optional<std::filesystem::path> ActivateSelection();
+
+  const std::filesystem::path& root() const { return root_; }
+  const std::vector<TreeEntry>& entries() const { return entries_; }
+  std::size_t selected_index() const { return selected_index_; }
+
+ private:
+  void RebuildEntries();
+  void AppendDirectory(const std::filesystem::path& directory,
+                       int depth,
+                       const IgnoreMatcher& matcher);
+  GitFileStatus EntryGitStatus(const std::filesystem::path& path) const;
+  bool IsExpanded(const std::filesystem::path& path) const;
+  static std::string NormalizePathKey(const std::filesystem::path& path);
+
+  std::filesystem::path root_;
+  std::vector<TreeEntry> entries_;
+  std::unordered_map<std::string, GitFileStatus> git_statuses_;
+  std::unordered_set<std::string> expanded_paths_;
+  std::size_t selected_index_ = 0;
+};
+
+}  // namespace microide::project

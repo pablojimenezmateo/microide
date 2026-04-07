@@ -1,0 +1,21 @@
+diff --git a/src/editor/Viewport.cpp b/src/editor/Viewport.cpp
+index 1234567..89abcde 100644
+--- a/src/editor/Viewport.cpp
++++ b/src/editor/Viewport.cpp
+@@ -10,7 +10,8 @@ void Viewport::ScrollToCursor() {
+-  scroll_line_ = cursor_line_;
++  scroll_line_ = ClampLine(cursor_line_);
++  horizontal_scroll_ = 0;
+   EnsureCursorVisible();
+ }
+
+diff --git a/src/workspace/StatusBar.cpp b/src/workspace/StatusBar.cpp
+index 1111111..2222222 100644
+--- a/src/workspace/StatusBar.cpp
++++ b/src/workspace/StatusBar.cpp
+@@ -20,6 +20,7 @@ void StatusBar::Render() {
+   DrawEncoding();
+   DrawLineEnding();
++  DrawFileType();
+   DrawCursorPosition();
+ }
