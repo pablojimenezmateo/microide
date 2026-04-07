@@ -153,6 +153,33 @@ Requirements:
 - SDL3 development package
 - optional: SDL3_ttf development package for the real font backend
 
+### Ubuntu
+
+If your distro packages do not provide recent enough SDL3 or `SDL3_ttf` development files, build and install them from source:
+
+```bash
+sudo apt install build-essential cmake git
+
+git clone https://github.com/libsdl-org/SDL.git
+cd SDL/
+
+sudo apt-get install build-essential git make pkg-config cmake ninja-build gnome-desktop-testing libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+cmake -S . -B build
+cmake --build build
+sudo cmake --install build
+
+cd ..
+git clone https://github.com/libsdl-org/SDL_ttf.git
+cd SDL_ttf/
+
+sudo apt install libfreetype-dev
+cmake -S . -B build
+cmake --build build
+sudo cmake --install build
+```
+
+Then return to this repo and configure/build `microide` normally.
+
 Example:
 
 ```bash
