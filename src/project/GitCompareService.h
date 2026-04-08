@@ -3,7 +3,10 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include "project/DirectoryTree.h"
 
 namespace microide::project {
 
@@ -24,5 +27,19 @@ struct GitFileContentAtCommit {
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
                                                           const std::filesystem::path& absolute_path,
                                                           const std::string& hash);
+
+struct GitBranchReference {
+  std::string ref;
+  std::string label;
+};
+
+struct GitBranchFileEntry {
+  std::filesystem::path relative_path;
+  GitFileStatus status = GitFileStatus::Clean;
+};
+
+std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root);
+std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
+                                                              std::string_view base_ref);
 
 }  // namespace microide::project

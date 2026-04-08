@@ -98,9 +98,42 @@ bool TextViewport::Save() {
   return true;
 }
 
+void TextViewport::LoadContent(std::string_view content,
+                               const std::filesystem::path& path,
+                               std::optional<LineEnding> line_ending) {
+  EnsureDocument();
+  const DecodedDocument decoded = DecodeDocument(content);
+
+  document_->path = path;
+  document_->lines = decoded.lines;
+  document_->line_ending = line_ending.value_or(decoded.line_ending);
+  document_->mixed_line_endings = line_ending.has_value() ? false : decoded.mixed_line_endings;
+  document_->encoding = decoded.encoding;
+  cursor_line_ = 0;
+  cursor_column_ = 0;
+  preferred_column_ = 0;
+  scroll_line_ = 0;
+  horizontal_scroll_ = 0;
+  selection_anchor_.reset();
+  document_->undo_stack.clear();
+  document_->redo_stack.clear();
+  document_->placeholder = false;
+  document_->dirty = false;
+  InvalidateLayoutCaches();
+  EnsureCursorVisible();
+}
+
 void TextViewport::SetPath(const std::filesystem::path& path) {
   EnsureDocument();
   document_->path = path;
+}
+
+void TextViewport::SetDirty(bool dirty) {
+  EnsureDocument();
+  document_->dirty = dirty;
+  if (dirty) {
+    document_->placeholder = false;
+  }
 }
 
 void TextViewport::SetPlaceholderText(std::string text) {

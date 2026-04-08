@@ -73,6 +73,7 @@ add_executable(microide
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
+  src/compare/MergeModel.cpp
   src/project/DirectoryTree.cpp
   src/project/FileOperationService.cpp
   src/project/GitCompareService.cpp
@@ -125,8 +126,11 @@ endif()
 
 add_executable(microide_tests
   src/compare/CompareModel.cpp
+  src/compare/MergeModel.cpp
   src/project/FileOperationService.cpp
   src/project/GitCompareService.cpp
+  src/project/GitStatusService.cpp
+  src/util/StartupTrace.cpp
   tests/TestMain.cpp
 )
 

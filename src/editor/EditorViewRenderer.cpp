@@ -122,7 +122,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"PgUp / PgDn / Esc", "page move / close overlay"},
   }};
 
-  static constexpr std::array<CheatRow, 34> kToolShortcuts = {{
+  static constexpr std::array<CheatRow, 39> kToolShortcuts = {{
       {"Tree Up / Down", "move tree selection"},
       {"Tree Left / Right", "collapse / expand"},
       {"Tree Enter", "open file or toggle dir"},
@@ -151,6 +151,11 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"Compare [ / ]", "jump previous / next hunk"},
       {"Compare Enter / o", "open working file"},
       {"Compare Esc", "close compare tab"},
+      {"Merge j / k or arrows", "move merge hunks"},
+      {"Merge i / b / c / m", "take incoming / base / current / both"},
+      {"Merge a", "restore auto choices for all hunks"},
+      {"Merge I / B / C / M", "apply incoming / base / current / both everywhere"},
+      {"Merge o / Esc", "open result / close merge tab"},
       {"Split click", "focus the hovered editor split"},
       {"Split divider drag", "resize editor split"},
       {"Terminal click", "focus the terminal panel"},
@@ -159,7 +164,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"Dirty prompt Tab / Enter / Esc", "pick / confirm / cancel"},
   }};
 
-  static constexpr std::array<CheatRow, 38> kCommands = {{
+  static constexpr std::array<CheatRow, 39> kCommands = {{
       {"colorscheme [name]", ""},
       {"ui-scale [n|up|down|reset]", ""},
       {"help", ""},
@@ -168,6 +173,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"tabswitch <tab>", ""},
       {"tabmove <n>", ""},
       {"compare [path] [commit]", ""},
+      {"merge <base> <incoming> <current> [output]", ""},
       {"tab-size [n]", ""},
       {"indent-width [n]", ""},
       {"soft-tabs [on|off]", ""},

@@ -1,10 +1,13 @@
 #include "project/GitStatusService.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "util/StartupTrace.h"
 
@@ -29,12 +32,25 @@ bool HasGitMarker(const std::filesystem::path& root) {
   return std::filesystem::exists(root / ".git");
 }
 
+std::filesystem::path AbsoluteToRelativePath(const std::filesystem::path& root,
+                                             const std::filesystem::path& absolute_path) {
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(absolute_path.lexically_normal(), root.lexically_normal(), error);
+  if (error || relative.empty() || relative.native().rfind("..", 0) == 0) {
+    return {};
+  }
+  return relative.lexically_normal();
+}
+
 bool StatusUsesTargetPath(std::string_view code) {
   return code.find('R') != std::string_view::npos || code.find('C') != std::string_view::npos;
 }
 
 int GitStatusPriority(GitFileStatus status) {
   switch (status) {
+    case GitFileStatus::Conflicted:
+      return 5;
     case GitFileStatus::Deleted:
       return 4;
     case GitFileStatus::Modified:
@@ -56,6 +72,9 @@ GitFileStatus CombineGitStatus(GitFileStatus current, GitFileStatus next) {
 GitFileStatus StatusFromPorcelainCode(std::string_view code) {
   if (code == "??") {
     return GitFileStatus::Untracked;
+  }
+  if (code.find('U') != std::string_view::npos || code == "AA" || code == "DD") {
+    return GitFileStatus::Conflicted;
   }
   if (code.find('D') != std::string_view::npos) {
     return GitFileStatus::Deleted;
@@ -127,6 +146,59 @@ std::unordered_map<std::string, GitFileStatus> ParseGitPorcelainStatus(std::stri
   return statuses;
 }
 
+std::vector<GitWorkingTreeEntry> ParseGitWorkingTreeEntries(std::string_view output) {
+  std::vector<GitWorkingTreeEntry> entries;
+
+  std::size_t offset = 0;
+  while (offset < output.size()) {
+    const std::size_t end = output.find('\0', offset);
+    const std::size_t current_end = end == std::string_view::npos ? output.size() : end;
+    const std::string_view entry = output.substr(offset, current_end - offset);
+    offset = current_end == output.size() ? output.size() : current_end + 1;
+
+    if (entry.size() < 4) {
+      continue;
+    }
+
+    const std::string_view code = entry.substr(0, 2);
+    std::string path(entry.substr(3));
+    if (path.empty()) {
+      continue;
+    }
+
+    if (StatusUsesTargetPath(code) && offset < output.size()) {
+      const std::size_t target_end = output.find('\0', offset);
+      const std::size_t resolved_end =
+          target_end == std::string_view::npos ? output.size() : target_end;
+      const std::string_view target = output.substr(offset, resolved_end - offset);
+      if (!target.empty()) {
+        path = std::string(target);
+      }
+      offset = resolved_end == output.size() ? output.size() : resolved_end + 1;
+    }
+
+    const bool conflicted =
+        code.find('U') != std::string_view::npos || code == "AA" || code == "DD";
+    const bool staged =
+        code.size() >= 2 && code[0] != ' ' && code[0] != '?' && !conflicted;
+    entries.push_back(GitWorkingTreeEntry{
+        .relative_path = std::filesystem::path(path).lexically_normal(),
+        .status = StatusFromPorcelainCode(code),
+        .staged = staged,
+        .conflicted = conflicted,
+    });
+  }
+
+  std::sort(entries.begin(), entries.end(), [](const GitWorkingTreeEntry& lhs,
+                                               const GitWorkingTreeEntry& rhs) {
+    if (lhs.staged != rhs.staged) {
+      return lhs.staged > rhs.staged;
+    }
+    return lhs.relative_path.generic_string() < rhs.relative_path.generic_string();
+  });
+  return entries;
+}
+
 std::string ReadCommandOutput(const std::string& command) {
   std::string output;
   FILE* pipe = popen(command.c_str(), "r");
@@ -153,6 +225,25 @@ std::string ReadCommandOutput(const std::string& command) {
   return output;
 }
 
+bool CommandSucceeds(const std::string& command) {
+  FILE* pipe = popen(command.c_str(), "r");
+  if (pipe == nullptr) {
+    return false;
+  }
+  std::array<char, 256> buffer{};
+  while (fread(buffer.data(), 1, buffer.size(), pipe) > 0) {
+  }
+  return pclose(pipe) == 0;
+}
+
+bool FileExistsAtHead(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
+  const std::string spec = "HEAD:" + relative_path.generic_string();
+  const std::string command =
+      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
+      "' cat-file -e '" + EscapeShellArg(spec) + "' 2>/dev/null";
+  return CommandSucceeds(command);
+}
+
 }  // namespace
 
 std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
@@ -171,6 +262,61 @@ std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
   }
 
   return ParseGitPorcelainStatus(output);
+}
+
+std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root) {
+  if (root.empty() || !HasGitMarker(root)) {
+    return {};
+  }
+
+  const std::string command =
+      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
+      "' status --porcelain=v1 -z --untracked-files=all 2>/dev/null";
+  const std::string output = ReadCommandOutput(command);
+  if (output.empty()) {
+    return {};
+  }
+  return ParseGitWorkingTreeEntries(output);
+}
+
+bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
+  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+    return false;
+  }
+
+  const std::filesystem::path relative_path = AbsoluteToRelativePath(root, absolute_path);
+  if (relative_path.empty()) {
+    return false;
+  }
+
+  const std::string command =
+      "git -C '" + EscapeShellArg(root.lexically_normal().string()) + "' add -- '" +
+      EscapeShellArg(relative_path.generic_string()) + "' >/dev/null 2>/dev/null";
+  return CommandSucceeds(command);
+}
+
+bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
+  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+    return false;
+  }
+
+  const std::filesystem::path relative_path = AbsoluteToRelativePath(root, absolute_path);
+  if (relative_path.empty()) {
+    return false;
+  }
+
+  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
+  const std::string escaped_relative = EscapeShellArg(relative_path.generic_string());
+  if (FileExistsAtHead(root, relative_path)) {
+    const std::string command =
+        "git -C '" + escaped_root + "' restore --source=HEAD --staged --worktree -- '" +
+        escaped_relative + "' >/dev/null 2>/dev/null";
+    return CommandSucceeds(command);
+  }
+
+  const std::string command =
+      "git -C '" + escaped_root + "' clean -f -- '" + escaped_relative + "' >/dev/null 2>/dev/null";
+  return CommandSucceeds(command);
 }
 
 }  // namespace microide::project

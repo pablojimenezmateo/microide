@@ -1,7 +1,10 @@
 #include "compare/CompareModel.h"
+#include "compare/MergeModel.h"
 #include "project/FileOperationService.h"
 #include "project/GitCompareService.h"
+#include "project/GitStatusService.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -16,12 +19,22 @@
 namespace {
 
 using microide::compare::BuildCompareModel;
+using microide::compare::BuildMergeModel;
 using microide::compare::CompareModel;
 using microide::compare::CompareRowKind;
 using microide::compare::CompareTextSpan;
+using microide::compare::MergeChoice;
+using microide::compare::MergeChoiceLines;
+using microide::compare::MergeResultLines;
+using microide::project::CollectGitBranchOutgoingFiles;
 using microide::project::CollectGitFileHistory;
+using microide::project::CollectGitWorkingTreeEntries;
 using microide::project::FileOperationService;
+using microide::project::GitDiscardPath;
+using microide::project::GitFileStatus;
+using microide::project::GitStagePath;
 using microide::project::ReadGitFileAtCommit;
+using microide::project::ResolveGitBaseReference;
 
 std::filesystem::path TestRoot() {
   return std::filesystem::path(MICROIDE_TEST_SOURCE_DIR);
@@ -495,6 +508,189 @@ void TestGitCompareFixture() {
   Expect(compare_summary.deleted == 0, "git session fixture should produce 0 deleted rows");
 }
 
+void TestGitWorkingTreeStatusAndActions() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto base_dir = FixturePath("diff/git/base");
+  CopyTree(base_dir, repo_path);
+
+  const std::string escaped_repo = ShellEscape(repo_path.string());
+  RequireCommandSuccess("git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
+                        "git init");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
+                        "git config user.name");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
+      "git config user.email");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null", "git add base");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' commit -m 'base fixture' >/dev/null 2>/dev/null",
+                        "git commit base");
+
+  const auto modified_file = repo_path / "README.md";
+  const auto deleted_file = repo_path / "src/session.cpp";
+  const auto untracked_file = repo_path / "scratch.txt";
+  WriteFile(modified_file, ReadFile(modified_file) + "\nworking tree change\n");
+  std::filesystem::remove(deleted_file);
+  WriteFile(untracked_file, "untracked content\n");
+
+  auto entries = CollectGitWorkingTreeEntries(repo_path);
+  Expect(entries.size() == 3, "working tree fixture should report three changed files");
+
+  bool saw_deleted = false;
+  bool saw_modified = false;
+  bool saw_untracked = false;
+  for (const auto& entry : entries) {
+    if (entry.relative_path == std::filesystem::path("README.md")) {
+      saw_modified = true;
+      Expect(entry.status == GitFileStatus::Modified, "modified file should be reported as modified");
+      Expect(!entry.staged, "modified file should start unstaged");
+    }
+    if (entry.relative_path == std::filesystem::path("src/session.cpp")) {
+      saw_deleted = true;
+      Expect(entry.status == GitFileStatus::Deleted, "deleted file should be reported as deleted");
+    }
+    if (entry.relative_path == std::filesystem::path("scratch.txt")) {
+      saw_untracked = true;
+      Expect(entry.status == GitFileStatus::Untracked, "untracked file should be reported as untracked");
+    }
+  }
+  Expect(saw_modified && saw_deleted && saw_untracked,
+         "working tree fixture should include modified, deleted, and untracked files");
+
+  Expect(GitStagePath(repo_path, modified_file), "git stage should succeed for modified file");
+  entries = CollectGitWorkingTreeEntries(repo_path);
+  auto staged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+    return entry.relative_path == std::filesystem::path("README.md");
+  });
+  Expect(staged_it != entries.end(), "staged modified file should still appear in working tree view");
+  Expect(staged_it->staged, "modified file should report staged after git add");
+
+  Expect(GitDiscardPath(repo_path, untracked_file), "discard should remove untracked file");
+  Expect(!std::filesystem::exists(untracked_file), "discard should delete untracked file");
+
+  Expect(GitDiscardPath(repo_path, deleted_file), "discard should restore deleted tracked file");
+  Expect(std::filesystem::exists(deleted_file), "discard should restore deleted tracked file on disk");
+
+  Expect(GitDiscardPath(repo_path, modified_file), "discard should restore modified tracked file");
+  Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
+         "discard should restore tracked file to HEAD content");
+}
+
+void TestGitOutgoingBranchFiles() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto base_dir = FixturePath("diff/git/base");
+  const auto head_dir = FixturePath("diff/git/head");
+  CopyTree(base_dir, repo_path);
+
+  const std::string escaped_repo = ShellEscape(repo_path.string());
+  RequireCommandSuccess("git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
+                        "git init");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
+                        "git config user.name");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
+      "git config user.email");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null", "git add base");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' commit -m 'base fixture' >/dev/null 2>/dev/null",
+                        "git commit base");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' checkout -b feature/git-view >/dev/null 2>/dev/null",
+                        "git checkout feature branch");
+
+  WriteFile(repo_path / "src/session.cpp", ReadFile(head_dir / "src/session.cpp"));
+  WriteFile(repo_path / "src/new_panel.cpp", ReadFile(head_dir / "src/new_panel.cpp"));
+  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null", "git add feature");
+  RequireCommandSuccess("git -C '" + escaped_repo + "' commit -m 'feature fixture' >/dev/null 2>/dev/null",
+                        "git commit feature");
+
+  const auto base_ref = ResolveGitBaseReference(repo_path);
+  Expect(base_ref.has_value(), "git base reference should resolve in a main-based repo");
+  Expect(base_ref->ref == "main", "local repo without remotes should resolve main as the base branch");
+
+  const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, base_ref->ref);
+  Expect(outgoing.size() == 2, "feature branch should report two outgoing files");
+
+  bool saw_modified = false;
+  bool saw_added = false;
+  for (const auto& entry : outgoing) {
+    if (entry.relative_path == std::filesystem::path("src/session.cpp")) {
+      saw_modified = true;
+      Expect(entry.status == GitFileStatus::Modified, "tracked changed file should be outgoing modified");
+    }
+    if (entry.relative_path == std::filesystem::path("src/new_panel.cpp")) {
+      saw_added = true;
+      Expect(entry.status == GitFileStatus::Added, "new file should be outgoing added");
+    }
+  }
+  Expect(saw_modified && saw_added, "outgoing branch list should include both changed files");
+}
+
+void TestMergeSingleSidedChange() {
+  auto model = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\nbeta-incoming\ngamma\n",
+                               "alpha\nbeta\ngamma\n");
+  Expect(model.hunks.size() == 1, "single-sided merge should produce one hunk");
+  Expect(!model.hunks.front().conflict, "single-sided merge should not conflict");
+  Expect(model.hunks.front().choice == MergeChoice::Auto,
+         "single-sided merge should auto-select the changed side");
+
+  const auto result = MergeResultLines(model);
+  Expect(result.size() == 4, "single-sided merge should preserve trailing empty line");
+  Expect(result[1] == "beta-incoming", "single-sided merge should use incoming change");
+}
+
+void TestMergeIndependentChanges() {
+  const auto model = BuildMergeModel("one\ntwo\nthree\nfour\n", "one\ntwo-incoming\nthree\nfour\n",
+                                     "one\ntwo\nthree\nfour-current\n");
+  Expect(model.hunks.size() == 2, "independent changes should stay as separate hunks");
+  Expect(!model.hunks[0].conflict && !model.hunks[1].conflict,
+         "independent changes should not conflict");
+
+  const auto result = MergeResultLines(model);
+  Expect(result[1] == "two-incoming", "merge should keep incoming-only change");
+  Expect(result[3] == "four-current", "merge should keep current-only change");
+}
+
+void TestMergeConflictChoiceHandling() {
+  auto model = BuildMergeModel("keep\nbase-line\n", "keep\nincoming-line\n",
+                               "keep\ncurrent-line\n");
+  Expect(model.hunks.size() == 1, "overlapping edits should produce one hunk");
+  Expect(model.hunks.front().conflict, "overlapping edits should conflict");
+
+  const auto base_result = MergeResultLines(model);
+  Expect(base_result[1] == "base-line", "conflict should default to base content");
+
+  model.hunks.front().choice = MergeChoice::Incoming;
+  const auto incoming_result = MergeResultLines(model);
+  Expect(incoming_result[1] == "incoming-line", "incoming choice should update merge result");
+
+  model.hunks.front().choice = MergeChoice::Current;
+  const auto current_result = MergeResultLines(model);
+  Expect(current_result[1] == "current-line", "current choice should update merge result");
+}
+
+void TestMergeIdenticalInsertions() {
+  const auto model =
+      BuildMergeModel("top\nbottom\n", "top\nshared\nbottom\n", "top\nshared\nbottom\n");
+  Expect(model.hunks.size() == 1, "matching insertions should still form one hunk");
+  Expect(!model.hunks.front().conflict, "matching insertions should auto-resolve");
+
+  const auto result = MergeResultLines(model);
+  Expect(result[1] == "shared", "matching insertions should appear once in the merge result");
+}
+
+void TestMergeBothChoiceConcatenatesConflictInsertions() {
+  auto model = BuildMergeModel("top\nbottom\n", "top\nincoming\nbottom\n",
+                               "top\ncurrent\nbottom\n");
+  Expect(model.hunks.size() == 1, "conflicting insertions should produce one hunk");
+  Expect(model.hunks.front().conflict, "different insertions at the same position should conflict");
+
+  model.hunks.front().choice = MergeChoice::Both;
+  const auto lines = MergeChoiceLines(model.hunks.front(), model.hunks.front().choice);
+  Expect(lines.size() == 2, "both choice should keep both insertion blocks");
+  Expect(lines[0] == "incoming", "both choice should keep incoming lines first");
+  Expect(lines[1] == "current", "both choice should append current lines");
+}
+
 }  // namespace
 
 int main() {
@@ -505,6 +701,13 @@ int main() {
     TestCompareUtf8ChangedSpans();
     TestCompareContextAwareAlignment();
     TestGitCompareFixture();
+    TestGitWorkingTreeStatusAndActions();
+    TestGitOutgoingBranchFiles();
+    TestMergeSingleSidedChange();
+    TestMergeIndependentChanges();
+    TestMergeConflictChoiceHandling();
+    TestMergeIdenticalInsertions();
+    TestMergeBothChoiceConcatenatesConflictInsertions();
     TestFileOperationService();
   } catch (const std::exception& error) {
     std::cerr << "microide_tests failed: " << error.what() << '\n';

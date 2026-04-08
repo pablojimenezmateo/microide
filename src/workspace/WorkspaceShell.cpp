@@ -12,6 +12,7 @@
 
 #include "editor/SyntaxHighlighter.h"
 #include "project/FileOperationService.h"
+#include "project/GitStatusService.h"
 #include "util/StartupTrace.h"
 
 namespace microide::workspace {
@@ -70,6 +71,9 @@ constexpr float kTabCloseButtonSize = 14.0f;
 constexpr float kTabCloseButtonRightInset = 6.0f;
 constexpr float kMenuPopupSeparatorHeight = 8.0f;
 constexpr float kMenuPopupItemHeight = 22.0f;
+constexpr float kMergeToolbarHeight = 54.0f;
+constexpr float kMergeToolbarButtonHeight = 22.0f;
+constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
 
 struct WorkspaceLayout {
@@ -137,9 +141,18 @@ struct PersistedEditorTabState {
   std::string compare_commit_hash;
   std::string compare_commit_short_hash;
   std::size_t compare_selected_row = 0;
+  bool compare_persistable = true;
+  std::filesystem::path merge_base_path;
+  std::filesystem::path merge_incoming_path;
+  std::filesystem::path merge_current_path;
+  std::filesystem::path merge_output_path;
+  std::size_t merge_selected_hunk = 0;
+  std::vector<std::string> merge_hunk_choices;
+  bool merge_persistable = true;
 };
 
-constexpr std::array<std::string_view, 2> kSidebarToolNames = {
+constexpr std::array<std::string_view, 3> kSidebarToolNames = {
+    "git",
     "search",
     "tree",
 };
@@ -293,6 +306,46 @@ std::vector<std::string> SplitSyntaxLines(std::string_view text) {
     start = newline + 1;
   }
   return lines;
+}
+
+std::optional<std::string> ReadFileText(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    return std::nullopt;
+  }
+
+  std::ostringstream buffer;
+  buffer << file.rdbuf();
+  return buffer.str();
+}
+
+editor::TextViewport::LineEnding DetectLineEnding(std::string_view text) {
+  std::size_t crlf_count = 0;
+  std::size_t lf_count = 0;
+  std::size_t cr_count = 0;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '\r') {
+      if (i + 1 < text.size() && text[i + 1] == '\n') {
+        ++crlf_count;
+        ++i;
+      } else {
+        ++cr_count;
+      }
+    } else if (text[i] == '\n') {
+      ++lf_count;
+    }
+  }
+
+  if (crlf_count >= lf_count && crlf_count >= cr_count && crlf_count > 0) {
+    return editor::TextViewport::LineEnding::CRLF;
+  }
+  if (lf_count >= cr_count && lf_count > 0) {
+    return editor::TextViewport::LineEnding::LF;
+  }
+  if (cr_count > 0) {
+    return editor::TextViewport::LineEnding::CR;
+  }
+  return editor::TextViewport::LineEnding::LF;
 }
 
 ParsedCommandLine ParseCommandLine(std::string_view input) {
@@ -1124,6 +1177,8 @@ SDL_Color CompareTokenColor(const render::Theme& theme,
 
 char GitMarker(project::GitFileStatus status) {
   switch (status) {
+    case project::GitFileStatus::Conflicted:
+      return '!';
     case project::GitFileStatus::Modified:
       return 'M';
     case project::GitFileStatus::Added:
@@ -1140,6 +1195,8 @@ char GitMarker(project::GitFileStatus status) {
 
 SDL_Color GitMarkerColor(const render::Theme& theme, project::GitFileStatus status) {
   switch (status) {
+    case project::GitFileStatus::Conflicted:
+      return theme.accent;
     case project::GitFileStatus::Modified:
       return theme.diff_modified;
     case project::GitFileStatus::Added:
@@ -1241,6 +1298,8 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Compare, "compare", "compare [path] [commit-prefix]",
                  "Compare Against...", ""},
       ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},
+      ActionSpec{ActionId::Merge, "merge", "merge <base> <incoming> <current> [output]",
+                 "Merge Editor", ""},
       ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
       ActionSpec{ActionId::CopyRelativePath, "", "", "Copy Relative Path", ""},
       ActionSpec{ActionId::CreateDirectory, "", "", "New Folder...", ""},
@@ -1398,6 +1457,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Compare:
     case ActionId::Find:
     case ActionId::Grep:
+    case ActionId::Merge:
     case ActionId::Open:
     case ActionId::ProjectClose:
     case ActionId::Rg:
@@ -1415,7 +1475,6 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Redo:
     case ActionId::ReplaceInBuffer:
     case ActionId::Reopen:
-    case ActionId::Save:
     case ActionId::Search:
     case ActionId::SelectAll:
     case ActionId::SplitFirst:
@@ -1426,6 +1485,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Unsplit:
     case ActionId::Vsplit:
       return ActiveTabIsEditor();
+    case ActionId::Save:
+      return ActiveTabIsEditor() || ActiveTabIsMerge();
     case ActionId::Focus:
       return true;
     case ActionId::IndentWidth:
@@ -1458,10 +1519,12 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   const auto item = [](ActionId action, std::string_view label = {},
                        std::string_view accelerator = {},
                        std::array<std::string_view, 2> args = {}, std::size_t arg_count = 0,
-                       bool checkable = false) {
-    return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable};
+                       bool checkable = false, MenuId submenu = MenuId::None) {
+    return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable, submenu};
   };
-  const auto separator = [] { return MenuItemSpec{ActionId::Help, {}, {}, {}, 0, true, false}; };
+  const auto separator = [] {
+    return MenuItemSpec{ActionId::Help, {}, {}, {}, 0, true, false, MenuId::None};
+  };
 
   static const auto kFileItems = std::to_array<MenuItemSpec>({
       item(ActionId::ProjectOpen, "New Project Tab..."),
@@ -1486,10 +1549,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       item(ActionId::SidebarToggle, {}, {}, {}, 0, true),
-      item(ActionId::SidebarShow, "Show Tree", {}, std::array<std::string_view, 2>{"tree", {}}, 1,
-           true),
-      item(ActionId::SidebarShow, "Show Search", {},
-           std::array<std::string_view, 2>{"search", {}}, 1, true),
+      item(ActionId::Help, "Sidebar Mode", {}, {}, 0, false, MenuId::SidebarMode),
       separator(),
       item(ActionId::ToggleBottomPanel, {}, {}, {}, 0, true),
       separator(),
@@ -1505,6 +1565,12 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
            std::array<std::string_view, 2>{"sidebar", {}}, 1),
       item(ActionId::Focus, "Focus Panel", {},
            std::array<std::string_view, 2>{"panel", {}}, 1),
+  });
+  static const auto kSidebarModeItems = std::to_array<MenuItemSpec>({
+      item(ActionId::SidebarShow, "Tree", {}, std::array<std::string_view, 2>{"tree", {}}, 1, true),
+      item(ActionId::SidebarShow, "Search", {}, std::array<std::string_view, 2>{"search", {}}, 1,
+           true),
+      item(ActionId::SidebarShow, "Git", {}, std::array<std::string_view, 2>{"git", {}}, 1, true),
   });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({
       item(ActionId::Search),
@@ -1529,6 +1595,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
       MenuSpec{MenuId::View, "View", kViewItems},
+      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", kSidebarModeItems},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
       MenuSpec{MenuId::Project, "Project", kProjectItems},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
@@ -1618,6 +1685,9 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
                           ? menu_bar.x + menu_bar.w - 8.0f
                           : window_buttons.front().rect.x - 8.0f;
   for (const MenuSpec& spec : MenuSpecs()) {
+    if (spec.id == MenuId::SidebarMode) {
+      continue;
+    }
     const float width =
         std::clamp(text_renderer_.MeasureWidth(spec.label) + 22.0f, 52.0f, 108.0f);
     if (x + width > max_x) {
@@ -1705,6 +1775,18 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
     return std::nullopt;
   }
 
+  const SDL_FRect bounds =
+      MakeRect(0.0f, 0.0f,
+               last_window_width_ > 0 ? static_cast<float>(last_window_width_) : menu_bar.w,
+               last_window_height_ > 0
+                   ? static_cast<float>(last_window_height_)
+                   : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
+  if (active_menu_anchor_rect_.has_value() && id == active_menu_id_) {
+    SDL_FRect anchor = *active_menu_anchor_rect_;
+    anchor.x += anchor.w - 1.0f;
+    return ComputePopupMenuRect(anchor, menu->items, bounds);
+  }
+
   const auto menu_bar_items = ComputeVisibleMenuBarItems(menu_bar);
   const auto bar_it =
       std::find_if(menu_bar_items.begin(), menu_bar_items.end(),
@@ -1712,13 +1794,6 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
   if (bar_it == menu_bar_items.end()) {
     return std::nullopt;
   }
-
-  const SDL_FRect bounds =
-      MakeRect(0.0f, 0.0f,
-               last_window_width_ > 0 ? static_cast<float>(last_window_width_) : menu_bar.w,
-               last_window_height_ > 0
-                   ? static_cast<float>(last_window_height_)
-                   : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
   return ComputePopupMenuRect(bar_it->rect, menu->items, bounds);
 }
 
@@ -1771,6 +1846,9 @@ std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
 }
 
 std::string WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) const {
+  if (item.submenu != MenuId::None) {
+    return ">";
+  }
   if (!item.accelerator.empty()) {
     return std::string(item.accelerator);
   }
@@ -1799,7 +1877,8 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     return true;
   }
   if ((item.action == ActionId::SidebarShow || item.action == ActionId::SidebarToggle) &&
-      item.arg_count > 0 && (item.args[0] == "tree" || item.args[0] == "search")) {
+      item.arg_count > 0 &&
+      (item.args[0] == "tree" || item.args[0] == "search" || item.args[0] == "git")) {
     return !project_root_.empty();
   }
 
@@ -1820,6 +1899,9 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
     }
     if (item.args[0] == "search") {
       return sidebar_visible_ && sidebar_mode_ == SidebarMode::Search && !sidebar_temporary_;
+    }
+    if (item.args[0] == "git") {
+      return sidebar_visible_ && sidebar_mode_ == SidebarMode::Git;
     }
   }
   if (item.action == ActionId::ToggleBottomPanel) {
@@ -1869,12 +1951,14 @@ void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
   menu_bar_open_ = true;
   active_menu_id_ = id;
   active_menu_item_index_ = FirstEnabledMenuItemIndex(id);
+  active_menu_anchor_rect_.reset();
 }
 
 void WorkspaceShell::CloseMenuBar() {
   menu_bar_open_ = false;
   active_menu_id_ = MenuId::None;
   active_menu_item_index_ = -1;
+  active_menu_anchor_rect_.reset();
 }
 
 bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
@@ -1885,6 +1969,28 @@ bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
 
   const MenuItemSpec& item = menu->items[item_index];
   if (!IsMenuItemEnabled(item)) {
+    return true;
+  }
+  if (item.submenu != MenuId::None) {
+    if (last_window_width_ > 0 && last_window_height_ > 0) {
+      const WorkspaceLayout layout =
+          ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                        sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+      if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, menu_id); popup_rect.has_value()) {
+        for (const VisiblePopupMenuItem& visible_item :
+             ComputeVisiblePopupMenuItems(menu_id, *popup_rect)) {
+          if (visible_item.index != item_index) {
+            continue;
+          }
+          active_menu_id_ = item.submenu;
+          active_menu_item_index_ = FirstEnabledMenuItemIndex(item.submenu);
+          active_menu_anchor_rect_ = visible_item.rect;
+          return true;
+        }
+      }
+    }
+    active_menu_id_ = item.submenu;
+    active_menu_item_index_ = FirstEnabledMenuItemIndex(item.submenu);
     return true;
   }
 
@@ -2130,6 +2236,11 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   project_search_selected_index_ = 0;
   project_search_running_ = false;
   project_search_error_.clear();
+  git_sidebar_entries_.clear();
+  git_base_ref_.clear();
+  git_base_label_.clear();
+  git_repo_available_ = false;
+  git_sidebar_selected_index_ = 0;
   project_search_run_id_ = 0;
   compare_picker_path_.clear();
   compare_picker_query_.clear();
@@ -2202,6 +2313,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
           .title = candidate.filename().string(),
           .editor_state = MakeEditorTabState(startup_view),
           .compare = std::nullopt,
+          .merge = std::nullopt,
       });
       active_tab_index_ = 0;
       if (log_feedback) {
@@ -2285,6 +2397,11 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.project_search_selected_index = project_search_selected_index_;
   state.project_search_running = false;
   state.project_search_error = std::move(project_search_error_);
+  state.git_sidebar_entries = std::move(git_sidebar_entries_);
+  state.git_base_ref = std::move(git_base_ref_);
+  state.git_base_label = std::move(git_base_label_);
+  state.git_repo_available = git_repo_available_;
+  state.git_sidebar_selected_index = git_sidebar_selected_index_;
   state.compare_picker_path = std::move(compare_picker_path_);
   state.compare_picker_query = std::move(compare_picker_query_);
   state.compare_picker_commits = std::move(compare_picker_commits_);
@@ -2345,6 +2462,11 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   project_search_selected_index_ = state.project_search_selected_index;
   project_search_running_ = false;
   project_search_error_ = std::move(state.project_search_error);
+  git_sidebar_entries_ = std::move(state.git_sidebar_entries);
+  git_base_ref_ = std::move(state.git_base_ref);
+  git_base_label_ = std::move(state.git_base_label);
+  git_repo_available_ = state.git_repo_available;
+  git_sidebar_selected_index_ = state.git_sidebar_selected_index;
   project_search_run_id_ = 0;
   compare_picker_path_ = std::move(state.compare_picker_path);
   compare_picker_query_ = std::move(state.compare_picker_query);
@@ -2616,6 +2738,7 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
   file_finder_.SetIndex(&file_index_);
   sidebar_scroll_row_ = 0;
+  RefreshGitSidebar();
 
   if (sidebar_mode_ == SidebarMode::Search && !project_search_query_.empty()) {
     RefreshProjectSearch();
@@ -3124,6 +3247,40 @@ bool WorkspaceShell::RestoreSessionState() {
       }
       continue;
     }
+    if (command == "merge-base" && tokens.size() == 2) {
+      current_tab->merge_base_path = std::filesystem::path(tokens[1].text);
+      continue;
+    }
+    if (command == "merge-incoming" && tokens.size() == 2) {
+      current_tab->merge_incoming_path = std::filesystem::path(tokens[1].text);
+      continue;
+    }
+    if (command == "merge-current" && tokens.size() == 2) {
+      current_tab->merge_current_path = std::filesystem::path(tokens[1].text);
+      continue;
+    }
+    if (command == "merge-output" && tokens.size() == 2) {
+      current_tab->merge_output_path = std::filesystem::path(tokens[1].text);
+      continue;
+    }
+    if (command == "merge-selected-hunk" && tokens.size() == 2) {
+      try {
+        current_tab->merge_selected_hunk = static_cast<std::size_t>(std::stoull(tokens[1].text));
+      } catch (...) {
+      }
+      continue;
+    }
+    if (command == "merge-choice" && tokens.size() == 3) {
+      try {
+        const std::size_t hunk_index = static_cast<std::size_t>(std::stoull(tokens[1].text));
+        if (current_tab->merge_hunk_choices.size() <= hunk_index) {
+          current_tab->merge_hunk_choices.resize(hunk_index + 1);
+        }
+        current_tab->merge_hunk_choices[hunk_index] = tokens[2].text;
+      } catch (...) {
+      }
+      continue;
+    }
     if (command == "split-node" && tokens.size() == 5) {
       const auto path = DecodeSessionNodePath(tokens[1].text);
       if (!path.has_value()) {
@@ -3179,6 +3336,59 @@ bool WorkspaceShell::RestoreSessionState() {
         continue;
       }
       open_tabs_.push_back(std::move(*compare_tab));
+      continue;
+    }
+    if (persisted_tab.kind == "merge") {
+      auto resolve_path = [&](std::filesystem::path path) {
+        if (path.is_relative()) {
+          path = project_root_ / path;
+        }
+        return path.lexically_normal();
+      };
+
+      const std::filesystem::path merge_base = resolve_path(persisted_tab.merge_base_path);
+      const std::filesystem::path merge_incoming = resolve_path(persisted_tab.merge_incoming_path);
+      const std::filesystem::path merge_current = resolve_path(persisted_tab.merge_current_path);
+      const std::filesystem::path merge_output = resolve_path(persisted_tab.merge_output_path);
+      if (merge_base.empty() || merge_incoming.empty() || merge_current.empty() || merge_output.empty()) {
+        continue;
+      }
+
+      auto merge_tab = BuildMergeTabEntry(merge_base, merge_incoming, merge_current, merge_output);
+      if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
+        continue;
+      }
+
+      const auto parse_choice = [](std::string_view text) {
+        if (text == "base") {
+          return compare::MergeChoice::Base;
+        }
+        if (text == "incoming") {
+          return compare::MergeChoice::Incoming;
+        }
+        if (text == "current") {
+          return compare::MergeChoice::Current;
+        }
+        if (text == "both") {
+          return compare::MergeChoice::Both;
+        }
+        return compare::MergeChoice::Auto;
+      };
+
+      auto& merge_state = merge_tab->merge.value();
+      for (std::size_t i = 0; i < merge_state.model.hunks.size() && i < persisted_tab.merge_hunk_choices.size();
+           ++i) {
+        if (persisted_tab.merge_hunk_choices[i].empty()) {
+          continue;
+        }
+        merge_state.model.hunks[i].choice = parse_choice(persisted_tab.merge_hunk_choices[i]);
+      }
+      merge_state.selected_hunk = merge_state.model.hunks.empty()
+                                      ? 0
+                                      : std::min(persisted_tab.merge_selected_hunk,
+                                                 merge_state.model.hunks.size() - 1);
+      RefreshMergeTabDerivedState(merge_state);
+      open_tabs_.push_back(std::move(*merge_tab));
       continue;
     }
 
@@ -3268,6 +3478,7 @@ bool WorkspaceShell::RestoreSessionState() {
         .title = tab_path.empty() ? "untitled" : tab_path.filename().string(),
         .editor_state = std::move(editor_state),
         .compare = std::nullopt,
+        .merge = std::nullopt,
     });
   }
 
@@ -3314,7 +3525,7 @@ void WorkspaceShell::SaveSessionState() {
   std::size_t persisted_tab_count = 0;
   for (std::size_t tab_index = 0; tab_index < open_tabs_.size(); ++tab_index) {
     auto& tab = open_tabs_[tab_index];
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() && tab.compare->persistable) {
       if (tab_index == active_tab_index_) {
         persisted_active_tab = persisted_tab_count;
       }
@@ -3325,6 +3536,29 @@ void WorkspaceShell::SaveSessionState() {
       file << "compare-commit " << QuoteCommandArg(tab.compare->commit_hash) << ' '
            << QuoteCommandArg(tab.compare->left_label) << '\n';
       file << "compare-selected-row " << tab.compare->selected_row << '\n';
+      file << "tab-end\n";
+      ++persisted_tab_count;
+      continue;
+    }
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() && tab.merge->persistable) {
+      if (tab_index == active_tab_index_) {
+        persisted_active_tab = persisted_tab_count;
+      }
+
+      file << "tab-begin\n";
+      file << "kind merge\n";
+      file << "merge-base " << QuoteCommandArg(tab.merge->base_path.lexically_normal().string()) << '\n';
+      file << "merge-incoming "
+           << QuoteCommandArg(tab.merge->incoming_path.lexically_normal().string()) << '\n';
+      file << "merge-current "
+           << QuoteCommandArg(tab.merge->current_path.lexically_normal().string()) << '\n';
+      file << "merge-output " << QuoteCommandArg(tab.merge->output_path.lexically_normal().string())
+           << '\n';
+      file << "merge-selected-hunk " << tab.merge->selected_hunk << '\n';
+      for (std::size_t i = 0; i < tab.merge->model.hunks.size(); ++i) {
+        file << "merge-choice " << i << ' '
+             << QuoteCommandArg(compare::MergeChoiceLabel(tab.merge->model.hunks[i].choice)) << '\n';
+      }
       file << "tab-end\n";
       ++persisted_tab_count;
       continue;
@@ -3583,6 +3817,66 @@ void WorkspaceShell::RevealActiveCompareSelection() {
   ClampCompareScrollRow(*compare_tab, visible_rows);
 }
 
+bool WorkspaceShell::ActiveTabIsMerge() const {
+  return active_tab_index_ < open_tabs_.size() &&
+         open_tabs_[active_tab_index_].kind == TabEntry::Kind::Merge &&
+         open_tabs_[active_tab_index_].merge.has_value();
+}
+
+WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() {
+  if (!ActiveTabIsMerge()) {
+    return nullptr;
+  }
+  return &open_tabs_[active_tab_index_].merge.value();
+}
+
+const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
+  if (!ActiveTabIsMerge()) {
+    return nullptr;
+  }
+  return &open_tabs_[active_tab_index_].merge.value();
+}
+
+int WorkspaceShell::MergeVisibleRows(const SDL_FRect& rect) const {
+  const float line_height = text_renderer_.LineHeight();
+  const float rows_y = rect.y + kMergeToolbarHeight + line_height + 12.0f;
+  return std::max(
+      1, static_cast<int>((rect.h - (rows_y - rect.y) - 8.0f) / std::max(1.0f, line_height)));
+}
+
+int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
+  return std::max(0,
+                  static_cast<int>(merge_tab.display_model.rows.size()) - std::max(1, visible_rows));
+}
+
+void WorkspaceShell::ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const {
+  merge_tab.scroll_row =
+      std::clamp(merge_tab.scroll_row, 0, MergeMaxScrollRow(merge_tab, visible_rows));
+}
+
+void WorkspaceShell::RevealActiveMergeSelection() {
+  MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr || last_window_width_ <= 0 || last_window_height_ <= 0 ||
+      merge_tab->display_model.hunks.empty()) {
+    return;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+  const int visible_rows = MergeVisibleRows(layout.editor_surface);
+  ClampMergeScrollRow(*merge_tab, visible_rows);
+  const auto& selected_hunk =
+      merge_tab->display_model.hunks[std::min(merge_tab->selected_hunk,
+                                              merge_tab->display_model.hunks.size() - 1)];
+  if (selected_hunk.start_row < merge_tab->scroll_row) {
+    merge_tab->scroll_row = selected_hunk.start_row;
+  } else if (selected_hunk.end_row >= merge_tab->scroll_row + visible_rows) {
+    merge_tab->scroll_row = selected_hunk.end_row - visible_rows + 1;
+  }
+  ClampMergeScrollRow(*merge_tab, visible_rows);
+}
+
 std::string WorkspaceShell::ActiveTabTitle() const {
   if (active_tab_index_ >= open_tabs_.size()) {
     return EditorTabLabel(text_viewport_);
@@ -3765,14 +4059,16 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     }
   }
   const bool active_compare_tab = ActiveTabIsCompare();
+  const bool active_merge_tab = ActiveTabIsMerge();
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
-      focus_ == FocusTarget::Editor && !active_compare_tab && event.key.key == SDLK_A) {
+      focus_ == FocusTarget::Editor && !active_compare_tab && !active_merge_tab &&
+      event.key.key == SDLK_A) {
     ExecuteAction(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
-      focus_ == FocusTarget::Editor && !active_compare_tab) {
+      focus_ == FocusTarget::Editor && !active_compare_tab && !active_merge_tab) {
     if ((modifiers & SDL_KMOD_SHIFT) && event.key.key == SDLK_F) {
       ExecuteAction(ActionId::Rg, {}, ActionSource::Shortcut);
       return true;
@@ -4209,6 +4505,50 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       }
     }
 
+    if (sidebar_mode_ == SidebarMode::Git) {
+      switch (event.key.key) {
+        case SDLK_UP:
+          MoveGitSidebarSelection(-1);
+          return true;
+        case SDLK_DOWN:
+          MoveGitSidebarSelection(1);
+          return true;
+        case SDLK_HOME:
+          if (!git_sidebar_entries_.empty()) {
+            git_sidebar_selected_index_ = 0;
+          }
+          return true;
+        case SDLK_END:
+          if (!git_sidebar_entries_.empty()) {
+            git_sidebar_selected_index_ = git_sidebar_entries_.size() - 1;
+          }
+          return true;
+        case SDLK_PAGEUP:
+          MoveGitSidebarSelection(-8);
+          return true;
+        case SDLK_PAGEDOWN:
+          MoveGitSidebarSelection(8);
+          return true;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          return OpenGitSidebarEntry(git_sidebar_selected_index_);
+        case SDLK_R:
+          RefreshProjectFiles();
+          LogMessage("Git sidebar refreshed");
+          return true;
+        default: {
+          const char input_character = KeycodeToAscii(event.key.key, modifiers);
+          if (input_character == 's') {
+            return StageGitSidebarEntry(git_sidebar_selected_index_);
+          }
+          if (input_character == 'x') {
+            return DiscardGitSidebarEntry(git_sidebar_selected_index_);
+          }
+          return false;
+        }
+      }
+    }
+
     switch (event.key.key) {
       case SDLK_UP:
         directory_tree_.MoveSelection(-1);
@@ -4300,6 +4640,97 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         }
         if (input_character == 'o') {
           OpenWorkingFileFromCompare();
+          return true;
+        }
+        return false;
+      }
+    }
+  }
+
+  if (focus_ == FocusTarget::Editor && active_merge_tab) {
+    switch (event.key.key) {
+      case SDLK_ESCAPE:
+        RequestCloseTab(active_tab_index_);
+        return true;
+      case SDLK_UP:
+        MoveMergeSelection(-1);
+        return true;
+      case SDLK_DOWN:
+        MoveMergeSelection(1);
+        return true;
+      case SDLK_PAGEUP:
+        MoveMergeSelection(-5);
+        return true;
+      case SDLK_PAGEDOWN:
+        MoveMergeSelection(5);
+        return true;
+      case SDLK_HOME:
+        if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr) {
+          merge_tab->selected_hunk = 0;
+          RevealActiveMergeSelection();
+        }
+        return true;
+      case SDLK_END:
+        if (auto* merge_tab = ActiveMergeTab();
+            merge_tab != nullptr && !merge_tab->display_model.hunks.empty()) {
+          merge_tab->selected_hunk = merge_tab->display_model.hunks.size() - 1;
+          RevealActiveMergeSelection();
+        }
+        return true;
+      case SDLK_LEFTBRACKET:
+        MoveMergeSelection(-1);
+        return true;
+      case SDLK_RIGHTBRACKET:
+        MoveMergeSelection(1);
+        return true;
+      default: {
+        const char input_character = KeycodeToAscii(event.key.key, modifiers);
+        if (input_character == 'j') {
+          MoveMergeSelection(1);
+          return true;
+        }
+        if (input_character == 'k') {
+          MoveMergeSelection(-1);
+          return true;
+        }
+        if (input_character == 'i') {
+          ApplyMergeChoice(compare::MergeChoice::Incoming);
+          return true;
+        }
+        if (input_character == 'c') {
+          ApplyMergeChoice(compare::MergeChoice::Current);
+          return true;
+        }
+        if (input_character == 'b') {
+          ApplyMergeChoice(compare::MergeChoice::Base);
+          return true;
+        }
+        if (input_character == 'm') {
+          ApplyMergeChoice(compare::MergeChoice::Both);
+          return true;
+        }
+        if (input_character == 'a') {
+          ApplyMergeChoiceToAll(compare::MergeChoice::Auto);
+          return true;
+        }
+        if (input_character == 'I') {
+          ApplyMergeChoiceToAll(compare::MergeChoice::Incoming);
+          return true;
+        }
+        if (input_character == 'C') {
+          ApplyMergeChoiceToAll(compare::MergeChoice::Current);
+          return true;
+        }
+        if (input_character == 'B') {
+          ApplyMergeChoiceToAll(compare::MergeChoice::Base);
+          return true;
+        }
+        if (input_character == 'M') {
+          ApplyMergeChoiceToAll(compare::MergeChoice::Both);
+          return true;
+        }
+        if (input_character == 'o') {
+          OpenMergeResultFile();
           return true;
         }
         return false;
@@ -4420,6 +4851,8 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
   SyncActiveEditorTabMetadata();
   if (tab.kind == TabEntry::Kind::Compare) {
     RevealActiveCompareSelection();
+  } else if (tab.kind == TabEntry::Kind::Merge) {
+    RevealActiveMergeSelection();
   }
   EnsureActiveTabVisible();
   focus_ = FocusTarget::Editor;
@@ -4463,7 +4896,23 @@ void WorkspaceShell::SyncActiveEditorTab() {
 }
 
 bool WorkspaceShell::SaveTab(std::size_t index) {
-  if (index >= open_tabs_.size() || open_tabs_[index].kind != TabEntry::Kind::Editor) {
+  if (index >= open_tabs_.size()) {
+    return false;
+  }
+
+  if (open_tabs_[index].kind == TabEntry::Kind::Merge && open_tabs_[index].merge.has_value()) {
+    auto& merge_tab = open_tabs_[index].merge.value();
+    if (!merge_tab.result_viewport.dirty()) {
+      return true;
+    }
+    if (!merge_tab.result_viewport.Save()) {
+      return false;
+    }
+    directory_tree_.Refresh();
+    return true;
+  }
+
+  if (open_tabs_[index].kind != TabEntry::Kind::Editor) {
     return false;
   }
 
@@ -4514,7 +4963,15 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
 }
 
 bool WorkspaceShell::TabIsDirty(std::size_t index) const {
-  if (index >= open_tabs_.size() || open_tabs_[index].kind != TabEntry::Kind::Editor) {
+  if (index >= open_tabs_.size()) {
+    return false;
+  }
+
+  if (open_tabs_[index].kind == TabEntry::Kind::Merge && open_tabs_[index].merge.has_value()) {
+    return open_tabs_[index].merge->result_viewport.dirty();
+  }
+
+  if (open_tabs_[index].kind != TabEntry::Kind::Editor) {
     return false;
   }
 
@@ -4563,6 +5020,10 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
   dirty_tabs.reserve(state.open_tabs.size());
   for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
     const auto& tab = state.open_tabs[i];
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() && tab.merge->result_viewport.dirty()) {
+      dirty_tabs.push_back(i);
+      continue;
+    }
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
         tab.editor_state->views.empty()) {
       continue;
@@ -4941,16 +5402,44 @@ std::vector<std::size_t> WorkspaceShell::AffectedCompareTabIndices(
   return indices;
 }
 
+std::vector<std::size_t> WorkspaceShell::AffectedMergeTabIndices(
+    const std::filesystem::path& path) const {
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    const TabEntry& tab = open_tabs_[i];
+    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+      continue;
+    }
+    if (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
+        PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), path.lexically_normal()) ||
+        PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), path.lexically_normal()) ||
+        PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), path.lexically_normal())) {
+      indices.push_back(i);
+    }
+  }
+  return indices;
+}
+
 bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                                std::string* blocking_label) const {
   for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
-    if (!EditorTabHasDirtyPath(i, path)) {
-      continue;
+    if (EditorTabHasDirtyPath(i, path)) {
+      if (blocking_label != nullptr) {
+        *blocking_label = open_tabs_[i].title;
+      }
+      return true;
     }
-    if (blocking_label != nullptr) {
-      *blocking_label = open_tabs_[i].title;
+    const TabEntry& tab = open_tabs_[i];
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() && tab.merge->result_viewport.dirty() &&
+        (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
+         PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), path.lexically_normal()) ||
+         PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), path.lexically_normal()) ||
+         PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), path.lexically_normal()))) {
+      if (blocking_label != nullptr) {
+        *blocking_label = tab.title;
+      }
+      return true;
     }
-    return true;
   }
   return false;
 }
@@ -4974,7 +5463,7 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     SyncActiveEditorTab();
   }
 
-  std::vector<std::size_t> compare_tabs_to_close;
+  std::vector<std::size_t> special_tabs_to_close;
   for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
     TabEntry& tab = open_tabs_[i];
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
@@ -5014,28 +5503,64 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
       continue;
     }
 
-    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
-        !PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
+      const std::filesystem::path updated_path =
+          ReplacePathPrefix(tab.compare->path, old_path, new_path);
+      const project::GitCommitEntry commit{
+          .hash = tab.compare->commit_hash,
+          .short_hash = tab.compare->left_label,
+          .subject = tab.compare->left_label,
+      };
+      auto rebuilt = BuildCompareTabEntry(updated_path, commit, tab.compare->selected_row);
+      if (!rebuilt.has_value()) {
+        special_tabs_to_close.push_back(i);
+        continue;
+      }
+      tab = std::move(*rebuilt);
       continue;
     }
 
-    const std::filesystem::path updated_path =
-        ReplacePathPrefix(tab.compare->path, old_path, new_path);
-    const project::GitCommitEntry commit{
-        .hash = tab.compare->commit_hash,
-        .short_hash = tab.compare->left_label,
-        .subject = tab.compare->left_label,
-    };
-    auto rebuilt = BuildCompareTabEntry(updated_path, commit, tab.compare->selected_row);
-    if (!rebuilt.has_value()) {
-      compare_tabs_to_close.push_back(i);
+    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
+
+    auto update_merge_path = [&](const std::filesystem::path& path) {
+      return PathEqualsOrWithin(path.lexically_normal(), old_path)
+                 ? ReplacePathPrefix(path, old_path, new_path).lexically_normal()
+                 : path.lexically_normal();
+    };
+    if (!PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), old_path) &&
+        !PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), old_path) &&
+        !PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), old_path) &&
+        !PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), old_path)) {
+      continue;
+    }
+
+    auto rebuilt = BuildMergeTabEntry(update_merge_path(tab.merge->base_path),
+                                      update_merge_path(tab.merge->incoming_path),
+                                      update_merge_path(tab.merge->current_path),
+                                      update_merge_path(tab.merge->output_path));
+    if (!rebuilt.has_value() || !rebuilt->merge.has_value()) {
+      special_tabs_to_close.push_back(i);
+      continue;
+    }
+    auto& rebuilt_merge = rebuilt->merge.value();
+    for (std::size_t hunk_index = 0;
+         hunk_index < rebuilt_merge.model.hunks.size() && hunk_index < tab.merge->model.hunks.size();
+         ++hunk_index) {
+      rebuilt_merge.model.hunks[hunk_index].choice = tab.merge->model.hunks[hunk_index].choice;
+    }
+    rebuilt_merge.selected_hunk = rebuilt_merge.model.hunks.empty()
+                                      ? 0
+                                      : std::min(tab.merge->selected_hunk,
+                                                 rebuilt_merge.model.hunks.size() - 1);
+    RefreshMergeTabDerivedState(rebuilt_merge);
     tab = std::move(*rebuilt);
   }
 
-  std::sort(compare_tabs_to_close.rbegin(), compare_tabs_to_close.rend());
-  for (std::size_t index : compare_tabs_to_close) {
+  std::sort(special_tabs_to_close.rbegin(), special_tabs_to_close.rend());
+  for (std::size_t index : special_tabs_to_close) {
     CloseTab(index);
   }
 
@@ -5055,7 +5580,9 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
 
   std::vector<std::size_t> indices = AffectedEditorTabIndices(path);
   const std::vector<std::size_t> compare_indices = AffectedCompareTabIndices(path);
+  const std::vector<std::size_t> merge_indices = AffectedMergeTabIndices(path);
   indices.insert(indices.end(), compare_indices.begin(), compare_indices.end());
+  indices.insert(indices.end(), merge_indices.begin(), merge_indices.end());
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   std::sort(indices.rbegin(), indices.rend());
@@ -5995,6 +6522,12 @@ void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
   LogMessage(temporary ? "Temporary project search opened" : "Project search sidebar opened");
 }
 
+void WorkspaceShell::ShowGitSidebar() {
+  RefreshGitSidebar();
+  ShowSidebarMode(SidebarMode::Git, false);
+  LogMessage("Git sidebar opened");
+}
+
 void WorkspaceShell::CloseSidebar() {
   if (sidebar_mode_ == SidebarMode::Search) {
     StopProjectSearch();
@@ -6053,6 +6586,359 @@ void WorkspaceShell::RefreshProjectFiles() {
   directory_tree_.Refresh();
   file_index_.Refresh();
   file_finder_.SetIndex(&file_index_);
+  RefreshGitSidebar();
+}
+
+void WorkspaceShell::RefreshGitSidebar() {
+  const std::filesystem::path previous_path =
+      git_sidebar_selected_index_ < git_sidebar_entries_.size()
+          ? git_sidebar_entries_[git_sidebar_selected_index_].path
+          : std::filesystem::path{};
+  const GitSidebarEntry::Section previous_section =
+      git_sidebar_selected_index_ < git_sidebar_entries_.size()
+          ? git_sidebar_entries_[git_sidebar_selected_index_].section
+          : GitSidebarEntry::Section::Modified;
+
+  git_sidebar_entries_.clear();
+  git_base_ref_.clear();
+  git_base_label_.clear();
+  git_repo_available_ = false;
+  git_sidebar_selected_index_ = 0;
+  if (project_root_.empty()) {
+    return;
+  }
+
+  const auto working_entries = project::CollectGitWorkingTreeEntries(project_root_);
+  for (const auto& entry : working_entries) {
+    git_sidebar_entries_.push_back(GitSidebarEntry{
+        .section = GitSidebarEntry::Section::Modified,
+        .path = (project_root_ / entry.relative_path).lexically_normal(),
+        .relative_path = entry.relative_path,
+        .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
+        .conflicted = entry.conflicted,
+        .staged = entry.staged,
+    });
+  }
+
+  const auto base_ref = project::ResolveGitBaseReference(project_root_);
+  if (base_ref.has_value()) {
+    git_repo_available_ = true;
+    git_base_ref_ = base_ref->ref;
+    git_base_label_ = base_ref->label;
+    const auto outgoing_entries =
+        project::CollectGitBranchOutgoingFiles(project_root_, git_base_ref_);
+    for (const auto& entry : outgoing_entries) {
+      git_sidebar_entries_.push_back(GitSidebarEntry{
+          .section = GitSidebarEntry::Section::Outgoing,
+          .path = (project_root_ / entry.relative_path).lexically_normal(),
+          .relative_path = entry.relative_path,
+          .status = entry.status,
+      });
+    }
+  } else {
+    git_repo_available_ = std::filesystem::exists(project_root_ / ".git");
+  }
+
+  for (std::size_t i = 0; i < git_sidebar_entries_.size(); ++i) {
+    if (git_sidebar_entries_[i].path == previous_path &&
+        git_sidebar_entries_[i].section == previous_section) {
+      git_sidebar_selected_index_ = i;
+      return;
+    }
+  }
+}
+
+std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
+  std::vector<GitSidebarLine> lines;
+  std::size_t modified_count = 0;
+  std::size_t outgoing_count = 0;
+  for (const auto& entry : git_sidebar_entries_) {
+    if (entry.section == GitSidebarEntry::Section::Modified) {
+      ++modified_count;
+    } else {
+      ++outgoing_count;
+    }
+  }
+
+  lines.push_back(GitSidebarLine{
+      .kind = GitSidebarLine::Kind::Header,
+      .section = GitSidebarEntry::Section::Modified,
+      .label = "Changes (" + std::to_string(modified_count) + ")",
+  });
+  if (modified_count == 0) {
+    lines.push_back(GitSidebarLine{
+        .kind = GitSidebarLine::Kind::Empty,
+        .section = GitSidebarEntry::Section::Modified,
+        .label = git_repo_available_ ? "Working tree is clean" : "Not a git repository",
+    });
+  } else {
+    for (std::size_t i = 0; i < git_sidebar_entries_.size(); ++i) {
+      if (git_sidebar_entries_[i].section != GitSidebarEntry::Section::Modified) {
+        continue;
+      }
+      lines.push_back(GitSidebarLine{
+          .kind = GitSidebarLine::Kind::Entry,
+          .section = GitSidebarEntry::Section::Modified,
+          .label = {},
+          .entry_index = static_cast<int>(i),
+      });
+    }
+  }
+
+  const std::string outgoing_header = git_base_label_.empty()
+                                          ? "Outgoing files (" + std::to_string(outgoing_count) + ")"
+                                          : "Outgoing files (" + std::to_string(outgoing_count) + ")  " +
+                                                git_base_label_;
+  lines.push_back(GitSidebarLine{
+      .kind = GitSidebarLine::Kind::Header,
+      .section = GitSidebarEntry::Section::Outgoing,
+      .label = outgoing_header,
+  });
+  if (outgoing_count == 0) {
+    lines.push_back(GitSidebarLine{
+        .kind = GitSidebarLine::Kind::Empty,
+        .section = GitSidebarEntry::Section::Outgoing,
+        .label = git_base_ref_.empty() ? "Base branch unavailable" : "No outgoing files",
+    });
+  } else {
+    for (std::size_t i = 0; i < git_sidebar_entries_.size(); ++i) {
+      if (git_sidebar_entries_[i].section != GitSidebarEntry::Section::Outgoing) {
+        continue;
+      }
+      lines.push_back(GitSidebarLine{
+          .kind = GitSidebarLine::Kind::Entry,
+          .section = GitSidebarEntry::Section::Outgoing,
+          .label = {},
+          .entry_index = static_cast<int>(i),
+      });
+    }
+  }
+  return lines;
+}
+
+std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
+  if (git_sidebar_selected_index_ >= git_sidebar_entries_.size()) {
+    return std::nullopt;
+  }
+  const auto lines = BuildGitSidebarLines();
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (lines[i].kind == GitSidebarLine::Kind::Entry &&
+        lines[i].entry_index == static_cast<int>(git_sidebar_selected_index_)) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry() const {
+  if (git_sidebar_selected_index_ >= git_sidebar_entries_.size()) {
+    return nullptr;
+  }
+  return &git_sidebar_entries_[git_sidebar_selected_index_];
+}
+
+void WorkspaceShell::MoveGitSidebarSelection(int delta) {
+  if (git_sidebar_entries_.empty() || delta == 0) {
+    return;
+  }
+  const int current = static_cast<int>(git_sidebar_selected_index_);
+  const int max_index = static_cast<int>(git_sidebar_entries_.size()) - 1;
+  git_sidebar_selected_index_ = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+}
+
+void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    auto& tab = open_tabs_[i];
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || TabIsDirty(i)) {
+      continue;
+    }
+
+    editor::TextViewport reopened_view;
+    if (!reopened_view.OpenFile(path)) {
+      continue;
+    }
+    ApplyEditorPreferences(reopened_view);
+
+    bool reloaded_any = false;
+    for (auto& view : tab.editor_state->views) {
+      const bool active_view =
+          i == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id &&
+          !view.needs_restore;
+      const std::filesystem::path current_path =
+          active_view ? text_viewport_.path().lexically_normal() : EditorViewPath(view);
+      if (current_path != path.lexically_normal()) {
+        continue;
+      }
+      view.viewport = reopened_view;
+      view.restored_path = path.lexically_normal();
+      view.restored_cursor_line = reopened_view.cursor_line();
+      view.restored_cursor_column = reopened_view.cursor_column();
+      view.restored_scroll_line = reopened_view.scroll_line();
+      view.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+      view.needs_restore = false;
+      if (active_view) {
+        text_viewport_ = reopened_view;
+      }
+      reloaded_any = true;
+    }
+    if (reloaded_any && i == active_tab_index_) {
+      NormalizeEditorSplitTree(*tab.editor_state);
+      SyncActiveEditorTabMetadata();
+    }
+  }
+}
+
+bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path,
+                                               const std::string& left_ref,
+                                               const std::string& left_label) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
+  if (!left_content.has_value()) {
+    LogMessage("Failed to read git content for comparison");
+    return false;
+  }
+  const std::optional<std::string> working_content = ReadFileText(normalized_path);
+  auto compare_tab = BuildCompareTabFromBuffers(
+      normalized_path, left_content->exists ? left_content->content : "", working_content.value_or(""),
+      left_label, "Working tree", 0, true);
+  if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
+    LogMessage("Failed to build comparison");
+    return false;
+  }
+  compare_tab->compare->commit_hash = left_ref;
+  SyncActiveEditorTab();
+  open_tabs_.push_back(std::move(*compare_tab));
+  active_tab_index_ = open_tabs_.size() - 1;
+  RevealActiveCompareSelection();
+  EnsureActiveTabVisible();
+  focus_ = FocusTarget::Editor;
+  LogMessage("Comparison opened");
+  return true;
+}
+
+bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
+                                              const std::string& left_ref,
+                                              const std::string& left_label,
+                                              const std::string& right_ref,
+                                              const std::string& right_label) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
+  const auto right_content = project::ReadGitFileAtCommit(project_root_, normalized_path, right_ref);
+  if (!left_content.has_value() || !right_content.has_value()) {
+    LogMessage("Failed to read branch content for comparison");
+    return false;
+  }
+  auto compare_tab = BuildCompareTabFromBuffers(
+      normalized_path, left_content->exists ? left_content->content : "",
+      right_content->exists ? right_content->content : "", left_label, right_label, 0, false);
+  if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
+    LogMessage("Failed to build comparison");
+    return false;
+  }
+  compare_tab->compare->commit_hash = left_ref;
+  SyncActiveEditorTab();
+  open_tabs_.push_back(std::move(*compare_tab));
+  active_tab_index_ = open_tabs_.size() - 1;
+  RevealActiveCompareSelection();
+  EnsureActiveTabVisible();
+  focus_ = FocusTarget::Editor;
+  LogMessage("Comparison opened");
+  return true;
+}
+
+bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const auto base_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":1");
+  const auto current_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":2");
+  const auto incoming_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":3");
+  if (!current_content.has_value() || !incoming_content.has_value()) {
+    LogMessage("Failed to read merge conflict stages");
+    return false;
+  }
+
+  auto merge_tab = BuildMergeTabFromBuffers(
+      normalized_path, base_content.has_value() && base_content->exists ? base_content->content : "",
+      incoming_content->exists ? incoming_content->content : "",
+      current_content->exists ? current_content->content : "", "Incoming", "Result", "Current", 0,
+      false);
+  if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
+    LogMessage("Failed to build merge editor");
+    return false;
+  }
+  merge_tab->merge->base_path = normalized_path;
+  merge_tab->merge->incoming_path = normalized_path;
+  merge_tab->merge->current_path = normalized_path;
+  SyncActiveEditorTab();
+  open_tabs_.push_back(std::move(*merge_tab));
+  active_tab_index_ = open_tabs_.size() - 1;
+  RevealActiveMergeSelection();
+  EnsureActiveTabVisible();
+  focus_ = FocusTarget::Editor;
+  LogMessage("Merge editor opened");
+  return true;
+}
+
+bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
+  if (entry_index >= git_sidebar_entries_.size()) {
+    return false;
+  }
+  const auto& entry = git_sidebar_entries_[entry_index];
+  if (entry.section == GitSidebarEntry::Section::Modified) {
+    if (entry.conflicted) {
+      return OpenGitConflictMerge(entry.path);
+    }
+    return OpenWorkingTreeComparison(entry.path, "HEAD", "HEAD");
+  }
+  if (git_base_ref_.empty()) {
+    LogMessage("Base branch is unavailable");
+    return false;
+  }
+  return OpenBranchHeadComparison(entry.path, git_base_ref_, git_base_label_.empty() ? git_base_ref_
+                                                                                      : git_base_label_,
+                                  "HEAD", "HEAD");
+}
+
+bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
+  if (entry_index >= git_sidebar_entries_.size()) {
+    return false;
+  }
+  const auto& entry = git_sidebar_entries_[entry_index];
+  if (entry.section != GitSidebarEntry::Section::Modified || entry.staged) {
+    return false;
+  }
+  if (!project::GitStagePath(project_root_, entry.path)) {
+    LogMessage("Git stage failed: " + entry.relative_path.string());
+    return false;
+  }
+  RefreshProjectFiles();
+  LogMessage("Staged: " + entry.relative_path.string());
+  return true;
+}
+
+bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
+  if (entry_index >= git_sidebar_entries_.size()) {
+    return false;
+  }
+  const auto& entry = git_sidebar_entries_[entry_index];
+  if (entry.section != GitSidebarEntry::Section::Modified) {
+    return false;
+  }
+
+  std::string blocking_label;
+  if (HasDirtyEditorTabsForPath(entry.path, &blocking_label)) {
+    LogMessage("Discard blocked by dirty tab: " + blocking_label);
+    return false;
+  }
+  if (!project::GitDiscardPath(project_root_, entry.path)) {
+    LogMessage("Git discard failed: " + entry.relative_path.string());
+    return false;
+  }
+  if (std::filesystem::exists(entry.path)) {
+    ReloadCleanEditorTabsForPath(entry.path);
+  }
+  RefreshProjectFiles();
+  LogMessage("Discarded: " + entry.relative_path.string());
+  return true;
 }
 
 void WorkspaceShell::OpenComparePicker() {
@@ -6139,25 +7025,38 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     return std::nullopt;
   }
 
-  std::ifstream working_file(normalized_path);
-  if (!working_file) {
-    return std::nullopt;
+  const std::optional<std::string> working_content = ReadFileText(normalized_path);
+  auto compare_tab = BuildCompareTabFromBuffers(normalized_path, content->exists ? content->content : "",
+                                                working_content.value_or(""), commit.short_hash,
+                                                "Working tree", selected_row, true);
+  if (compare_tab.has_value() && compare_tab->compare.has_value()) {
+    compare_tab->compare->commit_hash = commit.hash;
   }
-  std::ostringstream working_stream;
-  working_stream << working_file.rdbuf();
+  return compare_tab;
+}
+
+std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffers(
+    const std::filesystem::path& path,
+    std::string left_content,
+    std::string right_content,
+    std::string left_label,
+    std::string right_label,
+    std::size_t selected_row,
+    bool persistable) const {
+  const std::filesystem::path normalized_path = path.lexically_normal();
 
   CompareTabState compare_tab;
   compare_tab.path = normalized_path;
   compare_tab.title = "compare: " + normalized_path.filename().string();
-  compare_tab.commit_hash = commit.hash;
-  compare_tab.left_label = commit.short_hash;
-  compare_tab.right_label = "Working tree";
-  const std::string working_content = working_stream.str();
+  compare_tab.commit_hash = left_label;
+  compare_tab.left_label = std::move(left_label);
+  compare_tab.right_label = std::move(right_label);
+  compare_tab.persistable = persistable;
   compare_tab.left_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_path, SplitSyntaxLines(content->content));
+      editor::SyntaxHighlighter::InitialState(normalized_path, SplitSyntaxLines(left_content));
   compare_tab.right_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_path, SplitSyntaxLines(working_content));
-  compare_tab.model = compare::BuildCompareModel(content->content, working_content);
+      editor::SyntaxHighlighter::InitialState(normalized_path, SplitSyntaxLines(right_content));
+  compare_tab.model = compare::BuildCompareModel(left_content, right_content);
   compare_tab.left_tokens_by_row.reserve(compare_tab.model.rows.size());
   compare_tab.right_tokens_by_row.reserve(compare_tab.model.rows.size());
   editor::SyntaxState left_state = compare_tab.left_initial_syntax_state;
@@ -6208,6 +7107,111 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
       .title = compare_tab.title,
       .editor_state = std::nullopt,
       .compare = std::move(compare_tab),
+      .merge = std::nullopt,
+  };
+}
+
+std::vector<std::vector<editor::SyntaxTokenKind>> WorkspaceShell::HighlightBufferTokens(
+    const std::filesystem::path& path,
+    const std::vector<std::string>& lines) const {
+  std::vector<std::vector<editor::SyntaxTokenKind>> tokens_by_line;
+  tokens_by_line.reserve(lines.size());
+  editor::SyntaxState state = editor::SyntaxHighlighter::InitialState(path, lines);
+  for (const std::string& line : lines) {
+    editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(line, path, state);
+    state = highlighted.end_state;
+    tokens_by_line.push_back(std::move(highlighted.tokens));
+  }
+  return tokens_by_line;
+}
+
+void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const {
+  merge_tab.display_model = compare::BuildMergeDisplayModel(merge_tab.model);
+  const std::string result_text = compare::MergeResultText(merge_tab.model);
+  merge_tab.result_viewport.LoadContent(result_text, merge_tab.output_path, merge_tab.result_line_ending);
+  const std::optional<std::string> persisted_output = ReadFileText(merge_tab.output_path);
+  merge_tab.result_viewport.SetDirty(!persisted_output.has_value() || *persisted_output != result_text);
+  merge_tab.result_tokens = HighlightBufferTokens(merge_tab.output_path, merge_tab.result_viewport.lines());
+  if (merge_tab.display_model.hunks.empty()) {
+    merge_tab.selected_hunk = 0;
+    merge_tab.scroll_row = 0;
+    return;
+  }
+  merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.display_model.hunks.size() - 1);
+}
+
+std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabEntry(
+    const std::filesystem::path& base_path,
+    const std::filesystem::path& incoming_path,
+    const std::filesystem::path& current_path,
+    const std::filesystem::path& output_path) const {
+  const std::filesystem::path normalized_base = base_path.lexically_normal();
+  const std::filesystem::path normalized_incoming = incoming_path.lexically_normal();
+  const std::filesystem::path normalized_current = current_path.lexically_normal();
+  const std::filesystem::path normalized_output = output_path.lexically_normal();
+
+  const std::optional<std::string> base_text = ReadFileText(normalized_base);
+  const std::optional<std::string> incoming_text = ReadFileText(normalized_incoming);
+  const std::optional<std::string> current_text = ReadFileText(normalized_current);
+  if (!base_text.has_value() || !incoming_text.has_value() || !current_text.has_value()) {
+    return std::nullopt;
+  }
+
+  auto merge_tab = BuildMergeTabFromBuffers(
+      normalized_output.empty() ? normalized_current : normalized_output, *base_text, *incoming_text,
+      *current_text, RelativePathLabel(project_root_, normalized_incoming),
+      RelativePathLabel(project_root_, normalized_output.empty() ? normalized_current : normalized_output),
+      RelativePathLabel(project_root_, normalized_current), 0, true);
+  if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
+    return std::nullopt;
+  }
+  merge_tab->merge->base_path = normalized_base;
+  merge_tab->merge->incoming_path = normalized_incoming;
+  merge_tab->merge->current_path = normalized_current;
+  return merge_tab;
+}
+
+std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers(
+    const std::filesystem::path& output_path,
+    std::string base_content,
+    std::string incoming_content,
+    std::string current_content,
+    std::string incoming_label,
+    std::string result_label,
+    std::string current_label,
+    std::size_t selected_hunk,
+    bool persistable) const {
+  const std::filesystem::path normalized_output = output_path.lexically_normal();
+  const std::optional<std::string> output_text =
+      normalized_output.empty() ? std::nullopt : ReadFileText(normalized_output);
+
+  MergeTabState merge_tab;
+  merge_tab.base_path = normalized_output;
+  merge_tab.incoming_path = normalized_output;
+  merge_tab.current_path = normalized_output;
+  merge_tab.output_path = normalized_output;
+  merge_tab.title = "merge: " + normalized_output.filename().string();
+  merge_tab.incoming_label = std::move(incoming_label);
+  merge_tab.result_label = std::move(result_label);
+  merge_tab.current_label = std::move(current_label);
+  merge_tab.persistable = persistable;
+  const std::string& line_ending_source =
+      output_text.has_value() ? *output_text : (!current_content.empty() ? current_content : base_content);
+  merge_tab.result_line_ending = DetectLineEnding(line_ending_source);
+  merge_tab.model = compare::BuildMergeModel(base_content, incoming_content, current_content);
+  merge_tab.incoming_tokens = HighlightBufferTokens(normalized_output, merge_tab.model.incoming_lines);
+  merge_tab.current_tokens = HighlightBufferTokens(normalized_output, merge_tab.model.current_lines);
+  merge_tab.selected_hunk = selected_hunk;
+  merge_tab.scroll_row = 0;
+  merge_tab.result_viewport.SetPath(merge_tab.output_path);
+  RefreshMergeTabDerivedState(merge_tab);
+  return TabEntry{
+      .kind = TabEntry::Kind::Merge,
+      .path = merge_tab.output_path,
+      .title = merge_tab.title,
+      .editor_state = std::nullopt,
+      .compare = std::nullopt,
+      .merge = std::move(merge_tab),
   };
 }
 
@@ -6281,6 +7285,26 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
   LogMessage("Comparison opened");
 }
 
+bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
+                                     const std::filesystem::path& incoming_path,
+                                     const std::filesystem::path& current_path,
+                                     const std::filesystem::path& output_path) {
+  auto merge_tab = BuildMergeTabEntry(base_path, incoming_path, current_path, output_path);
+  if (!merge_tab.has_value()) {
+    LogMessage("Failed to open merge inputs");
+    return false;
+  }
+
+  SyncActiveEditorTab();
+  open_tabs_.push_back(std::move(*merge_tab));
+  active_tab_index_ = open_tabs_.size() - 1;
+  RevealActiveMergeSelection();
+  EnsureActiveTabVisible();
+  focus_ = FocusTarget::Editor;
+  LogMessage("Merge editor opened");
+  return true;
+}
+
 void WorkspaceShell::OpenWorkingFileFromCompare() {
   const CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr || compare_tab->model.rows.empty()) {
@@ -6310,6 +7334,14 @@ void WorkspaceShell::OpenWorkingFileFromCompare() {
   if (target_line > 0) {
     text_viewport_.MoveCursorTo(static_cast<std::size_t>(target_line - 1), 0);
   }
+}
+
+void WorkspaceShell::OpenMergeResultFile() {
+  const MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr || merge_tab->output_path.empty()) {
+    return;
+  }
+  OpenFile(merge_tab->output_path);
 }
 
 void WorkspaceShell::MoveCompareSelection(int delta) {
@@ -6356,6 +7388,44 @@ void WorkspaceShell::ScrollCompareRows(int delta) {
   const int visible_rows = CompareVisibleRows(layout.editor_surface);
   const int max_scroll = CompareMaxScrollRow(*compare_tab, visible_rows);
   compare_tab->scroll_row = std::clamp(compare_tab->scroll_row + delta, 0, max_scroll);
+}
+
+void WorkspaceShell::MoveMergeSelection(int delta) {
+  MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr || merge_tab->display_model.hunks.empty() || delta == 0) {
+    return;
+  }
+
+  const int current = static_cast<int>(merge_tab->selected_hunk);
+  const int max_index = static_cast<int>(merge_tab->display_model.hunks.size()) - 1;
+  merge_tab->selected_hunk = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  RevealActiveMergeSelection();
+}
+
+void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
+  MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr || merge_tab->model.hunks.empty()) {
+    return;
+  }
+
+  const std::size_t selected_hunk =
+      std::min(merge_tab->selected_hunk, merge_tab->model.hunks.size() - 1);
+  merge_tab->model.hunks[selected_hunk].choice = choice;
+  RefreshMergeTabDerivedState(*merge_tab);
+  RevealActiveMergeSelection();
+}
+
+void WorkspaceShell::ApplyMergeChoiceToAll(compare::MergeChoice choice) {
+  MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr || merge_tab->model.hunks.empty()) {
+    return;
+  }
+
+  for (auto& hunk : merge_tab->model.hunks) {
+    hunk.choice = choice;
+  }
+  RefreshMergeTabDerivedState(*merge_tab);
+  RevealActiveMergeSelection();
 }
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
@@ -6590,6 +7660,32 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         focus_ = FocusTarget::Sidebar;
         return true;
       }
+    } else if (sidebar_mode_ == SidebarMode::Git) {
+      const auto lines = BuildGitSidebarLines();
+      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
+      const int visible_rows =
+          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
+      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+      const auto scrollbar = MakeVerticalScrollbarGeometry(
+          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
+                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
+          static_cast<float>(lines.size()), static_cast<float>(visible_rows),
+          static_cast<float>(scroll_row));
+      if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+        drag_target_ = DragTarget::SidebarScrollbar;
+        drag_scrollbar_offset_ =
+            Contains(scrollbar->thumb, event.button.x, event.button.y)
+                ? static_cast<float>(event.button.y) - scrollbar->thumb.y
+                : scrollbar->thumb.h * 0.5f;
+        sidebar_scroll_row_ =
+            std::clamp(static_cast<int>(std::lround(
+                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
+                                                drag_scrollbar_offset_))),
+                       0, max_scroll);
+        focus_ = FocusTarget::Sidebar;
+        return true;
+      }
     } else {
       const auto& entries = directory_tree_.entries();
       const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
@@ -6741,6 +7837,58 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           LogMessage("Project search result opened");
         }
       }
+      return true;
+    }
+
+    if (sidebar_mode_ == SidebarMode::Git) {
+      if (local_y < 0.0f || event.button.button != SDL_BUTTON_LEFT) {
+        return true;
+      }
+
+      const auto lines = BuildGitSidebarLines();
+      const int visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / row_height));
+      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+      const float row_width =
+          std::max(0.0f, layout.sidebar.w - inset * 2.0f -
+                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
+      const int clicked_row = static_cast<int>(local_y / row_height);
+      const int line_index = scroll_row + clicked_row;
+      if (line_index < 0 || line_index >= static_cast<int>(lines.size())) {
+        return true;
+      }
+
+      const auto& line = lines[static_cast<std::size_t>(line_index)];
+      if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
+        return true;
+      }
+
+      git_sidebar_selected_index_ = static_cast<std::size_t>(line.entry_index);
+      const auto& entry = git_sidebar_entries_[git_sidebar_selected_index_];
+      const SDL_FRect row_rect = MakeRect(layout.sidebar.x + inset,
+                                          list_top + static_cast<float>(clicked_row) * row_height,
+                                          row_width, row_height - 2.0f);
+      float right_edge = row_rect.x + row_rect.w - 8.0f;
+      if (entry.section == GitSidebarEntry::Section::Modified) {
+        if (!entry.staged) {
+          const float stage_width = std::max(42.0f, text_renderer_.MeasureWidth("Stage") + 12.0f);
+          const SDL_FRect stage_rect =
+              MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
+          if (Contains(stage_rect, event.button.x, event.button.y)) {
+            StageGitSidebarEntry(git_sidebar_selected_index_);
+            return true;
+          }
+          right_edge = stage_rect.x - 6.0f;
+        }
+        const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
+        const SDL_FRect discard_rect =
+            MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
+        if (Contains(discard_rect, event.button.x, event.button.y)) {
+          DiscardGitSidebarEntry(git_sidebar_selected_index_);
+          return true;
+        }
+      }
+      OpenGitSidebarEntry(git_sidebar_selected_index_);
       return true;
     }
 
@@ -6918,6 +8066,122 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     if (clicked_row >= 0 && model_row >= 0 &&
         model_row < static_cast<int>(compare_tab->model.rows.size())) {
       compare_tab->selected_row = static_cast<std::size_t>(model_row);
+      focus_ = FocusTarget::Editor;
+      return true;
+    }
+    return false;
+  }
+
+  if (ActiveTabIsMerge()) {
+    MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab == nullptr) {
+      return false;
+    }
+
+    const auto make_button_rect = [&](float x, float y, std::string_view label) {
+      const float width =
+          std::clamp(text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
+      return MakeRect(x, y, width, kMergeToolbarButtonHeight);
+    };
+    float button_x = layout.editor_surface.x + 8.0f;
+    const float button_y = layout.editor_surface.y + 6.0f;
+    const SDL_FRect incoming_all_rect = make_button_rect(button_x, button_y, "All Incoming");
+    button_x += incoming_all_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect auto_rect = make_button_rect(button_x, button_y, "All Auto");
+    button_x += auto_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect current_all_rect = make_button_rect(button_x, button_y, "All Current");
+    button_x += current_all_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect base_all_rect = make_button_rect(button_x, button_y, "All Base");
+    const SDL_FRect save_rect =
+        make_button_rect(layout.editor_surface.x + layout.editor_surface.w - 92.0f, button_y, "Save");
+
+    if (Contains(incoming_all_rect, event.button.x, event.button.y)) {
+      ApplyMergeChoiceToAll(compare::MergeChoice::Incoming);
+      return true;
+    }
+    if (Contains(auto_rect, event.button.x, event.button.y)) {
+      ApplyMergeChoiceToAll(compare::MergeChoice::Auto);
+      return true;
+    }
+    if (Contains(current_all_rect, event.button.x, event.button.y)) {
+      ApplyMergeChoiceToAll(compare::MergeChoice::Current);
+      return true;
+    }
+    if (Contains(base_all_rect, event.button.x, event.button.y)) {
+      ApplyMergeChoiceToAll(compare::MergeChoice::Base);
+      return true;
+    }
+    if (Contains(save_rect, event.button.x, event.button.y)) {
+      ExecuteAction(ActionId::Save, {}, ActionSource::Menu);
+      return true;
+    }
+
+    if (!merge_tab->model.hunks.empty()) {
+      button_x = layout.editor_surface.x + 8.0f;
+      const float selected_y = button_y + kMergeToolbarButtonHeight + 6.0f;
+      const SDL_FRect incoming_rect = make_button_rect(button_x, selected_y, "Incoming");
+      button_x += incoming_rect.w + kMergeToolbarButtonGap;
+      const SDL_FRect base_rect = make_button_rect(button_x, selected_y, "Base");
+      button_x += base_rect.w + kMergeToolbarButtonGap;
+      const SDL_FRect current_rect = make_button_rect(button_x, selected_y, "Current");
+      button_x += current_rect.w + kMergeToolbarButtonGap;
+      const SDL_FRect both_rect = make_button_rect(button_x, selected_y, "Both");
+      button_x += both_rect.w + kMergeToolbarButtonGap;
+      const SDL_FRect open_rect = make_button_rect(button_x, selected_y, "Open Result");
+
+      if (Contains(incoming_rect, event.button.x, event.button.y)) {
+        ApplyMergeChoice(compare::MergeChoice::Incoming);
+        return true;
+      }
+      if (Contains(base_rect, event.button.x, event.button.y)) {
+        ApplyMergeChoice(compare::MergeChoice::Base);
+        return true;
+      }
+      if (Contains(current_rect, event.button.x, event.button.y)) {
+        ApplyMergeChoice(compare::MergeChoice::Current);
+        return true;
+      }
+      if (Contains(both_rect, event.button.x, event.button.y)) {
+        ApplyMergeChoice(compare::MergeChoice::Both);
+        return true;
+      }
+      if (Contains(open_rect, event.button.x, event.button.y)) {
+        OpenMergeResultFile();
+        return true;
+      }
+    }
+
+    const float rows_y =
+        layout.editor_surface.y + kMergeToolbarHeight + text_renderer_.LineHeight() + 12.0f;
+    const int visible_rows = MergeVisibleRows(layout.editor_surface);
+    ClampMergeScrollRow(*merge_tab, visible_rows);
+    const auto scrollbar = MakeVerticalScrollbarGeometry(
+        layout.editor_surface, static_cast<float>(merge_tab->display_model.rows.size()),
+        static_cast<float>(visible_rows), static_cast<float>(merge_tab->scroll_row));
+    if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+      drag_target_ = DragTarget::CompareScrollbar;
+      drag_scrollbar_offset_ =
+          Contains(scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.y) - scrollbar->thumb.y
+              : scrollbar->thumb.h * 0.5f;
+      merge_tab->scroll_row = std::clamp(
+          static_cast<int>(std::lround(ScrollUnitsForPointer(
+              *scrollbar, static_cast<float>(event.button.y), drag_scrollbar_offset_))),
+          0, MergeMaxScrollRow(*merge_tab, visible_rows));
+      focus_ = FocusTarget::Editor;
+      return true;
+    }
+
+    const int clicked_row =
+        static_cast<int>((event.button.y - rows_y) / std::max(1.0f, text_renderer_.LineHeight()));
+    const int model_row = merge_tab->scroll_row + clicked_row;
+    if (clicked_row >= 0 && model_row >= 0 &&
+        model_row < static_cast<int>(merge_tab->display_model.rows.size())) {
+      const int hunk_index = merge_tab->display_model.rows[static_cast<std::size_t>(model_row)].hunk;
+      if (hunk_index >= 0) {
+        merge_tab->selected_hunk = static_cast<std::size_t>(hunk_index);
+        RevealActiveMergeSelection();
+      }
       focus_ = FocusTarget::Editor;
       return true;
     }
@@ -7265,6 +8529,28 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                            ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
                                                 drag_scrollbar_offset_))),
                        0, max_scroll);
+      } else if (sidebar_mode_ == SidebarMode::Git) {
+        const auto lines = BuildGitSidebarLines();
+        const float list_y = drag_layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
+        const int visible_rows =
+            std::max(1, static_cast<int>((drag_layout.sidebar.h - 36.0f) / kSidebarRowHeight));
+        const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+        const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+        const auto scrollbar = MakeVerticalScrollbarGeometry(
+            MakeRect(drag_layout.sidebar.x, list_y, drag_layout.sidebar.w,
+                     std::max(0.0f, drag_layout.sidebar.y + drag_layout.sidebar.h - list_y)),
+            static_cast<float>(lines.size()), static_cast<float>(visible_rows),
+            static_cast<float>(scroll_row));
+        if (!scrollbar.has_value()) {
+          drag_target_ = DragTarget::None;
+          drag_scrollbar_offset_ = 0.0f;
+          return false;
+        }
+        sidebar_scroll_row_ =
+            std::clamp(static_cast<int>(std::lround(
+                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+                                                drag_scrollbar_offset_))),
+                       0, max_scroll);
       } else {
         const auto& entries = directory_tree_.entries();
         const float list_y = drag_layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
@@ -7348,18 +8634,44 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (drag_target_ == DragTarget::CompareScrollbar && ActiveTabIsCompare()) {
-      CompareTabState* compare_tab = ActiveCompareTab();
-      if (compare_tab == nullptr) {
+    if (drag_target_ == DragTarget::CompareScrollbar && (ActiveTabIsCompare() || ActiveTabIsMerge())) {
+      if (ActiveTabIsCompare()) {
+        CompareTabState* compare_tab = ActiveCompareTab();
+        if (compare_tab == nullptr) {
+          drag_target_ = DragTarget::None;
+          drag_scrollbar_offset_ = 0.0f;
+          return false;
+        }
+        const int visible_rows = CompareVisibleRows(drag_layout.editor_surface);
+        ClampCompareScrollRow(*compare_tab, visible_rows);
+        const auto scrollbar = MakeVerticalScrollbarGeometry(
+            drag_layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
+            static_cast<float>(visible_rows), static_cast<float>(compare_tab->scroll_row));
+        if (!scrollbar.has_value()) {
+          drag_target_ = DragTarget::None;
+          drag_scrollbar_offset_ = 0.0f;
+          return false;
+        }
+        const int target_scroll = std::clamp(
+            static_cast<int>(std::lround(ScrollUnitsForPointer(
+                *scrollbar, static_cast<float>(event.motion.y), drag_scrollbar_offset_))),
+            0, CompareMaxScrollRow(*compare_tab, visible_rows));
+        compare_tab->scroll_row = target_scroll;
+        focus_ = FocusTarget::Editor;
+        return true;
+      }
+
+      MergeTabState* merge_tab = ActiveMergeTab();
+      if (merge_tab == nullptr) {
         drag_target_ = DragTarget::None;
         drag_scrollbar_offset_ = 0.0f;
         return false;
       }
-      const int visible_rows = CompareVisibleRows(drag_layout.editor_surface);
-      ClampCompareScrollRow(*compare_tab, visible_rows);
+      const int visible_rows = MergeVisibleRows(drag_layout.editor_surface);
+      ClampMergeScrollRow(*merge_tab, visible_rows);
       const auto scrollbar = MakeVerticalScrollbarGeometry(
-          drag_layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
-          static_cast<float>(visible_rows), static_cast<float>(compare_tab->scroll_row));
+          drag_layout.editor_surface, static_cast<float>(merge_tab->display_model.rows.size()),
+          static_cast<float>(visible_rows), static_cast<float>(merge_tab->scroll_row));
       if (!scrollbar.has_value()) {
         drag_target_ = DragTarget::None;
         drag_scrollbar_offset_ = 0.0f;
@@ -7368,8 +8680,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       const int target_scroll = std::clamp(
           static_cast<int>(std::lround(ScrollUnitsForPointer(
               *scrollbar, static_cast<float>(event.motion.y), drag_scrollbar_offset_))),
-          0, CompareMaxScrollRow(*compare_tab, visible_rows));
-      compare_tab->scroll_row = target_scroll;
+          0, MergeMaxScrollRow(*merge_tab, visible_rows));
+      merge_tab->scroll_row = target_scroll;
       focus_ = FocusTarget::Editor;
       return true;
     }
@@ -7575,6 +8887,10 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       visible_rows =
           std::max(1, static_cast<int>((layout.sidebar.h - kSearchSidebarResultsTop) / 20.0f));
       max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
+    } else if (sidebar_mode_ == SidebarMode::Git) {
+      const auto lines = BuildGitSidebarLines();
+      visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / 20.0f));
+      max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
     } else {
       const auto& entries = directory_tree_.entries();
       visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / 20.0f));
@@ -7628,6 +8944,16 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       focus_ = FocusTarget::Editor;
       return true;
     }
+    if (ActiveTabIsMerge()) {
+      MergeTabState* merge_tab = ActiveMergeTab();
+      if (merge_tab != nullptr) {
+        const int visible_rows = MergeVisibleRows(layout.editor_surface);
+        merge_tab->scroll_row = std::clamp(
+            merge_tab->scroll_row - ticks * 3, 0, MergeMaxScrollRow(*merge_tab, visible_rows));
+      }
+      focus_ = FocusTarget::Editor;
+      return true;
+    }
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
     const auto hovered_pane = std::find_if(panes.begin(), panes.end(), [&](const EditorPaneLayout& pane) {
       return Contains(pane.rect, event.wheel.mouse_x, event.wheel.mouse_y);
@@ -7661,6 +8987,7 @@ bool WorkspaceShell::OpenUntitledTab() {
       .title = "untitled",
       .editor_state = MakeEditorTabState(untitled_view),
       .compare = std::nullopt,
+      .merge = std::nullopt,
   });
   active_tab_index_ = open_tabs_.size() - 1;
   EnsureActiveTabVisible();
@@ -7699,6 +9026,7 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
       .title = path.filename().string(),
       .editor_state = MakeEditorTabState(opened_view),
       .compare = std::nullopt,
+      .merge = std::nullopt,
   });
   active_tab_index_ = open_tabs_.size() - 1;
   EnsureActiveTabVisible();
@@ -8459,7 +9787,7 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
                : TextInputSurface::SidebarSearchReplace;
   }
 
-  if (focus_ == FocusTarget::Editor && !ActiveTabIsCompare()) {
+  if (focus_ == FocusTarget::Editor && !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
     return TextInputSurface::Editor;
   }
 
@@ -8595,7 +9923,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
 
-  if (focus_ == FocusTarget::Editor && !ActiveTabIsCompare()) {
+  if (focus_ == FocusTarget::Editor && !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
     text_viewport_.InsertText(input);
     ResetCaretBlink();
     return true;
@@ -9284,6 +10612,14 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     }
     case ActionId::SidebarToggle: {
       const std::string tool = args.empty() ? std::string{} : args[0];
+      if (tool == "git") {
+        if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Git) {
+          CloseSidebar();
+        } else {
+          ShowGitSidebar();
+        }
+        return true;
+      }
       if (tool == "tree") {
         if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
           CloseSidebar();
@@ -9308,6 +10644,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     }
     case ActionId::SidebarShow: {
       const std::string tool = args.empty() ? std::string{} : args[0];
+      if (tool == "git") {
+        ShowGitSidebar();
+        return true;
+      }
       if (tool == "tree") {
         const std::filesystem::path root_arg =
             args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
@@ -9593,7 +10933,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       if (require_project()) {
         return true;
       }
-      if (ActiveTabIsCompare()) {
+      if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
         LogMessage("search only works in editor tabs");
         return true;
       }
@@ -9717,6 +11057,37 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       });
       return true;
     }
+    case ActionId::Merge: {
+      if (require_project()) {
+        return true;
+      }
+      if (args.size() < 3 || args.size() > 4) {
+        LogMessage("usage: merge <base> <incoming> <current> [output]");
+        return true;
+      }
+
+      auto resolve_path = [&](const std::string& text) {
+        std::filesystem::path path = text;
+        if (path.is_relative()) {
+          path = project_root_ / path;
+        }
+        return path.lexically_normal();
+      };
+
+      const std::filesystem::path base_path = resolve_path(args[0]);
+      const std::filesystem::path incoming_path = resolve_path(args[1]);
+      const std::filesystem::path current_path = resolve_path(args[2]);
+      const std::filesystem::path output_path =
+          args.size() > 3 ? resolve_path(args[3]) : current_path;
+      if (!std::filesystem::exists(base_path) || !std::filesystem::exists(incoming_path) ||
+          !std::filesystem::exists(current_path)) {
+        LogMessage("merge expects existing base, incoming, and current files");
+        return true;
+      }
+
+      OpenMergeEditor(base_path, incoming_path, current_path, output_path);
+      return true;
+    }
     case ActionId::Tab:
       if (require_project()) {
         return true;
@@ -9806,7 +11177,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         if (source == ActionSource::Shortcut) {
           ResetCaretBlink();
         }
-        LogMessage("Saved file: " + text_viewport_.path().lexically_normal().string());
+        const std::filesystem::path saved_path =
+            ActiveTabIsMerge() && ActiveMergeTab() != nullptr
+                ? ActiveMergeTab()->output_path.lexically_normal()
+                : text_viewport_.path().lexically_normal();
+        LogMessage("Saved file: " + saved_path.string());
       } else {
         LogMessage("Save failed");
       }
@@ -9901,7 +11276,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::Goto:
     case ActionId::Jump: {
       const std::string command = id == ActionId::Goto ? "goto" : "jump";
-      if (ActiveTabIsCompare()) {
+      if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
         LogMessage(command + " only works in editor tabs");
         return true;
       }
@@ -10148,6 +11523,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
   if (ActiveTabIsCompare()) {
     RenderCompareSurface(renderer, layout.editor_surface);
+  } else if (ActiveTabIsMerge()) {
+    RenderMergeSurface(renderer, layout.editor_surface);
   } else {
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
     if (panes.empty() && text_viewport_.is_placeholder()) {
@@ -10562,6 +11939,17 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                               static_cast<float>(compare_tab->scroll_row),
                               drag_target_ == DragTarget::CompareScrollbar);
     }
+  } else if (ActiveTabIsMerge()) {
+    MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab != nullptr) {
+      const int visible_rows = MergeVisibleRows(layout.editor_surface);
+      ClampMergeScrollRow(*merge_tab, visible_rows);
+      draw_vertical_scrollbar(layout.editor_surface,
+                              static_cast<float>(merge_tab->display_model.rows.size()),
+                              static_cast<float>(visible_rows),
+                              static_cast<float>(merge_tab->scroll_row),
+                              drag_target_ == DragTarget::CompareScrollbar);
+    }
   } else {
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
     auto* editor_tab = ActiveEditorTab();
@@ -10783,6 +12171,106 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
                    std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
           static_cast<float>(line_map.size()), static_cast<float>(visible_rows),
+          static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
+    } else if (sidebar_mode_ == SidebarMode::Git) {
+      draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,
+                   theme_.text_secondary, theme_.chrome_background, "Source Control");
+      const auto lines = BuildGitSidebarLines();
+      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
+      const int visible_rows =
+          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
+      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float row_width =
+          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
+                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
+      int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+      if (const auto selected_line = SelectedGitSidebarLineIndex(); selected_line.has_value()) {
+        if (*selected_line < static_cast<std::size_t>(scroll_row)) {
+          scroll_row = static_cast<int>(*selected_line);
+        } else if (*selected_line >= static_cast<std::size_t>(scroll_row + visible_rows)) {
+          scroll_row = static_cast<int>(*selected_line) - visible_rows + 1;
+        }
+      }
+      sidebar_scroll_row_ = scroll_row;
+
+      for (int row = 0; row < visible_rows; ++row) {
+        const int line_index = scroll_row + row;
+        if (line_index >= static_cast<int>(lines.size())) {
+          break;
+        }
+
+        const auto& line = lines[static_cast<std::size_t>(line_index)];
+        SDL_FRect row_rect = MakeRect(layout.sidebar.x + kSidebarInset,
+                                      list_y + static_cast<float>(row) * kSidebarRowHeight, row_width,
+                                      kSidebarRowHeight - 2.0f);
+
+        if (line.kind == GitSidebarLine::Kind::Header) {
+          draw_text_on(row_rect.x + 4.0f, row_rect.y + text_y_offset, theme_.text_muted,
+                       theme_.surface_background, TruncateLabel(line.label, row_rect.w - 8.0f));
+          continue;
+        }
+        if (line.kind == GitSidebarLine::Kind::Empty || line.entry_index < 0) {
+          draw_text_on(row_rect.x + 4.0f, row_rect.y + text_y_offset, theme_.text_muted,
+                       theme_.surface_background, TruncateLabel(line.label, row_rect.w - 8.0f));
+          continue;
+        }
+
+        const auto& entry = git_sidebar_entries_[static_cast<std::size_t>(line.entry_index)];
+        const bool selected = static_cast<std::size_t>(line.entry_index) == git_sidebar_selected_index_;
+        if (selected) {
+          DrawFilledRect(renderer, row_rect, theme_.row_highlight);
+          DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
+                         theme_.accent);
+        }
+
+        const char git_marker = GitMarker(entry.status);
+        const std::string marker_text = git_marker == ' ' ? "" : std::string(1, git_marker);
+        const float marker_width = marker_text.empty() ? 0.0f : text_renderer_.MeasureWidth(marker_text);
+        float right_edge = row_rect.x + row_rect.w - 8.0f;
+
+        const auto draw_button = [&](const SDL_FRect& button_rect,
+                                     std::string_view label,
+                                     SDL_Color text_color) {
+          DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
+          draw_text_on(button_rect.x + 6.0f, button_rect.y + 2.0f, text_color,
+                       selected ? theme_.row_highlight : theme_.surface_background,
+                       std::string(label));
+        };
+
+        if (entry.section == GitSidebarEntry::Section::Modified) {
+          if (!entry.staged) {
+            const float stage_width = std::max(42.0f, text_renderer_.MeasureWidth("Stage") + 12.0f);
+            const SDL_FRect stage_rect =
+                MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
+            draw_button(stage_rect, "Stage", selected ? theme_.text_primary : theme_.accent);
+            right_edge = stage_rect.x - 6.0f;
+          }
+          const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
+          const SDL_FRect discard_rect = MakeRect(right_edge - discard_width, row_rect.y + 1.0f,
+                                                  discard_width, row_rect.h - 2.0f);
+          draw_button(discard_rect, "Discard",
+                      selected ? theme_.text_primary : theme_.diff_deleted);
+          right_edge = discard_rect.x - 6.0f;
+        }
+
+        if (!marker_text.empty()) {
+          draw_text_on(right_edge - marker_width, row_rect.y + text_y_offset,
+                       selected ? theme_.text_primary : GitMarkerColor(theme_, entry.status),
+                       selected ? theme_.row_highlight : theme_.surface_background, marker_text);
+          right_edge -= marker_width + 8.0f;
+        }
+
+        const std::string label = entry.relative_path.string() + (entry.staged ? "  [staged]" : "");
+        draw_text_on(row_rect.x + 6.0f, row_rect.y + text_y_offset,
+                     selected ? theme_.text_primary : theme_.text_secondary,
+                     selected ? theme_.row_highlight : theme_.surface_background,
+                     TruncateLabel(label, std::max(20.0f, right_edge - row_rect.x - 6.0f)));
+      }
+
+      draw_vertical_scrollbar(
+          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
+                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
+          static_cast<float>(lines.size()), static_cast<float>(visible_rows),
           static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
     } else {
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,
@@ -11244,6 +12732,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                        : "editor";
   const std::string sidebar_text =
       sidebar_mode_ == SidebarMode::Search ? (sidebar_temporary_ ? "search*" : "search")
+      : sidebar_mode_ == SidebarMode::Git ? "git"
       : sidebar_mode_ == SidebarMode::Tree ? "tree"
                                            : "none";
   const std::string left_status =
@@ -11255,6 +12744,21 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         "Compare  |  Row " +
         std::to_string(ActiveCompareTab() == nullptr ? 1
                                                      : ActiveCompareTab()->selected_row + 1);
+  } else if (ActiveTabIsMerge()) {
+    const MergeTabState* merge_tab = ActiveMergeTab();
+    const std::string dirty_prefix =
+        merge_tab != nullptr && merge_tab->result_viewport.dirty() ? "* " : "";
+    std::string hunk_state = "merge";
+    if (merge_tab != nullptr && !merge_tab->model.hunks.empty()) {
+      const std::size_t selected_hunk =
+          std::min(merge_tab->selected_hunk, merge_tab->model.hunks.size() - 1);
+      hunk_state = "Merge  |  Hunk " + std::to_string(selected_hunk + 1) + "/" +
+                   std::to_string(merge_tab->model.hunks.size()) + "  |  " +
+                   compare::MergeChoiceLabel(merge_tab->model.hunks[selected_hunk].choice);
+    } else {
+      hunk_state = "Merge  |  clean";
+    }
+    right_status = dirty_prefix + hunk_state;
   } else {
     const std::string dirty_prefix = text_viewport_.dirty() ? "* " : "";
     right_status =
@@ -11550,6 +13054,269 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   }
 }
 
+void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect& rect) {
+  MergeTabState* merge_tab = ActiveMergeTab();
+  if (renderer == nullptr || merge_tab == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+
+  static const std::vector<editor::SyntaxTokenKind> kEmptyTokens;
+
+  DrawFilledRect(renderer, rect, theme_.editor_background);
+
+  const float line_height = text_renderer_.LineHeight();
+  const std::size_t max_line_count =
+      std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.lines().size(),
+                merge_tab->model.current_lines.size(), std::size_t{1}});
+  const float gutter_width =
+      std::max(28.0f, text_renderer_.MeasureWidth(std::to_string(max_line_count + 1)) + 12.0f);
+  const float divider_width = 16.0f;
+  const float content_width =
+      std::max(60.0f, rect.w - gutter_width * 3.0f - divider_width * 2.0f - 16.0f);
+  const float pane_width = std::floor(content_width / 3.0f);
+  const float left_width = pane_width;
+  const float center_width = pane_width;
+  const float right_width = content_width - left_width - center_width;
+  const float left_x = rect.x + 8.0f;
+  const float center_x = left_x + gutter_width + left_width + divider_width;
+  const float right_x = center_x + gutter_width + center_width + divider_width;
+  const float button_y = rect.y + 6.0f;
+  const float secondary_button_y = button_y + kMergeToolbarButtonHeight + 6.0f;
+  const float header_y = rect.y + kMergeToolbarHeight + 4.0f;
+  const float rows_y = rect.y + kMergeToolbarHeight + line_height + 12.0f;
+  const int visible_rows = MergeVisibleRows(rect);
+  ClampMergeScrollRow(*merge_tab, visible_rows);
+  const std::size_t selected_hunk =
+      merge_tab->model.hunks.empty()
+          ? 0
+          : std::min(merge_tab->selected_hunk, merge_tab->model.hunks.size() - 1);
+
+  const auto draw_button = [&](const SDL_FRect& button_rect,
+                               std::string_view label,
+                               bool selected,
+                               bool primary = false) {
+    const SDL_Color background =
+        selected ? theme_.chrome_active : primary ? theme_.surface_raised : theme_.surface_background;
+    DrawFilledRect(renderer, button_rect, background);
+    DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
+    text_renderer_.DrawStringOn(
+        renderer, button_rect.x + 10.0f, button_rect.y + 4.0f,
+        selected ? theme_.text_primary : theme_.text_secondary, background,
+        TruncateLabel(label, button_rect.w - 18.0f));
+  };
+  const auto make_button_rect = [&](float x, float y, std::string_view label) {
+    const float width =
+        std::clamp(text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
+    return MakeRect(x, y, width, kMergeToolbarButtonHeight);
+  };
+
+  float button_x = rect.x + 8.0f;
+  const SDL_FRect incoming_all_rect = make_button_rect(button_x, button_y, "All Incoming");
+  button_x += incoming_all_rect.w + kMergeToolbarButtonGap;
+  const SDL_FRect auto_rect = make_button_rect(button_x, button_y, "All Auto");
+  button_x += auto_rect.w + kMergeToolbarButtonGap;
+  const SDL_FRect current_all_rect = make_button_rect(button_x, button_y, "All Current");
+  button_x += current_all_rect.w + kMergeToolbarButtonGap;
+  const SDL_FRect base_all_rect = make_button_rect(button_x, button_y, "All Base");
+  const SDL_FRect save_rect = make_button_rect(rect.x + rect.w - 92.0f, button_y, "Save");
+  draw_button(incoming_all_rect, "All Incoming", false, true);
+  draw_button(auto_rect, "All Auto", false, true);
+  draw_button(current_all_rect, "All Current", false, true);
+  draw_button(base_all_rect, "All Base", false, true);
+  draw_button(save_rect, "Save", false, true);
+
+  if (!merge_tab->model.hunks.empty()) {
+    button_x = rect.x + 8.0f;
+    const compare::MergeChoice active_choice = merge_tab->model.hunks[selected_hunk].choice;
+    const SDL_FRect incoming_rect = make_button_rect(button_x, secondary_button_y, "Incoming");
+    button_x += incoming_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect base_rect = make_button_rect(button_x, secondary_button_y, "Base");
+    button_x += base_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect current_rect = make_button_rect(button_x, secondary_button_y, "Current");
+    button_x += current_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect both_rect = make_button_rect(button_x, secondary_button_y, "Both");
+    button_x += both_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect open_rect = make_button_rect(button_x, secondary_button_y, "Open Result");
+
+    draw_button(incoming_rect, "Incoming", active_choice == compare::MergeChoice::Incoming);
+    draw_button(base_rect, "Base", active_choice == compare::MergeChoice::Base);
+    draw_button(current_rect, "Current", active_choice == compare::MergeChoice::Current);
+    draw_button(both_rect, "Both", active_choice == compare::MergeChoice::Both);
+    draw_button(open_rect, "Open Result", false);
+  }
+
+  DrawFilledRect(renderer, MakeRect(rect.x, rows_y - 6.0f, rect.w, 1.0f), theme_.border);
+  DrawFilledRect(renderer, MakeRect(center_x - 6.0f, rect.y, 1.0f, rect.h), theme_.border);
+  DrawFilledRect(renderer, MakeRect(right_x - 6.0f, rect.y, 1.0f, rect.h), theme_.border);
+
+  text_renderer_.DrawString(renderer, left_x + gutter_width, header_y, theme_.text_secondary,
+                            TruncateLabel(merge_tab->incoming_label, left_width - 8.0f));
+  text_renderer_.DrawString(renderer, center_x + gutter_width, header_y, theme_.text_secondary,
+                            TruncateLabel(merge_tab->result_label, center_width - 8.0f));
+  text_renderer_.DrawString(renderer, right_x + gutter_width, header_y, theme_.text_secondary,
+                            TruncateLabel(merge_tab->current_label, right_width - 8.0f));
+
+  const auto draw_text = [&](float x, float y, float width, SDL_Color color, SDL_Color background,
+                             const std::string& text) {
+    const std::string display_text = TruncateLabel(text, width);
+    if (display_text.empty()) {
+      return;
+    }
+    text_renderer_.DrawStringOn(renderer, x, y, color, background, display_text);
+  };
+  const auto draw_syntax_text = [&](float x,
+                                    float y,
+                                    float width,
+                                    SDL_Color plain_color,
+                                    SDL_Color background,
+                                    const std::string& text,
+                                    const std::vector<editor::SyntaxTokenKind>& full_tokens) {
+    if (text.empty()) {
+      return;
+    }
+
+    const std::string display_text = TruncateLabel(text, width);
+    if (display_text.empty()) {
+      return;
+    }
+
+    const std::size_t visible_text_bytes =
+        display_text != text && EndsWith(display_text, "...") && display_text.size() >= 3
+            ? display_text.size() - 3
+            : display_text.size();
+    const auto token_kind_at = [&](std::size_t byte_offset) {
+      if (byte_offset < visible_text_bytes && byte_offset < full_tokens.size()) {
+        return full_tokens[byte_offset];
+      }
+      return editor::SyntaxTokenKind::Plain;
+    };
+
+    float segment_x = x;
+    for (std::size_t segment_start = 0; segment_start < display_text.size();) {
+      const editor::SyntaxTokenKind kind = token_kind_at(segment_start);
+      std::size_t segment_end = segment_start;
+      while (segment_end < display_text.size()) {
+        const std::size_t next = segment_end + Utf8SequenceLength(display_text, segment_end);
+        if (next >= display_text.size()) {
+          segment_end = display_text.size();
+          break;
+        }
+        if (token_kind_at(next) != kind) {
+          segment_end = next;
+          break;
+        }
+        segment_end = next;
+      }
+
+      const std::string_view segment_text(display_text.data() + segment_start,
+                                          segment_end - segment_start);
+      text_renderer_.DrawStringOn(
+          renderer, segment_x, y, CompareTokenColor(theme_, kind, plain_color, false), background,
+          segment_text);
+      segment_x += text_renderer_.MeasureWidth(segment_text);
+      segment_start = segment_end;
+    }
+  };
+
+  for (int row = 0; row < visible_rows; ++row) {
+    const int model_index = merge_tab->scroll_row + row;
+    if (model_index >= static_cast<int>(merge_tab->display_model.rows.size())) {
+      break;
+    }
+
+    const auto& merge_row = merge_tab->display_model.rows[static_cast<std::size_t>(model_index)];
+    const float y = rows_y + static_cast<float>(row) * line_height;
+    const bool selected = merge_row.hunk >= 0 &&
+                          static_cast<std::size_t>(merge_row.hunk) == merge_tab->selected_hunk;
+    const SDL_Color row_background = selected ? theme_.row_highlight : theme_.editor_background;
+    if (selected) {
+      DrawFilledRect(renderer, MakeRect(rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, line_height),
+                     row_background);
+    }
+
+    const SDL_Color incoming_background =
+        merge_row.incoming_changed
+            ? BlendColor(row_background, merge_row.conflict ? theme_.diff_deleted : theme_.diff_added,
+                         selected ? 0.42f : 0.24f)
+            : row_background;
+    const SDL_Color result_background =
+        merge_row.result_changed
+            ? BlendColor(row_background,
+                         merge_row.conflict ? theme_.diff_modified : theme_.diff_added,
+                         selected ? 0.42f : 0.24f)
+            : row_background;
+    const SDL_Color current_background =
+        merge_row.current_changed
+            ? BlendColor(row_background, theme_.diff_modified, selected ? 0.42f : 0.24f)
+            : row_background;
+    const SDL_Color incoming_color =
+        merge_row.incoming_changed ? theme_.diff_added : theme_.text_secondary;
+    const SDL_Color current_color =
+        merge_row.current_changed ? theme_.diff_modified : theme_.text_secondary;
+    SDL_Color result_color = theme_.text_secondary;
+    if (merge_row.hunk >= 0 &&
+        static_cast<std::size_t>(merge_row.hunk) < merge_tab->model.hunks.size()) {
+      switch (merge_tab->model.hunks[static_cast<std::size_t>(merge_row.hunk)].choice) {
+        case compare::MergeChoice::Incoming:
+          result_color = theme_.diff_added;
+          break;
+        case compare::MergeChoice::Current:
+          result_color = theme_.diff_modified;
+          break;
+        case compare::MergeChoice::Both:
+          result_color = theme_.accent;
+          break;
+        case compare::MergeChoice::Base:
+        case compare::MergeChoice::Auto:
+        default:
+          result_color = merge_row.result_changed ? theme_.diff_added : theme_.text_secondary;
+          break;
+      }
+    }
+
+    if (merge_row.incoming_line > 0) {
+      draw_text(left_x, y, gutter_width - 4.0f,
+                selected ? theme_.current_line_number : theme_.line_number, row_background,
+                std::to_string(merge_row.incoming_line));
+    }
+    if (merge_row.result_line > 0) {
+      draw_text(center_x, y, gutter_width - 4.0f,
+                selected ? theme_.current_line_number : theme_.line_number, row_background,
+                std::to_string(merge_row.result_line));
+    }
+    if (merge_row.current_line > 0) {
+      draw_text(right_x, y, gutter_width - 4.0f,
+                selected ? theme_.current_line_number : theme_.line_number, row_background,
+                std::to_string(merge_row.current_line));
+    }
+
+    if (merge_row.incoming_line > 0) {
+      const std::vector<editor::SyntaxTokenKind>* tokens =
+          static_cast<std::size_t>(merge_row.incoming_line - 1) < merge_tab->incoming_tokens.size()
+              ? &merge_tab->incoming_tokens[static_cast<std::size_t>(merge_row.incoming_line - 1)]
+              : &kEmptyTokens;
+      draw_syntax_text(left_x + gutter_width, y, left_width - 8.0f, incoming_color,
+                       incoming_background, merge_row.incoming_text, *tokens);
+    }
+    if (merge_row.result_line > 0) {
+      const std::vector<editor::SyntaxTokenKind>* tokens =
+          static_cast<std::size_t>(merge_row.result_line - 1) < merge_tab->result_tokens.size()
+              ? &merge_tab->result_tokens[static_cast<std::size_t>(merge_row.result_line - 1)]
+              : &kEmptyTokens;
+      draw_syntax_text(center_x + gutter_width, y, center_width - 8.0f, result_color,
+                       result_background, merge_row.result_text, *tokens);
+    }
+    if (merge_row.current_line > 0) {
+      const std::vector<editor::SyntaxTokenKind>* tokens =
+          static_cast<std::size_t>(merge_row.current_line - 1) < merge_tab->current_tokens.size()
+              ? &merge_tab->current_tokens[static_cast<std::size_t>(merge_row.current_line - 1)]
+              : &kEmptyTokens;
+      draw_syntax_text(right_x + gutter_width, y, right_width - 8.0f, current_color,
+                       current_background, merge_row.current_text, *tokens);
+    }
+  }
+}
+
 std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
     const SDL_FRect& tab_strip) const {
   std::vector<VisibleTab> tabs;
@@ -11809,6 +13576,14 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
     return RelativePathLabel(project_root_, compare_tab->path) + "  |  " + compare_tab->left_label +
            " -> " + compare_tab->right_label;
   }
+  if (ActiveTabIsMerge()) {
+    const MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab == nullptr) {
+      return "merge";
+    }
+    return RelativePathLabel(project_root_, merge_tab->output_path) + "  |  " +
+           merge_tab->incoming_label + " -> " + merge_tab->current_label;
+  }
   if (text_viewport_.path().empty()) {
     return text_viewport_.is_placeholder() ? "welcome" : "untitled";
   }
@@ -12046,6 +13821,51 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
+    if (sidebar_mode_ == SidebarMode::Git) {
+      const auto lines = BuildGitSidebarLines();
+      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
+      const int visible_rows =
+          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
+      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float row_width =
+          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
+                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
+      const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
+      const int line_index = std::clamp(sidebar_scroll_row_, 0, max_scroll) + clicked_row;
+      if (clicked_row < 0 || line_index < 0 || line_index >= static_cast<int>(lines.size())) {
+        return CursorKind::Default;
+      }
+      const SDL_FRect row_rect = MakeRect(layout.sidebar.x + kSidebarInset,
+                                          list_y + static_cast<float>(clicked_row) * kSidebarRowHeight,
+                                          row_width, kSidebarRowHeight - 2.0f);
+      if (!Contains(row_rect, x, y)) {
+        return CursorKind::Default;
+      }
+      const auto& line = lines[static_cast<std::size_t>(line_index)];
+      if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
+        return CursorKind::Default;
+      }
+      const auto& entry = git_sidebar_entries_[static_cast<std::size_t>(line.entry_index)];
+      if (entry.section == GitSidebarEntry::Section::Modified) {
+        float right_edge = row_rect.x + row_rect.w - 8.0f;
+        if (!entry.staged) {
+          const float stage_width = std::max(42.0f, text_renderer_.MeasureWidth("Stage") + 12.0f);
+          const SDL_FRect stage_rect =
+              MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
+          if (Contains(stage_rect, x, y)) {
+            return CursorKind::Pointer;
+          }
+          right_edge = stage_rect.x - 6.0f;
+        }
+        const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
+        const SDL_FRect discard_rect =
+            MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
+        if (Contains(discard_rect, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Pointer;
+    }
 
     const auto& entries = directory_tree_.entries();
     const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
@@ -12118,6 +13938,22 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         std::clamp(compare_tab->scroll_row, 0, CompareMaxScrollRow(*compare_tab, visible_rows));
     const auto scrollbar = MakeVerticalScrollbarGeometry(
         layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
+        static_cast<float>(visible_rows), static_cast<float>(scroll_row));
+    if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
+      return CursorKind::Default;
+    }
+    return CursorKind::Pointer;
+  }
+  if (ActiveTabIsMerge()) {
+    const MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab == nullptr) {
+      return CursorKind::Default;
+    }
+    const int visible_rows = MergeVisibleRows(layout.editor_surface);
+    const int scroll_row =
+        std::clamp(merge_tab->scroll_row, 0, MergeMaxScrollRow(*merge_tab, visible_rows));
+    const auto scrollbar = MakeVerticalScrollbarGeometry(
+        layout.editor_surface, static_cast<float>(merge_tab->display_model.rows.size()),
         static_cast<float>(visible_rows), static_cast<float>(scroll_row));
     if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
       return CursorKind::Default;

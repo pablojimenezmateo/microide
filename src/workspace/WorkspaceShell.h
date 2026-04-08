@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "compare/MergeModel.h"
 #include "editor/EditorViewRenderer.h"
 #include "editor/TextViewport.h"
 #include "project/DirectoryTree.h"
@@ -66,6 +67,7 @@ class WorkspaceShell {
     None,
     Tree,
     Search,
+    Git,
   };
 
   enum class OverlayMode {
@@ -86,6 +88,7 @@ class WorkspaceShell {
     File,
     Edit,
     View,
+    SidebarMode,
     Search,
     Project,
     Terminal,
@@ -166,12 +169,35 @@ class WorkspaceShell {
     std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
     std::size_t selected_row = 0;
     int scroll_row = 0;
+    bool persistable = true;
+  };
+
+  struct MergeTabState {
+    std::filesystem::path base_path;
+    std::filesystem::path incoming_path;
+    std::filesystem::path current_path;
+    std::filesystem::path output_path;
+    std::string title;
+    std::string incoming_label;
+    std::string result_label;
+    std::string current_label;
+    editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
+    compare::MergeModel model;
+    compare::MergeDisplayModel display_model;
+    std::vector<std::vector<editor::SyntaxTokenKind>> incoming_tokens;
+    std::vector<std::vector<editor::SyntaxTokenKind>> result_tokens;
+    std::vector<std::vector<editor::SyntaxTokenKind>> current_tokens;
+    editor::TextViewport result_viewport;
+    std::size_t selected_hunk = 0;
+    int scroll_row = 0;
+    bool persistable = true;
   };
 
   struct TabEntry {
     enum class Kind {
       Editor,
       Compare,
+      Merge,
     };
 
     struct EditorTabState {
@@ -206,6 +232,7 @@ class WorkspaceShell {
     std::string title;
     std::optional<EditorTabState> editor_state;
     std::optional<CompareTabState> compare;
+    std::optional<MergeTabState> merge;
   };
 
   struct VisibleTab {
@@ -239,6 +266,33 @@ class WorkspaceShell {
     SDL_FRect rect{};
     SDL_FRect close_rect{};
     bool active = false;
+  };
+
+  struct GitSidebarEntry {
+    enum class Section {
+      Modified,
+      Outgoing,
+    };
+
+    Section section = Section::Modified;
+    std::filesystem::path path;
+    std::filesystem::path relative_path;
+    project::GitFileStatus status = project::GitFileStatus::Clean;
+    bool conflicted = false;
+    bool staged = false;
+  };
+
+  struct GitSidebarLine {
+    enum class Kind {
+      Header,
+      Entry,
+      Empty,
+    };
+
+    Kind kind = Kind::Empty;
+    GitSidebarEntry::Section section = GitSidebarEntry::Section::Modified;
+    std::string label;
+    int entry_index = -1;
   };
 
   struct EditorPaneLayout {
@@ -326,6 +380,7 @@ class WorkspaceShell {
     Colorscheme,
     Compare,
     CompareHead,
+    Merge,
     CopyAbsolutePath,
     CopyRelativePath,
     CreateDirectory,
@@ -411,6 +466,7 @@ class WorkspaceShell {
     std::size_t arg_count = 0;
     bool separator = false;
     bool checkable = false;
+    MenuId submenu = MenuId::None;
   };
 
   struct MenuSpec {
@@ -479,6 +535,11 @@ class WorkspaceShell {
     std::size_t project_search_selected_index = 0;
     bool project_search_running = false;
     std::string project_search_error;
+    std::vector<GitSidebarEntry> git_sidebar_entries;
+    std::string git_base_ref;
+    std::string git_base_label;
+    bool git_repo_available = false;
+    std::size_t git_sidebar_selected_index = 0;
     std::filesystem::path compare_picker_path;
     std::string compare_picker_query;
     std::vector<project::GitCommitEntry> compare_picker_commits;
@@ -595,6 +656,7 @@ class WorkspaceShell {
   bool EditorTabHasDirtyPath(std::size_t tab_index, const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedEditorTabIndices(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;
+  std::vector<std::size_t> AffectedMergeTabIndices(const std::filesystem::path& path) const;
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
   void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
@@ -658,6 +720,13 @@ class WorkspaceShell {
   int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const;
   void ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows) const;
   void RevealActiveCompareSelection();
+  bool ActiveTabIsMerge() const;
+  MergeTabState* ActiveMergeTab();
+  const MergeTabState* ActiveMergeTab() const;
+  int MergeVisibleRows(const SDL_FRect& rect) const;
+  int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;
+  void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const;
+  void RevealActiveMergeSelection();
   std::string ActiveTabTitle() const;
   void OpenComparePicker();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
@@ -665,6 +734,10 @@ class WorkspaceShell {
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
                                                const project::GitCommitEntry& commit,
                                                std::size_t selected_row = 0) const;
+  std::optional<TabEntry> BuildMergeTabEntry(const std::filesystem::path& base_path,
+                                             const std::filesystem::path& incoming_path,
+                                             const std::filesystem::path& current_path,
+                                             const std::filesystem::path& output_path) const;
   void RefreshComparePicker();
   void MoveComparePickerSelection(int delta);
   void OpenSelectedCompareCommit();
@@ -673,15 +746,63 @@ class WorkspaceShell {
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
   void ScrollCompareRows(int delta);
+  bool OpenMergeEditor(const std::filesystem::path& base_path,
+                       const std::filesystem::path& incoming_path,
+                       const std::filesystem::path& current_path,
+                       const std::filesystem::path& output_path);
+  void RefreshMergeTabDerivedState(MergeTabState& merge_tab) const;
+  std::vector<std::vector<editor::SyntaxTokenKind>> HighlightBufferTokens(
+      const std::filesystem::path& path,
+      const std::vector<std::string>& lines) const;
+  void MoveMergeSelection(int delta);
+  void ApplyMergeChoice(compare::MergeChoice choice);
+  void ApplyMergeChoiceToAll(compare::MergeChoice choice);
+  void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
   void RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
+  void RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
+  void ShowGitSidebar();
   void CloseSidebar();
   void ToggleSidebar();
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
+  void RefreshGitSidebar();
+  std::vector<GitSidebarLine> BuildGitSidebarLines() const;
+  std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
+  const GitSidebarEntry* SelectedGitSidebarEntry() const;
+  void MoveGitSidebarSelection(int delta);
+  bool OpenGitSidebarEntry(std::size_t entry_index);
+  bool StageGitSidebarEntry(std::size_t entry_index);
+  bool DiscardGitSidebarEntry(std::size_t entry_index);
+  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
+  std::optional<TabEntry> BuildCompareTabFromBuffers(const std::filesystem::path& path,
+                                                     std::string left_content,
+                                                     std::string right_content,
+                                                     std::string left_label,
+                                                     std::string right_label,
+                                                     std::size_t selected_row = 0,
+                                                     bool persistable = true) const;
+  bool OpenWorkingTreeComparison(const std::filesystem::path& path,
+                                 const std::string& left_ref,
+                                 const std::string& left_label);
+  bool OpenBranchHeadComparison(const std::filesystem::path& path,
+                                const std::string& left_ref,
+                                const std::string& left_label,
+                                const std::string& right_ref,
+                                const std::string& right_label);
+  std::optional<TabEntry> BuildMergeTabFromBuffers(const std::filesystem::path& output_path,
+                                                   std::string base_content,
+                                                   std::string incoming_content,
+                                                   std::string current_content,
+                                                   std::string incoming_label,
+                                                   std::string result_label,
+                                                   std::string current_label,
+                                                   std::size_t selected_hunk = 0,
+                                                   bool persistable = true) const;
+  bool OpenGitConflictMerge(const std::filesystem::path& path);
   void OpenBufferSearch();
   void OpenBufferReplace();
   void OpenProjectSearch();
@@ -823,6 +944,7 @@ class WorkspaceShell {
   bool menu_bar_open_ = false;
   MenuId active_menu_id_ = MenuId::None;
   int active_menu_item_index_ = -1;
+  std::optional<SDL_FRect> active_menu_anchor_rect_;
   TreeContextMenuState tree_context_menu_;
   BufferSearchField buffer_search_field_ = BufferSearchField::Search;
   bool command_mode_ = false;
@@ -855,6 +977,11 @@ class WorkspaceShell {
   std::size_t project_search_selected_index_ = 0;
   bool project_search_running_ = false;
   std::string project_search_error_;
+  std::vector<GitSidebarEntry> git_sidebar_entries_;
+  std::string git_base_ref_;
+  std::string git_base_label_;
+  bool git_repo_available_ = false;
+  std::size_t git_sidebar_selected_index_ = 0;
   std::uint64_t project_search_run_id_ = 0;
   Uint32 project_search_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

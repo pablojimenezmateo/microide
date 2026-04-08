@@ -26,6 +26,8 @@ This scaffold provides:
 - optional `SDL3_ttf` text backend with debug-text fallback
 - cached file-finder overlay
 - commit picker overlay and compare tabs
+- three-way merge tabs with incoming/result/current panes, per-hunk picks, and whole-side apply actions
+- sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
 - bottom-panel logs plus a minimal command prompt
 - bottom-panel terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, and common cursor/erase repaint handling
 - terminal text selection and clipboard copy
@@ -83,6 +85,20 @@ Current controls:
 - `[` / `]` in a compare tab: jump to the previous or next hunk
 - `Enter` or `o` in a compare tab: open the working-tree file at the corresponding line
 - `Esc` in a compare tab: close the compare tab
+- in a merge tab, use `Up` / `Down`, `j` / `k`, `Home`, and `End` to move between merge hunks
+- `i`, `b`, `c`, `m` in a merge tab: apply incoming, base, current, or both for the selected hunk
+- `a` in a merge tab: restore auto choices for all hunks
+- `I`, `B`, `C`, `M` in a merge tab: apply incoming, base, current, or both to every hunk
+- `o` in a merge tab: open the merge result file in a normal editor tab
+- `Esc` in a merge tab: close the merge tab
+- `sidebar-show git` or `sidebar-toggle git`: switch the sidebar into source-control mode
+- in the git sidebar, `Up` / `Down`, `Home`, `End`, `PageUp`, and `PageDown` move between files
+- `Enter` in the git sidebar: open the selected file, comparing `HEAD` against the working tree
+- selecting a conflicted file in the git sidebar opens the three-way merge tab instead of a diff tab
+- `s` in the git sidebar or clicking `Stage`: run `git add` for the selected modified file
+- `x` in the git sidebar or clicking `Discard`: restore the selected modified file to `HEAD`
+- `r` in the git sidebar: refresh working-tree and outgoing-file status
+- selecting an outgoing file opens a compare tab against the resolved base branch `HEAD`
 - left click on a tab: activate that file tab
 - left click on a tab `x`: close that tab
 - middle click on a tab: close that tab
@@ -112,6 +128,7 @@ Current commands:
 - `tabswitch <tab>`
 - `tabmove <n>`
 - `compare [path] [commit-prefix]`
+- `merge <base> <incoming> <current> [output]`
 - `reopen`
 - `save`
 - `quit`
@@ -137,6 +154,8 @@ Current commands:
 - `tree-refresh`
 - `sidebar-toggle`
 - `sidebar-show`
+- `sidebar-show git`
+- `sidebar-toggle git`
 - `sidebar-hide`
 - `sidebar-close`
 - `sidebar-width <n>`

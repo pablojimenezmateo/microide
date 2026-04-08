@@ -17,6 +17,7 @@ enum class GitFileStatus {
   Added,
   Deleted,
   Untracked,
+  Conflicted,
 };
 
 struct TreeEntry {

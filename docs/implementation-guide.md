@@ -40,6 +40,7 @@ This repo is not just stock `micro`. The current fork already has IDE-specific b
 - integrated terminal pane
 - git-aware file tree markers
 - git commit picker from the tree
+- source-control sidebar mode for working-tree changes and outgoing branch files
 - side-by-side compare view with aligned diff hunks
 
 The current behavior was originally defined mostly in these Go areas from the now-removed vendored legacy fork:
@@ -120,6 +121,7 @@ Use this layout as the default shell:
 - project tabs above file tabs
 - compact file-tab strip scoped to the active project
 - left sidebar host for tree and search tools
+- left sidebar host for tree, search, and source-control tools
 - central editor region with breadcrumbs/path header
 - bottom panel for logs, command entry, and terminal tabs
 - minimal bottom status bar for mode, file state, encoding, line endings, and cursor position
@@ -127,6 +129,7 @@ Use this layout as the default shell:
 Recommended behavior:
 
 - the tree stays visible while switching tabs
+- the sidebar host can switch between tree, search, and git/source-control views without changing the main layout
 - switching project tabs swaps the entire workspace context below the project-tab strip
 - the bottom panel can be shown or hidden without disturbing the main editor layout
 - overlays such as file finder and command palette open centered above the editor

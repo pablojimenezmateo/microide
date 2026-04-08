@@ -1,8 +1,10 @@
 #include "project/GitCompareService.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -54,6 +56,46 @@ CommandResult ReadCommandOutput(const std::string& command) {
 
 bool HasGitMarker(const std::filesystem::path& root) {
   return std::filesystem::exists(root / ".git");
+}
+
+std::string TrimTrailingWhitespace(std::string text) {
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
+                           text.back() == '\t')) {
+    text.pop_back();
+  }
+  return text;
+}
+
+std::string ShortRefLabel(std::string_view ref) {
+  if (ref.empty()) {
+    return {};
+  }
+  constexpr std::array<std::string_view, 2> prefixes = {
+      "refs/remotes/",
+      "refs/heads/",
+  };
+  for (std::string_view prefix : prefixes) {
+    if (ref.rfind(prefix, 0) == 0) {
+      return std::string(ref.substr(prefix.size()));
+    }
+  }
+  return std::string(ref);
+}
+
+GitFileStatus StatusFromDiffCode(char code) {
+  switch (code) {
+    case 'A':
+      return GitFileStatus::Added;
+    case 'D':
+      return GitFileStatus::Deleted;
+    case 'M':
+    case 'R':
+    case 'C':
+    case 'T':
+      return GitFileStatus::Modified;
+    default:
+      return GitFileStatus::Clean;
+  }
 }
 
 }  // namespace
@@ -132,6 +174,103 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
   }
 
   return GitFileContentAtCommit{.exists = true, .content = std::move(show_result.output)};
+}
+
+std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root) {
+  if (root.empty() || !HasGitMarker(root)) {
+    return std::nullopt;
+  }
+
+  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
+  const std::string origin_head_command =
+      "git -C '" + escaped_root + "' symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null";
+  const CommandResult origin_head_result = ReadCommandOutput(origin_head_command);
+  const std::string origin_head = TrimTrailingWhitespace(origin_head_result.output);
+  if (origin_head_result.exit_code == 0 && !origin_head.empty()) {
+    return GitBranchReference{
+        .ref = origin_head,
+        .label = ShortRefLabel(origin_head),
+    };
+  }
+
+  const std::array<std::string_view, 2> local_defaults = {"main", "master"};
+  for (std::string_view candidate : local_defaults) {
+    const std::string exists_command =
+        "git -C '" + escaped_root + "' show-ref --verify --quiet 'refs/heads/" +
+        std::string(candidate) + "' 2>/dev/null";
+    const CommandResult exists_result = ReadCommandOutput(exists_command);
+    if (exists_result.exit_code == 0) {
+      return GitBranchReference{
+          .ref = std::string(candidate),
+          .label = std::string(candidate),
+      };
+    }
+  }
+
+  const std::string upstream_command =
+      "git -C '" + escaped_root +
+      "' rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null";
+  const CommandResult upstream_result = ReadCommandOutput(upstream_command);
+  const std::string upstream = TrimTrailingWhitespace(upstream_result.output);
+  if (upstream_result.exit_code == 0 && !upstream.empty()) {
+    return GitBranchReference{
+        .ref = upstream,
+        .label = ShortRefLabel(upstream),
+    };
+  }
+
+  return std::nullopt;
+}
+
+std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
+                                                              std::string_view base_ref) {
+  if (root.empty() || base_ref.empty() || !HasGitMarker(root)) {
+    return {};
+  }
+
+  const std::string command =
+      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
+      "' diff --name-status --find-renames '" + EscapeShellArg(std::string(base_ref)) +
+      "...HEAD' 2>/dev/null";
+  const CommandResult result = ReadCommandOutput(command);
+  if (result.exit_code != 0 || result.output.empty()) {
+    return {};
+  }
+
+  std::vector<GitBranchFileEntry> entries;
+  std::istringstream stream(result.output);
+  std::string line;
+  while (std::getline(stream, line)) {
+    if (line.empty()) {
+      continue;
+    }
+
+    std::istringstream line_stream(line);
+    std::string status_code;
+    std::string path;
+    std::string target_path;
+    if (!(line_stream >> status_code)) {
+      continue;
+    }
+    if (!(line_stream >> path)) {
+      continue;
+    }
+    if ((status_code[0] == 'R' || status_code[0] == 'C') && (line_stream >> target_path) &&
+        !target_path.empty()) {
+      path = target_path;
+    }
+
+    entries.push_back(GitBranchFileEntry{
+        .relative_path = std::filesystem::path(path).lexically_normal(),
+        .status = StatusFromDiffCode(status_code[0]),
+    });
+  }
+
+  std::sort(entries.begin(), entries.end(), [](const GitBranchFileEntry& lhs,
+                                               const GitBranchFileEntry& rhs) {
+    return lhs.relative_path.generic_string() < rhs.relative_path.generic_string();
+  });
+  return entries;
 }
 
 }  // namespace microide::project

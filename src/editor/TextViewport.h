@@ -40,7 +40,11 @@ class TextViewport {
 
   bool OpenFile(const std::filesystem::path& path);
   bool Save();
+  void LoadContent(std::string_view content,
+                   const std::filesystem::path& path = {},
+                   std::optional<LineEnding> line_ending = std::nullopt);
   void SetPath(const std::filesystem::path& path);
+  void SetDirty(bool dirty);
   void SetPlaceholderText(std::string text);
   void SetUntitledBuffer();
   void SetViewportSize(std::size_t visible_lines, std::size_t visible_columns);
