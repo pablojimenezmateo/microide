@@ -118,7 +118,7 @@ The highest-value remaining performance work is:
 
 - glyph-atlas style text rendering work
 - dirty-rect and caret-only invalidation
-- highlighted-text sharpness cleanup
+- replace the current UI zoom path, which stretches a reduced logical framebuffer and blurs text, with a proper HiDPI scaling model that keeps layout and font rendering sharp at non-100% scales
 - startup and idle redraw profiling driven by `docs/startup-tracing.md`
 
 ## Out of Scope
