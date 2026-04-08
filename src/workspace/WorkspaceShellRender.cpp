@@ -199,6 +199,25 @@ void DrawChevron(SDL_Renderer* renderer, float x, float center_y, bool expanded,
   SDL_RenderLine(renderer, x + 2.0f, center_y + 4.0f, x + 6.0f, center_y);
 }
 
+void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  const float center_x = std::floor(rect.x + rect.w * 0.5f);
+  const float center_y = std::floor(rect.y + rect.h * 0.5f);
+  const auto draw_dot = [&](float x, float y) {
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    const SDL_FRect dot = MakeRect(x, y, 1.0f, 1.0f);
+    SDL_RenderFillRect(renderer, &dot);
+  };
+
+  for (int offset = -3; offset <= 3; ++offset) {
+    draw_dot(center_x + static_cast<float>(offset), center_y + static_cast<float>(offset));
+    draw_dot(center_x + static_cast<float>(offset), center_y - static_cast<float>(offset));
+  }
+}
+
 void DrawWindowControlGlyph(SDL_Renderer* renderer,
                             const SDL_FRect& rect,
                             microide::workspace::WorkspaceShell::WindowControlButtonId id,
@@ -736,6 +755,12 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer_.LineHeight()) * 0.5f);
     draw_text(x, y, foreground, text);
   };
+  const auto draw_tab_close_button = [&](const SDL_FRect& rect,
+                                         SDL_Color color,
+                                         SDL_Color hover_color) {
+    const bool hovered = last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
+    DrawCloseGlyph(renderer, rect, hovered ? hover_color : color);
+  };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
   const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
@@ -769,8 +794,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     const float title_x =
         std::floor(layout.menu_bar.x + (layout.menu_bar.w - title_width) * 0.5f);
     if (title_x >= left_limit && title_x + title_width <= right_limit) {
-      draw_text_on(title_x, layout.menu_bar.y + 4.0f, theme_.text_muted, theme_.chrome_background,
-                   title);
+      draw_vcentered_text_on(MakeRect(title_x, layout.menu_bar.y, title_width, layout.menu_bar.h),
+                             0.0f, theme_.text_muted, theme_.chrome_background, title);
     }
   }
 
@@ -884,8 +909,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
                            tab.active ? theme_.chrome_active : theme_.surface_raised,
                            TruncateLabel(ProjectTabDisplayTitle(tab.index), tab.rect.w - 46.0f));
-    draw_centered_text_on(tab.close_rect, tab.active ? theme_.text_secondary : theme_.text_disabled,
-                          tab.active ? theme_.chrome_active : theme_.surface_raised, "x");
+    draw_tab_close_button(tab.close_rect,
+                          tab.active ? theme_.text_secondary : theme_.text_disabled,
+                          tab.active ? theme_.text_primary : theme_.text_secondary);
   }
 
   if (!project_root_.empty() && open_tabs_.empty()) {
@@ -908,8 +934,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
                              tab.active ? theme_.chrome_active : theme_.surface_raised,
                              TruncateLabel(display_title, tab.rect.w - 46.0f));
-      draw_centered_text_on(tab.close_rect, tab.active ? theme_.text_secondary : theme_.text_disabled,
-                            tab.active ? theme_.chrome_active : theme_.surface_raised, "x");
+      draw_tab_close_button(tab.close_rect,
+                            tab.active ? theme_.text_secondary : theme_.text_disabled,
+                            tab.active ? theme_.text_primary : theme_.text_secondary);
     }
   }
 
@@ -1350,19 +1377,19 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     const float overlay_row_width =
         overlay.w - overlay_inset * 2.0f -
         (overlay_max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f);
-    const auto draw_overlay_row =
-        [&](int row_index, int selected_index, std::string_view label) {
-          const bool selected = row_index == selected_index;
-          SDL_FRect row = MakeRect(overlay.x + overlay_inset,
-                                   overlay_list_y +
-                                       static_cast<float>(row_index) * overlay_row_height,
-                                   overlay_row_width, 18.0f);
-          DrawFilledRect(renderer, row, selected ? theme_.row_highlight : theme_.surface_raised);
-          draw_text_on(row.x + 6.0f, row.y + 2.0f,
-                       selected ? theme_.text_primary : theme_.text_secondary,
-                       selected ? theme_.row_highlight : theme_.surface_raised,
-                       TruncateLabel(label, row.w - 12.0f));
-        };
+      const auto draw_overlay_row =
+          [&](int row_index, int selected_index, std::string_view label) {
+            const bool selected = row_index == selected_index;
+            SDL_FRect row = MakeRect(overlay.x + overlay_inset,
+                                     overlay_list_y +
+                                         static_cast<float>(row_index) * overlay_row_height,
+                                     overlay_row_width, 18.0f);
+            DrawFilledRect(renderer, row, selected ? theme_.row_highlight : theme_.surface_raised);
+            draw_vcentered_text_on(row, 6.0f,
+                                   selected ? theme_.text_primary : theme_.text_secondary,
+                                   selected ? theme_.row_highlight : theme_.surface_raised,
+                                   TruncateLabel(label, row.w - 12.0f));
+          };
 
     if (overlay_mode_ == OverlayMode::BufferSearch) {
       draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
@@ -1520,7 +1547,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         }
         draw_vcentered_text_on(tab.rect, 8.0f, foreground, background,
                                TruncateLabel(label, tab.rect.w - 40.0f));
-        draw_centered_text_on(tab.close_rect, foreground, background, "x");
+        draw_tab_close_button(tab.close_rect, foreground, theme_.text_primary);
       }
       const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
       DrawFilledRect(renderer, new_tab_rect, theme_.surface_raised);
@@ -1587,10 +1614,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    TruncateLabel(CommandPromptStatusText(), command_area.w - 24.0f));
 
       SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
-      const float prompt_y = prompt_rect.y + 4.0f;
       DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
-      draw_text_on(prompt_rect.x + 6.0f, prompt_y, theme_.text_primary, theme_.chrome_active,
-                   "> " + command_input_);
+      draw_vcentered_text_on(prompt_rect, 6.0f, theme_.text_primary, theme_.chrome_active,
+                             "> " + command_input_);
     }
 
     draw_vertical_scrollbar(
@@ -1716,8 +1742,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawFilledRect(renderer, header, theme_.chrome_background);
     DrawFilledRect(renderer, MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
                    theme_.border);
-    draw_text_on(header.x + 16.0f, header.y + 8.0f, theme_.text_primary, theme_.chrome_background,
-                 PromptSurfaceTitle());
+    draw_vcentered_text_on(header, 16.0f, theme_.text_primary, theme_.chrome_background,
+                           PromptSurfaceTitle());
     draw_text_on(message_rect.x, message_rect.y, theme_.text_muted, theme_.overlay_background,
                  TruncateLabel(PromptSurfaceMessage(), message_rect.w));
 
@@ -1725,9 +1751,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       DrawFilledRect(renderer, input_rect, theme_.surface_background);
       DrawRect(renderer, input_rect, theme_.border);
-      draw_text_on(input_rect.x + 6.0f, input_rect.y + 4.0f, theme_.text_primary,
-                   theme_.surface_background,
-                   TruncateLabel(prompt_surface_state_.input, input_rect.w - 12.0f));
+      draw_vcentered_text_on(input_rect, 6.0f, theme_.text_primary, theme_.surface_background,
+                             TruncateLabel(prompt_surface_state_.input, input_rect.w - 12.0f));
     }
 
     const auto buttons = ComputePromptSurfaceButtonRects(dialog);
@@ -1737,9 +1762,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const SDL_Color background = selected ? theme_.chrome_active : theme_.surface_raised;
       DrawFilledRect(renderer, buttons[i], background);
       DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
-      const float text_width = text_renderer_.MeasureWidth(labels[i]);
-      draw_text_on(buttons[i].x + std::floor((buttons[i].w - text_width) * 0.5f),
-                   buttons[i].y + 6.0f, theme_.text_primary, background, labels[i]);
+      draw_centered_text_on(buttons[i], theme_.text_primary, background, labels[i]);
     }
   }
 
@@ -1760,8 +1783,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
                    theme_.border);
 
-    draw_text_on(header.x + 12.0f, header.y + 9.0f, theme_.text_primary, theme_.chrome_background,
-                 DirtyPromptTitle());
+    draw_vcentered_text_on(header, 12.0f, theme_.text_primary, theme_.chrome_background,
+                           DirtyPromptTitle());
     draw_text_on(message_rect.x, message_rect.y, theme_.text_secondary, theme_.overlay_background,
                  TruncateLabel(DirtyPromptMessage(), message_rect.w));
     draw_text_on(message_rect.x, message_rect.y + 22.0f, theme_.text_muted, theme_.overlay_background,
@@ -1774,9 +1797,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       DrawFilledRect(renderer, buttons[i],
                      selected ? theme_.chrome_active : theme_.surface_raised);
       DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
-      draw_text_on(buttons[i].x + 12.0f, buttons[i].y + 7.0f,
-                   selected ? theme_.text_primary : theme_.text_secondary,
-                   selected ? theme_.chrome_active : theme_.surface_raised, labels[i]);
+      draw_centered_text_on(buttons[i],
+                            selected ? theme_.text_primary : theme_.text_secondary,
+                            selected ? theme_.chrome_active : theme_.surface_raised, labels[i]);
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
