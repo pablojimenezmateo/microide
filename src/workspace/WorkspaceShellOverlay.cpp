@@ -6,6 +6,7 @@
 #include <sstream>
 #include <vector>
 
+#include "project/ProjectFileScanner.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -79,7 +80,7 @@ void WorkspaceShell::RefreshProjectSearch() {
 
   project_search_running_ = true;
   project_search_run_id_ =
-      project_search_service_.Start(project_root_, project_search_query_, false);
+      project_search_service_.Start(project_root_, project_search_query_, project_search_options_);
   ResetOverlayScroll();
 }
 
@@ -293,18 +294,126 @@ void WorkspaceShell::CancelProjectSearchEdit() {
   LogMessage("Project search edit cancelled");
 }
 
+SDL_FRect WorkspaceShell::ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const {
+  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchQueryTop,
+                  std::max(0.0f, sidebar_rect.w - 20.0f), 14.0f);
+}
+
+SDL_FRect WorkspaceShell::ProjectSearchReplaceRect(const SDL_FRect& sidebar_rect) const {
+  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchReplaceTop,
+                  std::max(0.0f, sidebar_rect.w - 20.0f), 14.0f);
+}
+
+SDL_FRect WorkspaceShell::ProjectSearchModeButtonRect(const SDL_FRect& sidebar_rect) const {
+  const float gap = 4.0f;
+  const float available_width =
+      std::max(0.0f, sidebar_rect.w - 20.0f - gap * 2.0f);
+  const float mode_width = std::floor(available_width * 0.28f);
+  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchButtonTop, mode_width,
+                  kProjectSearchButtonHeight);
+}
+
+SDL_FRect WorkspaceShell::ProjectSearchCaseButtonRect(const SDL_FRect& sidebar_rect) const {
+  const float gap = 4.0f;
+  const float available_width =
+      std::max(0.0f, sidebar_rect.w - 20.0f - gap * 2.0f);
+  const float mode_width = std::floor(available_width * 0.28f);
+  const float case_width = std::floor(available_width * 0.38f);
+  const SDL_FRect mode_rect = ProjectSearchModeButtonRect(sidebar_rect);
+  return MakeRect(mode_rect.x + mode_width + gap, mode_rect.y, case_width,
+                  kProjectSearchButtonHeight);
+}
+
+SDL_FRect WorkspaceShell::ProjectSearchHiddenButtonRect(const SDL_FRect& sidebar_rect) const {
+  const float gap = 4.0f;
+  const float available_width =
+      std::max(0.0f, sidebar_rect.w - 20.0f - gap * 2.0f);
+  const float mode_width = std::floor(available_width * 0.28f);
+  const float case_width = std::floor(available_width * 0.38f);
+  const SDL_FRect case_rect = ProjectSearchCaseButtonRect(sidebar_rect);
+  const float hidden_width = std::max(0.0f, available_width - mode_width - case_width);
+  return MakeRect(case_rect.x + case_width + gap, case_rect.y, hidden_width,
+                  kProjectSearchButtonHeight);
+}
+
+std::string WorkspaceShell::ProjectSearchModeButtonLabel() const {
+  return project_search_options_.pattern_mode == project::ProjectSearchPatternMode::Regex ? "Rx"
+                                                                                           : "Lit";
+}
+
+std::string WorkspaceShell::ProjectSearchCaseButtonLabel() const {
+  switch (project_search_options_.case_mode) {
+    case project::ProjectSearchCaseMode::Sensitive:
+      return "Case";
+    case project::ProjectSearchCaseMode::Insensitive:
+      return "NoCase";
+    case project::ProjectSearchCaseMode::Smart:
+    default:
+      return "Smart";
+  }
+}
+
+std::string WorkspaceShell::ProjectSearchHiddenButtonLabel() const {
+  return project_search_options_.show_hidden ? "Hide+" : "Hide-";
+}
+
+bool WorkspaceShell::ProjectSearchCanReplaceAll() const {
+  return project_search_options_.pattern_mode == project::ProjectSearchPatternMode::Literal &&
+         !project_search_query_.empty();
+}
+
+bool WorkspaceShell::ProjectSearchReplaceCaseSensitive() const {
+  switch (project_search_options_.case_mode) {
+    case project::ProjectSearchCaseMode::Sensitive:
+      return true;
+    case project::ProjectSearchCaseMode::Insensitive:
+      return false;
+    case project::ProjectSearchCaseMode::Smart:
+    default:
+      return UsesCaseSensitiveLiteralMatch(project_search_query_);
+  }
+}
+
+void WorkspaceShell::ToggleProjectSearchPatternMode() {
+  project_search_options_.pattern_mode =
+      project_search_options_.pattern_mode == project::ProjectSearchPatternMode::Literal
+          ? project::ProjectSearchPatternMode::Regex
+          : project::ProjectSearchPatternMode::Literal;
+  RefreshProjectSearch();
+}
+
+void WorkspaceShell::CycleProjectSearchCaseMode() {
+  switch (project_search_options_.case_mode) {
+    case project::ProjectSearchCaseMode::Smart:
+      project_search_options_.case_mode = project::ProjectSearchCaseMode::Sensitive;
+      break;
+    case project::ProjectSearchCaseMode::Sensitive:
+      project_search_options_.case_mode = project::ProjectSearchCaseMode::Insensitive;
+      break;
+    case project::ProjectSearchCaseMode::Insensitive:
+      project_search_options_.case_mode = project::ProjectSearchCaseMode::Smart;
+      break;
+  }
+  RefreshProjectSearch();
+}
+
+void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
+  project_search_options_.show_hidden = !project_search_options_.show_hidden;
+  RefreshProjectSearch();
+}
+
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   if (project_search_query_.empty()) {
     LogMessage("Project replace needs a search query");
     return;
   }
 
-  if (!QuerySupportsLiteralReplace(project_search_query_)) {
-    LogMessage("Project replace currently supports literal queries only");
+  if (!ProjectSearchCanReplaceAll()) {
+    LogMessage("Project replace currently supports literal search mode only");
     return;
   }
 
-  const bool case_sensitive = UsesCaseSensitiveLiteralMatch(project_search_query_);
+  const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
   struct PendingProjectReplace {
     std::filesystem::path relative_path;
     std::filesystem::path absolute_path;
@@ -315,7 +424,10 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   std::vector<PendingProjectReplace> pending;
   std::size_t replaced_total = 0;
 
-  for (const auto& relative_path : file_index_.files()) {
+  const std::vector<std::filesystem::path> files = project::CollectProjectFiles(
+      project_root_, project_search_options_.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+                                                         : project::ProjectFileScanMode::ExcludeHidden);
+  for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = project_root_ / relative_path;
     const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();
 

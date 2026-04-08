@@ -19,7 +19,6 @@ constexpr float kSidebarHeaderHeight = 30.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
-constexpr float kSearchSidebarResultsTop = 88.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 constexpr float kDirtyPromptWidth = 460.0f;
@@ -546,8 +545,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const float text_y =
             layout.sidebar.y + (surface == TextInputSurface::SidebarSearchQuery ? 38.0f : 54.0f);
         const std::string prefix =
-            surface == TextInputSurface::SidebarSearchQuery ? "rg> " + project_search_edit_buffer_
-                                                            : "replace> " + project_search_edit_buffer_;
+            surface == TextInputSurface::SidebarSearchQuery
+                ? "search> " + project_search_edit_buffer_
+                : "replace> " + project_search_edit_buffer_;
         const float cursor_x = text_x + text_renderer_.MeasureWidth(prefix);
         return TextInputVisual{
             .surface = surface,
@@ -980,7 +980,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                        ? theme_.text_primary
                        : theme_.text_secondary,
                    theme_.surface_background,
-                   TruncateLabel("rg> " + active_query, layout.sidebar.w - kSidebarInset * 2.0f));
+                   TruncateLabel("search> " + active_query,
+                                 layout.sidebar.w - kSidebarInset * 2.0f));
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 54.0f,
                    project_search_editing_ &&
                            project_search_edit_field_ == ProjectSearchEditField::Replace
@@ -989,6 +990,31 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    theme_.surface_background,
                    TruncateLabel("replace> " + active_replace,
                                  layout.sidebar.w - kSidebarInset * 2.0f));
+      const auto draw_search_button = [&](const SDL_FRect& rect,
+                                          std::string_view label,
+                                          bool active) {
+        const bool hovered =
+            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
+        const SDL_Color background =
+            active ? (hovered ? theme_.row_highlight : theme_.chrome_active)
+                   : (hovered ? theme_.row_highlight : theme_.surface_raised);
+        const SDL_Color border = active ? theme_.accent : (hovered ? theme_.text_secondary
+                                                                   : theme_.border);
+        const SDL_Color text = active || hovered ? theme_.text_primary : theme_.text_secondary;
+        DrawFilledRect(renderer, rect, background);
+        DrawRect(renderer, rect, border);
+        draw_centered_text_on(rect, 4.0f, text, background, label);
+      };
+
+      draw_search_button(ProjectSearchModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
+                         project_search_options_.pattern_mode ==
+                             project::ProjectSearchPatternMode::Regex);
+      draw_search_button(ProjectSearchCaseButtonRect(layout.sidebar), ProjectSearchCaseButtonLabel(),
+                         project_search_options_.case_mode !=
+                             project::ProjectSearchCaseMode::Smart);
+      draw_search_button(ProjectSearchHiddenButtonRect(layout.sidebar),
+                         ProjectSearchHiddenButtonLabel(), project_search_options_.show_hidden);
+
       const std::string status_text =
           project_search_editing_
               ? (project_search_edit_field_ == ProjectSearchEditField::Query
@@ -999,18 +1025,24 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           : project_search_running_
               ? "Searching " + std::to_string(project_search_results_.size()) + " matches"
           : project_search_results_.empty()
-              ? (project_search_query_.empty() ? "/ query  = replace"
-                                               : "No matches  |  / query  = replace  r rerun  R replace all")
+              ? (project_search_query_.empty()
+                     ? "/ query  = replace  |  buttons change mode, case, hidden"
+                     : ProjectSearchCanReplaceAll()
+                           ? "No matches  |  / query  = replace  r rerun  R replace all"
+                           : "No matches  |  / query  = replace  r rerun  R needs literal mode")
               : std::to_string(project_search_results_.size()) +
-                    " matches  |  / query  = replace  r rerun  R replace all";
-      draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 70.0f, theme_.text_muted,
+                    (ProjectSearchCanReplaceAll()
+                         ? " matches  |  / query  = replace  r rerun  R replace all"
+                         : " matches  |  / query  = replace  r rerun  R needs literal mode");
+      draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + kProjectSearchStatusTop,
+                   theme_.text_muted,
                    theme_.surface_background,
                    TruncateLabel(status_text, layout.sidebar.w - kSidebarInset * 2.0f));
 
-      const float list_y = layout.sidebar.y + kSearchSidebarResultsTop;
+      const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
       const auto line_map = BuildProjectSearchLineMap();
       const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - kSearchSidebarResultsTop) / kSidebarRowHeight));
+          std::max(1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
       const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
       const float row_width =
           std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -

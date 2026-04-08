@@ -391,7 +391,6 @@ class WorkspaceShell {
     Find,
     Focus,
     Goto,
-    Grep,
     GitRefresh,
     Help,
     Hsplit,
@@ -406,10 +405,10 @@ class WorkspaceShell {
     ProjectNext,
     ProjectOpen,
     ProjectPrev,
+    ProjectSearch,
     Quit,
     RenamePath,
     Reopen,
-    Rg,
     Save,
     Search,
     SidebarClose,
@@ -529,6 +528,7 @@ class WorkspaceShell {
     std::vector<editor::SelectionRange> buffer_search_matches;
     std::size_t buffer_search_selected_index = 0;
     std::string project_search_query;
+    project::ProjectSearchOptions project_search_options;
     std::string project_search_edit_buffer;
     bool project_search_editing = false;
     ProjectSearchEditField project_search_edit_field = ProjectSearchEditField::Query;
@@ -557,6 +557,13 @@ class WorkspaceShell {
     std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
   };
+
+  static constexpr float kProjectSearchQueryTop = 38.0f;
+  static constexpr float kProjectSearchReplaceTop = 54.0f;
+  static constexpr float kProjectSearchButtonTop = 72.0f;
+  static constexpr float kProjectSearchButtonHeight = 18.0f;
+  static constexpr float kProjectSearchStatusTop = 94.0f;
+  static constexpr float kProjectSearchResultsTop = 112.0f;
 
   static std::span<const ActionSpec> ActionSpecs();
   static const ActionSpec* FindActionSpec(ActionId id);
@@ -838,6 +845,19 @@ class WorkspaceShell {
   void BeginProjectSearchEdit(ProjectSearchEditField field);
   void CommitProjectSearchEdit();
   void CancelProjectSearchEdit();
+  SDL_FRect ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ProjectSearchReplaceRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ProjectSearchModeButtonRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ProjectSearchCaseButtonRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ProjectSearchHiddenButtonRect(const SDL_FRect& sidebar_rect) const;
+  std::string ProjectSearchModeButtonLabel() const;
+  std::string ProjectSearchCaseButtonLabel() const;
+  std::string ProjectSearchHiddenButtonLabel() const;
+  bool ProjectSearchCanReplaceAll() const;
+  bool ProjectSearchReplaceCaseSensitive() const;
+  void ToggleProjectSearchPatternMode();
+  void CycleProjectSearchCaseMode();
+  void ToggleProjectSearchHiddenFiles();
   void ReplaceAllProjectSearchMatches();
   std::vector<int> BuildProjectSearchLineMap() const;
   int ProjectSearchLineForResult(std::size_t index) const;
@@ -989,6 +1009,7 @@ class WorkspaceShell {
   std::vector<editor::SelectionRange> buffer_search_matches_;
   std::size_t buffer_search_selected_index_ = 0;
   std::string project_search_query_;
+  project::ProjectSearchOptions project_search_options_;
   std::string project_search_edit_buffer_;
   bool project_search_editing_ = false;
   ProjectSearchEditField project_search_edit_field_ = ProjectSearchEditField::Query;

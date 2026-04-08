@@ -17,7 +17,6 @@ constexpr float kSidebarHeaderHeight = 30.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
-constexpr float kSearchSidebarResultsTop = 88.0f;
 constexpr float kDirtyPromptWidth = 460.0f;
 constexpr float kDirtyPromptHeight = 176.0f;
 constexpr float kDirtyPromptButtonWidth = 96.0f;
@@ -318,10 +317,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (event.button.button == SDL_BUTTON_LEFT && sidebar_visible_) {
     if (sidebar_mode_ == SidebarMode::Search) {
-      const float list_y = layout.sidebar.y + kSearchSidebarResultsTop;
+      const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
       const auto line_map = BuildProjectSearchLineMap();
       const int visible_rows = std::max(
-          1, static_cast<int>((layout.sidebar.h - kSearchSidebarResultsTop) / kSidebarRowHeight));
+          1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
       const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
       const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
       const auto scrollbar = MakeVerticalScrollbarGeometry(
@@ -486,12 +485,33 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (event.button.button != SDL_BUTTON_LEFT) {
         return true;
       }
-      if (event.button.y < layout.sidebar.y + 48.0f) {
+      if (Contains(ProjectSearchQueryRect(layout.sidebar), event.button.x, event.button.y)) {
         BeginProjectSearchEdit(ProjectSearchEditField::Query);
         return true;
       }
-      if (event.button.y < layout.sidebar.y + 66.0f) {
+      if (Contains(ProjectSearchReplaceRect(layout.sidebar), event.button.x, event.button.y)) {
         BeginProjectSearchEdit(ProjectSearchEditField::Replace);
+        return true;
+      }
+      if (Contains(ProjectSearchModeButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+        if (project_search_editing_) {
+          CommitProjectSearchEdit();
+        }
+        ToggleProjectSearchPatternMode();
+        return true;
+      }
+      if (Contains(ProjectSearchCaseButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+        if (project_search_editing_) {
+          CommitProjectSearchEdit();
+        }
+        CycleProjectSearchCaseMode();
+        return true;
+      }
+      if (Contains(ProjectSearchHiddenButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+        if (project_search_editing_) {
+          CommitProjectSearchEdit();
+        }
+        ToggleProjectSearchHiddenFiles();
         return true;
       }
       if (local_y < 0.0f) {
@@ -500,11 +520,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
       const auto line_map = BuildProjectSearchLineMap();
       const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - kSearchSidebarResultsTop) / row_height));
+          std::max(1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / row_height));
       const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
       const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
       const int clicked_row =
-          static_cast<int>((local_y - (kSearchSidebarResultsTop - header_height)) / row_height);
+          static_cast<int>((local_y - (kProjectSearchResultsTop - header_height)) / row_height);
       if (clicked_row >= 0) {
         const int line_index = scroll_row + clicked_row;
         if (line_index >= 0 && line_index < static_cast<int>(line_map.size()) &&
@@ -1227,10 +1247,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (drag_target_ == DragTarget::SidebarScrollbar && sidebar_visible_) {
       if (sidebar_mode_ == SidebarMode::Search) {
-        const float list_y = drag_layout.sidebar.y + kSearchSidebarResultsTop;
+        const float list_y = drag_layout.sidebar.y + kProjectSearchResultsTop;
         const auto line_map = BuildProjectSearchLineMap();
         const int visible_rows = std::max(
-            1, static_cast<int>((drag_layout.sidebar.h - kSearchSidebarResultsTop) / kSidebarRowHeight));
+            1, static_cast<int>((drag_layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
         const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
         const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
         const auto scrollbar = MakeVerticalScrollbarGeometry(
@@ -1605,7 +1625,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     if (sidebar_mode_ == SidebarMode::Search) {
       const auto line_map = BuildProjectSearchLineMap();
       visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - kSearchSidebarResultsTop) / 20.0f));
+          std::max(1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / 20.0f));
       max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
     } else if (sidebar_mode_ == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();

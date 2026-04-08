@@ -1,22 +1,20 @@
+#define PCRE2_CODE_UNIT_WIDTH 8
+
 #include "project/ProjectSearchService.h"
 
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#include <pcre2.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cerrno>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <fstream>
+#include <memory>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
-#include "project/FileIndex.h"
+#include "project/ProjectFileScanner.h"
 
 namespace microide::project {
 
@@ -25,12 +23,24 @@ namespace {
 constexpr std::size_t kBatchSize = 32;
 constexpr std::size_t kMaxResults = 200;
 
-bool IsDigits(std::string_view text) {
-  return !text.empty() &&
-         std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c); });
+bool QueryHasUppercase(std::string_view query) {
+  return std::any_of(query.begin(), query.end(),
+                     [](unsigned char c) { return std::isupper(c); });
 }
 
-std::string ToLower(std::string_view text) {
+bool UsesCaseSensitiveSearch(std::string_view query, ProjectSearchCaseMode case_mode) {
+  switch (case_mode) {
+    case ProjectSearchCaseMode::Sensitive:
+      return true;
+    case ProjectSearchCaseMode::Insensitive:
+      return false;
+    case ProjectSearchCaseMode::Smart:
+    default:
+      return QueryHasUppercase(query);
+  }
+}
+
+std::string ToLowerAscii(std::string_view text) {
   std::string lowered(text);
   std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
@@ -38,39 +48,164 @@ std::string ToLower(std::string_view text) {
   return lowered;
 }
 
-bool ParseVimgrepLine(std::string_view line, ProjectSearchResult& out_result) {
-  std::size_t first = line.find(':');
-  while (first != std::string_view::npos) {
-    const std::size_t second = line.find(':', first + 1);
-    if (second == std::string_view::npos) {
-      return false;
+std::string BuildRegexErrorMessage(int error_code, PCRE2_SIZE error_offset) {
+  std::array<PCRE2_UCHAR, 256> buffer{};
+  const int length = pcre2_get_error_message(error_code, buffer.data(), buffer.size());
+  const std::string message =
+      length > 0 ? std::string(reinterpret_cast<const char*>(buffer.data()),
+                               static_cast<std::size_t>(length))
+                 : "invalid regular expression";
+  return "Invalid project search pattern at offset " + std::to_string(error_offset) + ": " +
+         message;
+}
+
+class CompiledSearchPattern {
+ public:
+  CompiledSearchPattern(std::string_view query, ProjectSearchCaseMode case_mode) {
+    if (query.empty()) {
+      error_ = "Project search query is empty";
+      return;
     }
-    const std::size_t third = line.find(':', second + 1);
-    if (third == std::string_view::npos) {
+
+    const uint32_t options = UsesCaseSensitiveSearch(query, case_mode) ? 0u : PCRE2_CASELESS;
+    int error_code = 0;
+    PCRE2_SIZE error_offset = 0;
+    code_ = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(query.data()), query.size(), options,
+                          &error_code, &error_offset, nullptr);
+    if (code_ == nullptr) {
+      error_ = BuildRegexErrorMessage(error_code, error_offset);
+    }
+  }
+
+  ~CompiledSearchPattern() {
+    if (code_ != nullptr) {
+      pcre2_code_free(code_);
+      code_ = nullptr;
+    }
+  }
+
+  CompiledSearchPattern(const CompiledSearchPattern&) = delete;
+  CompiledSearchPattern& operator=(const CompiledSearchPattern&) = delete;
+
+  CompiledSearchPattern(CompiledSearchPattern&& other) noexcept
+      : code_(std::exchange(other.code_, nullptr)), error_(std::move(other.error_)) {}
+
+  CompiledSearchPattern& operator=(CompiledSearchPattern&& other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+    if (code_ != nullptr) {
+      pcre2_code_free(code_);
+    }
+    code_ = std::exchange(other.code_, nullptr);
+    error_ = std::move(other.error_);
+    return *this;
+  }
+
+  bool valid() const { return code_ != nullptr; }
+  const std::string& error() const { return error_; }
+
+  pcre2_match_data* CreateMatchData() const {
+    return valid() ? pcre2_match_data_create_from_pattern(code_, nullptr) : nullptr;
+  }
+
+  bool FindNext(std::string_view line,
+                std::size_t* search_from,
+                pcre2_match_data* match_data,
+                std::size_t* match_start,
+                std::size_t* match_end) const {
+    if (!valid() || search_from == nullptr || match_data == nullptr || match_start == nullptr ||
+        match_end == nullptr) {
       return false;
     }
 
-    const std::string_view line_text = line.substr(first + 1, second - first - 1);
-    const std::string_view column_text = line.substr(second + 1, third - second - 1);
-    if (IsDigits(line_text) && IsDigits(column_text)) {
-      const std::size_t line_number = static_cast<std::size_t>(std::strtoull(
-          std::string(line_text).c_str(), nullptr, 10));
-      const std::size_t column_number = static_cast<std::size_t>(std::strtoull(
-          std::string(column_text).c_str(), nullptr, 10));
-      out_result = ProjectSearchResult{
-          .relative_path = std::filesystem::path(std::string(line.substr(0, first))).lexically_normal(),
-          .line = line_number == 0 ? 0 : line_number - 1,
-          .column = column_number == 0 ? 0 : column_number - 1,
-          .preview = std::string(line.substr(third + 1)),
-      };
+    while (*search_from <= line.size()) {
+      const int rc =
+          pcre2_match(code_, reinterpret_cast<PCRE2_SPTR>(line.data()), line.size(), *search_from,
+                      0, match_data, nullptr);
+      if (rc == PCRE2_ERROR_NOMATCH) {
+        return false;
+      }
+      if (rc < 0) {
+        return false;
+      }
+
+      PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(match_data);
+      const std::size_t start = static_cast<std::size_t>(ovector[0]);
+      const std::size_t end = static_cast<std::size_t>(ovector[1]);
+      if (start > line.size() || end > line.size()) {
+        return false;
+      }
+      if (start == end) {
+        *search_from = end < line.size() ? end + 1 : line.size() + 1;
+        continue;
+      }
+
+      *match_start = start;
+      *match_end = end;
+      *search_from = end;
       return true;
     }
 
-    first = line.find(':', first + 1);
+    return false;
   }
 
-  return false;
-}
+ private:
+  pcre2_code* code_ = nullptr;
+  std::string error_;
+};
+
+class PreparedLiteralQuery {
+ public:
+  PreparedLiteralQuery(std::string_view query, ProjectSearchCaseMode case_mode)
+      : query_(query),
+        case_sensitive_(UsesCaseSensitiveSearch(query, case_mode)),
+        lowered_query_(case_sensitive_ ? std::string{} : ToLowerAscii(query)) {
+    if (query_.empty()) {
+      error_ = "Project search query is empty";
+    }
+  }
+
+  bool valid() const { return error_.empty(); }
+  const std::string& error() const { return error_; }
+
+  bool FindNext(std::string_view line,
+                std::size_t* search_from,
+                std::size_t* match_start,
+                std::size_t* match_end) const {
+    if (!valid() || search_from == nullptr || match_start == nullptr || match_end == nullptr ||
+        *search_from > line.size()) {
+      return false;
+    }
+
+    if (case_sensitive_) {
+      const std::size_t position = line.find(query_, *search_from);
+      if (position == std::string_view::npos) {
+        return false;
+      }
+      *match_start = position;
+      *match_end = position + query_.size();
+      *search_from = position + query_.size();
+      return true;
+    }
+
+    const std::string lowered_line = ToLowerAscii(line);
+    const std::size_t position = lowered_line.find(lowered_query_, *search_from);
+    if (position == std::string_view::npos) {
+      return false;
+    }
+    *match_start = position;
+    *match_end = position + query_.size();
+    *search_from = position + query_.size();
+    return true;
+  }
+
+ private:
+  std::string query_;
+  bool case_sensitive_ = false;
+  std::string lowered_query_;
+  std::string error_;
+};
 
 }  // namespace
 
@@ -85,36 +220,26 @@ void ProjectSearchService::SetWakeEventType(Uint32 event_type) {
 
 std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
                                           std::string query,
-                                          bool show_hidden) {
+                                          ProjectSearchOptions options) {
   Stop();
 
   std::lock_guard lock(mutex_);
   pending_update_ = {};
   const std::uint64_t run_id = ++next_run_id_;
   stop_requested_.store(false);
-  worker_ = std::thread(&ProjectSearchService::WorkerMain, this, root, std::move(query), show_hidden,
-                        run_id);
+  worker_ = std::thread(&ProjectSearchService::WorkerMain, this, root, std::move(query),
+                        options, run_id);
   return run_id;
 }
 
 void ProjectSearchService::Stop() {
   stop_requested_.store(true);
 
-  int pid = -1;
-  {
-    std::lock_guard lock(mutex_);
-    pid = active_pid_;
-  }
-  if (pid > 0) {
-    kill(pid, SIGKILL);
-  }
-
   if (worker_.joinable()) {
     worker_.join();
   }
 
   std::lock_guard lock(mutex_);
-  active_pid_ = -1;
   pending_update_ = {};
 }
 
@@ -127,195 +252,104 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
 
 void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::string query,
-                                      bool show_hidden,
+                                      ProjectSearchOptions options,
                                       std::uint64_t run_id) {
   if (query.empty()) {
     PublishFinished(run_id);
     return;
   }
 
-  std::string error;
-  switch (RunRipgrep(root, query, show_hidden, run_id, error)) {
-    case RipgrepOutcome::Completed:
-      PublishFinished(run_id, std::move(error));
-      return;
-    case RipgrepOutcome::Unavailable:
-      error = RunFallbackSearch(root, query, run_id);
-      if (!StopRequested()) {
-        PublishFinished(run_id, std::move(error));
-      }
-      return;
-    case RipgrepOutcome::Failed:
-      PublishFinished(run_id, std::move(error));
-      return;
+  const std::string error = RunSearch(root, query, options, run_id);
+  if (!StopRequested()) {
+    PublishFinished(run_id, error);
   }
 }
 
-ProjectSearchService::RipgrepOutcome ProjectSearchService::RunRipgrep(const std::filesystem::path& root,
-                                                                      const std::string& query,
-                                                                      bool show_hidden,
-                                                                      std::uint64_t run_id,
-                                                                      std::string& error) {
-  int pipe_fds[2] = {-1, -1};
-  if (pipe(pipe_fds) != 0) {
-    error = std::strerror(errno);
-    return RipgrepOutcome::Unavailable;
-  }
-
-  const pid_t pid = fork();
-  if (pid < 0) {
-    close(pipe_fds[0]);
-    close(pipe_fds[1]);
-    error = std::strerror(errno);
-    return RipgrepOutcome::Failed;
-  }
-
-  if (pid == 0) {
-    if (chdir(root.c_str()) != 0) {
-      _exit(126);
-    }
-
-    dup2(pipe_fds[1], STDOUT_FILENO);
-    dup2(pipe_fds[1], STDERR_FILENO);
-    close(pipe_fds[0]);
-    close(pipe_fds[1]);
-
-    std::vector<std::string> args = {"rg", "--vimgrep", "--smart-case", "--color", "never"};
-    if (show_hidden) {
-      args.push_back("--hidden");
-    }
-    args.push_back(query);
-    args.push_back(".");
-
-    std::vector<char*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto& arg : args) {
-      argv.push_back(arg.data());
-    }
-    argv.push_back(nullptr);
-
-    execvp("rg", argv.data());
-    _exit(127);
-  }
-
-  close(pipe_fds[1]);
-  SetActivePid(static_cast<int>(pid));
-
-  FILE* stream = fdopen(pipe_fds[0], "r");
-  if (stream == nullptr) {
-    close(pipe_fds[0]);
-    kill(pid, SIGKILL);
-    waitpid(pid, nullptr, 0);
-    SetActivePid(-1);
-    error = std::strerror(errno);
-    return RipgrepOutcome::Failed;
-  }
-
-  std::vector<ProjectSearchResult> batch;
-  char* line = nullptr;
-  std::size_t capacity = 0;
-  while (!StopRequested()) {
-    const ssize_t read = getline(&line, &capacity, stream);
-    if (read < 0) {
-      break;
-    }
-
-    std::string_view text(line, static_cast<std::size_t>(read));
-    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
-      text.remove_suffix(1);
-    }
-    if (text.empty()) {
-      continue;
-    }
-
-    ProjectSearchResult result;
-    if (ParseVimgrepLine(text, result)) {
-      batch.push_back(std::move(result));
-      if (batch.size() >= kBatchSize) {
-        PublishResults(run_id, std::move(batch));
-        batch = {};
-        if (StopRequested()) {
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (error.empty()) {
-      error = std::string(text);
-    }
-  }
-
-  if (line != nullptr) {
-    free(line);
-  }
-  fclose(stream);
-
-  int status = 0;
-  waitpid(pid, &status, 0);
-  SetActivePid(-1);
-
-  if (!batch.empty() && !StopRequested()) {
-    PublishResults(run_id, std::move(batch));
-  }
-
-  if (StopRequested()) {
-    return RipgrepOutcome::Failed;
-  }
-
-  if (WIFEXITED(status)) {
-    const int code = WEXITSTATUS(status);
-    if (code == 0 || code == 1) {
-      return RipgrepOutcome::Completed;
-    }
-    if (code == 127) {
-      error.clear();
-      return RipgrepOutcome::Unavailable;
-    }
-    if (error.empty()) {
-      error = "rg exited with status " + std::to_string(code);
-    }
-    return RipgrepOutcome::Failed;
-  }
-
-  if (error.empty()) {
-    error = "rg terminated unexpectedly";
-  }
-  return RipgrepOutcome::Failed;
-}
-
-std::string ProjectSearchService::RunFallbackSearch(const std::filesystem::path& root,
-                                                    const std::string& query,
-                                                    std::uint64_t run_id) {
-  FileIndex index;
-  if (!index.SetRoot(root)) {
+std::string ProjectSearchService::RunSearch(const std::filesystem::path& root,
+                                            const std::string& query,
+                                            const ProjectSearchOptions& options,
+                                            std::uint64_t run_id) {
+  std::error_code error;
+  const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
+  if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||
+      !std::filesystem::is_directory(absolute_root, error)) {
     return "Failed to index project files";
   }
 
-  const std::string lowered_query = ToLower(query);
+  std::unique_ptr<CompiledSearchPattern> regex_pattern;
+  std::unique_ptr<PreparedLiteralQuery> literal_query;
+  std::unique_ptr<pcre2_match_data, void (*)(pcre2_match_data*)> match_data_guard(
+      nullptr, [](pcre2_match_data* data) {
+        if (data != nullptr) {
+          pcre2_match_data_free(data);
+        }
+      });
+
+  if (options.pattern_mode == ProjectSearchPatternMode::Regex) {
+    regex_pattern = std::make_unique<CompiledSearchPattern>(query, options.case_mode);
+    if (!regex_pattern->valid()) {
+      return regex_pattern->error();
+    }
+
+    pcre2_match_data* match_data = regex_pattern->CreateMatchData();
+    if (match_data == nullptr) {
+      return "Failed to initialize project search matcher";
+    }
+    match_data_guard.reset(match_data);
+  } else {
+    literal_query = std::make_unique<PreparedLiteralQuery>(query, options.case_mode);
+    if (!literal_query->valid()) {
+      return literal_query->error();
+    }
+  }
+
+  const std::vector<std::filesystem::path> files = CollectProjectFiles(
+      absolute_root, options.show_hidden ? ProjectFileScanMode::IncludeHidden
+                                         : ProjectFileScanMode::ExcludeHidden);
   std::vector<ProjectSearchResult> batch;
   std::size_t total_results = 0;
+  std::array<char, 4096> probe{};
 
-  for (const auto& relative_path : index.files()) {
+  for (const auto& relative_path : files) {
     if (StopRequested()) {
       return {};
     }
 
-    std::ifstream file(root / relative_path);
+    std::ifstream file(absolute_root / relative_path, std::ios::binary);
     if (!file) {
       continue;
     }
 
+    file.read(probe.data(), static_cast<std::streamsize>(probe.size()));
+    const std::streamsize probe_size = file.gcount();
+    if (std::find(probe.begin(), probe.begin() + probe_size, '\0') != probe.begin() + probe_size) {
+      continue;
+    }
+    file.clear();
+    file.seekg(0, std::ios::beg);
+
     std::string line;
     std::size_t line_index = 0;
-    while (std::getline(file, line) && !StopRequested()) {
-      const std::string lowered_line = ToLower(line);
-      std::size_t offset = lowered_line.find(lowered_query);
-      while (offset != std::string::npos) {
+    while (!StopRequested() && std::getline(file, line)) {
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      if (line.find('\0') != std::string::npos) {
+        break;
+      }
+
+      std::size_t search_from = 0;
+      std::size_t match_start = 0;
+      std::size_t match_end = 0;
+      while ((regex_pattern != nullptr &&
+              regex_pattern->FindNext(line, &search_from, match_data_guard.get(), &match_start,
+                                      &match_end)) ||
+             (literal_query != nullptr &&
+              literal_query->FindNext(line, &search_from, &match_start, &match_end))) {
         batch.push_back(ProjectSearchResult{
             .relative_path = relative_path,
             .line = line_index,
-            .column = offset,
+            .column = match_start,
             .preview = line,
         });
         ++total_results;
@@ -329,7 +363,6 @@ std::string ProjectSearchService::RunFallbackSearch(const std::filesystem::path&
           }
           return {};
         }
-        offset = lowered_line.find(lowered_query, offset + 1);
       }
       ++line_index;
     }
@@ -341,7 +374,8 @@ std::string ProjectSearchService::RunFallbackSearch(const std::filesystem::path&
   return {};
 }
 
-void ProjectSearchService::PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch) {
+void ProjectSearchService::PublishResults(std::uint64_t run_id,
+                                          std::vector<ProjectSearchResult> batch) {
   if (batch.empty() || StopRequested()) {
     return;
   }
@@ -393,11 +427,6 @@ void ProjectSearchService::PushWakeEvent() const {
 
 bool ProjectSearchService::StopRequested() const {
   return stop_requested_.load();
-}
-
-void ProjectSearchService::SetActivePid(int pid) {
-  std::lock_guard lock(mutex_);
-  active_pid_ = pid;
 }
 
 }  // namespace microide::project

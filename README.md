@@ -14,7 +14,7 @@ This scaffold provides:
 - filesystem-backed sidebar tree
 - startup uses the launch working directory as the project root
 - `.gitignore`-aware tree and file indexing
-- async project search with ripgrep-first execution and background fallback scanning
+- async built-in project search with literal-by-default matching, optional regex, explicit case mode, and hidden-file toggles
 - git-aware tree status markers
 - file-backed editor viewport with a pluggable text backend
 - nested shared-buffer editor split trees
@@ -78,7 +78,9 @@ Current controls:
 - `Enter` or `Right` in sidebar search: open the selected result
 - `Esc` in temporary sidebar search: restore the previous sidebar tool
 - `/` in sidebar search: edit the query
+- click `Lit` / `Rx`, the case-mode button, or `Hide-` / `Hide+` in sidebar search: switch pattern mode, case mode, or hidden-file inclusion
 - `r` in sidebar search: rerun the current query
+- `R` in sidebar search: replace all matches when search mode is literal
 - while editing the sidebar search query, `Enter` applies it and `Esc` cancels editing
 - while the compare commit picker is open, type to filter commits and use `Enter` to open a compare tab
 - in a compare tab, use `Up` / `Down`, `j` / `k`, `Home`, and `End` to move between compare rows
@@ -138,8 +140,7 @@ Current commands:
 - `files [root]`
 - `tree [root]`
 - `search <query>`
-- `grep <query>`
-- `rg <query>`
+- `project-search [query]`
 - `goto <line[:col]>`
 - `jump <line[:col]>`
 - `tab-size [n]`

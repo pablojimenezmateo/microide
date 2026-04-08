@@ -190,7 +190,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
       focus_ == FocusTarget::Editor && !active_compare_tab && !active_merge_tab) {
     if ((modifiers & SDL_KMOD_SHIFT) && event.key.key == SDLK_F) {
-      ExecuteAction(ActionId::Rg, {}, ActionSource::Shortcut);
+      ExecuteAction(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_H) {

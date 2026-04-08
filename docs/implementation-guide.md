@@ -42,7 +42,8 @@ The current SDL shell already includes:
 - nested shared-buffer splits inside editor tabs
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
 - a file finder overlay and an async project-search sidebar
-- literal replace-in-project for plain-text queries
+- literal-by-default project search with regex, case-mode, and hidden-file controls
+- literal replace-in-project tied to literal search mode
 - a git sidebar for working-tree changes, conflicts, and outgoing branch files
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files
 - a PTY-backed terminal panel with tabs, scrollback, selection, and common ANSI handling
@@ -100,7 +101,7 @@ should continue to move into narrower subsystems rather than accrete more logic 
 
 Two current implementation details matter for future work:
 
-- project search currently uses a ripgrep-first path with an internal fallback scanner
+- project search now uses a built-in PCRE2-backed engine
 - git integration currently shells out to the system `git`
 
 Those dependencies should stay behind `src/project/*` service boundaries so the UI does not care

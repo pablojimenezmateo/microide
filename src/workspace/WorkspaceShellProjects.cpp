@@ -100,6 +100,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   buffer_search_matches_.clear();
   buffer_search_selected_index_ = 0;
   project_search_query_.clear();
+  project_search_options_ = {};
   project_search_edit_buffer_.clear();
   project_search_editing_ = false;
   project_search_edit_field_ = ProjectSearchEditField::Query;
@@ -264,6 +265,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.buffer_search_matches = std::move(buffer_search_matches_);
   state.buffer_search_selected_index = buffer_search_selected_index_;
   state.project_search_query = std::move(project_search_query_);
+  state.project_search_options = project_search_options_;
   state.project_search_edit_buffer = std::move(project_search_edit_buffer_);
   state.project_search_editing = project_search_editing_;
   state.project_search_edit_field = project_search_edit_field_;
@@ -330,6 +332,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   buffer_search_matches_ = std::move(state.buffer_search_matches);
   buffer_search_selected_index_ = state.buffer_search_selected_index;
   project_search_query_ = std::move(state.project_search_query);
+  project_search_options_ = state.project_search_options;
   project_search_edit_buffer_ = std::move(state.project_search_edit_buffer);
   project_search_editing_ = state.project_search_editing;
   project_search_edit_field_ = state.project_search_edit_field;

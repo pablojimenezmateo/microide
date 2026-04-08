@@ -42,10 +42,10 @@ These are done and should not be treated as open migration work:
 
 ### Search
 
-- `[~]` async project search exists and already has a built-in fallback path, but full behavior still depends on `rg` semantics when `rg` is present
-- `[ ]` make shipped project-search behavior independent of `rg`
-- `[ ]` unify search semantics across backends: regex or literal rules, smart-case or case-sensitivity, hidden-file handling, and result parity
-- `[ ]` add dedicated project-search tests for fallback behavior, cancellation, ignore handling, and replace eligibility
+- `[x]` async project search now uses one built-in PCRE2-backed backend and no longer depends on `rg` being installed
+- `[x]` project search exposes literal or regex mode, explicit case mode, and hidden-file inclusion from the sidebar
+- `[~]` replace-in-project is intentionally limited to literal search mode; regex-aware replace is still out of scope
+- `[~]` project-search backend coverage now includes literal mode, regex mode, case controls, hidden files, invalid patterns, and binary skipping
 
 ### Tree And Project Workflows
 
@@ -86,7 +86,7 @@ These are done and should not be treated as open migration work:
 ### Testing
 
 - `[ ]` editor-core unit tests for text editing primitives and undo/redo
-- `[ ]` project-search tests beyond the current workspace-shared helper coverage
+- `[~]` project-search backend coverage exists, but cancellation and larger-project behavior still need more validation
 - `[ ]` multi-project restore and workspace-session tests
 - `[ ]` tree-mutation workflow tests
 - `[ ]` broader compare and merge workflow tests

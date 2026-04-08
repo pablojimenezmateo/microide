@@ -122,7 +122,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"PgUp / PgDn / Esc", "page move / close overlay"},
   }};
 
-  static constexpr std::array<CheatRow, 39> kToolShortcuts = {{
+  static constexpr std::array<CheatRow, 40> kToolShortcuts = {{
       {"Tree Up / Down", "move tree selection"},
       {"Tree Left / Right", "collapse / expand"},
       {"Tree Enter", "open file or toggle dir"},
@@ -137,6 +137,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"Search Enter / Right", "open selected result"},
       {"Search /", "edit query"},
       {"Search =", "edit replace text"},
+      {"Search buttons", "toggle Lit/Rx, case mode, and hidden files"},
       {"Search r", "rerun current query"},
       {"Search R", "replace all literal matches"},
       {"Search Esc", "close temporary search"},
@@ -164,7 +165,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"Dirty prompt Tab / Enter / Esc", "pick / confirm / cancel"},
   }};
 
-  static constexpr std::array<CheatRow, 39> kCommands = {{
+  static constexpr std::array<CheatRow, 38> kCommands = {{
       {"colorscheme [name]", ""},
       {"ui-scale [n|up|down|reset]", ""},
       {"help", ""},
@@ -192,8 +193,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"files [root]", ""},
       {"tree [root]", ""},
       {"search <query>", ""},
-      {"grep <query>", ""},
-      {"rg <query>", ""},
+      {"project-search [query]", ""},
       {"goto <line[:col]>", ""},
       {"tree-refresh", ""},
       {"sidebar-toggle [tool]", ""},

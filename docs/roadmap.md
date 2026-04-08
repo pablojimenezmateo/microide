@@ -23,36 +23,22 @@ This roadmap was rechecked against the current codebase on 2026-04-08 with empha
 
 ## Near-Term Priorities
 
-### 1. Make project search independent of `rg`
+### 1. Polish built-in project search
 
-This is the clearest remaining product-level gap.
+The first backend unification is done: project search no longer depends on `rg` being installed.
 
 Current state:
 
-- `ProjectSearchService` tries `rg --vimgrep` first
-- if `rg` is unavailable, it falls back to an internal file scan
-- the fallback is not behaviorally equivalent to the `rg` path
+- `ProjectSearchService` now uses one built-in PCRE2-backed engine
+- the sidebar now exposes literal or regex mode, explicit case mode, and hidden-file inclusion
+- literal mode avoids regex compilation for common text searches
+- file enumeration stays aligned with project ignore handling
 
-The important mismatches today are:
+Remaining work:
 
-- the fallback only performs case-insensitive literal substring search
-- the `rg` path supports regex syntax and smart-case semantics
-- the current UI path always runs with `show_hidden = false`
-- replace-in-project only works for literal queries, based on query heuristics
-
-Desired end state:
-
-- shipped search behavior does not rely on `rg` being installed
-- result ordering, matching rules, and cancellation behavior are consistent
-- `rg` can remain an optional accelerator, not the source of truth
-
-Concrete work:
-
-- define a backend-independent search options model
-- implement the default engine over `FileIndex` with batching and cancellation
-- decide whether regex support stays in scope for the built-in engine
-- keep ignore handling and path filtering aligned with the tree and file index
-- add parity tests for search results, cancellation, and replace eligibility
+- decide whether replace-in-project should stay literal-only or grow regex-aware replace behavior
+- broaden backend coverage with more tests for result ordering, cancellation, and larger projects
+- benchmark literal-mode search on bigger repositories before adding more search UI or search syntax
 
 ### 2. Finish terminal polish without turning it into a second product
 
@@ -120,7 +106,7 @@ Remaining work:
 
 The highest-value missing automated coverage is:
 
-- project search behavior, especially fallback behavior without `rg`
+- project search behavior under cancellation, large repositories, and UI-driven option changes
 - session restore and multi-project workflow coverage
 - tree mutation flows
 - compare and merge workflow coverage beyond the current model-level tests

@@ -40,7 +40,6 @@ constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kBottomPanelHeaderButtonSize = 18.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
-constexpr float kSearchSidebarResultsTop = 88.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 constexpr float kOverlayMinWidth = 520.0f;
@@ -241,7 +240,6 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
       ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
       ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Refresh Git", ""},
-      ActionSpec{ActionId::Grep, "grep", "grep <query>", "Show Project Search", ""},
       ActionSpec{ActionId::Help, "help", "help", "Help", ""},
       ActionSpec{ActionId::Hsplit, "hsplit", "hsplit [path]", "Split Down", ""},
       ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width",
@@ -257,10 +255,11 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::ProjectOpen, "project-open", "project-open <path>", "Open Project",
                  ""},
       ActionSpec{ActionId::ProjectPrev, "project-prev", "project-prev", "Previous Project", ""},
+      ActionSpec{ActionId::ProjectSearch, "project-search", "project-search [query]",
+                 "Find in Project", "Ctrl+Shift+F"},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
       ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},
-      ActionSpec{ActionId::Rg, "rg", "rg <query>", "Find in Project", "Ctrl+Shift+F"},
       ActionSpec{ActionId::Save, "save", "save", "Save", "Ctrl+S"},
       ActionSpec{ActionId::Search, "search", "search <query>", "Find in Buffer", "Ctrl+F"},
       ActionSpec{ActionId::SidebarClose, "sidebar-close", "sidebar-close", "Close Sidebar", ""},
@@ -389,11 +388,10 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Compare:
     case ActionId::Find:
     case ActionId::GitRefresh:
-    case ActionId::Grep:
     case ActionId::Merge:
     case ActionId::Open:
     case ActionId::ProjectClose:
-    case ActionId::Rg:
+    case ActionId::ProjectSearch:
     case ActionId::Tab:
     case ActionId::Term:
     case ActionId::Tree:
@@ -507,7 +505,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       item(ActionId::Search),
       item(ActionId::ReplaceInBuffer),
       item(ActionId::Files),
-      item(ActionId::Rg),
+      item(ActionId::ProjectSearch),
   });
   static const auto kProjectItems = std::to_array<MenuItemSpec>({
       item(ActionId::Compare, "Compare Current File..."),
@@ -1943,13 +1941,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       ShowTreeSidebar(root_arg);
       return true;
     }
-    case ActionId::Grep:
-      if (require_project()) {
-        return true;
-      }
-      ShowSearchSidebar(JoinCommandArguments(args, 0), false);
-      return true;
-    case ActionId::Rg:
+    case ActionId::ProjectSearch:
       if (require_project()) {
         return true;
       }
@@ -2631,18 +2623,24 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
     if (sidebar_mode_ == SidebarMode::Search) {
-      if (y < layout.sidebar.y + 66.0f) {
+      if (Contains(ProjectSearchQueryRect(layout.sidebar), x, y) ||
+          Contains(ProjectSearchReplaceRect(layout.sidebar), x, y)) {
         return CursorKind::Text;
+      }
+      if (Contains(ProjectSearchModeButtonRect(layout.sidebar), x, y) ||
+          Contains(ProjectSearchCaseButtonRect(layout.sidebar), x, y) ||
+          Contains(ProjectSearchHiddenButtonRect(layout.sidebar), x, y)) {
+        return CursorKind::Pointer;
       }
 
       const auto line_map = BuildProjectSearchLineMap();
       const int visible_rows = std::max(
-          1, static_cast<int>((layout.sidebar.h - kSearchSidebarResultsTop) / kSidebarRowHeight));
+          1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
       const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
       const float row_width =
           std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      const float list_y = layout.sidebar.y + kSearchSidebarResultsTop;
+      const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
       const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
       const int line_index = std::clamp(sidebar_scroll_row_, 0, max_scroll) + clicked_row;
       if (clicked_row >= 0 && line_index >= 0 && line_index < static_cast<int>(line_map.size()) &&

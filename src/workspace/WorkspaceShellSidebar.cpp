@@ -54,7 +54,9 @@ void WorkspaceShell::ShowTreeSidebar(const std::filesystem::path& root) {
 }
 
 void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
-  project_search_query_ = std::move(query);
+  if (!query.empty() || project_search_query_.empty()) {
+    project_search_query_ = std::move(query);
+  }
   project_search_edit_buffer_ = project_search_query_;
   project_search_editing_ = project_search_query_.empty();
   project_search_edit_field_ = ProjectSearchEditField::Query;
