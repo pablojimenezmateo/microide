@@ -1,4 +1,5 @@
 #include "compare/CompareModel.h"
+#include "project/FileOperationService.h"
 #include "project/GitCompareService.h"
 
 #include <cstdlib>
@@ -19,6 +20,7 @@ using microide::compare::CompareModel;
 using microide::compare::CompareRowKind;
 using microide::compare::CompareTextSpan;
 using microide::project::CollectGitFileHistory;
+using microide::project::FileOperationService;
 using microide::project::ReadGitFileAtCommit;
 
 std::filesystem::path TestRoot() {
@@ -350,6 +352,92 @@ class TemporaryDirectory {
   std::filesystem::path path_;
 };
 
+class ScopedEnvVar {
+ public:
+  ScopedEnvVar(std::string name, std::string value) : name_(std::move(name)) {
+    const char* previous = std::getenv(name_.c_str());
+    if (previous != nullptr) {
+      had_previous_ = true;
+      previous_value_ = previous;
+    }
+    Set(value);
+  }
+
+  ~ScopedEnvVar() {
+    if (had_previous_) {
+      Set(previous_value_);
+      return;
+    }
+#if defined(_WIN32)
+    _putenv_s(name_.c_str(), "");
+#else
+    unsetenv(name_.c_str());
+#endif
+  }
+
+ private:
+  void Set(const std::string& value) {
+#if defined(_WIN32)
+    _putenv_s(name_.c_str(), value.c_str());
+#else
+    setenv(name_.c_str(), value.c_str(), 1);
+#endif
+  }
+
+  std::string name_;
+  bool had_previous_ = false;
+  std::string previous_value_;
+};
+
+void TestFileOperationService() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+
+  const auto created_directory = FileOperationService::CreateDirectory(root / "nested" / "folder");
+  Expect(created_directory.ok, "create directory should succeed");
+  Expect(std::filesystem::is_directory(root / "nested" / "folder"),
+         "created directory should exist");
+
+  const auto created_file = FileOperationService::CreateFile(root / "nested" / "folder" / "draft.txt");
+  Expect(created_file.ok, "create file should succeed");
+  Expect(std::filesystem::is_regular_file(root / "nested" / "folder" / "draft.txt"),
+         "created file should exist");
+
+  const auto renamed_file = FileOperationService::RenamePath(root / "nested" / "folder" / "draft.txt",
+                                                             root / "nested" / "folder" / "final.txt");
+  Expect(renamed_file.ok, "rename file should succeed");
+  Expect(!std::filesystem::exists(root / "nested" / "folder" / "draft.txt"),
+         "source file should disappear after rename");
+  Expect(std::filesystem::is_regular_file(root / "nested" / "folder" / "final.txt"),
+         "destination file should exist after rename");
+
+  const auto renamed_directory =
+      FileOperationService::RenamePath(root / "nested" / "folder", root / "nested" / "renamed");
+  Expect(renamed_directory.ok, "rename directory should succeed");
+  Expect(!std::filesystem::exists(root / "nested" / "folder"),
+         "source directory should disappear after rename");
+  Expect(std::filesystem::is_directory(root / "nested" / "renamed"),
+         "destination directory should exist after rename");
+  Expect(std::filesystem::is_regular_file(root / "nested" / "renamed" / "final.txt"),
+         "renamed directory should keep its contents");
+
+#if defined(__linux__)
+  const auto trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+  const auto trash_target = root / "trash-me.txt";
+  WriteFile(trash_target, "trash me");
+  const auto trashed = FileOperationService::TrashPath(trash_target);
+  Expect(trashed.ok, "trash should succeed on linux");
+  Expect(!std::filesystem::exists(trash_target), "source file should disappear after trash");
+  Expect(std::filesystem::is_regular_file(trashed.resulting_path),
+         "trashed file should be moved into the trash");
+  const auto info_path =
+      trash_home / "Trash" / "info" / (trashed.resulting_path.filename().string() + ".trashinfo");
+  Expect(std::filesystem::is_regular_file(info_path), "trash metadata file should exist");
+#endif
+}
+
 void TestGitCompareFixture() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -417,6 +505,7 @@ int main() {
     TestCompareUtf8ChangedSpans();
     TestCompareContextAwareAlignment();
     TestGitCompareFixture();
+    TestFileOperationService();
   } catch (const std::exception& error) {
     std::cerr << "microide_tests failed: " << error.what() << '\n';
     return 1;

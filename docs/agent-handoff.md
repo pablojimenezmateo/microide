@@ -47,7 +47,8 @@ The current SDL rewrite already has:
 - project-local session restore for editor tabs plus sidebar/bottom-panel visibility and sizing
 - a first shared action registry now backs command dispatch, command completion/help metadata, and the core shortcut set that upcoming menus/context menus should reuse
 - a first custom menu bar now exists with click-driven File/Edit/View/Search/Project/Terminal/Help menus backed by the shared action model, including accelerator labels and context-aware enablement
-- first tree context menus now exist for files, directories, the project root, and empty tree background, covering open/compare/refresh/close-project/copy-path actions on the same popup plumbing as the menu bar
+- first tree context menus now exist for files, directories, the project root, and empty tree background, now covering create/rename/delete prompts plus the earlier open/compare/refresh/close-project/copy-path actions on the same popup plumbing as the menu bar
+- a first reusable prompt surface now exists for tree file mutations, backed by a small `FileOperationService` that creates files/directories, renames paths, and moves deletes to the OS trash on Linux/macOS
 
 ## Important Code Anchors
 
@@ -68,6 +69,7 @@ Partially complete areas:
 - terminal support now has per-tab fresh sessions, text selection/copy, common CSI cursor/erase/edit handling, cursor visibility, alternate-screen switching/save-restore behavior, and xterm-style app mouse reporting, but it is still not a full terminal emulator
 - UTF-8 text entry now works in the editor too, and IME composition/preedit handling exists for the editor plus built-in prompt surfaces, but the buffer model is still byte-backed and real-IME validation is still pending
 - project-local persistence now restores editor tabs, compare tabs, workspace chrome, editor preferences, and colorscheme selection, and app-level user config now persists UI scale, but it still does not cover terminal session restore or broader user settings
+- tree mutations now have first-pass create/rename/delete flows with compare-tab retarget/close handling, but dirty editor tabs still hard-block rename/delete instead of offering save/discard prompts
 - the app can now use a custom borderless title row with in-window minimize/maximize/close controls on the same row as the menus; if SDL hit-testing is unavailable, it falls back to the normal system-decorated window
 - text sharpness is much better on stable backgrounds, but highlighted editor fragments still use the older blended fallback
 - split navigation command parity is still narrower than the old editor even though the split tree is now in place
@@ -76,9 +78,9 @@ Partially complete areas:
 
 If the goal is the best user-visible progress per unit of work, take the tasks in roughly this order:
 
-1. Add tree file mutations with dirty-tab safeguards and compare-tab path updates
-2. Add a visible open-project affordance outside the command prompt, likely through the menu bar or the upcoming prompt surface
-3. Fill out the remaining menu parity gaps, especially the direct `Compare Against HEAD` / `Compare Against...` actions in the main Project menu
+1. Add a visible open-project affordance outside the command prompt, likely through the menu bar or the now-existing prompt surface
+2. Fill out the remaining menu parity gaps, especially the direct `Compare Against HEAD` / `Compare Against...` actions in the main Project menu
+3. Return to tree-mutation polish, especially save/discard prompts for dirty rename/delete flows and more precise split-tab consequences
 4. Return to terminal polish, large-file validation, and broader command parity after the shell architecture is stable
 
 ## Validation Checklist
@@ -111,9 +113,11 @@ Manual checks worth doing in the real window:
 - restart after multiple project tabs are open and confirm the project-tab order plus active-project selection are restored from the app-level workspace session
 - after menus/context menus land, confirm menu enablement changes with focus and active tab kind, and confirm tree rename/delete flows update or close affected tabs correctly
 - right-click tree files, directories, the project root, and empty tree background and confirm the context menu item set matches the current partial implementation for each target
+- use the new tree prompts to create a file, create a folder, rename a file, rename a folder, and delete both, then confirm the tree refreshes, the selection follows the new path, and affected compare tabs either retarget or close cleanly
+- try renaming or deleting a path with an open dirty editor tab under it and confirm the mutation is blocked instead of silently discarding edits
 - on a normal desktop backend, confirm the system title bar is gone, the menu row hosts minimize/maximize/close on the right, blank space in that row drags the window, and edge resize still works; on unsupported backends, confirm it falls back to the system title bar instead of leaving an unmovable borderless window
 - in the tree file context menu, confirm `Compare Against HEAD` opens directly while `Compare Against...` still opens the picker
-- after tree delete lands, confirm deleted files and directories go to the OS trash/recycle bin rather than being permanently removed
+- confirm deleted files and directories now go to the OS trash/recycle bin rather than being permanently removed
 
 ## Documentation Expectations
 

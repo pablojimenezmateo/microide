@@ -98,6 +98,11 @@ bool TextViewport::Save() {
   return true;
 }
 
+void TextViewport::SetPath(const std::filesystem::path& path) {
+  EnsureDocument();
+  document_->path = path;
+}
+
 void TextViewport::SetPlaceholderText(std::string text) {
   EnsureDocument();
   document_->path.clear();

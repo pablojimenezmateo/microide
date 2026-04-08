@@ -109,6 +109,7 @@ class WorkspaceShell {
     None,
     Editor,
     Command,
+    PromptInput,
     FileFinder,
     BufferSearch,
     BufferReplaceSearch,
@@ -267,6 +268,27 @@ class WorkspaceShell {
     int selected_action = 0;
   };
 
+  struct PromptSurfaceState {
+    enum class Kind {
+      None,
+      TextInput,
+      Confirm,
+    };
+
+    enum class Action {
+      CreateFile,
+      CreateDirectory,
+      RenamePath,
+      DeletePath,
+    };
+
+    Kind kind = Kind::None;
+    Action action = Action::CreateFile;
+    std::filesystem::path path;
+    std::string input;
+    int selected_button = 0;
+  };
+
   struct TerminalSelectionPosition {
     std::size_t row = 0;
     std::size_t column = 0;
@@ -300,6 +322,9 @@ class WorkspaceShell {
     CompareHead,
     CopyAbsolutePath,
     CopyRelativePath,
+    CreateDirectory,
+    CreateFile,
+    DeletePath,
     Files,
     Find,
     Focus,
@@ -319,6 +344,7 @@ class WorkspaceShell {
     ProjectOpen,
     ProjectPrev,
     Quit,
+    RenamePath,
     Reopen,
     Rg,
     Save,
@@ -545,6 +571,26 @@ class WorkspaceShell {
   std::array<std::string, 3> DirtyPromptActionLabels() const;
   std::string DirtyPromptTitle() const;
   std::string DirtyPromptMessage() const;
+  void OpenPromptSurface(PromptSurfaceState::Action action,
+                         PromptSurfaceState::Kind kind,
+                         const std::filesystem::path& path,
+                         std::string input = {});
+  void DismissPromptSurface(bool restore_focus);
+  void ConfirmPromptSurface();
+  std::string PromptSurfaceTitle() const;
+  std::string PromptSurfaceMessage() const;
+  std::array<std::string, 2> PromptSurfaceActionLabels() const;
+  std::filesystem::path TreeMutationBasePath(ActionSource source) const;
+  bool EditorTabReferencesPath(std::size_t tab_index, const std::filesystem::path& path) const;
+  bool EditorTabHasDirtyPath(std::size_t tab_index, const std::filesystem::path& path) const;
+  std::vector<std::size_t> AffectedEditorTabIndices(const std::filesystem::path& path) const;
+  std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;
+  bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
+                                 std::string* blocking_label = nullptr) const;
+  void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
+  void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
+                                 const std::filesystem::path& new_path);
+  void CloseOpenTabsForPath(const std::filesystem::path& path);
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
@@ -606,6 +652,7 @@ class WorkspaceShell {
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
+  void ScrollCompareRows(int delta);
   void MoveFileFinderSelection(int delta);
   void RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
@@ -800,6 +847,9 @@ class WorkspaceShell {
   bool dirty_prompt_visible_ = false;
   FocusTarget dirty_prompt_previous_focus_ = FocusTarget::Editor;
   DirtyPromptState dirty_prompt_state_;
+  bool prompt_surface_visible_ = false;
+  FocusTarget prompt_surface_previous_focus_ = FocusTarget::Editor;
+  PromptSurfaceState prompt_surface_state_;
   bool quit_requested_ = false;
   std::string command_input_;
   std::vector<std::string> command_history_;

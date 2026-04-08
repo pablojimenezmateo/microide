@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include "editor/SyntaxHighlighter.h"
+#include "project/FileOperationService.h"
 
 namespace microide::workspace {
 
@@ -43,6 +44,12 @@ constexpr float kDirtyPromptHeight = 176.0f;
 constexpr float kDirtyPromptButtonWidth = 96.0f;
 constexpr float kDirtyPromptButtonHeight = 28.0f;
 constexpr float kDirtyPromptButtonGap = 10.0f;
+constexpr float kPromptSurfaceWidth = 520.0f;
+constexpr float kPromptSurfaceHeight = 188.0f;
+constexpr float kPromptSurfaceInputHeight = 24.0f;
+constexpr float kPromptSurfaceButtonWidth = 108.0f;
+constexpr float kPromptSurfaceButtonHeight = 28.0f;
+constexpr float kPromptSurfaceButtonGap = 10.0f;
 constexpr float kScrollbarThickness = 10.0f;
 constexpr float kScrollbarInset = 2.0f;
 constexpr float kScrollbarMinThumbLength = 24.0f;
@@ -580,6 +587,72 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) 
       MakeRect(start_x + (kDirtyPromptButtonWidth + kDirtyPromptButtonGap) * 2.0f, y,
                kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
   };
+}
+
+SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
+  const float width = std::min(kPromptSurfaceWidth, full.w - 32.0f);
+  const float height = std::min(kPromptSurfaceHeight, full.h - 32.0f);
+  return MakeRect(full.x + std::floor((full.w - width) * 0.5f),
+                  full.y + std::floor((full.h - height) * 0.5f), width, height);
+}
+
+std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog) {
+  const float total_width =
+      kPromptSurfaceButtonWidth * 2.0f + kPromptSurfaceButtonGap;
+  const float start_x = dialog.x + dialog.w - total_width - 16.0f;
+  const float y = dialog.y + dialog.h - kPromptSurfaceButtonHeight - 16.0f;
+  return {
+      MakeRect(start_x, y, kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight),
+      MakeRect(start_x + kPromptSurfaceButtonWidth + kPromptSurfaceButtonGap, y,
+               kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight),
+  };
+}
+
+SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
+  return MakeRect(dialog.x + 16.0f, dialog.y + 98.0f, dialog.w - 32.0f, kPromptSurfaceInputHeight);
+}
+
+bool PathEqualsOrWithin(const std::filesystem::path& candidate,
+                        const std::filesystem::path& root) {
+  const std::filesystem::path normalized_candidate = candidate.lexically_normal();
+  const std::filesystem::path normalized_root = root.lexically_normal();
+  if (normalized_candidate.empty() || normalized_root.empty()) {
+    return false;
+  }
+  if (normalized_candidate == normalized_root) {
+    return true;
+  }
+
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(normalized_candidate, normalized_root, error);
+  if (error || relative.empty()) {
+    return false;
+  }
+  const std::string relative_text = relative.generic_string();
+  return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
+}
+
+std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
+                                        const std::filesystem::path& old_prefix,
+                                        const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
+  if (!PathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
+    return normalized_path;
+  }
+  if (normalized_path == normalized_old_prefix) {
+    return normalized_new_prefix;
+  }
+
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(normalized_path, normalized_old_prefix, error);
+  if (error || relative.empty()) {
+    return normalized_path;
+  }
+  return (normalized_new_prefix / relative).lexically_normal();
 }
 
 WorkspaceLayout ComputeLayout(float window_width,
@@ -1169,6 +1242,9 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},
       ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
       ActionSpec{ActionId::CopyRelativePath, "", "", "Copy Relative Path", ""},
+      ActionSpec{ActionId::CreateDirectory, "", "", "New Folder...", ""},
+      ActionSpec{ActionId::CreateFile, "", "", "New File...", ""},
+      ActionSpec{ActionId::DeletePath, "", "", "Delete...", ""},
       ActionSpec{ActionId::Files, "files", "files [root]", "Find File", "F6"},
       ActionSpec{ActionId::Find, "find", "find <query>", "Find File By Query", ""},
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
@@ -1190,6 +1266,7 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
                  ""},
       ActionSpec{ActionId::ProjectPrev, "project-prev", "project-prev", "Previous Project", ""},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
+      ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},
       ActionSpec{ActionId::Rg, "rg", "rg <query>", "Find in Project", "Ctrl+Shift+F"},
       ActionSpec{ActionId::Save, "save", "save", "Save", "Ctrl+S"},
@@ -1298,6 +1375,25 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return !project_root_.empty() &&
              (tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind()) ==
                  TreeContextTargetKind::File;
+    case ActionId::CreateDirectory:
+    case ActionId::CreateFile: {
+      if (project_root_.empty()) {
+        return false;
+      }
+      const TreeContextTargetKind target =
+          tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind();
+      return target == TreeContextTargetKind::Directory || target == TreeContextTargetKind::Root ||
+             target == TreeContextTargetKind::Background;
+    }
+    case ActionId::DeletePath:
+    case ActionId::RenamePath: {
+      if (project_root_.empty()) {
+        return false;
+      }
+      const TreeContextTargetKind target =
+          tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind();
+      return target == TreeContextTargetKind::File || target == TreeContextTargetKind::Directory;
+    }
     case ActionId::Compare:
     case ActionId::Find:
     case ActionId::Grep:
@@ -1461,22 +1557,37 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuIte
       item(ActionId::CompareHead),
       item(ActionId::Compare),
       separator(),
+      item(ActionId::RenamePath),
+      item(ActionId::DeletePath),
+      separator(),
       item(ActionId::CopyRelativePath),
       item(ActionId::CopyAbsolutePath),
   });
   static const auto kDirectoryItems = std::to_array<MenuItemSpec>({
+      item(ActionId::CreateFile),
+      item(ActionId::CreateDirectory),
+      separator(),
+      item(ActionId::RenamePath),
+      item(ActionId::DeletePath),
+      separator(),
       item(ActionId::TreeRefresh, "Refresh"),
       separator(),
       item(ActionId::CopyRelativePath),
       item(ActionId::CopyAbsolutePath),
   });
   static const auto kRootItems = std::to_array<MenuItemSpec>({
+      item(ActionId::CreateFile),
+      item(ActionId::CreateDirectory),
+      separator(),
       item(ActionId::TreeRefresh, "Refresh"),
       item(ActionId::ProjectClose),
       separator(),
       item(ActionId::CopyAbsolutePath),
   });
   static const auto kBackgroundItems = std::to_array<MenuItemSpec>({
+      item(ActionId::CreateFile),
+      item(ActionId::CreateDirectory),
+      separator(),
       item(ActionId::TreeRefresh, "Refresh"),
   });
 
@@ -1574,7 +1685,8 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
     height += kMenuPopupItemHeight;
   }
 
-  width = std::clamp(width, 172.0f, 320.0f);
+  const float max_width = std::max(172.0f, bounds.w - 8.0f);
+  width = std::clamp(width, 172.0f, max_width);
   float x = std::clamp(anchor_rect.x, bounds.x + 4.0f,
                        bounds.x + std::max(4.0f, bounds.w - width - 4.0f));
   float y = anchor_rect.y + std::max(0.0f, anchor_rect.h) - 1.0f;
@@ -1888,8 +2000,9 @@ bool WorkspaceShell::ExecuteTreeContextMenuItem(std::size_t item_index) {
   for (std::size_t i = 0; i < item.arg_count; ++i) {
     args.emplace_back(item.args[i]);
   }
+  const bool handled = ExecuteAction(item.action, args, ActionSource::ContextMenu);
   CloseTreeContextMenu();
-  return ExecuteAction(item.action, args, ActionSource::ContextMenu);
+  return handled;
 }
 
 int WorkspaceShell::FirstEnabledTreeContextMenuItemIndex() const {
@@ -3500,6 +3613,54 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   if (CompositionConsumesKey(event.key.key, modifiers)) {
     return true;
   }
+  if (prompt_surface_visible_) {
+    if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
+      switch (event.key.key) {
+        case SDLK_ESCAPE:
+          {
+            const std::string title = PromptSurfaceTitle();
+            DismissPromptSurface(true);
+            LogMessage(title + " cancelled");
+          }
+          return true;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          prompt_surface_state_.selected_button = 0;
+          ConfirmPromptSurface();
+          return true;
+        case SDLK_BACKSPACE:
+          RemoveLastUtf8Codepoint(&prompt_surface_state_.input);
+          return true;
+        default:
+          return true;
+      }
+    }
+
+    switch (event.key.key) {
+      case SDLK_ESCAPE:
+        {
+          const std::string title = PromptSurfaceTitle();
+          DismissPromptSurface(true);
+          LogMessage(title + " cancelled");
+        }
+        return true;
+      case SDLK_LEFT:
+        prompt_surface_state_.selected_button =
+            std::max(0, prompt_surface_state_.selected_button - 1);
+        return true;
+      case SDLK_RIGHT:
+      case SDLK_TAB:
+        prompt_surface_state_.selected_button =
+            std::min(1, prompt_surface_state_.selected_button + 1);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        ConfirmPromptSurface();
+        return true;
+      default:
+        return true;
+    }
+  }
   const bool active_compare_tab = ActiveTabIsCompare();
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
       focus_ == FocusTarget::Editor && !active_compare_tab && event.key.key == SDLK_A) {
@@ -4493,6 +4654,393 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
   const std::size_t index = dirty_prompt_state_.tab_index;
   const std::string label = index < open_tabs_.size() ? open_tabs_[index].title : "this tab";
   return "Save changes to " + label + " before closing it?";
+}
+
+void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
+                                       PromptSurfaceState::Kind kind,
+                                       const std::filesystem::path& path,
+                                       std::string input) {
+  prompt_surface_visible_ = true;
+  prompt_surface_previous_focus_ = focus_;
+  prompt_surface_state_.kind = kind;
+  prompt_surface_state_.action = action;
+  prompt_surface_state_.path = path.lexically_normal();
+  prompt_surface_state_.input = std::move(input);
+  prompt_surface_state_.selected_button = 0;
+  focus_ = FocusTarget::Overlay;
+}
+
+void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
+  prompt_surface_visible_ = false;
+  prompt_surface_state_ = PromptSurfaceState{};
+  if (restore_focus) {
+    focus_ = prompt_surface_previous_focus_;
+  }
+}
+
+std::string WorkspaceShell::PromptSurfaceTitle() const {
+  switch (prompt_surface_state_.action) {
+    case PromptSurfaceState::Action::CreateFile:
+      return "New File";
+    case PromptSurfaceState::Action::CreateDirectory:
+      return "New Folder";
+    case PromptSurfaceState::Action::RenamePath:
+      return "Rename";
+    case PromptSurfaceState::Action::DeletePath:
+      return "Delete";
+  }
+  return "Prompt";
+}
+
+std::string WorkspaceShell::PromptSurfaceMessage() const {
+  const std::string label =
+      prompt_surface_state_.path == project_root_
+          ? ProjectLabel()
+          : RelativePathLabel(project_root_, prompt_surface_state_.path);
+  switch (prompt_surface_state_.action) {
+    case PromptSurfaceState::Action::CreateFile:
+      return "Create inside " + (label.empty() ? ProjectLabel() : label) + ".";
+    case PromptSurfaceState::Action::CreateDirectory:
+      return "Create inside " + (label.empty() ? ProjectLabel() : label) + ".";
+    case PromptSurfaceState::Action::RenamePath:
+      return "Enter a new path for " + label + ".";
+    case PromptSurfaceState::Action::DeletePath:
+      return "Move " + label + " to trash?";
+  }
+  return {};
+}
+
+std::array<std::string, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
+  switch (prompt_surface_state_.action) {
+    case PromptSurfaceState::Action::CreateFile:
+      return {"Create File", "Cancel"};
+    case PromptSurfaceState::Action::CreateDirectory:
+      return {"Create Folder", "Cancel"};
+    case PromptSurfaceState::Action::RenamePath:
+      return {"Rename", "Cancel"};
+    case PromptSurfaceState::Action::DeletePath:
+      return {"Delete", "Cancel"};
+  }
+  return {"OK", "Cancel"};
+}
+
+std::filesystem::path WorkspaceShell::TreeMutationBasePath(ActionSource source) const {
+  if (project_root_.empty()) {
+    return {};
+  }
+  if (source == ActionSource::ContextMenu && tree_context_menu_.open &&
+      tree_context_menu_.target == TreeContextTargetKind::Background) {
+    return project_root_;
+  }
+
+  std::filesystem::path path = ResolveTreeActionPath(source);
+  if (path.empty()) {
+    return project_root_;
+  }
+
+  std::error_code error;
+  if (std::filesystem::is_directory(path, error) && !error) {
+    return path.lexically_normal();
+  }
+  return path.parent_path().lexically_normal();
+}
+
+bool WorkspaceShell::EditorTabReferencesPath(std::size_t tab_index,
+                                             const std::filesystem::path& path) const {
+  if (tab_index >= open_tabs_.size()) {
+    return false;
+  }
+  const TabEntry& tab = open_tabs_[tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return false;
+  }
+
+  for (const auto& view : tab.editor_state->views) {
+    const editor::TextViewport& viewport =
+        tab_index == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id
+            ? text_viewport_
+            : view.viewport;
+    if (!viewport.path().empty() &&
+        PathEqualsOrWithin(viewport.path().lexically_normal(), path.lexically_normal())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool WorkspaceShell::EditorTabHasDirtyPath(std::size_t tab_index,
+                                           const std::filesystem::path& path) const {
+  if (tab_index >= open_tabs_.size()) {
+    return false;
+  }
+  const TabEntry& tab = open_tabs_[tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return false;
+  }
+
+  for (const auto& view : tab.editor_state->views) {
+    const editor::TextViewport& viewport =
+        tab_index == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id
+            ? text_viewport_
+            : view.viewport;
+    if (viewport.path().empty() || !viewport.dirty()) {
+      continue;
+    }
+    if (PathEqualsOrWithin(viewport.path().lexically_normal(), path.lexically_normal())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<std::size_t> WorkspaceShell::AffectedEditorTabIndices(
+    const std::filesystem::path& path) const {
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    if (EditorTabReferencesPath(i, path)) {
+      indices.push_back(i);
+    }
+  }
+  return indices;
+}
+
+std::vector<std::size_t> WorkspaceShell::AffectedCompareTabIndices(
+    const std::filesystem::path& path) const {
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    const TabEntry& tab = open_tabs_[i];
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
+      continue;
+    }
+    if (PathEqualsOrWithin(tab.compare->path.lexically_normal(), path.lexically_normal())) {
+      indices.push_back(i);
+    }
+  }
+  return indices;
+}
+
+bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
+                                               std::string* blocking_label) const {
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    if (!EditorTabHasDirtyPath(i, path)) {
+      continue;
+    }
+    if (blocking_label != nullptr) {
+      *blocking_label = open_tabs_[i].title;
+    }
+    return true;
+  }
+  return false;
+}
+
+void WorkspaceShell::RefreshProjectViewsAfterMutation(
+    const std::filesystem::path& preferred_tree_path) {
+  RefreshProjectFiles();
+  if (!preferred_tree_path.empty() && std::filesystem::exists(preferred_tree_path)) {
+    directory_tree_.SelectPath(preferred_tree_path);
+  } else if (!project_root_.empty()) {
+    directory_tree_.SelectPath(project_root_);
+  }
+  if (!project_search_query_.empty()) {
+    RefreshProjectSearch();
+  }
+}
+
+void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_path,
+                                               const std::filesystem::path& new_path) {
+  if (ActiveTabIsEditor()) {
+    SyncActiveEditorTab();
+  }
+
+  std::vector<std::size_t> compare_tabs_to_close;
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    TabEntry& tab = open_tabs_[i];
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      bool retargeted = false;
+      for (auto& view : tab.editor_state->views) {
+        if (view.viewport.path().empty() ||
+            !PathEqualsOrWithin(view.viewport.path().lexically_normal(), old_path)) {
+          continue;
+        }
+        const std::filesystem::path updated_path =
+            ReplacePathPrefix(view.viewport.path(), old_path, new_path);
+        view.viewport.SetPath(updated_path);
+        if (i == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id) {
+          text_viewport_.SetPath(updated_path);
+        }
+        retargeted = true;
+      }
+
+      if (retargeted) {
+        if (i == active_tab_index_) {
+          SyncActiveEditorTabMetadata();
+        } else if (auto* active_view =
+                       FindEditorView(*tab.editor_state, tab.editor_state->active_leaf_id);
+                   active_view != nullptr) {
+          tab.path = active_view->path().lexically_normal();
+          tab.title = EditorTabLabel(*active_view);
+        }
+      }
+      continue;
+    }
+
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+        !PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
+      continue;
+    }
+
+    const std::filesystem::path updated_path =
+        ReplacePathPrefix(tab.compare->path, old_path, new_path);
+    const project::GitCommitEntry commit{
+        .hash = tab.compare->commit_hash,
+        .short_hash = tab.compare->left_label,
+        .subject = tab.compare->left_label,
+    };
+    auto rebuilt = BuildCompareTabEntry(updated_path, commit, tab.compare->selected_row);
+    if (!rebuilt.has_value()) {
+      compare_tabs_to_close.push_back(i);
+      continue;
+    }
+    tab = std::move(*rebuilt);
+  }
+
+  std::sort(compare_tabs_to_close.rbegin(), compare_tabs_to_close.rend());
+  for (std::size_t index : compare_tabs_to_close) {
+    CloseTab(index);
+  }
+
+  if (!compare_picker_path_.empty() && PathEqualsOrWithin(compare_picker_path_, old_path)) {
+    compare_picker_path_ = ReplacePathPrefix(compare_picker_path_, old_path, new_path);
+    if (overlay_visible_ && overlay_mode_ == OverlayMode::CommitPicker) {
+      overlay_visible_ = false;
+      LogMessage("Compare picker closed after rename");
+    }
+  }
+}
+
+void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
+  if (ActiveTabIsEditor()) {
+    SyncActiveEditorTab();
+  }
+
+  std::vector<std::size_t> indices = AffectedEditorTabIndices(path);
+  const std::vector<std::size_t> compare_indices = AffectedCompareTabIndices(path);
+  indices.insert(indices.end(), compare_indices.begin(), compare_indices.end());
+  std::sort(indices.begin(), indices.end());
+  indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+  std::sort(indices.rbegin(), indices.rend());
+  for (std::size_t index : indices) {
+    CloseTab(index);
+  }
+
+  if (!compare_picker_path_.empty() && PathEqualsOrWithin(compare_picker_path_, path)) {
+    compare_picker_path_.clear();
+    compare_picker_query_.clear();
+    compare_picker_commits_.clear();
+    compare_picker_matches_.clear();
+    if (overlay_visible_ && overlay_mode_ == OverlayMode::CommitPicker) {
+      overlay_visible_ = false;
+      LogMessage("Compare picker closed after delete");
+    }
+  }
+}
+
+void WorkspaceShell::ConfirmPromptSurface() {
+  if (!prompt_surface_visible_) {
+    return;
+  }
+
+  const PromptSurfaceState state = prompt_surface_state_;
+  if (state.selected_button == 1) {
+    const std::string title = PromptSurfaceTitle();
+    DismissPromptSurface(true);
+    LogMessage(title + " cancelled");
+    return;
+  }
+
+  if (state.kind == PromptSurfaceState::Kind::TextInput) {
+    if (state.input.empty()) {
+      LogMessage("A path is required");
+      return;
+    }
+
+    std::filesystem::path typed_path(state.input);
+    if (typed_path.is_absolute()) {
+      LogMessage("Enter a project-relative path");
+      return;
+    }
+
+    std::filesystem::path destination;
+    if (state.action == PromptSurfaceState::Action::RenamePath) {
+      std::string blocking_label;
+      if (HasDirtyEditorTabsForPath(state.path, &blocking_label)) {
+        DismissPromptSurface(true);
+        LogMessage("Rename blocked by dirty tab: " + blocking_label);
+        return;
+      }
+      destination = (state.path.parent_path() / typed_path).lexically_normal();
+    } else {
+      destination = (state.path / typed_path).lexically_normal();
+    }
+
+    if (!PathEqualsOrWithin(destination, project_root_)) {
+      LogMessage("Path must stay inside the current project");
+      return;
+    }
+
+    project::FileOperationResult result;
+    if (state.action == PromptSurfaceState::Action::CreateFile) {
+      result = project::FileOperationService::CreateFile(destination);
+    } else if (state.action == PromptSurfaceState::Action::CreateDirectory) {
+      result = project::FileOperationService::CreateDirectory(destination);
+    } else {
+      result = project::FileOperationService::RenamePath(state.path, destination);
+    }
+
+    if (!result.ok) {
+      LogMessage(result.error_message);
+      return;
+    }
+
+    DismissPromptSurface(false);
+    if (state.action == PromptSurfaceState::Action::CreateFile) {
+      RefreshProjectViewsAfterMutation(result.resulting_path);
+      OpenFile(result.resulting_path);
+      LogMessage("Created file: " + RelativePathLabel(project_root_, result.resulting_path));
+      return;
+    }
+    if (state.action == PromptSurfaceState::Action::CreateDirectory) {
+      RefreshProjectViewsAfterMutation(result.resulting_path);
+      focus_ = FocusTarget::Sidebar;
+      LogMessage("Created folder: " + RelativePathLabel(project_root_, result.resulting_path));
+      return;
+    }
+
+    RetargetOpenTabsForRename(state.path, result.resulting_path);
+    RefreshProjectViewsAfterMutation(result.resulting_path);
+    LogMessage("Renamed: " + RelativePathLabel(project_root_, result.resulting_path));
+    return;
+  }
+
+  std::string blocking_label;
+  if (HasDirtyEditorTabsForPath(state.path, &blocking_label)) {
+    DismissPromptSurface(true);
+    LogMessage("Delete blocked by dirty tab: " + blocking_label);
+    return;
+  }
+
+  const project::FileOperationResult result = project::FileOperationService::TrashPath(state.path);
+  if (!result.ok) {
+    LogMessage(result.error_message);
+    return;
+  }
+
+  const std::filesystem::path parent = state.path.parent_path();
+  DismissPromptSurface(false);
+  CloseOpenTabsForPath(state.path);
+  RefreshProjectViewsAfterMutation(parent);
+  focus_ = FocusTarget::Sidebar;
+  LogMessage("Moved to trash: " + RelativePathLabel(project_root_, state.path));
 }
 
 bool WorkspaceShell::ActiveTabIsEditor() const {
@@ -5548,6 +6096,20 @@ void WorkspaceShell::JumpCompareHunk(int delta) {
   RevealActiveCompareSelection();
 }
 
+void WorkspaceShell::ScrollCompareRows(int delta) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || delta == 0 || last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+  const int visible_rows = CompareVisibleRows(layout.editor_surface);
+  const int max_scroll = CompareMaxScrollRow(*compare_tab, visible_rows);
+  compare_tab->scroll_row = std::clamp(compare_tab->scroll_row + delta, 0, max_scroll);
+}
+
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if ((event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
        event.button.button != SDL_BUTTON_RIGHT) ||
@@ -5566,6 +6128,23 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         dirty_prompt_state_.selected_action = static_cast<int>(i);
         ConfirmDirtyPrompt();
+        return true;
+      }
+    }
+    return true;
+  }
+
+  if (prompt_surface_visible_) {
+    const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
+                                    static_cast<float>(last_window_height_));
+    const SDL_FRect dialog = ComputePromptSurfaceRect(full);
+    const auto buttons = ComputePromptSurfaceButtonRects(dialog);
+    for (std::size_t i = 0; i < buttons.size(); ++i) {
+      if (Contains(buttons[i], event.button.x, event.button.y)) {
+        prompt_surface_state_.selected_button = static_cast<int>(i);
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          ConfirmPromptSurface();
+        }
         return true;
       }
     }
@@ -6190,6 +6769,9 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (dirty_prompt_visible_) {
     return true;
   }
+  if (prompt_surface_visible_) {
+    return true;
+  }
 
   if (bottom_panel_visible_ && BottomPanelShowsTerminal()) {
     auto* terminal_tab = ActiveTerminalTab();
@@ -6235,6 +6817,9 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (dirty_prompt_visible_) {
+    return true;
+  }
+  if (prompt_surface_visible_) {
     return true;
   }
 
@@ -6685,6 +7270,9 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   if (dirty_prompt_visible_) {
     return true;
   }
+  if (prompt_surface_visible_) {
+    return true;
+  }
 
   if (menu_bar_open_ || tree_context_menu_.open) {
     return true;
@@ -6788,7 +7376,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   if (Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     if (ActiveTabIsCompare()) {
-      MoveCompareSelection(-ticks);
+      ScrollCompareRows(-ticks * 3);
       focus_ = FocusTarget::Editor;
       return true;
     }
@@ -7578,6 +8166,12 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::None;
   }
 
+  if (prompt_surface_visible_) {
+    return prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput
+               ? TextInputSurface::PromptInput
+               : TextInputSurface::None;
+  }
+
   if (menu_bar_open_ || tree_context_menu_.open) {
     return TextInputSurface::None;
   }
@@ -7698,6 +8292,11 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   SyncTextInputSurface(nullptr);
   text_composition_ = TextCompositionState{};
   const std::string_view input(event.text);
+  if (prompt_surface_visible_ &&
+      prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
+    prompt_surface_state_.input.append(input);
+    return true;
+  }
   if (command_mode_) {
     command_input_.append(input);
     command_history_index_.reset();
@@ -8573,6 +9172,47 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       RefreshProjectFiles();
       LogMessage("Project tree refreshed");
       return true;
+    case ActionId::CreateFile:
+    case ActionId::CreateDirectory: {
+      if (require_project()) {
+        return true;
+      }
+      const std::filesystem::path base_path = TreeMutationBasePath(source);
+      if (base_path.empty()) {
+        LogMessage("No tree directory is selected");
+        return true;
+      }
+      OpenPromptSurface(id == ActionId::CreateFile ? PromptSurfaceState::Action::CreateFile
+                                                   : PromptSurfaceState::Action::CreateDirectory,
+                        PromptSurfaceState::Kind::TextInput, base_path);
+      return true;
+    }
+    case ActionId::RenamePath: {
+      if (require_project()) {
+        return true;
+      }
+      const std::filesystem::path path = ResolveTreeActionPath(source);
+      if (path.empty()) {
+        LogMessage("No tree path is selected");
+        return true;
+      }
+      OpenPromptSurface(PromptSurfaceState::Action::RenamePath,
+                        PromptSurfaceState::Kind::TextInput, path, path.filename().string());
+      return true;
+    }
+    case ActionId::DeletePath: {
+      if (require_project()) {
+        return true;
+      }
+      const std::filesystem::path path = ResolveTreeActionPath(source);
+      if (path.empty()) {
+        LogMessage("No tree path is selected");
+        return true;
+      }
+      OpenPromptSurface(PromptSurfaceState::Action::DeletePath,
+                        PromptSurfaceState::Kind::Confirm, path);
+      return true;
+    }
     case ActionId::CopyRelativePath:
     case ActionId::CopyAbsolutePath: {
       if (require_project()) {
@@ -9334,6 +9974,22 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
             .cursor_x = cursor_x,
             .foreground = theme_.text_primary,
             .background = theme_.chrome_active,
+        };
+      }
+      case TextInputSurface::PromptInput: {
+        const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+        const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
+        const float text_x = input_rect.x + 6.0f;
+        const float text_y = input_rect.y + 4.0f;
+        const float cursor_x = text_x + text_renderer_.MeasureWidth(prompt_surface_state_.input);
+        return TextInputVisual{
+            .surface = surface,
+            .area = MakeRect(text_x, text_y, std::max(1.0f, input_rect.w - 12.0f), line_height),
+            .text_x = text_x,
+            .text_y = text_y,
+            .cursor_x = cursor_x,
+            .foreground = theme_.text_primary,
+            .background = theme_.surface_background,
         };
       }
       case TextInputSurface::FileFinder:
@@ -10268,7 +10924,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const std::string accelerator = MenuItemAccelerator(spec);
         const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
         const float label_width =
-            std::max(0.0f, item.rect.w - 42.0f - accelerator_width - 16.0f);
+            std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
         draw_text_on(item.rect.x + 24.0f, item.rect.y + 3.0f, text_color, background,
                      TruncateLabel(MenuItemLabel(spec), label_width));
         if (!accelerator.empty()) {
@@ -10310,7 +10966,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const std::string accelerator = MenuItemAccelerator(spec);
         const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
         const float label_width =
-            std::max(0.0f, item.rect.w - 42.0f - accelerator_width - 16.0f);
+            std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
         draw_text_on(item.rect.x + 24.0f, item.rect.y + 3.0f, text_color, background,
                      TruncateLabel(MenuItemLabel(spec), label_width));
         if (!accelerator.empty()) {
@@ -10357,6 +11013,45 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                theme_.chrome_background, TruncateLabel(left_status, left_max_width));
   draw_text_on(right_status_x, layout.status_bar.y + 5.0f, theme_.text_muted,
                theme_.chrome_background, right_status);
+
+  if (prompt_surface_visible_) {
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    DrawFilledRect(renderer, layout.full, SDL_Color{0x05, 0x07, 0x0b, 0xcc});
+
+    const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+    const SDL_FRect header = MakeRect(dialog.x, dialog.y, dialog.w, 32.0f);
+    const SDL_FRect message_rect = MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 36.0f);
+    DrawFilledRect(renderer, dialog, theme_.overlay_background);
+    DrawRect(renderer, dialog, theme_.border);
+    DrawFilledRect(renderer, header, theme_.chrome_background);
+    DrawFilledRect(renderer, MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
+                   theme_.border);
+    draw_text_on(header.x + 16.0f, header.y + 8.0f, theme_.text_primary, theme_.chrome_background,
+                 PromptSurfaceTitle());
+    draw_text_on(message_rect.x, message_rect.y, theme_.text_muted, theme_.overlay_background,
+                 TruncateLabel(PromptSurfaceMessage(), message_rect.w));
+
+    if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
+      const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
+      DrawFilledRect(renderer, input_rect, theme_.surface_background);
+      DrawRect(renderer, input_rect, theme_.border);
+      draw_text_on(input_rect.x + 6.0f, input_rect.y + 4.0f, theme_.text_primary,
+                   theme_.surface_background,
+                   TruncateLabel(prompt_surface_state_.input, input_rect.w - 12.0f));
+    }
+
+    const auto buttons = ComputePromptSurfaceButtonRects(dialog);
+    const auto labels = PromptSurfaceActionLabels();
+    for (std::size_t i = 0; i < buttons.size(); ++i) {
+      const bool selected = prompt_surface_state_.selected_button == static_cast<int>(i);
+      const SDL_Color background = selected ? theme_.chrome_active : theme_.surface_raised;
+      DrawFilledRect(renderer, buttons[i], background);
+      DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
+      const float text_width = text_renderer_.MeasureWidth(labels[i]);
+      draw_text_on(buttons[i].x + std::floor((buttons[i].w - text_width) * 0.5f),
+                   buttons[i].y + 6.0f, theme_.text_primary, background, labels[i]);
+    }
+  }
 
   render_text_composition(active_text_input_visual);
   update_text_input_area(active_text_input_visual);
@@ -10931,6 +11626,22 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (Contains(button, x, y)) {
         return CursorKind::Pointer;
       }
+    }
+    return CursorKind::Default;
+  }
+
+  if (prompt_surface_visible_) {
+    const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
+                                    static_cast<float>(last_window_height_));
+    const SDL_FRect dialog = ComputePromptSurfaceRect(full);
+    for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(dialog)) {
+      if (Contains(button, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput &&
+        Contains(ComputePromptSurfaceInputRect(dialog), x, y)) {
+      return CursorKind::Text;
     }
     return CursorKind::Default;
   }

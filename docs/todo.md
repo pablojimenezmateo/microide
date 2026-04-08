@@ -128,11 +128,11 @@ These migration pieces are already present and should not be tracked as missing:
 - `[x]` tree command parity with `tree ['root']`
 - `[x]` file-finder command parity with `files ['root']`
 - `[x]` tree-driven compare entry point (`d` on a file in the tree)
-- `[~]` tree context menus now exist for files, directories, the project root, and empty tree background, but they currently cover non-mutating actions only
+- `[~]` tree context menus now exist for files, directories, the project root, and empty tree background, including first-pass create/rename/delete actions plus the earlier non-mutating actions
 - `[~]` direct tree/menu compare action for `Compare Against HEAD` now exists through the file context menu; the main Project menu shortcut is still pending
 - `[~]` tree/menu compare action for `Compare Against...` now exists through the file context menu and reuses the existing picker flow; the main Project menu entry is still pending
-- `[ ]` rename/create/delete flows in the tree, with dirty-tab safeguards and compare-tab retarget/close rules if they remain part of the accepted product scope
-- `[ ]` delete flows that move files and directories to the OS trash/recycle bin instead of permanently removing them
+- `[~]` rename/create/delete flows now exist in the tree through a reusable prompt surface, with compare-tab retarget/close handling and conservative dirty-tab blocking; save/discard mutation prompts and finer split-tab handling are still pending
+- `[x]` delete flows now move files and directories to the OS trash/recycle bin on Linux/macOS instead of permanently removing them
 
 ### 4. Search Workflow Parity
 
@@ -211,7 +211,7 @@ The command bar now has shell-style quoted/escaped parsing, history recall, and 
 
 - `[~]` shared action registry now backs the command bar, the core keyboard shortcuts, and the first menu-bar dispatch path, and exposes action metadata plus enablement hooks for upcoming context menus
 - `[~]` custom top menu bar now exists with click-driven menus, context-aware enablement, and accelerator labels; broader menu coverage and keyboard polish are still pending
-- `[~]` reusable popup menu surfaces now back both the menu bar and the first tree context menus; prompt surfaces for rename/create flows and future open-project prompts are still pending
+- `[~]` reusable popup menu surfaces now back both the menu bar and the tree context menus, and a first reusable prompt surface now covers tree create/rename/delete confirmation flows; open-project prompting and broader prompt reuse are still pending
 
 ### 10. Persistence And Config
 
