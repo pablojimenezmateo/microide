@@ -74,7 +74,6 @@ struct WorkspaceLayout {
   SDL_FRect menu_bar{};
   SDL_FRect project_tab_strip{};
   SDL_FRect tab_strip{};
-  SDL_FRect status_bar{};
   SDL_FRect bottom_panel{};
   SDL_FRect content{};
   SDL_FRect sidebar{};

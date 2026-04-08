@@ -103,11 +103,6 @@ class WorkspaceShell {
     Background,
   };
 
-  enum class BottomPanelMode {
-    Logs,
-    Terminal,
-  };
-
   enum class TextInputSurface {
     None,
     Editor,
@@ -399,8 +394,6 @@ class WorkspaceShell {
     Open,
     OpenSelectedTreeItem,
     OpenSelectedTreeItemInNewTab,
-    PanelHide,
-    PanelShow,
     ProjectClose,
     ProjectNext,
     ProjectOpen,
@@ -439,7 +432,6 @@ class WorkspaceShell {
     Redo,
     ReplaceInBuffer,
     SelectAll,
-    ToggleBottomPanel,
     Undo,
   };
 
@@ -508,8 +500,6 @@ class WorkspaceShell {
     SidebarMode sidebar_mode = SidebarMode::Tree;
     SidebarMode sidebar_prev_mode = SidebarMode::None;
     bool sidebar_temporary = false;
-    bool bottom_panel_visible = false;
-    BottomPanelMode bottom_panel_mode = BottomPanelMode::Logs;
     bool overlay_visible = false;
     OverlayMode overlay_mode = OverlayMode::FileFinder;
     BufferSearchField buffer_search_field = BufferSearchField::Search;
@@ -518,9 +508,7 @@ class WorkspaceShell {
     float sidebar_width = 288.0f;
     float bottom_panel_height = 184.0f;
     int sidebar_scroll_row = 0;
-    int bottom_panel_scroll_row = 0;
     int overlay_scroll_row = 0;
-    bool bottom_panel_follow_tail = true;
     std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
     std::size_t active_terminal_tab_index = 0;
     std::string buffer_search_query;
@@ -552,7 +540,7 @@ class WorkspaceShell {
     std::optional<std::size_t> command_history_index;
     std::string command_history_pending_input;
     std::string command_completion_feedback;
-    std::vector<std::string> log_messages;
+    std::string status_message;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
@@ -786,6 +774,7 @@ class WorkspaceShell {
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
+  SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
@@ -867,7 +856,7 @@ class WorkspaceShell {
   void ReplaceAllBufferSearchMatches();
   std::optional<editor::SelectionRange> ActiveBufferSearchMatch() const;
   bool ExecuteCommand(const std::string& command_line);
-  void OpenTerminal(std::string command);
+  void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
@@ -903,8 +892,7 @@ class WorkspaceShell {
   const TerminalTabState* ActiveTerminalTab() const;
   void CloseTerminalTab(std::size_t index);
   void ReapExitedTerminalTabs();
-  void SetBottomPanelVisible(bool visible);
-  bool BottomPanelShowsTerminal() const;
+  bool BottomPanelVisible() const;
   int BottomPanelVisibleRows(float panel_height) const;
   int BottomPanelScrollRow(std::size_t line_count, int visible_rows) const;
   void SetBottomPanelScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
@@ -918,7 +906,6 @@ class WorkspaceShell {
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
   std::string SelectedTerminalText(const std::vector<terminal::TerminalLine>& lines) const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
-  std::string BottomPanelHeaderLabel() const;
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   void LogMessage(std::string message);
   bool OpenUntitledTab();
@@ -974,8 +961,6 @@ class WorkspaceShell {
   SidebarMode sidebar_mode_ = SidebarMode::Tree;
   SidebarMode sidebar_prev_mode_ = SidebarMode::None;
   bool sidebar_temporary_ = false;
-  bool bottom_panel_visible_ = false;
-  BottomPanelMode bottom_panel_mode_ = BottomPanelMode::Logs;
   bool overlay_visible_ = false;
   OverlayMode overlay_mode_ = OverlayMode::FileFinder;
   bool menu_bar_open_ = false;
@@ -997,9 +982,7 @@ class WorkspaceShell {
   float sidebar_width_ = 288.0f;
   float bottom_panel_height_ = 184.0f;
   int sidebar_scroll_row_ = 0;
-  int bottom_panel_scroll_row_ = 0;
   int overlay_scroll_row_ = 0;
-  bool bottom_panel_follow_tail_ = true;
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs_;
   std::size_t active_terminal_tab_index_ = 0;
   int last_window_width_ = 0;
@@ -1044,7 +1027,7 @@ class WorkspaceShell {
   std::optional<std::size_t> command_history_index_;
   std::string command_history_pending_input_;
   std::string command_completion_feedback_;
-  std::vector<std::string> log_messages_;
+  std::string status_message_;
   std::vector<std::string> available_colorscheme_names_;
   std::string active_colorscheme_name_ = "default";
   std::optional<SDL_Color> project_base_color_;

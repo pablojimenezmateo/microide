@@ -26,9 +26,8 @@ The shell is intentionally compact:
 - project tabs above file tabs
 - a persistent left sidebar with tree, search, and source-control modes
 - a central editor workspace with nested splits
-- a bottom panel for logs, the command bar, and terminal tabs
+- a docked terminal-and-command pane
 - centered overlays for file finding and commit picking
-- a status bar for file and cursor state
 
 This is an editor-first product. Built-in tools should support editing rather than compete with
 the editor for space.
@@ -65,7 +64,7 @@ These decisions should stay fixed unless there is a clear product reason to revi
 - project tabs own the full workspace state below them
 - delete actions must use the OS trash or recycle-bin flow and fail clearly if unsupported
 - the sidebar stays persistent across tab switches
-- the bottom panel starts hidden by default
+- a terminal tab should be open by default for loaded projects
 - colorscheme and editor preferences remain project-local
 - compare, merge, search, git, and terminal workflows are built-in product features, not plugins
 

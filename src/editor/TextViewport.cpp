@@ -32,7 +32,7 @@ TextViewport::TextViewport() {
       "microide\n\n"
       "SDL3 shell scaffold is running.\n"
       "Open files from the sidebar with Enter.\n"
-      "F8 toggles the sidebar, F6 toggles the overlay, F9 toggles the bottom panel.\n");
+      "F8 toggles the sidebar, F6 toggles the overlay.\n");
 }
 
 bool TextViewport::OpenFile(const std::filesystem::path& path) {

@@ -19,7 +19,7 @@ These are done and should not be treated as open migration work:
 
 - `[x]` standalone CMake project with SDL3 app bootstrap
 - `[x]` event-driven rendering loop without a forced continuous redraw
-- `[x]` custom in-window menu bar, project tabs, file tabs, breadcrumb row, sidebar, bottom panel, and status bar
+- `[x]` custom in-window menu bar, project tabs, file tabs, breadcrumb row, sidebar, and docked terminal pane
 - `[x]` project-local workspace state below the project-tab strip, plus app-level restore of open project tabs
 - `[x]` editor open, save, reopen, selection, clipboard, undo/redo, line numbers, horizontal scrolling, and dirty-state tracking
 - `[x]` nested shared-buffer editor splits with focus movement and divider drag

@@ -185,9 +185,7 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
                    ? static_cast<float>(last_window_height_)
                    : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
   if (active_menu_anchor_rect_.has_value() && id == active_menu_id_) {
-    SDL_FRect anchor = *active_menu_anchor_rect_;
-    anchor.x += anchor.w - 1.0f;
-    return ComputePopupMenuRect(anchor, menu->items, bounds);
+    return ComputePopupMenuRect(*active_menu_anchor_rect_, menu->items, bounds);
   }
 
   const auto menu_bar_items = ComputeVisibleMenuBarItems(menu_bar);
@@ -275,7 +273,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
       return sidebar_visible_;
     }
     if (item.args[0] == "panel") {
-      return bottom_panel_visible_ && BottomPanelShowsTerminal();
+      return command_mode_ || ActiveTerminalTab() != nullptr;
     }
     return true;
   }
@@ -307,10 +305,6 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
       return sidebar_visible_ && sidebar_mode_ == SidebarMode::Git;
     }
   }
-  if (item.action == ActionId::ToggleBottomPanel) {
-    return bottom_panel_visible_;
-  }
-
   return false;
 }
 
@@ -425,7 +419,7 @@ bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
       const WorkspaceLayout layout = ComputeLayout(static_cast<float>(last_window_width_),
                                                    static_cast<float>(last_window_height_),
                                                    sidebar_visible_,
-                                                   bottom_panel_visible_,
+                                                   BottomPanelVisible(),
                                                    sidebar_width_,
                                                    bottom_panel_height_);
       if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, menu_id);

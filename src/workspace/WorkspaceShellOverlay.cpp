@@ -114,7 +114,7 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
       last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -553,7 +553,7 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
   if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -570,7 +570,7 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }

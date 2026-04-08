@@ -203,13 +203,17 @@ SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_r
 
   const float button_width = std::max(72.0f, text_renderer_.MeasureWidth("Refresh") + 18.0f);
   return MakeRect(sidebar_rect.x + sidebar_rect.w - 10.0f - button_width, sidebar_rect.y + 4.0f,
-                  button_width, 22.0f);
+                  button_width, 18.0f);
+}
+
+SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
+  return GitSidebarRefreshButtonRect(sidebar_rect);
 }
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
   switch (sidebar_mode_) {
     case SidebarMode::Search:
-      return sidebar_temporary_ ? "Search*" : "Search";
+      return "Search";
     case SidebarMode::Git:
       return "Source Control";
     case SidebarMode::Tree:
@@ -226,7 +230,7 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
   const std::string label = SidebarModeControlLabel();
   const float width = std::clamp(text_renderer_.MeasureWidth(label) + 30.0f, 92.0f,
                                  std::max(92.0f, sidebar_rect.w - 20.0f));
-  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + 4.0f, width, 22.0f);
+  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + 4.0f, width, 18.0f);
 }
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
@@ -294,7 +298,7 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   if (layout.sidebar.h <= 0.0f) {
     return;
   }

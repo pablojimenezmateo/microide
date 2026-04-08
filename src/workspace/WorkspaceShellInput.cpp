@@ -297,16 +297,13 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     case SDLK_F6:
       ExecuteAction(ActionId::Files, {}, ActionSource::Shortcut);
       return true;
-    case SDLK_F9:
-      ExecuteAction(ActionId::ToggleBottomPanel, {}, ActionSource::Shortcut);
-      return true;
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
         if (overlay_visible_) {
           focus_ = FocusTarget::Overlay;
           return true;
         }
-        const bool include_panel = bottom_panel_visible_ && BottomPanelShowsTerminal();
+        const bool include_panel = BottomPanelVisible();
         if (include_panel) {
           if (sidebar_visible_) {
             if (modifiers & SDL_KMOD_SHIFT) {
@@ -373,7 +370,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             if (last_window_width_ > 0 && last_window_height_ > 0) {
               const WorkspaceLayout layout = ComputeLayout(
                   static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                  sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                  sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
               RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
             }
           }
@@ -384,7 +381,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             if (last_window_width_ > 0 && last_window_height_ > 0) {
               const WorkspaceLayout layout = ComputeLayout(
                   static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                  sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                  sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
               RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
             }
           }
@@ -707,7 +704,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     }
   }
 
-  if (focus_ == FocusTarget::Panel && BottomPanelShowsTerminal()) {
+  if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     return HandleTerminalKeyDown(event.key, modifiers);
   }
 
@@ -1063,7 +1060,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
 
-  if (focus_ == FocusTarget::Panel && BottomPanelShowsTerminal()) {
+  if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     ClearTerminalSelection();
     if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
       terminal_tab->session.SendBytes(input);
@@ -1076,7 +1073,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
 
 bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
   auto* terminal_tab = ActiveTerminalTab();
-  if (!BottomPanelShowsTerminal() || terminal_tab == nullptr) {
+  if (terminal_tab == nullptr) {
     return false;
   }
 

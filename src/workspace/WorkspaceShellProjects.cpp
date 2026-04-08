@@ -80,8 +80,6 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   sidebar_mode_ = SidebarMode::Tree;
   sidebar_prev_mode_ = SidebarMode::None;
   sidebar_temporary_ = false;
-  bottom_panel_visible_ = false;
-  bottom_panel_mode_ = BottomPanelMode::Logs;
   overlay_visible_ = false;
   overlay_mode_ = OverlayMode::FileFinder;
   buffer_search_field_ = BufferSearchField::Search;
@@ -90,9 +88,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   sidebar_width_ = 288.0f;
   bottom_panel_height_ = 184.0f;
   sidebar_scroll_row_ = 0;
-  bottom_panel_scroll_row_ = 0;
   overlay_scroll_row_ = 0;
-  bottom_panel_follow_tail_ = true;
   terminal_tabs_.clear();
   active_terminal_tab_index_ = 0;
   buffer_search_query_.clear();
@@ -125,7 +121,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   command_history_index_.reset();
   command_history_pending_input_.clear();
   command_completion_feedback_.clear();
-  log_messages_.clear();
+  status_message_.clear();
   active_colorscheme_name_ = "default";
   project_base_color_ = std::nullopt;
   editor_preferences_ = EditorPreferences{};
@@ -162,6 +158,9 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   }
 
   if (restore_persistence && RestoreSessionState()) {
+    if (terminal_tabs_.empty()) {
+      OpenTerminal({}, false, false);
+    }
     ApplyEditorPreferencesToAllTabs();
     if (activate_restored_tab) {
       ActivateCurrentTabAfterStateLoad();
@@ -192,6 +191,9 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
           .merge = std::nullopt,
       });
       active_tab_index_ = 0;
+      if (terminal_tabs_.empty()) {
+        OpenTerminal({}, false, false);
+      }
       if (log_feedback) {
         LogMessage("Opened startup file: " + candidate.filename().string());
       }
@@ -204,6 +206,9 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       "Project loaded.\n"
       "Use the sidebar to open files.\n");
   ApplyEditorPreferences(text_viewport_);
+  if (terminal_tabs_.empty()) {
+    OpenTerminal({}, false, false);
+  }
   return true;
 }
 
@@ -245,8 +250,6 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.sidebar_mode = sidebar_mode_;
   state.sidebar_prev_mode = sidebar_prev_mode_;
   state.sidebar_temporary = sidebar_temporary_;
-  state.bottom_panel_visible = bottom_panel_visible_;
-  state.bottom_panel_mode = bottom_panel_mode_;
   state.overlay_visible = overlay_visible_;
   state.overlay_mode = overlay_mode_;
   state.buffer_search_field = buffer_search_field_;
@@ -255,9 +258,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.sidebar_width = sidebar_width_;
   state.bottom_panel_height = bottom_panel_height_;
   state.sidebar_scroll_row = sidebar_scroll_row_;
-  state.bottom_panel_scroll_row = bottom_panel_scroll_row_;
   state.overlay_scroll_row = overlay_scroll_row_;
-  state.bottom_panel_follow_tail = bottom_panel_follow_tail_;
   state.terminal_tabs = std::move(terminal_tabs_);
   state.active_terminal_tab_index = active_terminal_tab_index_;
   state.buffer_search_query = std::move(buffer_search_query_);
@@ -289,7 +290,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.command_history_index = command_history_index_;
   state.command_history_pending_input = std::move(command_history_pending_input_);
   state.command_completion_feedback = std::move(command_completion_feedback_);
-  state.log_messages = std::move(log_messages_);
+  state.status_message = std::move(status_message_);
   state.active_colorscheme_name = active_colorscheme_name_;
   state.project_base_color = project_base_color_;
   state.editor_preferences = editor_preferences_;
@@ -312,8 +313,6 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   sidebar_mode_ = state.sidebar_mode;
   sidebar_prev_mode_ = state.sidebar_prev_mode;
   sidebar_temporary_ = state.sidebar_temporary;
-  bottom_panel_visible_ = state.bottom_panel_visible;
-  bottom_panel_mode_ = state.bottom_panel_mode;
   overlay_visible_ = state.overlay_visible;
   overlay_mode_ = state.overlay_mode;
   buffer_search_field_ = state.buffer_search_field;
@@ -322,9 +321,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   sidebar_width_ = state.sidebar_width;
   bottom_panel_height_ = state.bottom_panel_height;
   sidebar_scroll_row_ = state.sidebar_scroll_row;
-  bottom_panel_scroll_row_ = state.bottom_panel_scroll_row;
   overlay_scroll_row_ = state.overlay_scroll_row;
-  bottom_panel_follow_tail_ = state.bottom_panel_follow_tail;
   terminal_tabs_ = std::move(state.terminal_tabs);
   active_terminal_tab_index_ = state.active_terminal_tab_index;
   buffer_search_query_ = std::move(state.buffer_search_query);
@@ -357,7 +354,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   command_history_index_ = state.command_history_index;
   command_history_pending_input_ = std::move(state.command_history_pending_input);
   command_completion_feedback_ = std::move(state.command_completion_feedback);
-  log_messages_ = std::move(state.log_messages);
+  status_message_ = std::move(state.status_message);
   active_colorscheme_name_ = state.active_colorscheme_name;
   project_base_color_ = state.project_base_color;
   editor_preferences_ = state.editor_preferences;
@@ -368,6 +365,9 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   ApplyEditorPreferencesToAllTabs();
   if (text_viewport_.is_placeholder()) {
     ApplyEditorPreferences(text_viewport_);
+  }
+  if (!project_root_.empty() && terminal_tabs_.empty()) {
+    OpenTerminal({}, false, false);
   }
 }
 

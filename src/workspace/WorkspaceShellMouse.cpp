@@ -12,8 +12,7 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kStatusBarHeight = 22.0f;
-constexpr float kSidebarHeaderHeight = 30.0f;
+constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
@@ -130,7 +129,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   mouse_selecting_ = false;
 
   if (tree_context_menu_.open) {
@@ -258,7 +257,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (event.button.button == SDL_BUTTON_LEFT && bottom_panel_visible_ &&
+  if (event.button.button == SDL_BUTTON_LEFT && BottomPanelVisible() &&
       Contains(BottomPanelResizeHandleRect(layout), event.button.x, event.button.y)) {
     drag_target_ = DragTarget::BottomPanelDivider;
     return true;
@@ -420,7 +419,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
     if (open_tabs_.empty()) {
       const SDL_FRect placeholder_tab =
-          MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 5.0f, 220.0f, 24.0f);
+          MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
+                   std::max(22.0f, layout.tab_strip.h - 2.0f));
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {
         focus_ = FocusTarget::Editor;
@@ -443,11 +443,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
   }
 
-  if (bottom_panel_visible_) {
+  if (BottomPanelVisible()) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kBottomPanelHeaderHeight);
-    if (BottomPanelShowsTerminal() && Contains(panel_header, event.button.x, event.button.y)) {
+    if (ActiveTerminalTab() != nullptr && Contains(panel_header, event.button.x, event.button.y)) {
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(BottomPanelTerminalNewTabRect(panel_header), event.button.x, event.button.y)) {
         OpenTerminal({});
@@ -465,7 +465,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           CloseTerminalTab(tab.index);
         } else if (event.button.button == SDL_BUTTON_LEFT) {
           active_terminal_tab_index_ = tab.index;
-          bottom_panel_mode_ = BottomPanelMode::Terminal;
           focus_ = FocusTarget::Panel;
         }
         return true;
@@ -608,6 +607,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       return true;
     }
 
+    if (event.button.button == SDL_BUTTON_LEFT &&
+        Contains(TreeSidebarRefreshButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+      return ExecuteAction(ActionId::TreeRefresh, {}, ActionSource::Shortcut);
+    }
+
     if (local_y < 0.0f) {
       if (event.button.button == SDL_BUTTON_RIGHT) {
         OpenTreeContextMenu(TreeContextTargetKind::Background, {},
@@ -665,12 +669,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (event.button.button == SDL_BUTTON_LEFT && bottom_panel_visible_) {
-    const std::size_t line_count = BottomPanelShowsTerminal()
-                                       ? (ActiveTerminalTab() != nullptr
-                                              ? ActiveTerminalTab()->session.SnapshotLines().size()
-                                              : 0)
-                                       : log_messages_.size();
+  if (event.button.button == SDL_BUTTON_LEFT && BottomPanelVisible()) {
+    const std::size_t line_count =
+        ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.SnapshotLines().size() : 0;
     const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
     const int max_scroll = std::max(0, static_cast<int>(line_count) - visible_rows);
     const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
@@ -691,11 +692,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                                               drag_scrollbar_offset_))),
                      0, max_scroll),
           line_count, visible_rows);
+      if (ActiveTerminalTab() != nullptr) {
+        focus_ = FocusTarget::Panel;
+      }
       return true;
     }
   }
 
-  if (bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+  if (ActiveTerminalTab() != nullptr) {
     auto* terminal_tab = ActiveTerminalTab();
     if (terminal_tab != nullptr) {
       const auto viewport_position =
@@ -713,9 +717,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
   }
 
-  if (event.button.button == SDL_BUTTON_LEFT && bottom_panel_visible_ &&
+  if (event.button.button == SDL_BUTTON_LEFT && BottomPanelVisible() &&
       Contains(layout.bottom_panel, event.button.x, event.button.y)) {
-    if (BottomPanelShowsTerminal()) {
+    if (ActiveTerminalTab() != nullptr) {
       const SDL_FRect panel_content = BottomPanelContentRect(layout, command_mode_);
       if (Contains(panel_content, event.button.x, event.button.y)) {
         const auto terminal_lines =
@@ -737,8 +741,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         ClearTerminalSelection();
       }
       focus_ = FocusTarget::Panel;
-    } else {
-      ClearTerminalSelection();
+    }
+    if (command_mode_) {
+      focus_ = FocusTarget::Panel;
     }
     return true;
   }
@@ -1001,7 +1006,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     return true;
   }
 
-  if (bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+  if (ActiveTerminalTab() != nullptr) {
     auto* terminal_tab = ActiveTerminalTab();
     const auto viewport_position =
         TerminalViewportPositionForPoint(event.button.x, event.button.y);
@@ -1076,7 +1081,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   if (menu_bar_open_) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
     for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
       if (!Contains(item.rect, event.motion.x, event.motion.y)) {
         continue;
@@ -1143,7 +1148,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (drag_target_ == DragTarget::BottomPanelDivider) {
       const float desired_height =
-          static_cast<float>(last_window_height_) - kStatusBarHeight - static_cast<float>(event.motion.y);
+          static_cast<float>(last_window_height_) - static_cast<float>(event.motion.y);
       bottom_panel_height_ =
           ClampBottomPanelHeight(desired_height, static_cast<float>(last_window_height_));
       return true;
@@ -1151,7 +1156,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     const WorkspaceLayout drag_layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
 
     if (drag_target_ == DragTarget::EditorSplitDivider) {
       auto* editor_tab = ActiveEditorTab();
@@ -1318,12 +1323,9 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (drag_target_ == DragTarget::BottomPanelScrollbar && bottom_panel_visible_) {
-      const std::size_t line_count = BottomPanelShowsTerminal()
-                                         ? (ActiveTerminalTab() != nullptr
-                                                ? ActiveTerminalTab()->session.SnapshotLines().size()
-                                                : 0)
-                                         : log_messages_.size();
+    if (drag_target_ == DragTarget::BottomPanelScrollbar && BottomPanelVisible()) {
+      const std::size_t line_count =
+          ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.SnapshotLines().size() : 0;
       const int visible_rows = BottomPanelVisibleRows(drag_layout.bottom_panel.h);
       const int max_scroll = std::max(0, static_cast<int>(line_count) - visible_rows);
       const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
@@ -1343,7 +1345,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                               drag_scrollbar_offset_))),
                      0, max_scroll),
           line_count, visible_rows);
-      if (BottomPanelShowsTerminal()) {
+      if (ActiveTerminalTab() != nullptr) {
         focus_ = FocusTarget::Panel;
       }
       return true;
@@ -1477,7 +1479,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
-  if (bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+  if (ActiveTerminalTab() != nullptr) {
     if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
       const bool buttons_down =
           (event.motion.state & (SDL_BUTTON_LMASK | SDL_BUTTON_MMASK | SDL_BUTTON_RMASK)) != 0;
@@ -1506,11 +1508,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
   if (auto* terminal_tab = ActiveTerminalTab();
       terminal_tab != nullptr && terminal_tab->mouse_selecting &&
-      (event.motion.state & SDL_BUTTON_LMASK) != 0 && bottom_panel_visible_ &&
-      BottomPanelShowsTerminal()) {
+      (event.motion.state & SDL_BUTTON_LMASK) != 0 && BottomPanelVisible() &&
+      ActiveTerminalTab() != nullptr) {
     const WorkspaceLayout layout = ComputeLayout(static_cast<float>(last_window_width_),
                                                  static_cast<float>(last_window_height_),
-                                                 sidebar_visible_, bottom_panel_visible_,
+                                                 sidebar_visible_, BottomPanelVisible(),
                                                  sidebar_width_, bottom_panel_height_);
     if (!Contains(layout.bottom_panel, event.motion.x, event.motion.y)) {
       return false;
@@ -1532,7 +1534,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   if (!Contains(layout.editor_surface, event.motion.x, event.motion.y)) {
     return false;
   }
@@ -1591,7 +1593,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
 
   if (overlay_visible_) {
     if (overlay_mode_ == OverlayMode::CommitPicker) {
@@ -1643,7 +1645,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+  if (ActiveTerminalTab() != nullptr) {
     if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr &&
                                                 terminal_tab->session.WantsMouseCapture()) {
       if (const auto viewport_position =
@@ -1664,17 +1666,14 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     }
   }
 
-  if (bottom_panel_visible_ && Contains(layout.bottom_panel, event.wheel.mouse_x, event.wheel.mouse_y)) {
-    const std::size_t line_count = BottomPanelShowsTerminal()
-                                       ? (ActiveTerminalTab() != nullptr
-                                              ? ActiveTerminalTab()->session.SnapshotLines().size()
-                                              : 0)
-                                       : log_messages_.size();
+  if (BottomPanelVisible() && Contains(layout.bottom_panel, event.wheel.mouse_x, event.wheel.mouse_y)) {
+    const std::size_t line_count =
+        ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.SnapshotLines().size() : 0;
     const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
     const int max_scroll = std::max(0, static_cast<int>(line_count) - visible_rows);
     const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
     SetBottomPanelScrollRow(std::clamp(scroll_row - ticks, 0, max_scroll), line_count, visible_rows);
-    if (BottomPanelShowsTerminal()) {
+    if (ActiveTerminalTab() != nullptr) {
       focus_ = FocusTarget::Panel;
     }
     return true;

@@ -7,9 +7,11 @@
 
 namespace microide::workspace {
 
-void WorkspaceShell::OpenTerminal(std::string command) {
+void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
   if (project_root_.empty()) {
-    LogMessage("No project is loaded");
+    if (log_feedback) {
+      LogMessage("No project is loaded");
+    }
     return;
   }
   const std::filesystem::path working_directory = project_root_;
@@ -18,18 +20,21 @@ void WorkspaceShell::OpenTerminal(std::string command) {
     terminal_tab->session.SetWakeEventType(terminal_event_type_);
   }
   if (!terminal_tab->session.Start(working_directory, command)) {
-    bottom_panel_mode_ = BottomPanelMode::Logs;
-    LogMessage("Failed to start terminal");
+    if (log_feedback) {
+      LogMessage("Failed to start terminal");
+    }
     return;
   }
 
   terminal_tabs_.push_back(std::move(terminal_tab));
   active_terminal_tab_index_ = terminal_tabs_.size() - 1;
-  bottom_panel_mode_ = BottomPanelMode::Terminal;
-  SetBottomPanelVisible(true);
-  focus_ = FocusTarget::Panel;
-  if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
-    LogMessage("Terminal started: " + active_terminal->session.LaunchLabel());
+  if (focus_terminal) {
+    focus_ = FocusTarget::Panel;
+  }
+  if (log_feedback) {
+    if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
+      LogMessage("Terminal started: " + active_terminal->session.LaunchLabel());
+    }
   }
 }
 
@@ -55,8 +60,8 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
   terminal_tabs_.erase(terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(index));
   if (terminal_tabs_.empty()) {
     active_terminal_tab_index_ = 0;
-    bottom_panel_mode_ = BottomPanelMode::Logs;
-    if (focus_ == FocusTarget::Panel) {
+    ClearTerminalSelection();
+    if (focus_ == FocusTarget::Panel && !command_mode_) {
       focus_ = FocusTarget::Editor;
     }
     return;
@@ -78,21 +83,8 @@ void WorkspaceShell::ReapExitedTerminalTabs() {
   }
 }
 
-void WorkspaceShell::SetBottomPanelVisible(bool visible) {
-  bottom_panel_visible_ = visible;
-  if (!bottom_panel_visible_) {
-    ClearTerminalSelection();
-    if (focus_ == FocusTarget::Panel) {
-      focus_ = FocusTarget::Editor;
-    }
-    command_mode_ = false;
-    command_input_.clear();
-    ResetCommandSessionState();
-  }
-}
-
-bool WorkspaceShell::BottomPanelShowsTerminal() const {
-  return bottom_panel_mode_ == BottomPanelMode::Terminal && ActiveTerminalTab() != nullptr;
+bool WorkspaceShell::BottomPanelVisible() const {
+  return command_mode_ || !terminal_tabs_.empty();
 }
 
 int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
@@ -101,17 +93,13 @@ int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
 
 int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_rows) const {
   const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
-  if (const auto* terminal_tab = ActiveTerminalTab(); BottomPanelShowsTerminal() &&
-                                                     terminal_tab != nullptr) {
+  if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     return terminal_tab->follow_tail ? max_scroll
                                      : ClampScrollRowToContent(terminal_tab->scroll_row,
                                                                line_count,
                                                                visible_rows);
   }
-  return bottom_panel_follow_tail_ ? max_scroll
-                                   : ClampScrollRowToContent(bottom_panel_scroll_row_,
-                                                             line_count,
-                                                             visible_rows);
+  return 0;
 }
 
 void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
@@ -119,14 +107,10 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
                                              int visible_rows) {
   const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
   const int clamped_scroll = ClampScrollRowToContent(scroll_row, line_count, visible_rows);
-  if (auto* terminal_tab = ActiveTerminalTab(); BottomPanelShowsTerminal() &&
-                                               terminal_tab != nullptr) {
+  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     terminal_tab->scroll_row = clamped_scroll;
     terminal_tab->follow_tail = clamped_scroll >= max_scroll;
-    return;
   }
-  bottom_panel_scroll_row_ = clamped_scroll;
-  bottom_panel_follow_tail_ = clamped_scroll >= max_scroll;
 }
 
 void WorkspaceShell::ClearTerminalSelection() {
@@ -162,14 +146,14 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
     int x,
     int y,
     const std::vector<terminal::TerminalLine>& lines) const {
-  if (!bottom_panel_visible_ || !BottomPanelShowsTerminal() || lines.empty() ||
+  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || lines.empty() ||
       last_window_width_ <= 0 || last_window_height_ <= 0) {
     return std::nullopt;
   }
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   const SDL_FRect panel_content = BottomPanelContentRect(layout, command_mode_);
   const float text_x = panel_content.x + 12.0f;
   const float text_y = panel_content.y + 8.0f;
@@ -198,7 +182,7 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
 
 std::optional<WorkspaceShell::TerminalSelectionPosition>
 WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
-  if (!bottom_panel_visible_ || !BottomPanelShowsTerminal() || last_window_width_ <= 0 ||
+  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || last_window_width_ <= 0 ||
       last_window_height_ <= 0) {
     return std::nullopt;
   }
@@ -216,7 +200,7 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   const SDL_FRect panel_content = BottomPanelContentRect(layout, command_mode_);
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;

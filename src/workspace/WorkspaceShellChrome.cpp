@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "workspace/WorkspaceShellShared.h"
@@ -12,6 +13,10 @@ namespace {
 constexpr float kBottomPanelHeaderButtonSize = 18.0f;
 constexpr float kTabCloseButtonSize = 14.0f;
 constexpr float kTabCloseButtonRightInset = 6.0f;
+
+float CenteredInset(float outer_size, float inner_size) {
+  return std::floor(std::max(0.0f, outer_size - inner_size) * 0.5f);
+}
 
 }  // namespace
 
@@ -38,7 +43,7 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
   const float strip_width =
       last_window_width_ > 0 ? static_cast<float>(last_window_width_) : 1440.0f;
   const float start_x = 12.0f;
-  const float gap = 6.0f;
+  const float gap = 1.0f;
   const float max_tab_x = std::max(start_x + 120.0f, strip_width - 12.0f);
   project_tab_scroll_index_ =
       static_cast<int>(EnsureVisibleStripIndex(widths, start_x, gap, max_tab_x,
@@ -59,9 +64,9 @@ std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisiblePro
     widths.push_back(ProjectTabWidthForIndex(i));
   }
 
-  const float tab_y = project_tab_strip.y + 4.0f;
-  const float tab_height = std::max(18.0f, project_tab_strip.h - 8.0f);
-  const float gap = 6.0f;
+  const float tab_y = project_tab_strip.y + 2.0f;
+  const float tab_height = std::max(18.0f, project_tab_strip.h - 2.0f);
+  const float gap = 1.0f;
   const float start_x = project_tab_strip.x + 12.0f;
   const float max_tab_x =
       std::max(start_x + 120.0f, project_tab_strip.x + project_tab_strip.w - 12.0f);
@@ -78,7 +83,8 @@ std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisiblePro
     tab.rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
     tab.close_rect =
         MakeRect(tab.rect.x + tab.rect.w - kTabCloseButtonRightInset - kTabCloseButtonSize,
-                 tab.rect.y + 3.0f, kTabCloseButtonSize, kTabCloseButtonSize);
+                 tab.rect.y + CenteredInset(tab.rect.h, kTabCloseButtonSize),
+                 kTabCloseButtonSize, kTabCloseButtonSize);
     tabs.push_back(tab);
   }
 
@@ -107,7 +113,7 @@ void WorkspaceShell::EnsureActiveTabVisible() {
   const float tab_strip_width =
       last_window_width_ > 0 ? static_cast<float>(last_window_width_) : 1440.0f;
   const float start_x = 12.0f;
-  const float gap = 6.0f;
+  const float gap = 1.0f;
   const float right_reserve = std::clamp(tab_strip_width * 0.22f, 160.0f, 240.0f);
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip_width - right_reserve);
   tab_scroll_index_ =
@@ -129,9 +135,9 @@ std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
     widths.push_back(TabWidthForIndex(i));
   }
 
-  const float tab_y = tab_strip.y + 5.0f;
-  const float tab_height = 24.0f;
-  const float gap = 6.0f;
+  const float tab_y = tab_strip.y + 2.0f;
+  const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
+  const float gap = 1.0f;
   const float start_x = tab_strip.x + 12.0f;
   const float right_reserve = std::clamp(tab_strip.w * 0.22f, 160.0f, 240.0f);
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve);
@@ -148,7 +154,8 @@ std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
     tab.rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
     tab.close_rect =
         MakeRect(tab.rect.x + tab.rect.w - kTabCloseButtonRightInset - kTabCloseButtonSize,
-                 tab.rect.y + 4.0f, kTabCloseButtonSize, kTabCloseButtonSize);
+                 tab.rect.y + CenteredInset(tab.rect.h, kTabCloseButtonSize),
+                 kTabCloseButtonSize, kTabCloseButtonSize);
     tabs.push_back(tab);
   }
 
@@ -180,9 +187,9 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
     widths.push_back(std::clamp(text_renderer_.MeasureWidth(label) + 38.0f, 84.0f, 220.0f));
   }
 
-  const float tab_y = panel_header.y + 3.0f;
-  const float tab_height = std::max(18.0f, panel_header.h - 6.0f);
-  const float gap = 4.0f;
+  const float tab_y = panel_header.y + 2.0f;
+  const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
+  const float gap = 1.0f;
   const float start_x = panel_header.x + 12.0f;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
   const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
@@ -197,7 +204,8 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
     tab.rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
     tab.close_rect =
         MakeRect(tab.rect.x + tab.rect.w - kTabCloseButtonRightInset - kTabCloseButtonSize,
-                 tab.rect.y + 2.0f, kTabCloseButtonSize, kTabCloseButtonSize);
+                 tab.rect.y + CenteredInset(tab.rect.h, kTabCloseButtonSize),
+                 kTabCloseButtonSize, kTabCloseButtonSize);
     tabs.push_back(tab);
   }
 

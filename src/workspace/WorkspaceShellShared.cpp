@@ -16,7 +16,6 @@ constexpr float kMenuBarHeight = 25.0f;
 constexpr float kProjectTabStripHeight = 32.0f;
 constexpr float kTabStripHeight = 34.0f;
 constexpr float kHeaderHeight = 26.0f;
-constexpr float kStatusBarHeight = 22.0f;
 constexpr float kDivider = 1.0f;
 constexpr float kResizeHandleThickness = 6.0f;
 constexpr float kScrollbarThickness = 10.0f;
@@ -726,15 +725,13 @@ WorkspaceLayout ComputeLayout(float window_width,
       MakeRect(0.0f, kMenuBarHeight, window_width, kProjectTabStripHeight);
   layout.tab_strip =
       MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight, window_width, kTabStripHeight);
-  layout.status_bar =
-      MakeRect(0.0f, window_height - kStatusBarHeight, window_width, kStatusBarHeight);
   layout.bottom_panel =
-      MakeRect(0.0f, window_height - kStatusBarHeight - resolved_bottom_panel_height,
-               window_width, resolved_bottom_panel_height);
+      MakeRect(0.0f, window_height - resolved_bottom_panel_height, window_width,
+               resolved_bottom_panel_height);
   layout.content =
       MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight + kTabStripHeight, window_width,
                window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight -
-                   resolved_bottom_panel_height - kStatusBarHeight);
+                   resolved_bottom_panel_height);
   layout.sidebar = MakeRect(0.0f, layout.content.y, resolved_sidebar_width, layout.content.h);
   layout.editor_area =
       MakeRect(resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f), layout.content.y,
@@ -761,8 +758,7 @@ float ClampSidebarWidth(float width, float window_width) {
 
 float ClampBottomPanelHeight(float height, float window_height) {
   const float content_height =
-      std::max(0.0f, window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight -
-                         kStatusBarHeight);
+      std::max(0.0f, window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight);
   const float min_height = std::min(kMinBottomPanelHeight, content_height);
   const float max_height = std::max(min_height, content_height - kMinEditorAreaHeight);
   return std::clamp(height, min_height, max_height);

@@ -32,12 +32,10 @@ constexpr float kWindowControlButtonRightInset = 8.0f;
 constexpr float kProjectTabStripHeight = 32.0f;
 constexpr float kTabStripHeight = 34.0f;
 constexpr float kHeaderHeight = 26.0f;
-constexpr float kStatusBarHeight = 22.0f;
 constexpr float kDivider = 1.0f;
 constexpr float kResizeHandleThickness = 6.0f;
-constexpr float kSidebarHeaderHeight = 30.0f;
+constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
-constexpr float kBottomPanelHeaderButtonSize = 18.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
 constexpr float kTreeIndentWidth = 14.0f;
@@ -248,8 +246,6 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Open, "open", "open <path>", "Open File", ""},
       ActionSpec{ActionId::OpenSelectedTreeItem, "", "", "Open", ""},
       ActionSpec{ActionId::OpenSelectedTreeItemInNewTab, "", "", "Open in New Tab", ""},
-      ActionSpec{ActionId::PanelHide, "panel-hide", "panel-hide", "Hide Bottom Panel", ""},
-      ActionSpec{ActionId::PanelShow, "panel-show", "panel-show", "Show Bottom Panel", ""},
       ActionSpec{ActionId::ProjectClose, "project-close", "project-close", "Close Project", ""},
       ActionSpec{ActionId::ProjectNext, "project-next", "project-next", "Next Project", ""},
       ActionSpec{ActionId::ProjectOpen, "project-open", "project-open <path>", "Open Project",
@@ -293,7 +289,6 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Redo, "", "", "Redo", "Ctrl+Y / Ctrl+Shift+Z"},
       ActionSpec{ActionId::ReplaceInBuffer, "", "", "Replace in Buffer", "Ctrl+H"},
       ActionSpec{ActionId::SelectAll, "", "", "Select All", "Ctrl+A"},
-      ActionSpec{ActionId::ToggleBottomPanel, "", "", "Toggle Bottom Panel", "F9", true},
       ActionSpec{ActionId::Undo, "", "", "Undo", "Ctrl+Z"},
   });
   return kSpecs;
@@ -356,7 +351,6 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::SidebarHide:
     case ActionId::SidebarShow:
     case ActionId::SidebarToggle:
-    case ActionId::ToggleBottomPanel:
       return true;
     case ActionId::CloseActiveTab:
       return !open_tabs_.empty();
@@ -421,8 +415,6 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Focus:
       return true;
     case ActionId::IndentWidth:
-    case ActionId::PanelHide:
-    case ActionId::PanelShow:
       return true;
     case ActionId::CopyAbsolutePath:
       return !ResolveTreeActionPath(ActionSource::ContextMenu).empty();
@@ -480,7 +472,6 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       item(ActionId::SidebarToggle, {}, {}, {}, 0, true),
-      item(ActionId::ToggleBottomPanel, {}, {}, {}, 0, true),
       separator(),
       item(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
       item(ActionId::UiScale, "Zoom Out", "Ctrl+-",
@@ -496,10 +487,12 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
            std::array<std::string_view, 2>{"panel", {}}, 1),
   });
   static const auto kSidebarModeItems = std::to_array<MenuItemSpec>({
-      item(ActionId::SidebarShow, "Tree", {}, std::array<std::string_view, 2>{"tree", {}}, 1, true),
+      item(ActionId::SidebarShow, "Project", {}, std::array<std::string_view, 2>{"tree", {}}, 1,
+           true),
       item(ActionId::SidebarShow, "Search", {}, std::array<std::string_view, 2>{"search", {}}, 1,
            true),
-      item(ActionId::SidebarShow, "Git", {}, std::array<std::string_view, 2>{"git", {}}, 1, true),
+      item(ActionId::SidebarShow, "Source Control", {},
+           std::array<std::string_view, 2>{"git", {}}, 1, true),
   });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({
       item(ActionId::Search),
@@ -732,7 +725,7 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
   }
 
   const WorkspaceLayout layout =
-      ComputeLayout(window_width, window_height, sidebar_visible_, bottom_panel_visible_,
+      ComputeLayout(window_width, window_height, sidebar_visible_, BottomPanelVisible(),
                     sidebar_width_, bottom_panel_height_);
   if (!Contains(layout.menu_bar, x, y)) {
     return SDL_HITTEST_NORMAL;
@@ -832,7 +825,7 @@ void WorkspaceShell::RevealActiveCompareSelection() {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   const int visible_rows = CompareVisibleRows(layout.editor_surface);
   ClampCompareScrollRow(*compare_tab, visible_rows);
   if (compare_tab->selected_row < static_cast<std::size_t>(compare_tab->scroll_row)) {
@@ -890,7 +883,7 @@ void WorkspaceShell::RevealActiveMergeSelection() {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   const int visible_rows = MergeVisibleRows(layout.editor_surface);
   ClampMergeScrollRow(*merge_tab, visible_rows);
   const auto& selected_hunk =
@@ -1263,8 +1256,9 @@ void WorkspaceShell::MoveFileFinderSelection(int delta) {
   file_finder_.MoveSelection(delta);
   if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+        ComputeLayout(static_cast<float>(last_window_width_),
+                      static_cast<float>(last_window_height_), sidebar_visible_,
+                      BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -1485,7 +1479,7 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::Editor;
   }
 
-  if (focus_ == FocusTarget::Panel && BottomPanelShowsTerminal()) {
+  if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     return TextInputSurface::Terminal;
   }
 
@@ -1565,10 +1559,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
 
   switch (id) {
     case ActionId::Help:
-      if (source == ActionSource::Menu) {
-        bottom_panel_mode_ = BottomPanelMode::Logs;
-        SetBottomPanelVisible(true);
-      }
       LogMessage("Commands: " + CommandHelpSummary());
       return true;
     case ActionId::Colorscheme:
@@ -1592,7 +1582,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       if (args.empty()) {
         if (source == ActionSource::Menu) {
           command_mode_ = true;
-          SetBottomPanelVisible(true);
+          focus_ = FocusTarget::Panel;
           command_input_ = "project-open ";
           ResetCommandSessionState();
           LogMessage("Enter a project path");
@@ -1770,18 +1760,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       LogMessage(std::string("Soft tabs ") + (editor_preferences_.soft_tabs ? "enabled"
                                                                             : "disabled"));
       return true;
-    case ActionId::PanelShow:
-      SetBottomPanelVisible(true);
-      LogMessage("Bottom panel shown");
-      return true;
-    case ActionId::PanelHide:
-      SetBottomPanelVisible(false);
-      LogMessage("Bottom panel hidden");
-      return true;
-    case ActionId::ToggleBottomPanel:
-      SetBottomPanelVisible(!bottom_panel_visible_);
-      LogMessage(std::string("Bottom panel ") + (bottom_panel_visible_ ? "shown" : "hidden"));
-      return true;
     case ActionId::TreeRefresh:
       if (require_project()) {
         return true;
@@ -1881,9 +1859,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         LogMessage("Focus moved to editor");
         return true;
       }
-      if (target == "panel" && bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+      if (target == "panel" && (command_mode_ || ActiveTerminalTab() != nullptr)) {
         focus_ = FocusTarget::Panel;
-        LogMessage("Focus moved to terminal panel");
+        LogMessage(ActiveTerminalTab() != nullptr ? "Focus moved to terminal panel"
+                                                  : "Focus moved to command panel");
         return true;
       }
       LogMessage("Unknown focus target");
@@ -2341,7 +2320,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::OpenCommandPrompt:
       command_mode_ = true;
-      SetBottomPanelVisible(true);
+      focus_ = FocusTarget::Panel;
       command_input_.clear();
       ResetCommandSessionState();
       LogMessage("Command mode opened");
@@ -2496,7 +2475,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
 
   if (tree_context_menu_.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect();
@@ -2587,7 +2566,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   if (sidebar_visible_ && Contains(SidebarResizeHandleRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
-  if (bottom_panel_visible_ && Contains(BottomPanelResizeHandleRect(layout), x, y)) {
+  if (BottomPanelVisible() && Contains(BottomPanelResizeHandleRect(layout), x, y)) {
     return CursorKind::NsResize;
   }
 
@@ -2605,7 +2584,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (open_tabs_.empty()) {
-      return Contains(MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 5.0f, 220.0f, 24.0f),
+      return Contains(MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
+                               std::max(22.0f, layout.tab_strip.h - 2.0f)),
                       x, y)
                  ? CursorKind::Pointer
                  : CursorKind::Default;
@@ -2654,6 +2634,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (sidebar_mode_ == SidebarMode::Git) {
+      if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), x, y)) {
+        return CursorKind::Pointer;
+      }
       const auto lines = BuildGitSidebarLines();
       const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
       const float visible_units =
@@ -2683,20 +2666,25 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         float right_edge = row_rect.x + row_rect.w - 8.0f;
         const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
         const float stage_width =
-            std::max(entry.staged ? 60.0f : 42.0f, text_renderer_.MeasureWidth(stage_label) + 12.0f);
+            std::max(entry.staged ? 68.0f : 48.0f, text_renderer_.MeasureWidth(stage_label) + 16.0f);
         const SDL_FRect stage_rect =
             MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
         if (Contains(stage_rect, x, y)) {
           return CursorKind::Pointer;
         }
         right_edge = stage_rect.x - 6.0f;
-        const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
+        const float discard_width =
+            std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
         const SDL_FRect discard_rect =
             MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
         if (Contains(discard_rect, x, y)) {
           return CursorKind::Pointer;
         }
       }
+      return CursorKind::Pointer;
+    }
+
+    if (Contains(TreeSidebarRefreshButtonRect(layout.sidebar), x, y)) {
       return CursorKind::Pointer;
     }
 
@@ -2719,11 +2707,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (bottom_panel_visible_ && Contains(layout.bottom_panel, x, y)) {
+  if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kBottomPanelHeaderHeight);
-    if (BottomPanelShowsTerminal() && Contains(panel_header, x, y)) {
+    if (ActiveTerminalTab() != nullptr && Contains(panel_header, x, y)) {
       if (Contains(BottomPanelTerminalNewTabRect(panel_header), x, y)) {
         return CursorKind::Pointer;
       }
@@ -2734,7 +2722,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
-    if (BottomPanelShowsTerminal()) {
+    if (ActiveTerminalTab() != nullptr) {
       const std::size_t line_count =
           ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
       const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
@@ -2751,7 +2739,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (command_mode_ && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }
-    if (BottomPanelShowsTerminal() && y >= layout.bottom_panel.y + kBottomPanelHeaderHeight) {
+    if (ActiveTerminalTab() != nullptr && y >= layout.bottom_panel.y + kBottomPanelHeaderHeight) {
       return CursorKind::Text;
     }
     return CursorKind::Default;

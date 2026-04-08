@@ -21,15 +21,15 @@ This scaffold provides:
 - project-local session restore for editor tabs, compare tabs, and workspace chrome
 - project-local editor preferences for tab size, indent width, and soft-tabs
 - tab-aware text layout with visual-column cursor positioning
-- editor load/save now preserves detected line endings and reports encoding plus line endings in the status bar
+- editor load/save now preserves detected line endings
 - extracted text renderer and editor view renderer modules
 - optional `SDL3_ttf` text backend with debug-text fallback
 - cached file-finder overlay
 - commit picker overlay and compare tabs
 - three-way merge tabs with incoming/result/current panes, per-hunk picks, and whole-side apply actions
 - sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
-- bottom-panel logs plus a minimal command prompt
-- bottom-panel terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, and common cursor/erase repaint handling
+- docked command prompt
+- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, and common cursor/erase repaint handling
 - terminal text selection and clipboard copy
 - SDL text input wired into command/search/finder/sidebar-edit fields, the terminal, and editor insertion
 - editor cursor movement, layout, and backspace/delete now respect UTF-8 codepoint boundaries
@@ -41,15 +41,13 @@ The current shell draws:
 - left sidebar region
 - breadcrumb/header bar
 - editor surface
-- bottom panel host
-- status bar
+- docked terminal pane when a terminal tab or command prompt is active
 
 Current controls:
 
 - `F8`: toggle sidebar
 - `F6`: toggle centered overlay
-- `F9`: toggle bottom panel
-- `Ctrl+Tab`: switch focus between sidebar and editor
+- `Ctrl+Tab`: switch focus between the sidebar, editor, and command or terminal pane
 - `Ctrl+w`: close the active tab
 - `Ctrl+f`: open buffer search
 - `Ctrl+h`: open replace-in-buffer
@@ -121,7 +119,7 @@ Current controls:
 - `Home` / `End`: move to start or end of line
 - `Ctrl+Home` / `Ctrl+End`: jump to start or end of file
 - `Esc` in the terminal with an active selection: clear the terminal selection
-- `Ctrl+e`: open the bottom-panel command prompt
+- `Ctrl+e`: open the command prompt
 
 Current commands:
 
@@ -161,8 +159,6 @@ Current commands:
 - `sidebar-hide`
 - `sidebar-close`
 - `sidebar-width <n>`
-- `panel-show`
-- `panel-hide`
 - `focus <editor|sidebar|panel>`
 
 Project state:

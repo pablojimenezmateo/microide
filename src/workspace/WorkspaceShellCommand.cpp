@@ -246,16 +246,7 @@ void WorkspaceShell::LogMessage(std::string message) {
   if (message.empty()) {
     return;
   }
-  if (bottom_panel_follow_tail_) {
-    bottom_panel_scroll_row_ = std::max(0, static_cast<int>(log_messages_.size()) - 1);
-  }
-  log_messages_.push_back(std::move(message));
-  if (log_messages_.size() > 128) {
-    log_messages_.erase(log_messages_.begin(),
-                        log_messages_.begin() +
-                            static_cast<std::ptrdiff_t>(log_messages_.size() - 128));
-    bottom_panel_scroll_row_ = std::max(0, bottom_panel_scroll_row_ - 1);
-  }
+  status_message_ = std::move(message);
 }
 
 }  // namespace microide::workspace

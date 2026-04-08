@@ -260,7 +260,6 @@ bool WorkspaceShell::RestoreSessionState() {
   bool version_ok = false;
   bool restored_sidebar_visible = sidebar_visible_;
   float restored_sidebar_width = sidebar_width_;
-  bool restored_bottom_panel_visible = bottom_panel_visible_;
   float restored_bottom_panel_height = bottom_panel_height_;
   std::optional<std::size_t> restored_active_tab_index;
   std::vector<PersistedEditorTabState> persisted_tabs;
@@ -291,10 +290,6 @@ bool WorkspaceShell::RestoreSessionState() {
         restored_sidebar_width = std::stof(tokens[1].text);
       } catch (...) {
       }
-      continue;
-    }
-    if (command == "bottom-panel-visible" && tokens.size() == 2) {
-      restored_bottom_panel_visible = tokens[1].text == "1";
       continue;
     }
     if (command == "bottom-panel-height" && tokens.size() == 2) {
@@ -422,7 +417,6 @@ bool WorkspaceShell::RestoreSessionState() {
 
   open_tabs_.clear();
   active_tab_index_ = 0;
-  bottom_panel_mode_ = BottomPanelMode::Logs;
   overlay_visible_ = false;
   command_mode_ = false;
   compare_picker_matches_.clear();
@@ -602,7 +596,6 @@ bool WorkspaceShell::RestoreSessionState() {
 
   sidebar_visible_ = restored_sidebar_visible;
   sidebar_width_ = restored_sidebar_width;
-  bottom_panel_visible_ = restored_bottom_panel_visible;
   bottom_panel_height_ = restored_bottom_panel_height;
 
   if (open_tabs_.empty()) {
@@ -643,7 +636,6 @@ void WorkspaceShell::SaveSessionState() {
   file << "version 1\n";
   file << "sidebar-visible " << (sidebar_visible_ ? 1 : 0) << '\n';
   file << "sidebar-width " << sidebar_width_ << '\n';
-  file << "bottom-panel-visible " << (bottom_panel_visible_ ? 1 : 0) << '\n';
   file << "bottom-panel-height " << bottom_panel_height_ << '\n';
 
   std::size_t persisted_active_tab = 0;

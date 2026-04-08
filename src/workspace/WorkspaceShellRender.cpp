@@ -15,7 +15,7 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kDivider = 1.0f;
-constexpr float kSidebarHeaderHeight = 30.0f;
+constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
@@ -239,26 +239,9 @@ void DrawWindowControlGlyph(SDL_Renderer* renderer,
 
 }  // namespace
 
-std::string WorkspaceShell::BottomPanelHeaderLabel() const {
-  if (!BottomPanelShowsTerminal()) {
-    return "Bottom Panel | Logs";
-  }
-
-  const auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr) {
-    return "Bottom Panel | Logs";
-  }
-
-  const std::string launch_label = terminal_tab->session.LaunchLabel();
-  if (launch_label.empty()) {
-    return "Bottom Panel | Terminal";
-  }
-  return "Bottom Panel | Terminal | " + launch_label;
-}
-
 void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
   auto* terminal_tab = ActiveTerminalTab();
-  if (!BottomPanelShowsTerminal() || terminal_tab == nullptr) {
+  if (terminal_tab == nullptr) {
     return;
   }
 
@@ -298,7 +281,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_visible_,
-                    bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+                    BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
@@ -307,7 +290,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       NormalizeEditorSplitTree(*editor_tab);
     }
   }
-  if (bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+  if (ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
   float mouse_x = 0.0f;
@@ -315,7 +298,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   SDL_GetMouseState(&mouse_x, &mouse_y);
   UpdateMouseCursor(mouse_x, mouse_y);
   const std::vector<terminal::TerminalLine> terminal_lines =
-      bottom_panel_visible_ && BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr
+      ActiveTerminalTab() != nullptr
           ? ActiveTerminalTab()->session.SnapshotLines()
           : std::vector<terminal::TerminalLine>{};
   std::optional<SDL_FRect> active_editor_pane_rect;
@@ -345,10 +328,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                  MakeRect(layout.breadcrumb.x, layout.breadcrumb.y + layout.breadcrumb.h - kDivider,
                           layout.breadcrumb.w, kDivider),
                  theme_.border);
-  DrawFilledRect(renderer, layout.status_bar, theme_.chrome_background);
-  DrawFilledRect(renderer,
-                 MakeRect(layout.status_bar.x, layout.status_bar.y, layout.status_bar.w, kDivider),
-                 theme_.border);
 
   if (sidebar_visible_) {
     DrawFilledRect(renderer, layout.sidebar, theme_.surface_background);
@@ -365,7 +344,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    theme_.border);
   }
 
-  if (bottom_panel_visible_) {
+  if (BottomPanelVisible()) {
     DrawFilledRect(renderer, layout.bottom_panel, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
@@ -417,6 +396,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       [&](float x, float y, SDL_Color foreground, SDL_Color background, std::string_view text) {
         text_renderer_.DrawStringOn(renderer, x, y, foreground, background, text);
       };
+  const auto draw_text = [&](float x, float y, SDL_Color foreground, std::string_view text) {
+    text_renderer_.DrawString(renderer, x, y, foreground, text);
+  };
   struct TextInputVisual {
     TextInputSurface surface = TextInputSurface::None;
     SDL_FRect area{};
@@ -735,13 +717,24 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
     flush_segment();
   };
+  const auto draw_vcentered_text_on = [&](const SDL_FRect& rect,
+                                          float left_padding,
+                                          SDL_Color foreground,
+                                          SDL_Color background,
+                                          std::string_view text) {
+    (void) background;
+    const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer_.LineHeight()) * 0.5f);
+    draw_text(rect.x + left_padding, y, foreground, text);
+  };
   const auto draw_centered_text_on = [&](const SDL_FRect& rect,
-                                         float left_padding,
                                          SDL_Color foreground,
                                          SDL_Color background,
                                          std::string_view text) {
+    (void) background;
+    const float text_width = text_renderer_.MeasureWidth(text);
+    const float x = rect.x + std::floor(std::max(0.0f, rect.w - text_width) * 0.5f);
     const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer_.LineHeight()) * 0.5f);
-    draw_text_on(rect.x + left_padding, y, foreground, background, text);
+    draw_text(x, y, foreground, text);
   };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
@@ -758,8 +751,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                      MakeRect(item.rect.x, item.rect.y + item.rect.h - 2.0f, item.rect.w, 2.0f),
                      theme_.accent);
     }
-    draw_centered_text_on(item.rect, 10.0f, item.active ? theme_.text_primary : theme_.text_secondary,
-                          background, menu->label);
+    draw_vcentered_text_on(item.rect, 10.0f,
+                           item.active ? theme_.text_primary : theme_.text_secondary, background,
+                           menu->label);
   }
 
   if (custom_window_chrome_enabled_) {
@@ -887,23 +881,22 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (tab.active) {
       DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f), theme_.accent);
     }
-    draw_text_on(tab.rect.x + 10.0f, tab.rect.y + 5.0f,
-                 tab.active ? theme_.text_primary : theme_.text_secondary,
-                 tab.active ? theme_.chrome_active : theme_.surface_raised,
-                 TruncateLabel(ProjectTabDisplayTitle(tab.index), tab.rect.w - 46.0f));
-    draw_text_on(tab.close_rect.x + 3.0f, tab.close_rect.y + 1.0f,
-                 tab.active ? theme_.text_secondary : theme_.text_disabled,
-                 tab.active ? theme_.chrome_active : theme_.surface_raised, "x");
+    draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
+                           tab.active ? theme_.chrome_active : theme_.surface_raised,
+                           TruncateLabel(ProjectTabDisplayTitle(tab.index), tab.rect.w - 46.0f));
+    draw_centered_text_on(tab.close_rect, tab.active ? theme_.text_secondary : theme_.text_disabled,
+                          tab.active ? theme_.chrome_active : theme_.surface_raised, "x");
   }
 
   if (!project_root_.empty() && open_tabs_.empty()) {
     const SDL_FRect placeholder_tab =
-        MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 5.0f, 220.0f, 24.0f);
+        MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
+                 std::max(22.0f, layout.tab_strip.h - 2.0f));
     DrawFilledRect(renderer, placeholder_tab, theme_.chrome_active);
     DrawFilledRect(renderer, MakeRect(placeholder_tab.x, placeholder_tab.y, placeholder_tab.w, 2.0f),
                    theme_.accent);
-    draw_text_on(placeholder_tab.x + 10.0f, placeholder_tab.y + 6.0f, theme_.text_primary,
-                 theme_.chrome_active, "welcome");
+    draw_vcentered_text_on(placeholder_tab, 10.0f, theme_.text_primary, theme_.chrome_active,
+                           "welcome");
   } else if (!project_root_.empty()) {
     for (const VisibleTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
       DrawFilledRect(renderer, tab.rect, tab.active ? theme_.chrome_active : theme_.surface_raised);
@@ -912,13 +905,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                        theme_.accent);
       }
       const std::string display_title = TabDisplayTitle(tab.index);
-      draw_text_on(tab.rect.x + 10.0f, tab.rect.y + 6.0f,
-                   tab.active ? theme_.text_primary : theme_.text_secondary,
-                   tab.active ? theme_.chrome_active : theme_.surface_raised,
-                   TruncateLabel(display_title, tab.rect.w - 46.0f));
-      draw_text_on(tab.close_rect.x + 3.0f, tab.close_rect.y + 1.0f,
-                   tab.active ? theme_.text_secondary : theme_.text_disabled,
-                   tab.active ? theme_.chrome_active : theme_.surface_raised, "x");
+      draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
+                             tab.active ? theme_.chrome_active : theme_.surface_raised,
+                             TruncateLabel(display_title, tab.rect.w - 46.0f));
+      draw_centered_text_on(tab.close_rect, tab.active ? theme_.text_secondary : theme_.text_disabled,
+                            tab.active ? theme_.chrome_active : theme_.surface_raised, "x");
     }
   }
 
@@ -931,6 +922,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   const float breadcrumb_label_x = layout.breadcrumb.x + 12.0f;
+  const std::string status_message_label =
+      status_message_.empty()
+          ? std::string{}
+          : TruncateLabel(status_message_, std::max(120.0f, layout.breadcrumb.w * 0.45f));
+  const float status_message_width =
+      status_message_label.empty() ? 0.0f : text_renderer_.MeasureWidth(status_message_label);
+  const float status_message_x =
+      status_message_.empty()
+          ? layout.breadcrumb.x + layout.breadcrumb.w - 12.0f
+          : std::max(layout.breadcrumb.x + 12.0f,
+                     layout.breadcrumb.x + layout.breadcrumb.w - status_message_width - 12.0f);
+  const float breadcrumb_right_limit =
+      status_message_.empty() ? layout.breadcrumb.x + layout.breadcrumb.w - 12.0f
+                              : status_message_x - 16.0f;
   draw_text_on(breadcrumb_label_x, layout.breadcrumb.y + 7.0f, theme_.text_muted,
                theme_.chrome_background, project_label);
   const float breadcrumb_text_x =
@@ -938,10 +943,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   draw_text_on(breadcrumb_text_x, layout.breadcrumb.y + 7.0f, theme_.text_primary,
                theme_.chrome_background,
                TruncateLabel(BreadcrumbLabel(),
-                             layout.breadcrumb.w - (breadcrumb_text_x - layout.breadcrumb.x) - 14.0f));
+                             std::max(0.0f, breadcrumb_right_limit - breadcrumb_text_x)));
+  if (!status_message_label.empty()) {
+    draw_text_on(status_message_x, layout.breadcrumb.y + 7.0f, theme_.text_muted,
+                 theme_.chrome_background, status_message_label);
+  }
 
   if (sidebar_visible_) {
-    const float text_y_offset = 4.0f;
     const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
     const bool sidebar_mode_hovered =
         last_mouse_position_valid_ && Contains(sidebar_mode_rect, last_mouse_x_, last_mouse_y_);
@@ -953,17 +961,15 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawRect(renderer, sidebar_mode_rect,
              sidebar_mode_open ? theme_.accent
                                : sidebar_mode_hovered ? theme_.text_secondary : theme_.border);
-    draw_text_on(sidebar_mode_rect.x + 8.0f, sidebar_mode_rect.y + 4.0f,
-                 sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary
-                                                           : theme_.text_secondary,
-                 sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
-                                                           : theme_.surface_raised,
-                 SidebarModeControlLabel());
-    draw_text_on(sidebar_mode_rect.x + sidebar_mode_rect.w - 12.0f, sidebar_mode_rect.y + 4.0f,
-                 sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary : theme_.text_muted,
-                 sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
-                                                           : theme_.surface_raised,
-                 "v");
+    draw_vcentered_text_on(sidebar_mode_rect, 8.0f,
+                           sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary
+                                                                     : theme_.text_secondary,
+                           sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
+                                                                     : theme_.surface_raised,
+                           SidebarModeControlLabel());
+    DrawChevron(renderer, sidebar_mode_rect.x + sidebar_mode_rect.w - 18.0f,
+                sidebar_mode_rect.y + sidebar_mode_rect.h * 0.5f, true,
+                sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary : theme_.text_muted);
 
     if (sidebar_mode_ == SidebarMode::Search) {
       const std::string active_query =
@@ -1003,7 +1009,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const SDL_Color text = active || hovered ? theme_.text_primary : theme_.text_secondary;
         DrawFilledRect(renderer, rect, background);
         DrawRect(renderer, rect, border);
-        draw_centered_text_on(rect, 4.0f, text, background, label);
+        draw_centered_text_on(rect, text, background, label);
       };
 
       draw_search_button(ProjectSearchModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
@@ -1074,9 +1080,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
               static_cast<std::size_t>(std::min(line_index + 1, static_cast<int>(line_map.size()) - 1));
           const auto& file_result =
               project_search_results_[static_cast<std::size_t>(line_map[next_result_index])];
-          draw_text_on(row_rect.x + 4.0f, row_rect.y + text_y_offset, theme_.text_primary,
-                       theme_.surface_background,
-                       TruncateLabel(file_result.relative_path.string(), row_rect.w - 8.0f));
+          draw_vcentered_text_on(row_rect, 4.0f, theme_.text_primary, theme_.surface_background,
+                                 TruncateLabel(file_result.relative_path.string(), row_rect.w - 8.0f));
           continue;
         }
 
@@ -1089,10 +1094,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const std::string snippet = CollapseWhitespace(result.preview);
         const std::string label =
             std::to_string(result.line + 1) + ":" + std::to_string(result.column + 1) + "  " + snippet;
-        draw_text_on(row_rect.x + 6.0f, row_rect.y + text_y_offset,
-                     selected ? theme_.text_primary : theme_.text_secondary,
-                     selected ? theme_.row_highlight : theme_.surface_background,
-                     TruncateLabel(label, row_rect.w - 12.0f));
+        draw_vcentered_text_on(row_rect, 6.0f,
+                               selected ? theme_.text_primary : theme_.text_secondary,
+                               selected ? theme_.row_highlight : theme_.surface_background,
+                               TruncateLabel(label, row_rect.w - 12.0f));
       }
 
       if (line_map.empty()) {
@@ -1119,8 +1124,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       DrawFilledRect(renderer, refresh_rect,
                      refresh_hovered ? theme_.row_highlight : theme_.surface_raised);
       DrawRect(renderer, refresh_rect, refresh_hovered ? theme_.accent : theme_.border);
-      draw_centered_text_on(refresh_rect, 8.0f,
-                            refresh_hovered ? theme_.text_primary : theme_.accent,
+      draw_centered_text_on(refresh_rect, refresh_hovered ? theme_.text_primary : theme_.accent,
                             refresh_hovered ? theme_.row_highlight : theme_.surface_raised,
                             "Refresh");
       const auto lines = BuildGitSidebarLines();
@@ -1148,13 +1152,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                       kSidebarRowHeight - 2.0f);
 
         if (line.kind == GitSidebarLine::Kind::Header) {
-          draw_text_on(row_rect.x + 4.0f, row_rect.y + text_y_offset, theme_.text_muted,
-                       theme_.surface_background, TruncateLabel(line.label, row_rect.w - 8.0f));
+          draw_vcentered_text_on(row_rect, 4.0f, theme_.text_muted, theme_.surface_background,
+                                 TruncateLabel(line.label, row_rect.w - 8.0f));
           continue;
         }
         if (line.kind == GitSidebarLine::Kind::Empty || line.entry_index < 0) {
-          draw_text_on(row_rect.x + 4.0f, row_rect.y + text_y_offset, theme_.text_muted,
-                       theme_.surface_background, TruncateLabel(line.label, row_rect.w - 8.0f));
+          draw_vcentered_text_on(row_rect, 4.0f, theme_.text_muted, theme_.surface_background,
+                                 TruncateLabel(line.label, row_rect.w - 8.0f));
           continue;
         }
 
@@ -1175,8 +1179,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                      std::string_view label,
                                      SDL_Color text_color) {
           DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
-          draw_centered_text_on(button_rect, 8.0f, text_color,
-                                selected ? theme_.row_highlight : theme_.surface_background, label);
+          draw_centered_text_on(button_rect, text_color,
+                                selected ? theme_.row_highlight : theme_.surface_background,
+                                label);
         };
 
         if (entry.section == GitSidebarEntry::Section::Modified) {
@@ -1198,17 +1203,18 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         }
 
         if (!marker_text.empty()) {
-          draw_text_on(right_edge - marker_width, row_rect.y + text_y_offset,
-                       selected ? theme_.text_primary : GitMarkerColor(theme_, entry.status),
-                       selected ? theme_.row_highlight : theme_.surface_background, marker_text);
+          draw_vcentered_text_on(
+              MakeRect(right_edge - marker_width, row_rect.y, marker_width, row_rect.h), 0.0f,
+              selected ? theme_.text_primary : GitMarkerColor(theme_, entry.status),
+              selected ? theme_.row_highlight : theme_.surface_background, marker_text);
           right_edge -= marker_width + 8.0f;
         }
 
         const std::string label = entry.relative_path.string() + (entry.staged ? "  [staged]" : "");
-        draw_text_on(row_rect.x + 6.0f, row_rect.y + text_y_offset,
-                     selected ? theme_.text_primary : theme_.text_secondary,
-                     selected ? theme_.row_highlight : theme_.surface_background,
-                     TruncateLabel(label, std::max(20.0f, right_edge - row_rect.x - 6.0f)));
+        draw_vcentered_text_on(
+            row_rect, 6.0f, selected ? theme_.text_primary : theme_.text_secondary,
+            selected ? theme_.row_highlight : theme_.surface_background,
+            TruncateLabel(label, std::max(20.0f, right_edge - row_rect.x - 6.0f)));
       }
 
       draw_vertical_scrollbar(
@@ -1217,11 +1223,27 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           static_cast<float>(lines.size()), visible_units,
           static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
     } else {
+      const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
+      const bool refresh_hovered =
+          last_mouse_position_valid_ && Contains(refresh_rect, last_mouse_x_, last_mouse_y_);
+      DrawFilledRect(renderer, refresh_rect,
+                     refresh_hovered ? theme_.row_highlight : theme_.surface_raised);
+      DrawRect(renderer, refresh_rect, refresh_hovered ? theme_.accent : theme_.border);
+      draw_centered_text_on(refresh_rect, refresh_hovered ? theme_.text_primary : theme_.accent,
+                            refresh_hovered ? theme_.row_highlight : theme_.surface_raised,
+                            "Refresh");
+
       const std::string tree_root_label = ProjectLabel();
-      const float root_label_width = text_renderer_.MeasureWidth(tree_root_label);
-      draw_text_on(layout.sidebar.x + layout.sidebar.w - root_label_width - kSidebarInset,
-                   layout.sidebar.y + 8.0f, theme_.text_muted, theme_.chrome_background,
-                   tree_root_label);
+      const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
+      const float root_label_left = sidebar_mode_rect.x + sidebar_mode_rect.w + 10.0f;
+      const float root_label_right = refresh_rect.x - 10.0f;
+      const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
+      const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
+      const float root_label_width = text_renderer_.MeasureWidth(root_label);
+      if (!root_label.empty()) {
+        draw_text_on(root_label_right - root_label_width, layout.sidebar.y + 8.0f,
+                     theme_.text_muted, theme_.chrome_background, root_label);
+      }
 
       const auto& entries = directory_tree_.entries();
       const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
@@ -1280,16 +1302,17 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                       selected ? theme_.text_primary : theme_.text_muted);
         }
 
-        draw_text_on(label_x, row_rect.y + text_y_offset,
-                     selected ? theme_.text_primary
-                              : (entry.is_directory ? theme_.text_primary : theme_.text_secondary),
-                     selected ? theme_.row_highlight : theme_.surface_background,
-                     TruncateLabel(entry.label, label_width));
+        draw_vcentered_text_on(
+            MakeRect(label_x, row_rect.y, label_width, row_rect.h), 0.0f,
+            selected ? theme_.text_primary
+                     : (entry.is_directory ? theme_.text_primary : theme_.text_secondary),
+            selected ? theme_.row_highlight : theme_.surface_background,
+            TruncateLabel(entry.label, label_width));
         if (has_git_marker) {
-          draw_text_on(marker_x, row_rect.y + text_y_offset,
-                       selected ? theme_.text_primary : GitMarkerColor(theme_, entry.git_status),
-                       selected ? theme_.row_highlight : theme_.surface_background,
-                       git_marker_text);
+          draw_vcentered_text_on(
+              MakeRect(marker_x, row_rect.y, marker_width, row_rect.h), 0.0f,
+              selected ? theme_.text_primary : GitMarkerColor(theme_, entry.git_status),
+              selected ? theme_.row_highlight : theme_.surface_background, git_marker_text);
         }
       }
 
@@ -1467,11 +1490,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         static_cast<float>(overlay_scroll_row_), drag_target_ == DragTarget::OverlayScrollbar);
   }
 
-  if (bottom_panel_visible_) {
+  if (BottomPanelVisible()) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kBottomPanelHeaderHeight);
-    const bool terminal_panel = BottomPanelShowsTerminal();
+    const bool terminal_panel = ActiveTerminalTab() != nullptr;
     if (terminal_panel) {
       for (const VisibleTerminalTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
         const auto* terminal_tab =
@@ -1491,29 +1514,22 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         if (label.empty()) {
           label = "terminal";
         }
-        draw_text_on(tab.rect.x + 8.0f, tab.rect.y + 4.0f, foreground, background,
-                     TruncateLabel(label, tab.rect.w - 40.0f));
-        draw_text_on(tab.close_rect.x + 3.0f, tab.close_rect.y + 1.0f, foreground, background,
-                     "x");
+        draw_vcentered_text_on(tab.rect, 8.0f, foreground, background,
+                               TruncateLabel(label, tab.rect.w - 40.0f));
+        draw_centered_text_on(tab.close_rect, foreground, background, "x");
       }
       const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
       DrawFilledRect(renderer, new_tab_rect, theme_.surface_raised);
       DrawRect(renderer, new_tab_rect, theme_.border);
-      draw_text_on(new_tab_rect.x + 5.0f, new_tab_rect.y + 2.0f, theme_.text_secondary,
-                   theme_.surface_raised, "+");
+      draw_centered_text_on(new_tab_rect, theme_.text_secondary, theme_.surface_raised, "+");
     } else {
-      std::string panel_header_label = BottomPanelHeaderLabel();
-      if (command_mode_) {
-        panel_header_label += " | Command";
-      }
-      draw_text_on(layout.bottom_panel.x + 12.0f, layout.bottom_panel.y + 8.0f,
-                   theme_.text_secondary, theme_.chrome_background,
-                   TruncateLabel(panel_header_label, layout.bottom_panel.w - 24.0f));
+      draw_vcentered_text_on(panel_header, 12.0f, theme_.text_secondary, theme_.chrome_background,
+                             "Command");
     }
 
     const SDL_FRect panel_content = BottomPanelContentRect(layout, command_mode_);
     const float logs_y = panel_content.y + 8.0f;
-    const std::size_t panel_line_count = terminal_panel ? terminal_lines.size() : log_messages_.size();
+    const std::size_t panel_line_count = terminal_panel ? terminal_lines.size() : 0;
     const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
     const int max_scroll = std::max(0, static_cast<int>(panel_line_count) - visible_rows);
     const int scroll_row = BottomPanelScrollRow(panel_line_count, visible_rows);
@@ -1530,10 +1546,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         draw_terminal_line(panel_content.x + 12.0f, line_y, log_width,
                            terminal_lines[static_cast<std::size_t>(index)],
                            static_cast<std::size_t>(index));
-      } else {
-        draw_text_on(panel_content.x + 12.0f, line_y, theme_.text_muted,
-                     theme_.surface_background,
-                     TruncateLabel(log_messages_[static_cast<std::size_t>(index)], log_width));
       }
     }
 
@@ -1618,18 +1630,18 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
             const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
             DrawFilledRect(renderer, item.rect, background);
             if (item.checked) {
-              draw_centered_text_on(item.rect, 8.0f,
-                                    item.enabled ? theme_.accent : theme_.text_disabled, background,
-                                    "x");
+              draw_centered_text_on(
+                  MakeRect(item.rect.x + 8.0f, item.rect.y, 10.0f, item.rect.h),
+                  item.enabled ? theme_.accent : theme_.text_disabled, background, "x");
             }
             const std::string accelerator = MenuItemAccelerator(spec);
             const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
             const float label_width = std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
-            draw_centered_text_on(
-                MakeRect(item.rect.x + 24.0f, item.rect.y, label_width, item.rect.h), 0.0f, text_color,
-                background, TruncateLabel(MenuItemLabel(spec), label_width));
+            draw_vcentered_text_on(
+                MakeRect(item.rect.x + 24.0f, item.rect.y, label_width, item.rect.h), 0.0f,
+                text_color, background, TruncateLabel(MenuItemLabel(spec), label_width));
             if (!accelerator.empty()) {
-              draw_centered_text_on(
+              draw_vcentered_text_on(
                   MakeRect(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y,
                            accelerator_width, item.rect.h),
                   0.0f, accel_color, background, accelerator);
@@ -1667,75 +1679,26 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
         DrawFilledRect(renderer, item.rect, background);
         if (item.checked) {
-          draw_text_on(item.rect.x + 8.0f, item.rect.y + 3.0f,
-                       item.enabled ? theme_.accent : theme_.text_disabled, background, "x");
+          draw_centered_text_on(MakeRect(item.rect.x + 8.0f, item.rect.y, 10.0f, item.rect.h),
+                                item.enabled ? theme_.accent : theme_.text_disabled, background,
+                                "x");
         }
         const std::string accelerator = MenuItemAccelerator(spec);
         const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
         const float label_width =
             std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
-        draw_text_on(item.rect.x + 24.0f, item.rect.y + 3.0f, text_color, background,
-                     TruncateLabel(MenuItemLabel(spec), label_width));
+        draw_vcentered_text_on(MakeRect(item.rect.x + 24.0f, item.rect.y, label_width, item.rect.h),
+                               0.0f, text_color, background,
+                               TruncateLabel(MenuItemLabel(spec), label_width));
         if (!accelerator.empty()) {
-          draw_text_on(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y + 3.0f,
-                       accel_color, background, accelerator);
+          draw_vcentered_text_on(
+              MakeRect(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y,
+                       accelerator_width, item.rect.h),
+              0.0f, accel_color, background, accelerator);
         }
       }
     }
   }
-
-  const std::string focus_text =
-      focus_ == FocusTarget::Sidebar ? "sidebar"
-      : focus_ == FocusTarget::Panel ? "panel"
-      : focus_ == FocusTarget::Overlay ? "overlay"
-                                       : "editor";
-  const std::string sidebar_text =
-      sidebar_mode_ == SidebarMode::Search ? (sidebar_temporary_ ? "search*" : "search")
-      : sidebar_mode_ == SidebarMode::Git ? "git"
-      : sidebar_mode_ == SidebarMode::Tree ? "tree"
-                                           : "none";
-  const std::string left_status =
-      ProjectLabel() + "  |  " + std::string(text_renderer_.BackendName()) + "  |  focus " +
-      focus_text + "  |  sidebar " + sidebar_text + "  |  scale " + UiScaleLabel(ui_scale_);
-  std::string right_status;
-  if (ActiveTabIsCompare()) {
-    right_status =
-        "Compare  |  Row " +
-        std::to_string(ActiveCompareTab() == nullptr ? 1
-                                                     : ActiveCompareTab()->selected_row + 1);
-  } else if (ActiveTabIsMerge()) {
-    const MergeTabState* merge_tab = ActiveMergeTab();
-    const std::string dirty_prefix =
-        merge_tab != nullptr && merge_tab->result_viewport.dirty() ? "* " : "";
-    std::string hunk_state = "merge";
-    if (merge_tab != nullptr && !merge_tab->model.hunks.empty()) {
-      const std::size_t selected_hunk =
-          std::min(merge_tab->selected_hunk, merge_tab->model.hunks.size() - 1);
-      hunk_state = "Merge  |  Hunk " + std::to_string(selected_hunk + 1) + "/" +
-                   std::to_string(merge_tab->model.hunks.size()) + "  |  " +
-                   compare::MergeChoiceLabel(merge_tab->model.hunks[selected_hunk].choice);
-    } else {
-      hunk_state = "Merge  |  clean";
-    }
-    right_status = dirty_prefix + hunk_state;
-  } else {
-    const std::string dirty_prefix = text_viewport_.dirty() ? "* " : "";
-    right_status =
-        dirty_prefix + text_viewport_.EncodingLabel() + "  |  " +
-        text_viewport_.LineEndingLabel() + "  |  Ln " +
-        std::to_string(text_viewport_.cursor_line() + 1) + ", Col " +
-        std::to_string(text_viewport_.cursor_column() + 1);
-  }
-  const float right_status_width = text_renderer_.MeasureWidth(right_status);
-  const float right_status_x = std::max(layout.status_bar.x + 10.0f,
-                                        layout.status_bar.x + layout.status_bar.w -
-                                            right_status_width - 12.0f);
-  const float left_max_width =
-      std::max(0.0f, right_status_x - (layout.status_bar.x + 10.0f) - 12.0f);
-  draw_text_on(layout.status_bar.x + 10.0f, layout.status_bar.y + 5.0f, theme_.text_secondary,
-               theme_.chrome_background, TruncateLabel(left_status, left_max_width));
-  draw_text_on(right_status_x, layout.status_bar.y + 5.0f, theme_.text_muted,
-               theme_.chrome_background, right_status);
 
   if (prompt_surface_visible_) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
