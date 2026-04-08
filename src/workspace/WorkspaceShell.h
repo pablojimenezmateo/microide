@@ -178,6 +178,12 @@ class WorkspaceShell {
       struct EditorViewState {
         std::size_t leaf_id = 0;
         editor::TextViewport viewport;
+        std::filesystem::path restored_path;
+        std::size_t restored_cursor_line = 0;
+        std::size_t restored_cursor_column = 0;
+        std::size_t restored_scroll_line = 0;
+        std::size_t restored_horizontal_scroll = 0;
+        bool needs_restore = false;
       };
 
       struct EditorSplitNode {
@@ -544,7 +550,8 @@ class WorkspaceShell {
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
                                 bool restore_persistence,
-                                bool log_feedback);
+                                bool log_feedback,
+                                bool activate_restored_tab = true);
   void StoreCurrentProjectState(ProjectWorkspaceState& state);
   void LoadProjectState(ProjectWorkspaceState& state);
   bool OpenProjectTab(const std::filesystem::path& project_root,
@@ -591,6 +598,10 @@ class WorkspaceShell {
   void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
                                  const std::filesystem::path& new_path);
   void CloseOpenTabsForPath(const std::filesystem::path& path);
+  std::filesystem::path EditorViewPath(const TabEntry::EditorTabState::EditorViewState& view) const;
+  bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
+  bool EnsureEditorTabLoaded(TabEntry& tab);
+  bool ActivateCurrentTabAfterStateLoad();
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
@@ -600,6 +611,12 @@ class WorkspaceShell {
       float size_fraction = 1.0f);
   void SyncActiveEditorTabMetadata();
   bool ReplaceActiveEditorView(const editor::TextViewport& viewport);
+  TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
+      TabEntry::EditorTabState& editor_tab,
+      std::size_t leaf_id);
+  const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
+      const TabEntry::EditorTabState& editor_tab,
+      std::size_t leaf_id) const;
   editor::TextViewport* FindEditorView(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
   const editor::TextViewport* FindEditorView(const TabEntry::EditorTabState& editor_tab,
                                              std::size_t leaf_id) const;

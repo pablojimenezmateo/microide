@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "util/StartupTrace.h"
+
 namespace microide::project {
 
 namespace {
@@ -155,6 +157,7 @@ std::string ReadCommandOutput(const std::string& command) {
 
 std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
     const std::filesystem::path& root) {
+  util::StartupTrace::Scope trace_scope("CollectGitStatuses");
   if (root.empty() || !HasGitMarker(root)) {
     return {};
   }

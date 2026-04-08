@@ -5,6 +5,7 @@
 
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
+#include "util/StartupTrace.h"
 
 namespace microide::project {
 
@@ -32,6 +33,7 @@ bool IsHidden(const std::filesystem::path& path) {
 }  // namespace
 
 bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
+  util::StartupTrace::Scope trace_scope("DirectoryTree::SetRoot");
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
   if (error || !std::filesystem::exists(absolute_root) ||
@@ -176,6 +178,7 @@ std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
 }
 
 void DirectoryTree::RebuildEntries() {
+  util::StartupTrace::Scope trace_scope("DirectoryTree::RebuildEntries");
   const auto selected_path =
       entries_.empty() ? std::filesystem::path{} : entries_[selected_index_].path;
 

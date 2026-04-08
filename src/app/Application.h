@@ -33,6 +33,7 @@ class Application {
   bool initialized_ = false;
   bool running_ = false;
   bool custom_window_chrome_enabled_ = false;
+  bool first_render_complete_ = false;
 
   workspace::WorkspaceShell workspace_shell_;
 };

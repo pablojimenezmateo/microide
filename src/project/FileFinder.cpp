@@ -26,7 +26,11 @@ bool RemoveLastUtf8Codepoint(std::string* text) {
 
 void FileFinder::SetIndex(const FileIndex* index) {
   index_ = index;
-  Refresh();
+  results_.clear();
+  selected_index_ = 0;
+  if (index_ != nullptr && !query_.empty()) {
+    Refresh();
+  }
 }
 
 void FileFinder::SetQuery(std::string query) {

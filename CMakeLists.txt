@@ -87,6 +87,7 @@ add_executable(microide
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
+  src/util/StartupTrace.cpp
   src/workspace/WorkspaceShell.cpp
 )
 

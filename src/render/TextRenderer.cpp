@@ -1,6 +1,7 @@
 #include "render/TextRenderer.h"
 
 #include "render/DebugTextBackend.h"
+#include "util/StartupTrace.h"
 
 #if MICROIDE_HAS_SDL3_TTF
 #include "render/SdlTtfTextBackend.h"
@@ -81,6 +82,7 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer) {
   if (attempted_optional_backend_) {
     return;
   }
+  util::StartupTrace::Scope trace_scope("TextRenderer::EnsureInitialized");
   attempted_optional_backend_ = true;
 
 #if MICROIDE_HAS_SDL3_TTF

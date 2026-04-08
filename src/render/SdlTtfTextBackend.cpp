@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/StartupTrace.h"
+
 namespace microide::render {
 
 namespace {
@@ -48,6 +50,7 @@ SdlTtfTextBackend::~SdlTtfTextBackend() {
 }
 
 bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
+  util::StartupTrace::Scope trace_scope("SdlTtfTextBackend::Initialize");
   if (renderer == nullptr) {
     return false;
   }

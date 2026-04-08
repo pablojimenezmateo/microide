@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <optional>
 
+#include "util/StartupTrace.h"
+
 namespace microide::app {
 
 namespace {
@@ -61,25 +63,37 @@ bool Application::Initialize() {
     return true;
   }
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
-    SDL_Log("SDL_Init failed: %s", SDL_GetError());
-    return false;
+  util::StartupTrace::Reset();
+  util::StartupTrace::Scope trace_scope("Application::Initialize");
+
+  {
+    util::StartupTrace::Scope sdl_init_scope("SDL_Init");
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+      SDL_Log("SDL_Init failed: %s", SDL_GetError());
+      return false;
+    }
   }
 
   const SDL_WindowFlags window_flags =
       SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
-  window_ = SDL_CreateWindow(
-      "microide",
-      kInitialWindowWidth,
-      kInitialWindowHeight,
-      window_flags);
+  {
+    util::StartupTrace::Scope create_window_scope("SDL_CreateWindow");
+    window_ = SDL_CreateWindow(
+        "microide",
+        kInitialWindowWidth,
+        kInitialWindowHeight,
+        window_flags);
+  }
   if (window_ == nullptr) {
     SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
     return false;
   }
 
-  renderer_ = SDL_CreateRenderer(window_, nullptr);
+  {
+    util::StartupTrace::Scope create_renderer_scope("SDL_CreateRenderer");
+    renderer_ = SDL_CreateRenderer(window_, nullptr);
+  }
   if (renderer_ == nullptr) {
     SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
     return false;
@@ -87,28 +101,41 @@ bool Application::Initialize() {
 
   SDL_SetRenderVSync(renderer_, 1);
 
-  if (!workspace_shell_.Initialize(std::filesystem::current_path())) {
-    SDL_Log("Workspace initialization failed");
-    return false;
+  {
+    util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
+    if (!workspace_shell_.Initialize(std::filesystem::current_path())) {
+      SDL_Log("Workspace initialization failed");
+      return false;
+    }
   }
 
   custom_window_chrome_enabled_ = false;
-  if (!SDL_SetWindowBordered(window_, false)) {
-    SDL_Log("SDL_SetWindowBordered(false) failed: %s", SDL_GetError());
-  } else if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
-    SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
-    SDL_SetWindowBordered(window_, true);
-  } else {
-    custom_window_chrome_enabled_ = true;
+  {
+    util::StartupTrace::Scope window_chrome_scope("WindowChromeSetup");
+    if (!SDL_SetWindowBordered(window_, false)) {
+      SDL_Log("SDL_SetWindowBordered(false) failed: %s", SDL_GetError());
+    } else if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
+      SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
+      SDL_SetWindowBordered(window_, true);
+    } else {
+      custom_window_chrome_enabled_ = true;
+    }
   }
 
-  UpdateRendererPresentation();
+  {
+    util::StartupTrace::Scope presentation_scope("UpdateRendererPresentation");
+    UpdateRendererPresentation();
+  }
 
-  if (!SDL_StartTextInput(window_)) {
-    SDL_Log("SDL_StartTextInput failed: %s", SDL_GetError());
+  {
+    util::StartupTrace::Scope text_input_scope("SDL_StartTextInput");
+    if (!SDL_StartTextInput(window_)) {
+      SDL_Log("SDL_StartTextInput failed: %s", SDL_GetError());
+    }
   }
 
   initialized_ = true;
+  first_render_complete_ = false;
   return true;
 }
 
@@ -172,6 +199,11 @@ void Application::Render() {
     return;
   }
 
+  std::optional<util::StartupTrace::Scope> first_render_scope;
+  if (!first_render_complete_ && util::StartupTrace::Enabled()) {
+    first_render_scope.emplace("Application::FirstRender");
+  }
+
   int width = 0;
   int height = 0;
   if (!UpdateRendererPresentation(&width, &height)) {
@@ -180,6 +212,7 @@ void Application::Render() {
 
   workspace_shell_.Render(renderer_, width, height);
   SDL_RenderPresent(renderer_);
+  first_render_complete_ = true;
 }
 
 bool Application::UpdateRendererPresentation(int* logical_width, int* logical_height) {

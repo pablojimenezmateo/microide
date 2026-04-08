@@ -6,10 +6,17 @@ Rewrite this modified `micro`-based IDE from Go/TUI into a lean C++ desktop appl
 
 The GUI design direction should be explicitly based on Zed's desktop UI language, minus the features this project does not need.
 
-The rewrite should prioritize:
+The rewrite is performance-sensitive by design. When tradeoffs conflict, use this order:
 
-- low idle CPU usage
+1. startup speed
+2. low idle CPU usage
+3. low memory footprint
+
+After those, the rewrite should prioritize:
+
 - fast startup
+- low idle CPU usage
+- low memory footprint
 - low input latency
 - simple architecture
 - a compact, dense desktop GUI similar to Zed
@@ -77,6 +84,7 @@ This mirrors the current fork closely, but removes the constraints imposed by a 
 The current implementation already matches the single-project subset of this shell.
 The next planned expansion is a multi-project workspace layer plus menu/context-menu surfaces.
 Detailed design notes for that expansion now live in `docs/workspace-expansion-plan.md`.
+Startup tracing instructions now live in `docs/startup-tracing.md`.
 
 ## Visual Direction: Zed-Inspired, Reduced Scope
 
@@ -773,6 +781,9 @@ Exit criteria:
 
 ### Phase 8: Polish And Optimization
 
+- protect startup speed first
+- then reduce idle CPU usage
+- then reduce memory footprint
 - theme support
 - syntax asset conversion
 - keybinding compatibility
@@ -790,7 +801,9 @@ Exit criteria:
 
 Before calling the rewrite successful, verify:
 
+- startup feels immediate on medium-sized projects and remains explainable with traced timings
 - idle CPU near zero when the window is unfocused and unchanged
+- memory growth is bounded during ordinary editing and navigation
 - no full redraw on caret blink
 - no full project rescan on every tree focus
 - search cancellation works

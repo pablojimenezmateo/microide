@@ -5,6 +5,7 @@ This file is for the next agent starting from a cold context. Read this together
 ## Non-Negotiable Product Decisions
 
 - The visual direction is a reduced-scope, Zed-inspired desktop shell.
+- Performance priority order is strict: startup speed first, then low CPU usage, then low memory footprint.
 - The project root is the launch working directory.
 - Do not reintroduce automatic project-root detection or hardcoded absolute-path markers.
 - The tree must stay simple and technical: chevrons and text cues only, not pictorial folder/file icons.
@@ -61,6 +62,7 @@ The current SDL rewrite already has:
 - text backend and sharpness work: `src/render/SdlTtfTextBackend.cpp`
 - planned multi-project/menu/context-menu design: `docs/workspace-expansion-plan.md`
 - source-of-truth migration checklist: `docs/todo.md`
+- startup-trace usage and interpretation: `docs/startup-tracing.md`
 
 ## Missing Features And QoL
 

@@ -4,6 +4,7 @@
 #include <system_error>
 
 #include "project/IgnoreMatcher.h"
+#include "util/StartupTrace.h"
 
 namespace microide::project {
 
@@ -65,6 +66,7 @@ void CollectFiles(const std::filesystem::path& root,
 }  // namespace
 
 bool FileIndex::SetRoot(const std::filesystem::path& root) {
+  util::StartupTrace::Scope trace_scope("FileIndex::SetRoot");
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
   if (error || !std::filesystem::exists(absolute_root) ||
@@ -73,13 +75,30 @@ bool FileIndex::SetRoot(const std::filesystem::path& root) {
   }
 
   root_ = absolute_root;
-  Refresh();
+  files_.clear();
+  needs_refresh_ = true;
   return true;
 }
 
 void FileIndex::Refresh() {
+  needs_refresh_ = true;
+  EnsureFresh();
+}
+
+const std::vector<std::filesystem::path>& FileIndex::files() const {
+  EnsureFresh();
+  return files_;
+}
+
+void FileIndex::EnsureFresh() const {
+  util::StartupTrace::Scope trace_scope("FileIndex::Refresh");
+  if (!needs_refresh_) {
+    return;
+  }
+
   files_.clear();
   if (root_.empty()) {
+    needs_refresh_ = false;
     return;
   }
 
@@ -90,6 +109,7 @@ void FileIndex::Refresh() {
   std::sort(files_.begin(), files_.end(), [](const auto& lhs, const auto& rhs) {
     return lhs.string() < rhs.string();
   });
+  needs_refresh_ = false;
 }
 
 }  // namespace microide::project
