@@ -16,6 +16,10 @@ namespace microide::workspace {
 
 namespace {
 
+constexpr float kMenuBarHeight = 25.0f;
+constexpr float kWindowFrameHitThickness = 6.0f;
+constexpr float kWindowControlButtonGap = 4.0f;
+constexpr float kWindowControlButtonRightInset = 8.0f;
 constexpr float kProjectTabStripHeight = 32.0f;
 constexpr float kTabStripHeight = 34.0f;
 constexpr float kHeaderHeight = 26.0f;
@@ -56,10 +60,13 @@ constexpr float kBottomPanelCommandTopPadding = 8.0f;
 constexpr float kBottomPanelCommandBottomPadding = 8.0f;
 constexpr float kTabCloseButtonSize = 14.0f;
 constexpr float kTabCloseButtonRightInset = 6.0f;
+constexpr float kMenuPopupSeparatorHeight = 8.0f;
+constexpr float kMenuPopupItemHeight = 22.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
 
 struct WorkspaceLayout {
   SDL_FRect full;
+  SDL_FRect menu_bar;
   SDL_FRect project_tab_strip;
   SDL_FRect tab_strip;
   SDL_FRect status_bar;
@@ -124,18 +131,6 @@ struct PersistedEditorTabState {
   std::size_t compare_selected_row = 0;
 };
 
-constexpr std::array<std::string_view, 42> kCommandNames = {
-    "colorscheme",   "compare",       "files",         "find",          "focus",
-    "goto",          "grep",          "help",          "hsplit",        "indent-width",
-    "jump",          "open",          "panel-hide",    "panel-show",    "project-close",
-    "project-next",  "project-open",  "project-prev",  "quit",          "reopen",
-    "rg",            "save",          "search",        "sidebar-close", "sidebar-hide",
-    "sidebar-show",  "sidebar-toggle","sidebar-width", "soft-tabs",     "split-first",
-    "split-last",    "split-next",    "split-prev",    "tab",           "tab-size",
-    "tabmove",       "tabswitch",     "term",          "tree",          "tree-refresh",
-    "unsplit",       "vsplit",
-};
-
 constexpr std::array<std::string_view, 2> kSidebarToolNames = {
     "search",
     "tree",
@@ -151,6 +146,85 @@ constexpr std::array<std::string_view, 2> kToggleValues = {
     "off",
     "on",
 };
+
+constexpr std::array<std::string_view, 3> kUiScaleCommands = {
+    "down",
+    "reset",
+    "up",
+};
+
+constexpr std::array<float, 10> kUiScalePresets = {
+    0.75f,
+    1.0f,
+    1.25f,
+    1.5f,
+    1.75f,
+    2.0f,
+    2.25f,
+    2.5f,
+    2.75f,
+    3.0f,
+};
+
+constexpr float kMinUiScale = kUiScalePresets.front();
+constexpr float kMaxUiScale = kUiScalePresets.back();
+
+std::string UiScaleLabel(float scale) {
+  const int percent = static_cast<int>(std::lround(scale * 100.0f));
+  return std::to_string(percent) + "%";
+}
+
+std::optional<float> ParseUiScaleValue(std::string_view text) {
+  if (text.empty()) {
+    return std::nullopt;
+  }
+
+  bool percent = false;
+  if (text.back() == '%') {
+    percent = true;
+    text.remove_suffix(1);
+  }
+  if (text.empty()) {
+    return std::nullopt;
+  }
+
+  try {
+    float scale = std::stof(std::string(text));
+    if (!percent && scale > 10.0f) {
+      scale *= 0.01f;
+    }
+    if (percent) {
+      scale *= 0.01f;
+    }
+    if (!std::isfinite(scale)) {
+      return std::nullopt;
+    }
+    return std::clamp(scale, kMinUiScale, kMaxUiScale);
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+float StepUiScale(float current_scale, int delta) {
+  const float clamped_current = std::clamp(current_scale, kMinUiScale, kMaxUiScale);
+  if (delta > 0) {
+    for (float candidate : kUiScalePresets) {
+      if (candidate > clamped_current + 0.001f) {
+        return candidate;
+      }
+    }
+    return kMaxUiScale;
+  }
+  if (delta < 0) {
+    for (auto it = kUiScalePresets.rbegin(); it != kUiScalePresets.rend(); ++it) {
+      if (*it < clamped_current - 0.001f) {
+        return *it;
+      }
+    }
+    return kMinUiScale;
+  }
+  return clamped_current;
+}
 
 std::string EncodeSessionNodePath(const std::vector<std::size_t>& path) {
   if (path.empty()) {
@@ -519,16 +593,19 @@ WorkspaceLayout ComputeLayout(float window_width,
 
   WorkspaceLayout layout;
   layout.full = MakeRect(0.0f, 0.0f, window_width, window_height);
-  layout.project_tab_strip = MakeRect(0.0f, 0.0f, window_width, kProjectTabStripHeight);
-  layout.tab_strip = MakeRect(0.0f, kProjectTabStripHeight, window_width, kTabStripHeight);
+  layout.menu_bar = MakeRect(0.0f, 0.0f, window_width, kMenuBarHeight);
+  layout.project_tab_strip =
+      MakeRect(0.0f, kMenuBarHeight, window_width, kProjectTabStripHeight);
+  layout.tab_strip =
+      MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight, window_width, kTabStripHeight);
   layout.status_bar =
       MakeRect(0.0f, window_height - kStatusBarHeight, window_width, kStatusBarHeight);
   layout.bottom_panel =
       MakeRect(0.0f, window_height - kStatusBarHeight - resolved_bottom_panel_height,
                window_width, resolved_bottom_panel_height);
   layout.content =
-      MakeRect(0.0f, kProjectTabStripHeight + kTabStripHeight, window_width,
-               window_height - kProjectTabStripHeight - kTabStripHeight -
+      MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight + kTabStripHeight, window_width,
+               window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight -
                    resolved_bottom_panel_height - kStatusBarHeight);
   layout.sidebar = MakeRect(0.0f, layout.content.y, resolved_sidebar_width, layout.content.h);
   layout.editor_area =
@@ -556,7 +633,7 @@ float ClampSidebarWidth(float width, float window_width) {
 
 float ClampBottomPanelHeight(float height, float window_height) {
   const float content_height =
-      std::max(0.0f, window_height - kProjectTabStripHeight - kTabStripHeight -
+      std::max(0.0f, window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight -
                          kStatusBarHeight);
   const float min_height = std::min(kMinBottomPanelHeight, content_height);
   const float max_height = std::max(min_height, content_height - kMinEditorAreaHeight);
@@ -1015,7 +1092,832 @@ void DrawChevron(SDL_Renderer* renderer, float x, float center_y, bool expanded,
   SDL_RenderLine(renderer, x + 2.0f, center_y + 4.0f, x + 6.0f, center_y);
 }
 
+SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bottom) {
+  if (top && left) {
+    return SDL_HITTEST_RESIZE_TOPLEFT;
+  }
+  if (top && right) {
+    return SDL_HITTEST_RESIZE_TOPRIGHT;
+  }
+  if (bottom && left) {
+    return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+  }
+  if (bottom && right) {
+    return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+  }
+  if (top) {
+    return SDL_HITTEST_RESIZE_TOP;
+  }
+  if (bottom) {
+    return SDL_HITTEST_RESIZE_BOTTOM;
+  }
+  if (left) {
+    return SDL_HITTEST_RESIZE_LEFT;
+  }
+  if (right) {
+    return SDL_HITTEST_RESIZE_RIGHT;
+  }
+  return SDL_HITTEST_NORMAL;
+}
+
+void DrawWindowControlGlyph(SDL_Renderer* renderer,
+                            const SDL_FRect& rect,
+                            microide::workspace::WorkspaceShell::WindowControlButtonId id,
+                            SDL_Color color,
+                            bool maximized) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float left = rect.x + 4.0f;
+  const float right = rect.x + rect.w - 4.0f;
+  const float top = rect.y + 4.0f;
+  const float bottom = rect.y + rect.h - 4.0f;
+  const float center_y = rect.y + rect.h * 0.5f;
+
+  switch (id) {
+    case microide::workspace::WorkspaceShell::WindowControlButtonId::Minimize:
+      SDL_RenderLine(renderer, left, center_y + 2.0f, right, center_y + 2.0f);
+      return;
+    case microide::workspace::WorkspaceShell::WindowControlButtonId::Maximize:
+      if (maximized) {
+        const SDL_FRect back = SDL_FRect{left + 1.5f, top + 3.0f, rect.w - 9.0f, rect.h - 9.0f};
+        const SDL_FRect front = SDL_FRect{left - 1.0f, top + 1.0f, rect.w - 9.0f, rect.h - 9.0f};
+        SDL_RenderRect(renderer, &back);
+        SDL_RenderRect(renderer, &front);
+      } else {
+        const SDL_FRect outline = SDL_FRect{left, top + 1.0f, rect.w - 8.0f, rect.h - 8.0f};
+        SDL_RenderRect(renderer, &outline);
+      }
+      return;
+    case microide::workspace::WorkspaceShell::WindowControlButtonId::Close:
+      SDL_RenderLine(renderer, left, top, right, bottom);
+      SDL_RenderLine(renderer, right, top, left, bottom);
+      return;
+  }
+}
+
 }  // namespace
+
+std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
+  static const auto kSpecs = std::to_array<ActionSpec>({
+      ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]", "Colorscheme",
+                 ""},
+      ActionSpec{ActionId::Compare, "compare", "compare [path] [commit-prefix]",
+                 "Compare Against...", ""},
+      ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},
+      ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
+      ActionSpec{ActionId::CopyRelativePath, "", "", "Copy Relative Path", ""},
+      ActionSpec{ActionId::Files, "files", "files [root]", "Find File", "F6"},
+      ActionSpec{ActionId::Find, "find", "find <query>", "Find File By Query", ""},
+      ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
+      ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
+      ActionSpec{ActionId::Grep, "grep", "grep <query>", "Show Project Search", ""},
+      ActionSpec{ActionId::Help, "help", "help", "Help", ""},
+      ActionSpec{ActionId::Hsplit, "hsplit", "hsplit [path]", "Split Down", ""},
+      ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width",
+                 ""},
+      ActionSpec{ActionId::Jump, "jump", "jump <line[:col]>", "Jump Relative", ""},
+      ActionSpec{ActionId::Open, "open", "open <path>", "Open File", ""},
+      ActionSpec{ActionId::OpenSelectedTreeItem, "", "", "Open", ""},
+      ActionSpec{ActionId::OpenSelectedTreeItemInNewTab, "", "", "Open in New Tab", ""},
+      ActionSpec{ActionId::PanelHide, "panel-hide", "panel-hide", "Hide Bottom Panel", ""},
+      ActionSpec{ActionId::PanelShow, "panel-show", "panel-show", "Show Bottom Panel", ""},
+      ActionSpec{ActionId::ProjectClose, "project-close", "project-close", "Close Project", ""},
+      ActionSpec{ActionId::ProjectNext, "project-next", "project-next", "Next Project", ""},
+      ActionSpec{ActionId::ProjectOpen, "project-open", "project-open <path>", "Open Project",
+                 ""},
+      ActionSpec{ActionId::ProjectPrev, "project-prev", "project-prev", "Previous Project", ""},
+      ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
+      ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},
+      ActionSpec{ActionId::Rg, "rg", "rg <query>", "Find in Project", "Ctrl+Shift+F"},
+      ActionSpec{ActionId::Save, "save", "save", "Save", "Ctrl+S"},
+      ActionSpec{ActionId::Search, "search", "search <query>", "Find in Buffer", "Ctrl+F"},
+      ActionSpec{ActionId::SidebarClose, "sidebar-close", "sidebar-close", "Close Sidebar", ""},
+      ActionSpec{ActionId::SidebarHide, "sidebar-hide", "sidebar-hide", "Hide Sidebar", ""},
+      ActionSpec{ActionId::SidebarShow, "sidebar-show", "sidebar-show [tool]", "Show Sidebar",
+                 ""},
+      ActionSpec{ActionId::SidebarToggle, "sidebar-toggle", "sidebar-toggle [tool]",
+                 "Toggle Sidebar", "F8", true},
+      ActionSpec{ActionId::SidebarWidth, "sidebar-width", "sidebar-width <n>", "Sidebar Width",
+                 ""},
+      ActionSpec{ActionId::SoftTabs, "soft-tabs", "soft-tabs [on|off]", "Soft Tabs", ""},
+      ActionSpec{ActionId::SplitFirst, "split-first", "split-first", "First Split", ""},
+      ActionSpec{ActionId::SplitLast, "split-last", "split-last", "Last Split", ""},
+      ActionSpec{ActionId::SplitNext, "split-next", "split-next", "Next Split", ""},
+      ActionSpec{ActionId::SplitPrev, "split-prev", "split-prev", "Previous Split", ""},
+      ActionSpec{ActionId::Tab, "tab", "tab [path]", "New Tab", ""},
+      ActionSpec{ActionId::TabSize, "tab-size", "tab-size [n]", "Tab Size", ""},
+      ActionSpec{ActionId::TabMove, "tabmove", "tabmove <n>", "Move Tab", ""},
+      ActionSpec{ActionId::TabSwitch, "tabswitch", "tabswitch <tab>", "Switch Tab", ""},
+      ActionSpec{ActionId::Term, "term", "term [command]", "New Terminal", ""},
+      ActionSpec{ActionId::Tree, "tree", "tree [root]", "Show Tree", ""},
+      ActionSpec{ActionId::TreeRefresh, "tree-refresh", "tree-refresh", "Refresh Tree", ""},
+      ActionSpec{ActionId::UiScale, "ui-scale", "ui-scale [n|up|down|reset]", "UI Scale", ""},
+      ActionSpec{ActionId::Unsplit, "unsplit", "unsplit", "Close Split", ""},
+      ActionSpec{ActionId::Vsplit, "vsplit", "vsplit [path]", "Split Right", ""},
+      ActionSpec{ActionId::CloseActiveTab, "", "", "Close Tab", "Ctrl+W"},
+      ActionSpec{ActionId::CopySelection, "", "", "Copy", "Ctrl+C"},
+      ActionSpec{ActionId::CutSelection, "", "", "Cut", "Ctrl+X"},
+      ActionSpec{ActionId::OpenCommandPrompt, "", "", "Command Prompt", "Ctrl+E"},
+      ActionSpec{ActionId::PasteClipboard, "", "", "Paste", "Ctrl+V"},
+      ActionSpec{ActionId::Redo, "", "", "Redo", "Ctrl+Y / Ctrl+Shift+Z"},
+      ActionSpec{ActionId::ReplaceInBuffer, "", "", "Replace in Buffer", "Ctrl+H"},
+      ActionSpec{ActionId::SelectAll, "", "", "Select All", "Ctrl+A"},
+      ActionSpec{ActionId::ToggleBottomPanel, "", "", "Toggle Bottom Panel", "F9", true},
+      ActionSpec{ActionId::Undo, "", "", "Undo", "Ctrl+Z"},
+  });
+  return kSpecs;
+}
+
+const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionSpec(ActionId id) {
+  const auto specs = ActionSpecs();
+  const auto it = std::find_if(specs.begin(), specs.end(),
+                               [id](const ActionSpec& spec) { return spec.id == id; });
+  return it == specs.end() ? nullptr : &(*it);
+}
+
+const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionByCommand(std::string_view command_name) {
+  const auto specs = ActionSpecs();
+  const auto it = std::find_if(specs.begin(), specs.end(), [command_name](const ActionSpec& spec) {
+    return !spec.command_name.empty() && spec.command_name == command_name;
+  });
+  return it == specs.end() ? nullptr : &(*it);
+}
+
+const std::vector<std::string>& WorkspaceShell::CommandNames() {
+  static const std::vector<std::string> kNames = [] {
+    std::vector<std::string> names;
+    for (const ActionSpec& spec : ActionSpecs()) {
+      if (!spec.command_name.empty()) {
+        names.emplace_back(spec.command_name);
+      }
+    }
+    return names;
+  }();
+  return kNames;
+}
+
+const std::string& WorkspaceShell::CommandHelpSummary() {
+  static const std::string kSummary = [] {
+    std::string summary;
+    for (const ActionSpec& spec : ActionSpecs()) {
+      if (spec.command_usage.empty()) {
+        continue;
+      }
+      if (!summary.empty()) {
+        summary += ", ";
+      }
+      summary += spec.command_usage;
+    }
+    return summary;
+  }();
+  return kSummary;
+}
+
+bool WorkspaceShell::IsActionEnabled(ActionId id) const {
+  switch (id) {
+    case ActionId::Colorscheme:
+    case ActionId::Files:
+    case ActionId::Help:
+    case ActionId::OpenCommandPrompt:
+    case ActionId::ProjectOpen:
+    case ActionId::Quit:
+    case ActionId::SidebarClose:
+    case ActionId::SidebarHide:
+    case ActionId::SidebarShow:
+    case ActionId::SidebarToggle:
+    case ActionId::ToggleBottomPanel:
+      return true;
+    case ActionId::CloseActiveTab:
+      return !open_tabs_.empty();
+    case ActionId::CompareHead:
+    case ActionId::OpenSelectedTreeItem:
+    case ActionId::OpenSelectedTreeItemInNewTab:
+      return !project_root_.empty() &&
+             (tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind()) ==
+                 TreeContextTargetKind::File;
+    case ActionId::Compare:
+    case ActionId::Find:
+    case ActionId::Grep:
+    case ActionId::Open:
+    case ActionId::ProjectClose:
+    case ActionId::Rg:
+    case ActionId::Tab:
+    case ActionId::Term:
+    case ActionId::Tree:
+    case ActionId::TreeRefresh:
+      return !project_root_.empty();
+    case ActionId::CopySelection:
+    case ActionId::CutSelection:
+    case ActionId::Goto:
+    case ActionId::Hsplit:
+    case ActionId::Jump:
+    case ActionId::PasteClipboard:
+    case ActionId::Redo:
+    case ActionId::ReplaceInBuffer:
+    case ActionId::Reopen:
+    case ActionId::Save:
+    case ActionId::Search:
+    case ActionId::SelectAll:
+    case ActionId::SplitFirst:
+    case ActionId::SplitLast:
+    case ActionId::SplitNext:
+    case ActionId::SplitPrev:
+    case ActionId::Undo:
+    case ActionId::Unsplit:
+    case ActionId::Vsplit:
+      return ActiveTabIsEditor();
+    case ActionId::Focus:
+      return true;
+    case ActionId::IndentWidth:
+    case ActionId::PanelHide:
+    case ActionId::PanelShow:
+      return true;
+    case ActionId::CopyAbsolutePath:
+      return !ResolveTreeActionPath(ActionSource::ContextMenu).empty();
+    case ActionId::CopyRelativePath: {
+      const std::filesystem::path path = ResolveTreeActionPath(ActionSource::ContextMenu);
+      return !project_root_.empty() && !path.empty() && path != project_root_;
+    }
+    case ActionId::SidebarWidth:
+    case ActionId::SoftTabs:
+    case ActionId::TabSize:
+    case ActionId::UiScale:
+      return true;
+    case ActionId::ProjectNext:
+    case ActionId::ProjectPrev:
+      return !project_root_.empty() && projects_.size() > 1;
+    case ActionId::TabMove:
+    case ActionId::TabSwitch:
+      return !project_root_.empty() && !open_tabs_.empty();
+  }
+
+  return true;
+}
+
+std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
+  const auto item = [](ActionId action, std::string_view label = {},
+                       std::string_view accelerator = {},
+                       std::array<std::string_view, 2> args = {}, std::size_t arg_count = 0,
+                       bool checkable = false) {
+    return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable};
+  };
+  const auto separator = [] { return MenuItemSpec{ActionId::Help, {}, {}, {}, 0, true, false}; };
+
+  static const auto kFileItems = std::to_array<MenuItemSpec>({
+      item(ActionId::ProjectOpen, "New Project Tab..."),
+      separator(),
+      item(ActionId::Tab),
+      item(ActionId::Save),
+      item(ActionId::CloseActiveTab),
+      item(ActionId::Reopen),
+      separator(),
+      item(ActionId::ProjectClose),
+      separator(),
+      item(ActionId::Quit),
+  });
+  static const auto kEditItems = std::to_array<MenuItemSpec>({
+      item(ActionId::Undo),
+      item(ActionId::Redo),
+      separator(),
+      item(ActionId::CutSelection),
+      item(ActionId::CopySelection),
+      item(ActionId::PasteClipboard),
+      item(ActionId::SelectAll),
+  });
+  static const auto kViewItems = std::to_array<MenuItemSpec>({
+      item(ActionId::SidebarToggle, {}, {}, {}, 0, true),
+      item(ActionId::SidebarShow, "Show Tree", {}, std::array<std::string_view, 2>{"tree", {}}, 1,
+           true),
+      item(ActionId::SidebarShow, "Show Search", {},
+           std::array<std::string_view, 2>{"search", {}}, 1, true),
+      separator(),
+      item(ActionId::ToggleBottomPanel, {}, {}, {}, 0, true),
+      separator(),
+      item(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
+      item(ActionId::UiScale, "Zoom Out", "Ctrl+-",
+           std::array<std::string_view, 2>{"down", {}}, 1),
+      item(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
+           std::array<std::string_view, 2>{"reset", {}}, 1),
+      separator(),
+      item(ActionId::Focus, "Focus Editor", {},
+           std::array<std::string_view, 2>{"editor", {}}, 1),
+      item(ActionId::Focus, "Focus Sidebar", {},
+           std::array<std::string_view, 2>{"sidebar", {}}, 1),
+      item(ActionId::Focus, "Focus Panel", {},
+           std::array<std::string_view, 2>{"panel", {}}, 1),
+  });
+  static const auto kSearchItems = std::to_array<MenuItemSpec>({
+      item(ActionId::Search),
+      item(ActionId::ReplaceInBuffer),
+      item(ActionId::Files),
+      item(ActionId::Rg),
+  });
+  static const auto kProjectItems = std::to_array<MenuItemSpec>({
+      item(ActionId::Compare, "Compare Current File..."),
+      item(ActionId::TreeRefresh),
+      separator(),
+      item(ActionId::ProjectNext),
+      item(ActionId::ProjectPrev),
+  });
+  static const auto kTerminalItems = std::to_array<MenuItemSpec>({
+      item(ActionId::Term),
+  });
+  static const auto kHelpItems = std::to_array<MenuItemSpec>({
+      item(ActionId::Help, "Command Summary"),
+  });
+  static const auto kMenus = std::to_array<MenuSpec>({
+      MenuSpec{MenuId::File, "File", kFileItems},
+      MenuSpec{MenuId::Edit, "Edit", kEditItems},
+      MenuSpec{MenuId::View, "View", kViewItems},
+      MenuSpec{MenuId::Search, "Search", kSearchItems},
+      MenuSpec{MenuId::Project, "Project", kProjectItems},
+      MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
+      MenuSpec{MenuId::Help, "Help", kHelpItems},
+  });
+  return kMenus;
+}
+
+const WorkspaceShell::MenuSpec* WorkspaceShell::FindMenuSpec(MenuId id) {
+  const auto menus = MenuSpecs();
+  const auto it = std::find_if(menus.begin(), menus.end(),
+                               [id](const MenuSpec& spec) { return spec.id == id; });
+  return it == menus.end() ? nullptr : &(*it);
+}
+
+std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuItems(
+    TreeContextTargetKind target) {
+  const auto item = [](ActionId action, std::string_view label = {}) {
+    return MenuItemSpec{action, label, {}, {}, 0, false, false};
+  };
+  const auto separator = [] { return MenuItemSpec{ActionId::Help, {}, {}, {}, 0, true, false}; };
+
+  static const auto kFileItems = std::to_array<MenuItemSpec>({
+      item(ActionId::OpenSelectedTreeItem),
+      item(ActionId::OpenSelectedTreeItemInNewTab),
+      separator(),
+      item(ActionId::CompareHead),
+      item(ActionId::Compare),
+      separator(),
+      item(ActionId::CopyRelativePath),
+      item(ActionId::CopyAbsolutePath),
+  });
+  static const auto kDirectoryItems = std::to_array<MenuItemSpec>({
+      item(ActionId::TreeRefresh, "Refresh"),
+      separator(),
+      item(ActionId::CopyRelativePath),
+      item(ActionId::CopyAbsolutePath),
+  });
+  static const auto kRootItems = std::to_array<MenuItemSpec>({
+      item(ActionId::TreeRefresh, "Refresh"),
+      item(ActionId::ProjectClose),
+      separator(),
+      item(ActionId::CopyAbsolutePath),
+  });
+  static const auto kBackgroundItems = std::to_array<MenuItemSpec>({
+      item(ActionId::TreeRefresh, "Refresh"),
+  });
+
+  switch (target) {
+    case TreeContextTargetKind::File:
+      return kFileItems;
+    case TreeContextTargetKind::Directory:
+      return kDirectoryItems;
+    case TreeContextTargetKind::Root:
+      return kRootItems;
+    case TreeContextTargetKind::Background:
+      return kBackgroundItems;
+    case TreeContextTargetKind::None:
+    default:
+      return {};
+  }
+}
+
+std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
+    const SDL_FRect& menu_bar) const {
+  std::vector<VisibleMenuBarItem> items;
+  float x = menu_bar.x + 8.0f;
+  const float y = menu_bar.y + 3.0f;
+  const float height = std::max(18.0f, menu_bar.h - 6.0f);
+  const auto window_buttons = ComputeVisibleWindowControlButtons(menu_bar);
+  const float max_x = window_buttons.empty()
+                          ? menu_bar.x + menu_bar.w - 8.0f
+                          : window_buttons.front().rect.x - 8.0f;
+  for (const MenuSpec& spec : MenuSpecs()) {
+    const float width =
+        std::clamp(text_renderer_.MeasureWidth(spec.label) + 22.0f, 52.0f, 108.0f);
+    if (x + width > max_x) {
+      break;
+    }
+    items.push_back(VisibleMenuBarItem{
+        .id = spec.id,
+        .rect = MakeRect(x, y, width, height),
+        .active = menu_bar_open_ && spec.id == active_menu_id_,
+    });
+    x += width + 4.0f;
+  }
+  return items;
+}
+
+std::vector<WorkspaceShell::VisibleWindowControlButton>
+WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) const {
+  std::vector<VisibleWindowControlButton> buttons;
+  if (!custom_window_chrome_enabled_) {
+    return buttons;
+  }
+
+  const float button_size = std::max(18.0f, menu_bar.h - 6.0f);
+  const float total_width =
+      button_size * 3.0f + kWindowControlButtonGap * 2.0f;
+  const float start_x =
+      menu_bar.x + std::max(0.0f, menu_bar.w - total_width - kWindowControlButtonRightInset);
+  const float y = menu_bar.y + (menu_bar.h - button_size) * 0.5f;
+  static constexpr auto kButtonIds = std::to_array<WindowControlButtonId>({
+      WindowControlButtonId::Minimize,
+      WindowControlButtonId::Maximize,
+      WindowControlButtonId::Close,
+  });
+
+  float x = start_x;
+  for (WindowControlButtonId id : kButtonIds) {
+    const SDL_FRect rect = MakeRect(x, y, button_size, button_size);
+    buttons.push_back(VisibleWindowControlButton{
+        .id = id,
+        .rect = rect,
+        .hovered =
+            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+    });
+    x += button_size + kWindowControlButtonGap;
+  }
+  return buttons;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
+    const SDL_FRect& anchor_rect,
+    std::span<const MenuItemSpec> items,
+    const SDL_FRect& bounds) const {
+  if (items.empty()) {
+    return std::nullopt;
+  }
+
+  float width = 172.0f;
+  float height = 12.0f;
+  for (const MenuItemSpec& item : items) {
+    if (item.separator) {
+      height += kMenuPopupSeparatorHeight;
+      continue;
+    }
+    width = std::max(width, text_renderer_.MeasureWidth(MenuItemLabel(item)) +
+                                text_renderer_.MeasureWidth(MenuItemAccelerator(item)) + 68.0f);
+    height += kMenuPopupItemHeight;
+  }
+
+  width = std::clamp(width, 172.0f, 320.0f);
+  float x = std::clamp(anchor_rect.x, bounds.x + 4.0f,
+                       bounds.x + std::max(4.0f, bounds.w - width - 4.0f));
+  float y = anchor_rect.y + std::max(0.0f, anchor_rect.h) - 1.0f;
+  if (y + height > bounds.y + bounds.h - 4.0f) {
+    y = anchor_rect.y - height + 1.0f;
+  }
+  y = std::clamp(y, bounds.y + 4.0f, bounds.y + std::max(4.0f, bounds.h - height - 4.0f));
+  return MakeRect(x, y, width, height);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& menu_bar,
+                                                              MenuId id) const {
+  const MenuSpec* menu = FindMenuSpec(id);
+  if (menu == nullptr) {
+    return std::nullopt;
+  }
+
+  const auto menu_bar_items = ComputeVisibleMenuBarItems(menu_bar);
+  const auto bar_it =
+      std::find_if(menu_bar_items.begin(), menu_bar_items.end(),
+                   [id](const VisibleMenuBarItem& item) { return item.id == id; });
+  if (bar_it == menu_bar_items.end()) {
+    return std::nullopt;
+  }
+
+  const SDL_FRect bounds =
+      MakeRect(0.0f, 0.0f,
+               last_window_width_ > 0 ? static_cast<float>(last_window_width_) : menu_bar.w,
+               last_window_height_ > 0
+                   ? static_cast<float>(last_window_height_)
+                   : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
+  return ComputePopupMenuRect(bar_it->rect, menu->items, bounds);
+}
+
+std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisiblePopupMenuItems(
+    std::span<const MenuItemSpec> items,
+    int active_item_index,
+    const SDL_FRect& popup_rect) const {
+  std::vector<VisiblePopupMenuItem> visible_items;
+  float y = popup_rect.y + 6.0f;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    const MenuItemSpec& item = items[i];
+    const float height = item.separator ? kMenuPopupSeparatorHeight : kMenuPopupItemHeight;
+    const SDL_FRect rect =
+        MakeRect(popup_rect.x + 6.0f, y, std::max(0.0f, popup_rect.w - 12.0f), height);
+    visible_items.push_back(VisiblePopupMenuItem{
+        .index = i,
+        .rect = rect,
+        .enabled = IsMenuItemEnabled(item),
+        .checked = IsMenuItemChecked(item),
+        .hovered = static_cast<int>(i) == active_item_index,
+        .separator = item.separator,
+    });
+    y += height;
+  }
+  return visible_items;
+}
+
+std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisiblePopupMenuItems(
+    MenuId id,
+    const SDL_FRect& popup_rect) const {
+  const MenuSpec* menu = FindMenuSpec(id);
+  return menu == nullptr ? std::vector<VisiblePopupMenuItem>{}
+                         : ComputeVisiblePopupMenuItems(menu->items, active_menu_item_index_,
+                                                        popup_rect);
+}
+
+std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
+  if (!item.label.empty()) {
+    return std::string(item.label);
+  }
+  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr &&
+                                                        !action->label.empty()) {
+    return std::string(action->label);
+  }
+  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr &&
+                                                        !action->command_name.empty()) {
+    return std::string(action->command_name);
+  }
+  return {};
+}
+
+std::string WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) const {
+  if (!item.accelerator.empty()) {
+    return std::string(item.accelerator);
+  }
+  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr &&
+                                                        !action->accelerator.empty()) {
+    return std::string(action->accelerator);
+  }
+  return {};
+}
+
+bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
+  if (item.separator) {
+    return false;
+  }
+
+  if (item.action == ActionId::Files) {
+    return !project_root_.empty();
+  }
+  if (item.action == ActionId::Focus && item.arg_count > 0) {
+    if (item.args[0] == "sidebar") {
+      return sidebar_visible_;
+    }
+    if (item.args[0] == "panel") {
+      return bottom_panel_visible_ && BottomPanelShowsTerminal();
+    }
+    return true;
+  }
+  if ((item.action == ActionId::SidebarShow || item.action == ActionId::SidebarToggle) &&
+      item.arg_count > 0 && (item.args[0] == "tree" || item.args[0] == "search")) {
+    return !project_root_.empty();
+  }
+
+  return IsActionEnabled(item.action);
+}
+
+bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
+  if (!item.checkable) {
+    return false;
+  }
+
+  if (item.action == ActionId::SidebarToggle) {
+    return sidebar_visible_;
+  }
+  if (item.action == ActionId::SidebarShow && item.arg_count > 0) {
+    if (item.args[0] == "tree") {
+      return sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree;
+    }
+    if (item.args[0] == "search") {
+      return sidebar_visible_ && sidebar_mode_ == SidebarMode::Search && !sidebar_temporary_;
+    }
+  }
+  if (item.action == ActionId::ToggleBottomPanel) {
+    return bottom_panel_visible_;
+  }
+
+  return false;
+}
+
+int WorkspaceShell::FirstEnabledMenuItemIndex(MenuId id) const {
+  const MenuSpec* menu = FindMenuSpec(id);
+  if (menu == nullptr) {
+    return -1;
+  }
+
+  for (std::size_t i = 0; i < menu->items.size(); ++i) {
+    if (IsMenuItemEnabled(menu->items[i])) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+int WorkspaceShell::NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const {
+  const MenuSpec* menu = FindMenuSpec(id);
+  if (menu == nullptr || menu->items.empty() || delta == 0) {
+    return -1;
+  }
+
+  const int item_count = static_cast<int>(menu->items.size());
+  int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
+  for (int step = 0; step < item_count; ++step) {
+    index = (index + delta + item_count) % item_count;
+    if (IsMenuItemEnabled(menu->items[static_cast<std::size_t>(index)])) {
+      return index;
+    }
+  }
+  return current_index;
+}
+
+void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
+  if (id == MenuId::None) {
+    CloseMenuBar();
+    return;
+  }
+  CloseTreeContextMenu();
+  menu_bar_open_ = true;
+  active_menu_id_ = id;
+  active_menu_item_index_ = FirstEnabledMenuItemIndex(id);
+}
+
+void WorkspaceShell::CloseMenuBar() {
+  menu_bar_open_ = false;
+  active_menu_id_ = MenuId::None;
+  active_menu_item_index_ = -1;
+}
+
+bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
+  const MenuSpec* menu = FindMenuSpec(menu_id);
+  if (menu == nullptr || item_index >= menu->items.size()) {
+    return false;
+  }
+
+  const MenuItemSpec& item = menu->items[item_index];
+  if (!IsMenuItemEnabled(item)) {
+    return true;
+  }
+
+  std::vector<std::string> args;
+  args.reserve(item.arg_count);
+  for (std::size_t i = 0; i < item.arg_count; ++i) {
+    args.emplace_back(item.args[i]);
+  }
+  CloseMenuBar();
+  return ExecuteAction(item.action, args, ActionSource::Menu);
+}
+
+bool WorkspaceShell::SwitchMenuBarMenu(int delta) {
+  const auto menus = MenuSpecs();
+  if (menus.empty() || active_menu_id_ == MenuId::None || delta == 0) {
+    return false;
+  }
+
+  auto current_it = std::find_if(menus.begin(), menus.end(),
+                                 [this](const MenuSpec& spec) { return spec.id == active_menu_id_; });
+  if (current_it == menus.end()) {
+    return false;
+  }
+
+  const int current_index = static_cast<int>(std::distance(menus.begin(), current_it));
+  const int next_index =
+      (current_index + delta + static_cast<int>(menus.size())) % static_cast<int>(menus.size());
+  OpenMenuBarMenu(menus[static_cast<std::size_t>(next_index)].id);
+  return true;
+}
+
+bool WorkspaceShell::MoveActiveMenuItem(int delta) {
+  if (!menu_bar_open_ || active_menu_id_ == MenuId::None) {
+    return false;
+  }
+  active_menu_item_index_ = NextEnabledMenuItemIndex(active_menu_id_, active_menu_item_index_, delta);
+  return active_menu_item_index_ >= 0;
+}
+
+const project::TreeEntry* WorkspaceShell::SelectedTreeEntry() const {
+  if (sidebar_mode_ != SidebarMode::Tree) {
+    return nullptr;
+  }
+  const auto& entries = directory_tree_.entries();
+  if (directory_tree_.selected_index() >= entries.size()) {
+    return nullptr;
+  }
+  return &entries[directory_tree_.selected_index()];
+}
+
+std::filesystem::path WorkspaceShell::SelectedTreePath() const {
+  const project::TreeEntry* entry = SelectedTreeEntry();
+  return entry == nullptr ? std::filesystem::path{} : entry->path.lexically_normal();
+}
+
+WorkspaceShell::TreeContextTargetKind WorkspaceShell::SelectedTreeTargetKind() const {
+  const project::TreeEntry* entry = SelectedTreeEntry();
+  if (entry == nullptr) {
+    return TreeContextTargetKind::None;
+  }
+  if (!entry->is_directory) {
+    return TreeContextTargetKind::File;
+  }
+  return entry->path == project_root_ ? TreeContextTargetKind::Root
+                                      : TreeContextTargetKind::Directory;
+}
+
+std::filesystem::path WorkspaceShell::ResolveTreeActionPath(ActionSource source) const {
+  if (source == ActionSource::ContextMenu && tree_context_menu_.open &&
+      !tree_context_menu_.path.empty()) {
+    return tree_context_menu_.path.lexically_normal();
+  }
+  return SelectedTreePath();
+}
+
+std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
+  if (!tree_context_menu_.open || last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return std::nullopt;
+  }
+  return ComputePopupMenuRect(tree_context_menu_.anchor_rect,
+                              TreeContextMenuItems(tree_context_menu_.target),
+                              MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
+                                       static_cast<float>(last_window_height_)));
+}
+
+void WorkspaceShell::OpenTreeContextMenu(TreeContextTargetKind target,
+                                         const std::filesystem::path& path,
+                                         const SDL_FRect& anchor_rect) {
+  CloseMenuBar();
+  tree_context_menu_.open = true;
+  tree_context_menu_.target = target;
+  tree_context_menu_.path = path.lexically_normal();
+  tree_context_menu_.anchor_rect = anchor_rect;
+  tree_context_menu_.active_item_index = FirstEnabledTreeContextMenuItemIndex();
+}
+
+void WorkspaceShell::CloseTreeContextMenu() {
+  tree_context_menu_ = TreeContextMenuState{};
+}
+
+bool WorkspaceShell::ExecuteTreeContextMenuItem(std::size_t item_index) {
+  const auto items = TreeContextMenuItems(tree_context_menu_.target);
+  if (item_index >= items.size()) {
+    return false;
+  }
+
+  const MenuItemSpec& item = items[item_index];
+  if (!IsMenuItemEnabled(item)) {
+    return true;
+  }
+
+  std::vector<std::string> args;
+  args.reserve(item.arg_count);
+  for (std::size_t i = 0; i < item.arg_count; ++i) {
+    args.emplace_back(item.args[i]);
+  }
+  CloseTreeContextMenu();
+  return ExecuteAction(item.action, args, ActionSource::ContextMenu);
+}
+
+int WorkspaceShell::FirstEnabledTreeContextMenuItemIndex() const {
+  const auto items = TreeContextMenuItems(tree_context_menu_.target);
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (IsMenuItemEnabled(items[i])) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+int WorkspaceShell::NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const {
+  const auto items = TreeContextMenuItems(tree_context_menu_.target);
+  if (items.empty() || delta == 0) {
+    return -1;
+  }
+
+  const int item_count = static_cast<int>(items.size());
+  int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
+  for (int step = 0; step < item_count; ++step) {
+    index = (index + delta + item_count) % item_count;
+    if (IsMenuItemEnabled(items[static_cast<std::size_t>(index)])) {
+      return index;
+    }
+  }
+  return current_index;
+}
 
 bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
                                           const std::filesystem::path& project_root) {
@@ -1072,6 +1974,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   StopProjectSearch();
+  CloseTreeContextMenu();
 
   project_root_.clear();
   directory_tree_ = project::DirectoryTree{};
@@ -1197,6 +2100,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
 void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   SyncActiveEditorTab();
   StopProjectSearch();
+  CloseTreeContextMenu();
 
   state.root = project_root_;
   state.directory_tree = std::move(directory_tree_);
@@ -1256,6 +2160,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   StopProjectSearch();
+  CloseTreeContextMenu();
 
   project_root_ = state.root;
   directory_tree_ = std::move(state.directory_tree);
@@ -1343,6 +2248,7 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
     terminal_event_type_ = 0;
   }
 
+  RestoreUserConfig();
   RefreshAvailableColorschemeNames();
   ResetProjectScopedState(true);
 
@@ -1358,6 +2264,8 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
 }
 
 void WorkspaceShell::Shutdown() {
+  SaveUserConfig();
+
   if (!projects_.empty() && !project_root_.empty() && active_project_index_ < projects_.size()) {
     SaveConfigState();
     SaveSessionState();
@@ -1431,6 +2339,73 @@ bool WorkspaceShell::ConsumeQuitRequested() {
   return requested;
 }
 
+void WorkspaceShell::SetWindowChromeState(int width,
+                                          int height,
+                                          bool maximized,
+                                          bool custom_enabled) {
+  if (width > 0) {
+    last_window_width_ = width;
+  }
+  if (height > 0) {
+    last_window_height_ = height;
+  }
+  window_maximized_ = maximized;
+  custom_window_chrome_enabled_ = custom_enabled;
+}
+
+SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
+  if (!custom_window_chrome_enabled_ || last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return SDL_HITTEST_NORMAL;
+  }
+
+  const float window_width = static_cast<float>(last_window_width_);
+  const float window_height = static_cast<float>(last_window_height_);
+  if (x < 0.0f || y < 0.0f || x >= window_width || y >= window_height) {
+    return SDL_HITTEST_NORMAL;
+  }
+
+  if (!window_maximized_) {
+    const bool left = x < kWindowFrameHitThickness;
+    const bool right = x >= window_width - kWindowFrameHitThickness;
+    const bool top = y < kWindowFrameHitThickness;
+    const bool bottom = y >= window_height - kWindowFrameHitThickness;
+    if (left || right || top || bottom) {
+      return ResizeHitTestResult(left, right, top, bottom);
+    }
+  }
+
+  if (menu_bar_open_ || tree_context_menu_.open) {
+    return SDL_HITTEST_NORMAL;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(window_width, window_height, sidebar_visible_, bottom_panel_visible_,
+                    sidebar_width_, bottom_panel_height_);
+  if (!Contains(layout.menu_bar, x, y)) {
+    return SDL_HITTEST_NORMAL;
+  }
+
+  for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
+    if (Contains(item.rect, x, y)) {
+      return SDL_HITTEST_NORMAL;
+    }
+  }
+  for (const VisibleWindowControlButton& button :
+       ComputeVisibleWindowControlButtons(layout.menu_bar)) {
+    if (Contains(button.rect, x, y)) {
+      return SDL_HITTEST_NORMAL;
+    }
+  }
+
+  return SDL_HITTEST_DRAGGABLE;
+}
+
+WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
+  const WindowAction action = pending_window_action_;
+  pending_window_action_ = WindowAction::None;
+  return action;
+}
+
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   if (!ShouldBlinkCaret()) {
     return std::nullopt;
@@ -1447,7 +2422,8 @@ void WorkspaceShell::ResetCaretBlink() {
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
   return focus_ == FocusTarget::Editor && !command_mode_ && !dirty_prompt_visible_ &&
-         !overlay_visible_ && ActiveTabIsEditor() && !text_viewport_.is_placeholder();
+         !overlay_visible_ && !menu_bar_open_ && !tree_context_menu_.open &&
+         ActiveTabIsEditor() && !text_viewport_.is_placeholder();
 }
 
 bool WorkspaceShell::CaretVisibleNow() const {
@@ -1545,6 +2521,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   if (index >= projects_.size()) {
     return false;
   }
+  CloseTreeContextMenu();
   if (!project_root_.empty() && index == active_project_index_) {
     EnsureActiveProjectVisible();
     return true;
@@ -1622,6 +2599,17 @@ std::filesystem::path WorkspaceShell::ConfigStatePath() const {
                                : project_root_ / ".microide-config";
 }
 
+std::filesystem::path WorkspaceShell::UserConfigPath() const {
+  if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+      xdg_config_home != nullptr && *xdg_config_home != '\0') {
+    return std::filesystem::path(xdg_config_home) / "microide" / "config";
+  }
+  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+    return std::filesystem::path(home) / ".config" / "microide" / "config";
+  }
+  return {};
+}
+
 void WorkspaceShell::RefreshAvailableColorschemeNames() {
   available_colorscheme_names_ = render::ListAvailableThemeNames();
 }
@@ -1653,6 +2641,82 @@ bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool 
     LogMessage("Colorscheme set to " + active_colorscheme_name_);
   }
   return true;
+}
+
+bool WorkspaceShell::ApplyUiScale(float scale, bool persist, bool log_feedback) {
+  if (!std::isfinite(scale)) {
+    return false;
+  }
+
+  ui_scale_ = std::clamp(scale, kMinUiScale, kMaxUiScale);
+  if (persist) {
+    SaveUserConfig();
+  }
+  if (log_feedback) {
+    LogMessage("UI scale set to " + UiScaleLabel(ui_scale_));
+  }
+  return true;
+}
+
+bool WorkspaceShell::RestoreUserConfig() {
+  const std::filesystem::path config_path = UserConfigPath();
+  if (config_path.empty()) {
+    return false;
+  }
+
+  std::ifstream file(config_path);
+  if (!file) {
+    return false;
+  }
+
+  bool version_ok = false;
+  float restored_scale = ui_scale_;
+  std::string line;
+  while (std::getline(file, line)) {
+    const ParsedCommandLine parsed = ParseCommandLine(line);
+    if (parsed.tokens.empty()) {
+      continue;
+    }
+
+    const auto& tokens = parsed.tokens;
+    const std::string& command = tokens.front().text;
+    if (command == "version") {
+      version_ok = tokens.size() == 2 && tokens[1].text == "1";
+      continue;
+    }
+    if (!version_ok) {
+      return false;
+    }
+    if (command == "ui-scale" && tokens.size() == 2) {
+      if (const auto scale = ParseUiScaleValue(tokens[1].text); scale.has_value()) {
+        restored_scale = *scale;
+      }
+    }
+  }
+
+  if (!version_ok) {
+    return false;
+  }
+
+  return ApplyUiScale(restored_scale, false, false);
+}
+
+void WorkspaceShell::SaveUserConfig() const {
+  const std::filesystem::path config_path = UserConfigPath();
+  if (config_path.empty()) {
+    return;
+  }
+
+  std::error_code error;
+  std::filesystem::create_directories(config_path.parent_path(), error);
+
+  std::ofstream file(config_path, std::ios::trunc);
+  if (!file) {
+    return;
+  }
+
+  file << "version 1\n";
+  file << "ui-scale " << ui_scale_ << '\n';
 }
 
 bool WorkspaceShell::RestoreConfigState() {
@@ -2383,101 +3447,130 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   }
 
   const SDL_Keymod modifiers = SDL_GetModState();
+  if (tree_context_menu_.open) {
+    switch (event.key.key) {
+      case SDLK_ESCAPE:
+        CloseTreeContextMenu();
+        return true;
+      case SDLK_DOWN:
+        tree_context_menu_.active_item_index =
+            NextEnabledTreeContextMenuItemIndex(tree_context_menu_.active_item_index, 1);
+        return true;
+      case SDLK_UP:
+        tree_context_menu_.active_item_index =
+            NextEnabledTreeContextMenuItemIndex(tree_context_menu_.active_item_index, -1);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        if (tree_context_menu_.active_item_index >= 0) {
+          return ExecuteTreeContextMenuItem(
+              static_cast<std::size_t>(tree_context_menu_.active_item_index));
+        }
+        return true;
+      default:
+        return true;
+    }
+  }
+  if (menu_bar_open_) {
+    switch (event.key.key) {
+      case SDLK_ESCAPE:
+        CloseMenuBar();
+        return true;
+      case SDLK_LEFT:
+        return SwitchMenuBarMenu(-1);
+      case SDLK_RIGHT:
+        return SwitchMenuBarMenu(1);
+      case SDLK_TAB:
+        return SwitchMenuBarMenu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+      case SDLK_DOWN:
+        return MoveActiveMenuItem(1);
+      case SDLK_UP:
+        return MoveActiveMenuItem(-1);
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        if (active_menu_item_index_ >= 0) {
+          return ExecuteMenuItem(active_menu_id_,
+                                 static_cast<std::size_t>(active_menu_item_index_));
+        }
+        return true;
+      default:
+        return true;
+    }
+  }
   if (CompositionConsumesKey(event.key.key, modifiers)) {
     return true;
   }
   const bool active_compare_tab = ActiveTabIsCompare();
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
       focus_ == FocusTarget::Editor && !active_compare_tab && event.key.key == SDLK_A) {
-    text_viewport_.SelectAll();
-    ResetCaretBlink();
-    focus_ = FocusTarget::Editor;
+    ExecuteAction(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
       focus_ == FocusTarget::Editor && !active_compare_tab) {
     if ((modifiers & SDL_KMOD_SHIFT) && event.key.key == SDLK_F) {
-      ShowSearchSidebar("", true);
+      ExecuteAction(ActionId::Rg, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_H) {
-      OpenBufferReplace();
+      ExecuteAction(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_F) {
-      OpenBufferSearch();
+      ExecuteAction(ActionId::Search, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_W) {
-      if (!open_tabs_.empty()) {
-        RequestCloseTab(active_tab_index_);
-      }
+      ExecuteAction(ActionId::CloseActiveTab, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_Z) {
-      if ((modifiers & SDL_KMOD_SHIFT) != 0) {
-        if (text_viewport_.Redo()) {
-          LogMessage("Redo");
-          ResetCaretBlink();
-        }
-      } else if (text_viewport_.Undo()) {
-        LogMessage("Undo");
-        ResetCaretBlink();
-      }
+      ExecuteAction((modifiers & SDL_KMOD_SHIFT) != 0 ? ActionId::Redo : ActionId::Undo, {},
+                    ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_Y) {
-      if (text_viewport_.Redo()) {
-        LogMessage("Redo");
-        ResetCaretBlink();
-      }
+      ExecuteAction(ActionId::Redo, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_C) {
-      const std::string text = text_viewport_.SelectedText();
-      if (!text.empty() && SDL_SetClipboardText(text.c_str())) {
-        LogMessage("Selection copied");
-      }
+      ExecuteAction(ActionId::CopySelection, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_X) {
-      const std::string text = text_viewport_.SelectedText();
-      if (!text.empty() && SDL_SetClipboardText(text.c_str())) {
-        text_viewport_.DeleteSelectedText();
-        ResetCaretBlink();
-        LogMessage("Selection cut");
-      }
+      ExecuteAction(ActionId::CutSelection, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key.key == SDLK_V) {
-      char* clipboard_text = SDL_GetClipboardText();
-      if (clipboard_text != nullptr) {
-        text_viewport_.InsertText(clipboard_text);
-        ResetCaretBlink();
-        SDL_free(clipboard_text);
-        LogMessage("Clipboard pasted");
-      }
+      ExecuteAction(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
       return true;
     }
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !active_compare_tab && event.key.key == SDLK_S) {
-    if (SaveTab(active_tab_index_)) {
-      ResetCaretBlink();
-      LogMessage("Saved file: " + text_viewport_.path().lexically_normal().string());
-    } else {
-      LogMessage("Save failed");
-    }
+    ExecuteAction(ActionId::Save, {}, ActionSource::Shortcut);
     return true;
   }
 
+  if (modifiers & SDL_KMOD_CTRL) {
+    if (event.key.key == SDLK_0 || event.key.key == SDLK_KP_0) {
+      ExecuteAction(ActionId::UiScale, {"reset"}, ActionSource::Shortcut);
+      return true;
+    }
+    if (event.key.key == SDLK_MINUS || event.key.key == SDLK_KP_MINUS) {
+      ExecuteAction(ActionId::UiScale, {"down"}, ActionSource::Shortcut);
+      return true;
+    }
+    if (event.key.key == SDLK_EQUALS || event.key.key == SDLK_PLUS ||
+        event.key.key == SDLK_KP_PLUS) {
+      ExecuteAction(ActionId::UiScale, {"up"}, ActionSource::Shortcut);
+      return true;
+    }
+  }
+
   if ((modifiers & SDL_KMOD_CTRL) && event.key.key == SDLK_E) {
-    command_mode_ = true;
-    SetBottomPanelVisible(true);
-    command_input_.clear();
-    ResetCommandSessionState();
-    LogMessage("Command mode opened");
+    ExecuteAction(ActionId::OpenCommandPrompt, {}, ActionSource::Shortcut);
     return true;
   }
 
@@ -2519,23 +3612,13 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
 
   switch (event.key.key) {
     case SDLK_F8:
-      ToggleSidebar();
+      ExecuteAction(ActionId::SidebarToggle, {}, ActionSource::Shortcut);
       return true;
     case SDLK_F6:
-      overlay_visible_ = !overlay_visible_;
-      if (overlay_visible_) {
-        overlay_mode_ = OverlayMode::FileFinder;
-        file_index_.Refresh();
-        file_finder_.SetIndex(&file_index_);
-        file_finder_.SetQuery("");
-        ResetOverlayScroll();
-      }
-      focus_ = overlay_visible_ ? FocusTarget::Overlay : FocusTarget::Editor;
-      LogMessage(std::string("Finder overlay ") + (overlay_visible_ ? "opened" : "closed"));
+      ExecuteAction(ActionId::Files, {}, ActionSource::Shortcut);
       return true;
     case SDLK_F9:
-      SetBottomPanelVisible(!bottom_panel_visible_);
-      LogMessage(std::string("Bottom panel ") + (bottom_panel_visible_ ? "shown" : "hidden"));
+      ExecuteAction(ActionId::ToggleBottomPanel, {}, ActionSource::Shortcut);
       return true;
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -4072,6 +5155,9 @@ void WorkspaceShell::ShowSidebarMode(SidebarMode mode, bool temporary) {
     CloseSidebar();
     return;
   }
+  if (mode != SidebarMode::Tree) {
+    CloseTreeContextMenu();
+  }
 
   if (sidebar_mode_ == SidebarMode::Search && mode != SidebarMode::Search) {
     StopProjectSearch();
@@ -4117,6 +5203,7 @@ void WorkspaceShell::CloseSidebar() {
   if (sidebar_mode_ == SidebarMode::Search) {
     StopProjectSearch();
   }
+  CloseTreeContextMenu();
 
   if (sidebar_temporary_ && sidebar_prev_mode_ != SidebarMode::None) {
     RestorePreviousSidebar();
@@ -4462,7 +5549,8 @@ void WorkspaceShell::JumpCompareHunk(int delta) {
 }
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
-  if ((event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE) ||
+  if ((event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
+       event.button.button != SDL_BUTTON_RIGHT) ||
       last_window_width_ <= 0 || last_window_height_ <= 0) {
     return false;
   }
@@ -4495,6 +5583,95 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
   mouse_selecting_ = false;
+
+  if (tree_context_menu_.open) {
+    if (const auto popup_rect = ComputeTreeContextMenuRect();
+        popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
+      for (const VisiblePopupMenuItem& item : ComputeVisiblePopupMenuItems(
+               TreeContextMenuItems(tree_context_menu_.target),
+               tree_context_menu_.active_item_index, *popup_rect)) {
+        if (!Contains(item.rect, event.button.x, event.button.y)) {
+          continue;
+        }
+        tree_context_menu_.active_item_index = item.enabled ? static_cast<int>(item.index) : -1;
+        if (event.button.button == SDL_BUTTON_LEFT && !item.separator && item.enabled) {
+          ExecuteTreeContextMenuItem(item.index);
+        }
+        return true;
+      }
+      return true;
+    }
+    CloseTreeContextMenu();
+  }
+
+  if (menu_bar_open_ && event.button.button != SDL_BUTTON_LEFT) {
+    CloseMenuBar();
+  }
+
+  if (event.button.button == SDL_BUTTON_LEFT) {
+    const auto menu_bar_items = ComputeVisibleMenuBarItems(layout.menu_bar);
+    const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
+    for (const VisibleWindowControlButton& button : window_buttons) {
+      if (!Contains(button.rect, event.button.x, event.button.y)) {
+        continue;
+      }
+      CloseMenuBar();
+      switch (button.id) {
+        case WindowControlButtonId::Minimize:
+          pending_window_action_ = WindowAction::Minimize;
+          break;
+        case WindowControlButtonId::Maximize:
+          pending_window_action_ = WindowAction::ToggleMaximize;
+          break;
+        case WindowControlButtonId::Close:
+          RequestQuit();
+          break;
+      }
+      return true;
+    }
+    if (menu_bar_open_) {
+      for (const VisibleMenuBarItem& item : menu_bar_items) {
+        if (!Contains(item.rect, event.button.x, event.button.y)) {
+          continue;
+        }
+        if (item.id == active_menu_id_) {
+          CloseMenuBar();
+        } else {
+          OpenMenuBarMenu(item.id);
+        }
+        return true;
+      }
+
+      if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
+          popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
+        for (const VisiblePopupMenuItem& item :
+             ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
+          if (!Contains(item.rect, event.button.x, event.button.y)) {
+            continue;
+          }
+          active_menu_item_index_ = item.enabled ? static_cast<int>(item.index) : -1;
+          if (!item.separator && item.enabled) {
+            ExecuteMenuItem(active_menu_id_, item.index);
+          }
+          return true;
+        }
+        return true;
+      }
+
+      CloseMenuBar();
+      return true;
+    }
+
+    if (Contains(layout.menu_bar, event.button.x, event.button.y)) {
+      for (const VisibleMenuBarItem& item : menu_bar_items) {
+        if (Contains(item.rect, event.button.x, event.button.y)) {
+          OpenMenuBarMenu(item.id);
+          return true;
+        }
+      }
+      return true;
+    }
+  }
 
   if (event.button.button == SDL_BUTTON_LEFT && sidebar_visible_ &&
       Contains(SidebarResizeHandleRect(layout), event.button.x, event.button.y)) {
@@ -4699,6 +5876,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     const float local_y = event.button.y - list_top;
 
     if (sidebar_mode_ == SidebarMode::Search) {
+      if (event.button.button != SDL_BUTTON_LEFT) {
+        return true;
+      }
       if (event.button.y < layout.sidebar.y + 48.0f) {
         BeginProjectSearchEdit(ProjectSearchEditField::Query);
         return true;
@@ -4738,6 +5918,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
 
     if (local_y < 0.0f) {
+      if (event.button.button == SDL_BUTTON_RIGHT) {
+        OpenTreeContextMenu(TreeContextTargetKind::Background, {},
+                            MakeRect(static_cast<float>(event.button.x),
+                                     static_cast<float>(event.button.y), 1.0f, 1.0f));
+      }
       return true;
     }
 
@@ -4745,6 +5930,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     const int visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / row_height));
     const int max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
     const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+    const float row_width =
+        std::max(0.0f, layout.sidebar.w - inset * 2.0f -
+                           (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
 
     const int clicked_row = static_cast<int>(local_y / row_height);
     const int entry_index = scroll_row + clicked_row;
@@ -4753,9 +5941,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       const SDL_FRect row_rect = MakeRect(
           layout.sidebar.x + inset,
           list_top + static_cast<float>(clicked_row) * row_height,
-          std::max(0.0f, layout.sidebar.w - inset * 2.0f),
+          row_width,
           row_height - 2.0f);
-      if (Contains(row_rect, event.button.x, event.button.y)) {
+      if (Contains(row_rect, event.button.x, event.button.y) &&
+          event.button.button == SDL_BUTTON_RIGHT) {
+        const auto& entry = entries[static_cast<std::size_t>(entry_index)];
+        const TreeContextTargetKind target =
+            !entry.is_directory ? TreeContextTargetKind::File
+            : entry.path == project_root_ ? TreeContextTargetKind::Root
+                                          : TreeContextTargetKind::Directory;
+        OpenTreeContextMenu(target, entry.path,
+                            MakeRect(static_cast<float>(event.button.x),
+                                     static_cast<float>(event.button.y), 1.0f, 1.0f));
+        return true;
+      }
+      if (Contains(row_rect, event.button.x, event.button.y) &&
+          event.button.button != SDL_BUTTON_RIGHT) {
         const auto opened = directory_tree_.ActivateSelection();
         if (opened.has_value()) {
           OpenFile(*opened);
@@ -4764,6 +5965,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         }
       }
       return true;
+    }
+    if (event.button.button == SDL_BUTTON_RIGHT) {
+      OpenTreeContextMenu(TreeContextTargetKind::Background, {},
+                          MakeRect(static_cast<float>(event.button.x),
+                                   static_cast<float>(event.button.y), 1.0f, 1.0f));
     }
     return true;
   }
@@ -5034,6 +6240,53 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
   if (last_window_width_ <= 0 || last_window_height_ <= 0) {
     return false;
+  }
+
+  if (tree_context_menu_.open) {
+    if (const auto popup_rect = ComputeTreeContextMenuRect();
+        popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
+      tree_context_menu_.active_item_index = -1;
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(TreeContextMenuItems(tree_context_menu_.target),
+                                        tree_context_menu_.active_item_index, *popup_rect)) {
+        if (Contains(item.rect, event.motion.x, event.motion.y)) {
+          tree_context_menu_.active_item_index = item.enabled ? static_cast<int>(item.index) : -1;
+          break;
+        }
+      }
+      return true;
+    }
+    tree_context_menu_.active_item_index = -1;
+    return true;
+  }
+
+  if (menu_bar_open_) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                      sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+    for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (!Contains(item.rect, event.motion.x, event.motion.y)) {
+        continue;
+      }
+      if (item.id != active_menu_id_) {
+        OpenMenuBarMenu(item.id);
+      }
+      return true;
+    }
+    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
+        popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
+      active_menu_item_index_ = -1;
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
+        if (Contains(item.rect, event.motion.x, event.motion.y)) {
+          active_menu_item_index_ = item.enabled ? static_cast<int>(item.index) : -1;
+          break;
+        }
+      }
+      return true;
+    }
+    active_menu_item_index_ = -1;
+    return true;
   }
 
   if (drag_target_ != DragTarget::None) {
@@ -5430,6 +6683,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   if (dirty_prompt_visible_) {
+    return true;
+  }
+
+  if (menu_bar_open_ || tree_context_menu_.open) {
     return true;
   }
 
@@ -6321,6 +7578,10 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::None;
   }
 
+  if (menu_bar_open_ || tree_context_menu_.open) {
+    return TextInputSurface::None;
+  }
+
   if (command_mode_) {
     return TextInputSurface::Command;
   }
@@ -6403,6 +7664,10 @@ bool WorkspaceShell::CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifier
 }
 
 bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
+  if (menu_bar_open_ || tree_context_menu_.open) {
+    text_composition_ = TextCompositionState{};
+    return true;
+  }
   SyncTextInputSurface(nullptr);
   const TextInputSurface surface = CurrentTextInputSurface();
   if (surface == TextInputSurface::None || surface == TextInputSurface::Terminal) {
@@ -6423,6 +7688,9 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
 }
 
 bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
+  if (menu_bar_open_ || tree_context_menu_.open) {
+    return true;
+  }
   if (event.text == nullptr || event.text[0] == '\0' || dirty_prompt_visible_) {
     return false;
   }
@@ -6732,10 +8000,11 @@ void WorkspaceShell::CompleteCommandInput() {
       starts_new_token || parsed.tokens.empty() ? command_input_.size() : parsed.tokens.back().start;
   const std::filesystem::path completion_root =
       project_root_.empty() ? std::filesystem::current_path() : project_root_;
+  const std::vector<std::string>& command_names = CommandNames();
 
   std::vector<CommandCompletionCandidate> candidates;
   if (active_index == 0) {
-    candidates = CompleteFromList(active_prefix, kCommandNames);
+    candidates = CompleteFromValues(active_prefix, command_names);
   } else if (command == "colorscheme" && active_index == 1) {
     candidates = CompleteFromValues(active_prefix, available_colorscheme_names_);
     if (StartsWith("list", active_prefix)) {
@@ -6781,8 +8050,10 @@ void WorkspaceShell::CompleteCommandInput() {
     }
   } else if (command == "soft-tabs" && active_index == 1) {
     candidates = CompleteFromList(active_prefix, kToggleValues);
+  } else if (command == "ui-scale" && active_index == 1) {
+    candidates = CompleteFromList(active_prefix, kUiScaleCommands);
   } else if (command == "help") {
-    candidates = CompleteFromList(active_prefix, kCommandNames);
+    candidates = CompleteFromValues(active_prefix, command_names);
   }
 
   if (candidates.empty()) {
@@ -7073,6 +8344,763 @@ void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
   terminal_tab->session.Resize(static_cast<std::size_t>(rows), static_cast<std::size_t>(columns));
 }
 
+bool WorkspaceShell::ExecuteAction(ActionId id,
+                                   const std::vector<std::string>& args,
+                                   ActionSource source) {
+  if (source != ActionSource::ContextMenu) {
+    CloseTreeContextMenu();
+  }
+
+  const auto require_project = [&]() {
+    if (!project_root_.empty()) {
+      return false;
+    }
+    LogMessage("No project is loaded");
+    return true;
+  };
+
+  switch (id) {
+    case ActionId::Help:
+      if (source == ActionSource::Menu) {
+        bottom_panel_mode_ = BottomPanelMode::Logs;
+        SetBottomPanelVisible(true);
+      }
+      LogMessage("Commands: " + CommandHelpSummary());
+      return true;
+    case ActionId::Colorscheme:
+      if (args.empty()) {
+        LogMessage("Colorscheme: " + active_colorscheme_name_);
+        return true;
+      }
+      if (args[0] == "list") {
+        RefreshAvailableColorschemeNames();
+        if (available_colorscheme_names_.empty()) {
+          LogMessage("No bundled colorschemes found");
+        } else {
+          LogMessage("Colorschemes: " + JoinCommandArguments(available_colorscheme_names_, 0));
+        }
+        return true;
+      }
+      RefreshAvailableColorschemeNames();
+      ApplyColorscheme(args[0], true, true);
+      return true;
+    case ActionId::ProjectOpen:
+      if (args.empty()) {
+        if (source == ActionSource::Menu) {
+          command_mode_ = true;
+          SetBottomPanelVisible(true);
+          command_input_ = "project-open ";
+          ResetCommandSessionState();
+          LogMessage("Enter a project path");
+          return true;
+        }
+        LogMessage("usage: project-open <path>");
+        return true;
+      }
+      OpenProjectTab(std::filesystem::path(args[0]), true, true);
+      return true;
+    case ActionId::ProjectClose:
+      if (projects_.empty() || project_root_.empty()) {
+        LogMessage("No project is loaded");
+        return true;
+      }
+      RequestCloseProject(active_project_index_);
+      return true;
+    case ActionId::ProjectNext:
+    case ActionId::ProjectPrev: {
+      if (projects_.empty() || project_root_.empty()) {
+        LogMessage("No project is loaded");
+        return true;
+      }
+      if (projects_.size() == 1) {
+        LogMessage("Only one project is open");
+        return true;
+      }
+      const int delta = id == ActionId::ProjectNext ? 1 : -1;
+      const int project_count = static_cast<int>(projects_.size());
+      const int next_index =
+          (static_cast<int>(active_project_index_) + delta + project_count) % project_count;
+      SwitchProject(static_cast<std::size_t>(next_index), true);
+      return true;
+    }
+    case ActionId::SidebarToggle: {
+      const std::string tool = args.empty() ? std::string{} : args[0];
+      if (tool == "tree") {
+        if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
+          CloseSidebar();
+        } else {
+          const std::filesystem::path root_arg =
+              args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
+          ShowTreeSidebar(root_arg);
+        }
+        return true;
+      }
+      if (tool == "search") {
+        const std::string query = JoinCommandArguments(args, 1);
+        if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Search && !sidebar_temporary_) {
+          CloseSidebar();
+        } else {
+          ShowSearchSidebar(query, false);
+        }
+        return true;
+      }
+      ToggleSidebar();
+      return true;
+    }
+    case ActionId::SidebarShow: {
+      const std::string tool = args.empty() ? std::string{} : args[0];
+      if (tool == "tree") {
+        const std::filesystem::path root_arg =
+            args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
+        ShowTreeSidebar(root_arg);
+        return true;
+      }
+      if (tool == "search") {
+        ShowSearchSidebar(JoinCommandArguments(args, 1), false);
+        return true;
+      }
+      sidebar_visible_ = true;
+      focus_ = FocusTarget::Sidebar;
+      LogMessage("Sidebar shown");
+      return true;
+    }
+    case ActionId::SidebarHide:
+    case ActionId::SidebarClose:
+      CloseSidebar();
+      return true;
+    case ActionId::SidebarWidth:
+      if (args.empty()) {
+        LogMessage("usage: sidebar-width <n>");
+        return true;
+      }
+      try {
+        const float width = std::stof(args[0]);
+        sidebar_width_ =
+            ClampSidebarWidth(width, static_cast<float>(std::max(1, last_window_width_)));
+        LogMessage("Sidebar width updated");
+      } catch (...) {
+        LogMessage("Invalid sidebar width");
+      }
+      return true;
+    case ActionId::TabSize:
+      if (args.empty()) {
+        LogMessage("Tab size: " + std::to_string(editor_preferences_.tab_size));
+        return true;
+      }
+      try {
+        editor_preferences_.tab_size =
+            std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(args[0])), 1, 16);
+        ApplyEditorPreferencesToAllTabs();
+        SaveConfigState();
+        LogMessage("Tab size set to " + std::to_string(editor_preferences_.tab_size));
+      } catch (...) {
+        LogMessage("Invalid tab size");
+      }
+      return true;
+    case ActionId::IndentWidth:
+      if (args.empty()) {
+        LogMessage("Indent width: " + std::to_string(editor_preferences_.indent_width));
+        return true;
+      }
+      try {
+        editor_preferences_.indent_width =
+            std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(args[0])), 1, 16);
+        ApplyEditorPreferencesToAllTabs();
+        SaveConfigState();
+        LogMessage("Indent width set to " + std::to_string(editor_preferences_.indent_width));
+      } catch (...) {
+        LogMessage("Invalid indent width");
+      }
+      return true;
+    case ActionId::UiScale:
+      if (args.empty()) {
+        LogMessage("UI scale: " + UiScaleLabel(ui_scale_));
+        return true;
+      }
+      if (args[0] == "up") {
+        ApplyUiScale(StepUiScale(ui_scale_, 1), true, true);
+        return true;
+      }
+      if (args[0] == "down") {
+        ApplyUiScale(StepUiScale(ui_scale_, -1), true, true);
+        return true;
+      }
+      if (args[0] == "reset") {
+        ApplyUiScale(1.0f, true, true);
+        return true;
+      }
+      if (const auto scale = ParseUiScaleValue(args[0]); scale.has_value()) {
+        ApplyUiScale(*scale, true, true);
+      } else {
+        LogMessage("usage: ui-scale <n|up|down|reset>");
+      }
+      return true;
+    case ActionId::SoftTabs:
+      if (args.empty()) {
+        LogMessage(std::string("Soft tabs: ") + (editor_preferences_.soft_tabs ? "on" : "off"));
+        return true;
+      }
+      if (const std::string value = ToLower(args[0]);
+          value != "on" && value != "off" && value != "true" && value != "false" &&
+          value != "1" && value != "0") {
+        LogMessage("usage: soft-tabs <on|off>");
+        return true;
+      } else {
+        editor_preferences_.soft_tabs =
+            value == "on" || value == "true" || value == "1";
+      }
+      ApplyEditorPreferencesToAllTabs();
+      SaveConfigState();
+      LogMessage(std::string("Soft tabs ") + (editor_preferences_.soft_tabs ? "enabled"
+                                                                            : "disabled"));
+      return true;
+    case ActionId::PanelShow:
+      SetBottomPanelVisible(true);
+      LogMessage("Bottom panel shown");
+      return true;
+    case ActionId::PanelHide:
+      SetBottomPanelVisible(false);
+      LogMessage("Bottom panel hidden");
+      return true;
+    case ActionId::ToggleBottomPanel:
+      SetBottomPanelVisible(!bottom_panel_visible_);
+      LogMessage(std::string("Bottom panel ") + (bottom_panel_visible_ ? "shown" : "hidden"));
+      return true;
+    case ActionId::TreeRefresh:
+      if (require_project()) {
+        return true;
+      }
+      RefreshProjectFiles();
+      LogMessage("Project tree refreshed");
+      return true;
+    case ActionId::CopyRelativePath:
+    case ActionId::CopyAbsolutePath: {
+      if (require_project()) {
+        return true;
+      }
+      const std::filesystem::path path = ResolveTreeActionPath(source);
+      if (path.empty()) {
+        LogMessage("No tree path is selected");
+        return true;
+      }
+
+      std::string clipboard_text;
+      if (id == ActionId::CopyRelativePath) {
+        std::error_code error;
+        const std::filesystem::path relative = std::filesystem::relative(path, project_root_, error);
+        if (error || relative.empty()) {
+          LogMessage("Failed to compute relative path");
+          return true;
+        }
+        clipboard_text = relative.generic_string();
+      } else {
+        clipboard_text = path.lexically_normal().string();
+      }
+
+      if (SDL_SetClipboardText(clipboard_text.c_str())) {
+        LogMessage(std::string(id == ActionId::CopyRelativePath ? "Relative" : "Absolute") +
+                   " path copied");
+      } else {
+        LogMessage("Failed to copy path");
+      }
+      return true;
+    }
+    case ActionId::Focus: {
+      const std::string target = args.empty() ? std::string{} : args[0];
+      if (target == "sidebar" && sidebar_visible_) {
+        focus_ = FocusTarget::Sidebar;
+        LogMessage("Focus moved to sidebar");
+        return true;
+      }
+      if (target == "editor") {
+        focus_ = FocusTarget::Editor;
+        LogMessage("Focus moved to editor");
+        return true;
+      }
+      if (target == "panel" && bottom_panel_visible_ && BottomPanelShowsTerminal()) {
+        focus_ = FocusTarget::Panel;
+        LogMessage("Focus moved to terminal panel");
+        return true;
+      }
+      LogMessage("Unknown focus target");
+      return true;
+    }
+    case ActionId::Term:
+      if (require_project()) {
+        return true;
+      }
+      OpenTerminal(JoinCommandArguments(args, 0));
+      return true;
+    case ActionId::Find:
+      if (require_project()) {
+        return true;
+      }
+      file_index_.Refresh();
+      file_finder_.SetIndex(&file_index_);
+      file_finder_.SetQuery(JoinCommandArguments(args, 0));
+      overlay_visible_ = true;
+      overlay_mode_ = OverlayMode::FileFinder;
+      focus_ = FocusTarget::Overlay;
+      ResetOverlayScroll();
+      LogMessage("Finder opened from command");
+      return true;
+    case ActionId::Files: {
+      const std::string root_arg = args.empty() ? std::string{} : args[0];
+      if (!root_arg.empty() && !OpenProjectTab(root_arg, true, true)) {
+        return true;
+      }
+      if (source == ActionSource::Shortcut && overlay_visible_) {
+        overlay_visible_ = false;
+        focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+        LogMessage("Finder overlay closed");
+        return true;
+      }
+      if (source != ActionSource::Shortcut && require_project()) {
+        return true;
+      }
+      overlay_visible_ = true;
+      overlay_mode_ = OverlayMode::FileFinder;
+      file_index_.Refresh();
+      file_finder_.SetIndex(&file_index_);
+      file_finder_.SetQuery("");
+      focus_ = FocusTarget::Overlay;
+      ResetOverlayScroll();
+      LogMessage(source == ActionSource::Shortcut ? "Finder overlay opened" : "Finder opened");
+      return true;
+    }
+    case ActionId::Tree: {
+      const std::filesystem::path root_arg =
+          args.empty() ? std::filesystem::path{} : std::filesystem::path(args[0]);
+      if (root_arg.empty() && require_project()) {
+        return true;
+      }
+      ShowTreeSidebar(root_arg);
+      return true;
+    }
+    case ActionId::Grep:
+      if (require_project()) {
+        return true;
+      }
+      ShowSearchSidebar(JoinCommandArguments(args, 0), false);
+      return true;
+    case ActionId::Rg:
+      if (require_project()) {
+        return true;
+      }
+      ShowSearchSidebar(JoinCommandArguments(args, 0), true);
+      return true;
+    case ActionId::Search:
+      if (require_project()) {
+        return true;
+      }
+      if (ActiveTabIsCompare()) {
+        LogMessage("search only works in editor tabs");
+        return true;
+      }
+      OpenBufferSearch();
+      buffer_search_query_ = JoinCommandArguments(args, 0);
+      RefreshBufferSearch();
+      LogMessage("Buffer search opened");
+      return true;
+    case ActionId::ReplaceInBuffer:
+      OpenBufferReplace();
+      return true;
+    case ActionId::Open:
+      if (require_project()) {
+        return true;
+      }
+      if (args.empty()) {
+        LogMessage("usage: open <path>");
+        return true;
+      }
+      {
+        std::filesystem::path path = args[0];
+        if (path.is_relative()) {
+          path = project_root_ / path;
+        }
+        path = path.lexically_normal();
+
+        auto* editor_tab = ActiveEditorTab();
+        if (editor_tab != nullptr && editor_tab->views.size() > 1) {
+          editor::TextViewport opened_view;
+          if (!opened_view.OpenFile(path)) {
+            LogMessage("Failed to open file: " + path.string());
+            return true;
+          }
+          if (!ReplaceActiveEditorView(opened_view)) {
+            LogMessage("Failed to open file in active split: " + path.string());
+            return true;
+          }
+          LogMessage("Opened file in active split: " + path.string());
+          return true;
+        }
+
+        OpenFile(path);
+        return true;
+      }
+    case ActionId::OpenSelectedTreeItem:
+    case ActionId::OpenSelectedTreeItemInNewTab: {
+      if (require_project()) {
+        return true;
+      }
+      const std::filesystem::path path = ResolveTreeActionPath(source);
+      if (path.empty()) {
+        LogMessage("No tree file is selected");
+        return true;
+      }
+      if (id == ActionId::OpenSelectedTreeItemInNewTab) {
+        if (!OpenFileInNewTab(path)) {
+          LogMessage("Failed to open file: " + path.string());
+          return true;
+        }
+        LogMessage("Opened tab: " + open_tabs_[active_tab_index_].title);
+      } else {
+        OpenFile(path);
+      }
+      return true;
+    }
+    case ActionId::Compare: {
+      if (require_project()) {
+        return true;
+      }
+      std::filesystem::path path;
+      if (!args.empty()) {
+        path = std::filesystem::path(args[0]);
+        if (path.is_relative()) {
+          path = project_root_ / path;
+        }
+        path = path.lexically_normal();
+      } else if (source == ActionSource::ContextMenu) {
+        path = ResolveTreeActionPath(source);
+      } else if (!text_viewport_.path().empty()) {
+        path = text_viewport_.path().lexically_normal();
+      } else if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
+        const auto& entries = directory_tree_.entries();
+        if (directory_tree_.selected_index() < entries.size() &&
+            !entries[directory_tree_.selected_index()].is_directory) {
+          path = entries[directory_tree_.selected_index()].path.lexically_normal();
+        }
+      }
+
+      if (path.empty()) {
+        LogMessage("usage: compare [path] [commit-prefix]");
+        return true;
+      }
+
+      if (!std::filesystem::exists(path)) {
+        LogMessage("File does not exist: " + path.string());
+        return true;
+      }
+
+      const std::string commit_spec = args.size() > 1 ? args[1] : "";
+      OpenComparePickerForPath(path, commit_spec);
+      return true;
+    }
+    case ActionId::CompareHead: {
+      if (require_project()) {
+        return true;
+      }
+      const std::filesystem::path path = ResolveTreeActionPath(source);
+      if (path.empty()) {
+        LogMessage("No tree file is selected");
+        return true;
+      }
+      if (!std::filesystem::exists(path)) {
+        LogMessage("File does not exist: " + path.string());
+        return true;
+      }
+      compare_picker_path_ = path.lexically_normal();
+      OpenComparison(project::GitCommitEntry{
+          .hash = "HEAD",
+          .short_hash = "HEAD",
+          .subject = "HEAD",
+      });
+      return true;
+    }
+    case ActionId::Tab:
+      if (require_project()) {
+        return true;
+      }
+      if (args.empty()) {
+        OpenUntitledTab();
+        LogMessage("Opened untitled tab");
+        return true;
+      }
+
+      for (const std::string& arg : args) {
+        std::filesystem::path path = arg;
+        if (path.is_relative()) {
+          path = project_root_ / path;
+        }
+        path = path.lexically_normal();
+
+        if (!OpenFileInNewTab(path)) {
+          LogMessage("Failed to open file: " + path.string());
+          return true;
+        }
+      }
+
+      LogMessage("Opened tab: " + open_tabs_[active_tab_index_].title);
+      return true;
+    case ActionId::TabSwitch: {
+      if (require_project()) {
+        return true;
+      }
+      std::string error_message;
+      const std::optional<std::size_t> tab_index =
+          FindTabIndexBySpecifier(JoinCommandArguments(args, 0), &error_message);
+      if (!tab_index.has_value()) {
+        LogMessage(error_message);
+        return true;
+      }
+      ActivateTab(*tab_index);
+      LogMessage("Switched to tab: " + open_tabs_[*tab_index].title);
+      return true;
+    }
+    case ActionId::TabMove:
+      if (require_project()) {
+        return true;
+      }
+      if (args.empty()) {
+        LogMessage("usage: tabmove <n>");
+        return true;
+      }
+      if (open_tabs_.empty()) {
+        LogMessage("No tabs are open");
+        return true;
+      }
+      {
+        std::size_t parsed_length = 0;
+        int slot = 0;
+        try {
+          slot = std::stoi(args[0], &parsed_length);
+        } catch (...) {
+          LogMessage("Invalid tab slot");
+          return true;
+        }
+        if (parsed_length != args[0].size()) {
+          LogMessage("Invalid tab slot");
+          return true;
+        }
+
+        const bool relative = !args[0].empty() && (args[0].front() == '+' || args[0].front() == '-');
+        const int current_slot = static_cast<int>(active_tab_index_) + 1;
+        const int requested_slot = relative ? current_slot + slot : slot;
+        const int clamped_slot =
+            std::clamp(requested_slot, 1, static_cast<int>(open_tabs_.size()));
+        MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
+        LogMessage("Moved tab to slot " + std::to_string(clamped_slot));
+        return true;
+      }
+    case ActionId::Reopen:
+      if (require_project()) {
+        return true;
+      }
+      ReopenActiveTab();
+      return true;
+    case ActionId::Save:
+      if (require_project()) {
+        return true;
+      }
+      if (SaveTab(active_tab_index_)) {
+        if (source == ActionSource::Shortcut) {
+          ResetCaretBlink();
+        }
+        LogMessage("Saved file: " + text_viewport_.path().lexically_normal().string());
+      } else {
+        LogMessage("Save failed");
+      }
+      return true;
+    case ActionId::Vsplit:
+    case ActionId::Hsplit: {
+      if (require_project()) {
+        return true;
+      }
+      const EditorSplitOrientation orientation =
+          id == ActionId::Vsplit ? EditorSplitOrientation::Vertical
+                                 : EditorSplitOrientation::Horizontal;
+      const std::string command = id == ActionId::Vsplit ? "vsplit" : "hsplit";
+      const std::string split_label = id == ActionId::Vsplit ? "Vertical" : "Horizontal";
+
+      if (args.empty()) {
+        if (!SplitActiveEditor(orientation)) {
+          LogMessage(command + " only works in editor tabs");
+        } else {
+          LogMessage(split_label + " split opened");
+        }
+        return true;
+      }
+
+      for (const std::string& arg : args) {
+        std::filesystem::path path = arg;
+        if (path.is_relative()) {
+          path = project_root_ / path;
+        }
+        path = path.lexically_normal();
+
+        editor::TextViewport opened_view;
+        if (!opened_view.OpenFile(path)) {
+          LogMessage("Failed to open file: " + path.string());
+          return true;
+        }
+        if (!SplitActiveEditor(orientation)) {
+          LogMessage(command + " only works in editor tabs");
+          return true;
+        }
+        if (!ReplaceActiveEditorView(opened_view)) {
+          LogMessage("Failed to load file into split: " + path.string());
+          return true;
+        }
+      }
+
+      LogMessage(split_label + " split opened");
+      return true;
+    }
+    case ActionId::Unsplit:
+      if (!UnsplitActiveEditor()) {
+        LogMessage("No editor split is active");
+      } else {
+        LogMessage("Editor split closed");
+      }
+      return true;
+    case ActionId::SplitNext:
+      if (!CycleEditorSplit(1)) {
+        LogMessage("No other split is available");
+      } else {
+        LogMessage("Focus moved to the next split");
+      }
+      return true;
+    case ActionId::SplitPrev:
+      if (!CycleEditorSplit(-1)) {
+        LogMessage("No other split is available");
+      } else {
+        LogMessage("Focus moved to the previous split");
+      }
+      return true;
+    case ActionId::SplitFirst:
+      if (!ActivateOrderedEditorSplit(0)) {
+        LogMessage("No other split is available");
+      } else {
+        LogMessage("Focus moved to the first split");
+      }
+      return true;
+    case ActionId::SplitLast: {
+      auto* editor_tab = ActiveEditorTab();
+      const std::size_t last_index =
+          editor_tab == nullptr || editor_tab->views.empty() ? 0 : editor_tab->views.size() - 1;
+      if (!ActivateOrderedEditorSplit(last_index)) {
+        LogMessage("No other split is available");
+      } else {
+        LogMessage("Focus moved to the last split");
+      }
+      return true;
+    }
+    case ActionId::Quit:
+      RequestQuit();
+      return true;
+    case ActionId::Goto:
+    case ActionId::Jump: {
+      const std::string command = id == ActionId::Goto ? "goto" : "jump";
+      if (ActiveTabIsCompare()) {
+        LogMessage(command + " only works in editor tabs");
+        return true;
+      }
+      if (args.empty()) {
+        LogMessage("usage: " + command + " <line[:col]>");
+        return true;
+      }
+
+      long long requested_line = 0;
+      std::size_t column = 0;
+      if (!ParseLineColumnSpec(args[0], &requested_line, &column, id == ActionId::Jump)) {
+        LogMessage("Invalid " + command + " target");
+        return true;
+      }
+
+      if (id == ActionId::Goto && requested_line == 0) {
+        LogMessage("goto expects 1-based positions");
+        return true;
+      }
+
+      const std::size_t line_count = std::max<std::size_t>(1, text_viewport_.line_count());
+      std::size_t line = 0;
+      if (id == ActionId::Jump) {
+        const long long current_line = static_cast<long long>(text_viewport_.cursor_line()) + 1;
+        const long long target_line = current_line + requested_line;
+        line = static_cast<std::size_t>(
+            std::clamp(target_line - 1, 0LL, static_cast<long long>(line_count - 1)));
+      } else if (requested_line > 0) {
+        line = static_cast<std::size_t>(requested_line - 1);
+      } else {
+        const std::size_t from_end = static_cast<std::size_t>(-requested_line);
+        line = from_end >= line_count ? 0 : line_count - from_end;
+      }
+
+      text_viewport_.MoveCursorTo(line, column > 0 ? column - 1 : 0);
+      focus_ = FocusTarget::Editor;
+      LogMessage("Cursor moved to requested location");
+      return true;
+    }
+    case ActionId::CloseActiveTab:
+      if (!open_tabs_.empty()) {
+        RequestCloseTab(active_tab_index_);
+      }
+      return true;
+    case ActionId::OpenCommandPrompt:
+      command_mode_ = true;
+      SetBottomPanelVisible(true);
+      command_input_.clear();
+      ResetCommandSessionState();
+      LogMessage("Command mode opened");
+      return true;
+    case ActionId::SelectAll:
+      text_viewport_.SelectAll();
+      ResetCaretBlink();
+      focus_ = FocusTarget::Editor;
+      return true;
+    case ActionId::Undo:
+      if (text_viewport_.Undo()) {
+        LogMessage("Undo");
+        ResetCaretBlink();
+      }
+      return true;
+    case ActionId::Redo:
+      if (text_viewport_.Redo()) {
+        LogMessage("Redo");
+        ResetCaretBlink();
+      }
+      return true;
+    case ActionId::CopySelection: {
+      const std::string text = text_viewport_.SelectedText();
+      if (!text.empty() && SDL_SetClipboardText(text.c_str())) {
+        LogMessage("Selection copied");
+      }
+      return true;
+    }
+    case ActionId::CutSelection: {
+      const std::string text = text_viewport_.SelectedText();
+      if (!text.empty() && SDL_SetClipboardText(text.c_str())) {
+        text_viewport_.DeleteSelectedText();
+        ResetCaretBlink();
+        LogMessage("Selection cut");
+      }
+      return true;
+    }
+    case ActionId::PasteClipboard: {
+      char* clipboard_text = SDL_GetClipboardText();
+      if (clipboard_text != nullptr) {
+        text_viewport_.InsertText(clipboard_text);
+        ResetCaretBlink();
+        SDL_free(clipboard_text);
+        LogMessage("Clipboard pasted");
+      }
+      return true;
+    }
+  }
+
+  return true;
+}
+
 bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   const ParsedCommandLine parsed = ParseCommandLine(command_line);
   if (parsed.dangling_escape) {
@@ -7090,634 +9118,21 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
     return true;
   }
 
-  std::vector<std::string> args;
-  args.reserve(parsed.tokens.size());
-  for (const auto& token : parsed.tokens) {
-    args.push_back(token.text);
-  }
-
-  const std::string& command = args.front();
   PushCommandHistory(command_line);
   ClearCommandCompletionFeedback();
-  const auto require_project = [&]() {
-    if (!project_root_.empty()) {
-      return false;
-    }
-    LogMessage("No project is loaded");
-    return true;
-  };
-
-  if (command == "help") {
-    LogMessage("Commands: help, project-open <path>, project-close, project-next, project-prev, open <path>, tab [path], tabswitch <tab>, tabmove <n>, compare [path] [commit-prefix], reopen, save, quit, term [command], find <query>, files [root], tree [root], search <query>, grep <query>, rg <query>, goto <line[:col]>, jump <line[:col]>, vsplit [path], hsplit [path], unsplit, split-next, split-prev, split-first, split-last, tree-refresh, sidebar-toggle [tool], sidebar-show [tool], sidebar-hide, sidebar-close, sidebar-width <n>, panel-show, panel-hide, focus <editor|sidebar|panel>, tab-size [n], indent-width [n], soft-tabs [on|off], colorscheme [name|list]");
+  const std::string& command = parsed.tokens.front().text;
+  const ActionSpec* action = FindActionByCommand(command);
+  if (action == nullptr) {
+    LogMessage("Unknown command: " + command);
     return true;
   }
 
-  if (command == "colorscheme") {
-    if (args.size() < 2) {
-      LogMessage("Colorscheme: " + active_colorscheme_name_);
-      return true;
-    }
-    if (args[1] == "list") {
-      RefreshAvailableColorschemeNames();
-      if (available_colorscheme_names_.empty()) {
-        LogMessage("No bundled colorschemes found");
-      } else {
-        LogMessage("Colorschemes: " + JoinCommandArguments(available_colorscheme_names_, 0));
-      }
-      return true;
-    }
-    RefreshAvailableColorschemeNames();
-    ApplyColorscheme(args[1], true, true);
-    return true;
+  std::vector<std::string> args;
+  args.reserve(parsed.tokens.size() - 1);
+  for (std::size_t i = 1; i < parsed.tokens.size(); ++i) {
+    args.push_back(parsed.tokens[i].text);
   }
-
-  if (command == "project-open") {
-    if (args.size() < 2) {
-      LogMessage("usage: project-open <path>");
-      return true;
-    }
-    OpenProjectTab(std::filesystem::path(args[1]), true, true);
-    return true;
-  }
-
-  if (command == "project-close") {
-    if (projects_.empty() || project_root_.empty()) {
-      LogMessage("No project is loaded");
-      return true;
-    }
-    RequestCloseProject(active_project_index_);
-    return true;
-  }
-
-  if (command == "project-next" || command == "project-prev") {
-    if (projects_.empty() || project_root_.empty()) {
-      LogMessage("No project is loaded");
-      return true;
-    }
-    if (projects_.size() == 1) {
-      LogMessage("Only one project is open");
-      return true;
-    }
-    const int delta = command == "project-next" ? 1 : -1;
-    const int project_count = static_cast<int>(projects_.size());
-    const int next_index =
-        (static_cast<int>(active_project_index_) + delta + project_count) % project_count;
-    SwitchProject(static_cast<std::size_t>(next_index), true);
-    return true;
-  }
-
-  if (command == "sidebar-toggle") {
-    const std::string tool = args.size() > 1 ? args[1] : "";
-    if (tool == "tree") {
-      if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
-        CloseSidebar();
-      } else {
-        const std::filesystem::path root_arg =
-            args.size() > 2 ? std::filesystem::path(args[2]) : std::filesystem::path{};
-        ShowTreeSidebar(root_arg);
-      }
-      return true;
-    }
-    if (tool == "search") {
-      const std::string query = JoinCommandArguments(args, 2);
-      if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Search && !sidebar_temporary_) {
-        CloseSidebar();
-      } else {
-        ShowSearchSidebar(query, false);
-      }
-      return true;
-    }
-    ToggleSidebar();
-    return true;
-  }
-
-  if (command == "sidebar-show") {
-    const std::string tool = args.size() > 1 ? args[1] : "";
-    if (tool == "tree") {
-      const std::filesystem::path root_arg =
-          args.size() > 2 ? std::filesystem::path(args[2]) : std::filesystem::path{};
-      ShowTreeSidebar(root_arg);
-      return true;
-    }
-    if (tool == "search") {
-      ShowSearchSidebar(JoinCommandArguments(args, 2), false);
-      return true;
-    }
-    sidebar_visible_ = true;
-    focus_ = FocusTarget::Sidebar;
-    LogMessage("Sidebar shown");
-    return true;
-  }
-
-  if (command == "sidebar-hide" || command == "sidebar-close") {
-    CloseSidebar();
-    return true;
-  }
-
-  if (command == "sidebar-width") {
-    if (args.size() < 2) {
-      LogMessage("usage: sidebar-width <n>");
-      return true;
-    }
-    try {
-      const float width = std::stof(args[1]);
-      sidebar_width_ = ClampSidebarWidth(width, static_cast<float>(std::max(1, last_window_width_)));
-      LogMessage("Sidebar width updated");
-    } catch (...) {
-      LogMessage("Invalid sidebar width");
-    }
-    return true;
-  }
-
-  if (command == "tab-size") {
-    if (args.size() < 2) {
-      LogMessage("Tab size: " + std::to_string(editor_preferences_.tab_size));
-      return true;
-    }
-    try {
-      editor_preferences_.tab_size =
-          std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(args[1])), 1, 16);
-      ApplyEditorPreferencesToAllTabs();
-      SaveConfigState();
-      LogMessage("Tab size set to " + std::to_string(editor_preferences_.tab_size));
-    } catch (...) {
-      LogMessage("Invalid tab size");
-    }
-    return true;
-  }
-
-  if (command == "indent-width") {
-    if (args.size() < 2) {
-      LogMessage("Indent width: " + std::to_string(editor_preferences_.indent_width));
-      return true;
-    }
-    try {
-      editor_preferences_.indent_width =
-          std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(args[1])), 1, 16);
-      ApplyEditorPreferencesToAllTabs();
-      SaveConfigState();
-      LogMessage("Indent width set to " + std::to_string(editor_preferences_.indent_width));
-    } catch (...) {
-      LogMessage("Invalid indent width");
-    }
-    return true;
-  }
-
-  if (command == "soft-tabs") {
-    if (args.size() < 2) {
-      LogMessage(std::string("Soft tabs: ") + (editor_preferences_.soft_tabs ? "on" : "off"));
-      return true;
-    }
-
-    const std::string value = ToLower(args[1]);
-    if (value != "on" && value != "off" && value != "true" && value != "false" &&
-        value != "1" && value != "0") {
-      LogMessage("usage: soft-tabs <on|off>");
-      return true;
-    }
-
-    editor_preferences_.soft_tabs =
-        value == "on" || value == "true" || value == "1";
-    ApplyEditorPreferencesToAllTabs();
-    SaveConfigState();
-    LogMessage(std::string("Soft tabs ") + (editor_preferences_.soft_tabs ? "enabled" : "disabled"));
-    return true;
-  }
-
-  if (command == "panel-show") {
-    SetBottomPanelVisible(true);
-    LogMessage("Bottom panel shown");
-    return true;
-  }
-
-  if (command == "panel-hide") {
-    SetBottomPanelVisible(false);
-    LogMessage("Bottom panel hidden");
-    return true;
-  }
-
-  if (command == "tree-refresh") {
-    if (require_project()) {
-      return true;
-    }
-    RefreshProjectFiles();
-    LogMessage("Project tree refreshed");
-    return true;
-  }
-
-  if (command == "focus") {
-    const std::string target = args.size() > 1 ? args[1] : "";
-    if (target == "sidebar" && sidebar_visible_) {
-      focus_ = FocusTarget::Sidebar;
-      LogMessage("Focus moved to sidebar");
-      return true;
-    }
-    if (target == "editor") {
-      focus_ = FocusTarget::Editor;
-      LogMessage("Focus moved to editor");
-      return true;
-    }
-    if (target == "panel" && bottom_panel_visible_ && BottomPanelShowsTerminal()) {
-      focus_ = FocusTarget::Panel;
-      LogMessage("Focus moved to terminal panel");
-      return true;
-    }
-    LogMessage("Unknown focus target");
-    return true;
-  }
-
-  if (command == "term") {
-    if (require_project()) {
-      return true;
-    }
-    OpenTerminal(JoinCommandArguments(args, 1));
-    return true;
-  }
-
-  if (command == "find") {
-    if (require_project()) {
-      return true;
-    }
-    file_index_.Refresh();
-    file_finder_.SetIndex(&file_index_);
-    file_finder_.SetQuery(JoinCommandArguments(args, 1));
-    overlay_visible_ = true;
-    overlay_mode_ = OverlayMode::FileFinder;
-    focus_ = FocusTarget::Overlay;
-    ResetOverlayScroll();
-    LogMessage("Finder opened from command");
-    return true;
-  }
-
-  if (command == "files") {
-    const std::string root_arg = args.size() > 1 ? args[1] : "";
-    if (!root_arg.empty() && !OpenProjectTab(root_arg, true, true)) {
-      return true;
-    }
-    if (require_project()) {
-      return true;
-    }
-    overlay_visible_ = true;
-    overlay_mode_ = OverlayMode::FileFinder;
-    file_index_.Refresh();
-    file_finder_.SetIndex(&file_index_);
-    file_finder_.SetQuery("");
-    focus_ = FocusTarget::Overlay;
-    ResetOverlayScroll();
-    LogMessage("Finder opened");
-    return true;
-  }
-
-  if (command == "tree") {
-    const std::filesystem::path root_arg =
-        args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
-    if (root_arg.empty() && require_project()) {
-      return true;
-    }
-    ShowTreeSidebar(root_arg);
-    return true;
-  }
-
-  if (command == "grep") {
-    if (require_project()) {
-      return true;
-    }
-    ShowSearchSidebar(JoinCommandArguments(args, 1), false);
-    return true;
-  }
-
-  if (command == "rg") {
-    if (require_project()) {
-      return true;
-    }
-    ShowSearchSidebar(JoinCommandArguments(args, 1), true);
-    return true;
-  }
-
-  if (command == "search") {
-    if (require_project()) {
-      return true;
-    }
-    if (ActiveTabIsCompare()) {
-      LogMessage("search only works in editor tabs");
-      return true;
-    }
-    OpenBufferSearch();
-    buffer_search_query_ = JoinCommandArguments(args, 1);
-    RefreshBufferSearch();
-    LogMessage("Buffer search opened");
-    return true;
-  }
-
-  if (command == "open") {
-    if (require_project()) {
-      return true;
-    }
-    if (args.size() < 2) {
-      LogMessage("usage: open <path>");
-      return true;
-    }
-    std::filesystem::path path = args[1];
-    if (path.is_relative()) {
-      path = project_root_ / path;
-    }
-    path = path.lexically_normal();
-
-    auto* editor_tab = ActiveEditorTab();
-    if (editor_tab != nullptr && editor_tab->views.size() > 1) {
-      editor::TextViewport opened_view;
-      if (!opened_view.OpenFile(path)) {
-        LogMessage("Failed to open file: " + path.string());
-        return true;
-      }
-      if (!ReplaceActiveEditorView(opened_view)) {
-        LogMessage("Failed to open file in active split: " + path.string());
-        return true;
-      }
-      LogMessage("Opened file in active split: " + path.string());
-      return true;
-    }
-
-    OpenFile(path);
-    return true;
-  }
-
-  if (command == "compare") {
-    if (require_project()) {
-      return true;
-    }
-    std::filesystem::path path;
-    if (args.size() >= 2) {
-      path = std::filesystem::path(args[1]);
-      if (path.is_relative()) {
-        path = project_root_ / path;
-      }
-      path = path.lexically_normal();
-    } else if (!text_viewport_.path().empty()) {
-      path = text_viewport_.path().lexically_normal();
-    } else if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
-      const auto& entries = directory_tree_.entries();
-      if (directory_tree_.selected_index() < entries.size() &&
-          !entries[directory_tree_.selected_index()].is_directory) {
-        path = entries[directory_tree_.selected_index()].path.lexically_normal();
-      }
-    }
-
-    if (path.empty()) {
-      LogMessage("usage: compare [path] [commit-prefix]");
-      return true;
-    }
-
-    if (!std::filesystem::exists(path)) {
-      LogMessage("File does not exist: " + path.string());
-      return true;
-    }
-
-    const std::string commit_spec = args.size() >= 3 ? args[2] : "";
-    OpenComparePickerForPath(path, commit_spec);
-    return true;
-  }
-
-  if (command == "tab") {
-    if (require_project()) {
-      return true;
-    }
-    if (args.size() < 2) {
-      OpenUntitledTab();
-      LogMessage("Opened untitled tab");
-      return true;
-    }
-
-    for (std::size_t i = 1; i < args.size(); ++i) {
-      std::filesystem::path path = args[i];
-      if (path.is_relative()) {
-        path = project_root_ / path;
-      }
-      path = path.lexically_normal();
-
-      if (!OpenFileInNewTab(path)) {
-        LogMessage("Failed to open file: " + path.string());
-        return true;
-      }
-    }
-
-    LogMessage("Opened tab: " + open_tabs_[active_tab_index_].title);
-    return true;
-  }
-
-  if (command == "tabswitch") {
-    if (require_project()) {
-      return true;
-    }
-    std::string error_message;
-    const std::optional<std::size_t> tab_index =
-        FindTabIndexBySpecifier(JoinCommandArguments(args, 1), &error_message);
-    if (!tab_index.has_value()) {
-      LogMessage(error_message);
-      return true;
-    }
-    ActivateTab(*tab_index);
-    LogMessage("Switched to tab: " + open_tabs_[*tab_index].title);
-    return true;
-  }
-
-  if (command == "tabmove") {
-    if (require_project()) {
-      return true;
-    }
-    if (args.size() < 2) {
-      LogMessage("usage: tabmove <n>");
-      return true;
-    }
-    if (open_tabs_.empty()) {
-      LogMessage("No tabs are open");
-      return true;
-    }
-
-    std::size_t parsed_length = 0;
-    int slot = 0;
-    try {
-      slot = std::stoi(args[1], &parsed_length);
-    } catch (...) {
-      LogMessage("Invalid tab slot");
-      return true;
-    }
-    if (parsed_length != args[1].size()) {
-      LogMessage("Invalid tab slot");
-      return true;
-    }
-
-    const bool relative = !args[1].empty() && (args[1].front() == '+' || args[1].front() == '-');
-    const int current_slot = static_cast<int>(active_tab_index_) + 1;
-    const int requested_slot = relative ? current_slot + slot : slot;
-    const int clamped_slot =
-        std::clamp(requested_slot, 1, static_cast<int>(open_tabs_.size()));
-    MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
-    LogMessage("Moved tab to slot " + std::to_string(clamped_slot));
-    return true;
-  }
-
-  if (command == "reopen") {
-    if (require_project()) {
-      return true;
-    }
-    ReopenActiveTab();
-    return true;
-  }
-
-  if (command == "save") {
-    if (require_project()) {
-      return true;
-    }
-    if (SaveTab(active_tab_index_)) {
-      LogMessage("Saved file: " + text_viewport_.path().lexically_normal().string());
-    } else {
-      LogMessage("Save failed");
-    }
-    return true;
-  }
-
-  if (command == "vsplit" || command == "hsplit") {
-    if (require_project()) {
-      return true;
-    }
-    const EditorSplitOrientation orientation =
-        command == "vsplit" ? EditorSplitOrientation::Vertical
-                            : EditorSplitOrientation::Horizontal;
-    const std::string split_label = command == "vsplit" ? "Vertical" : "Horizontal";
-
-    if (args.size() < 2) {
-      if (!SplitActiveEditor(orientation)) {
-        LogMessage(command + " only works in editor tabs");
-      } else {
-        LogMessage(split_label + " split opened");
-      }
-      return true;
-    }
-
-    for (std::size_t i = 1; i < args.size(); ++i) {
-      std::filesystem::path path = args[i];
-      if (path.is_relative()) {
-        path = project_root_ / path;
-      }
-      path = path.lexically_normal();
-
-      editor::TextViewport opened_view;
-      if (!opened_view.OpenFile(path)) {
-        LogMessage("Failed to open file: " + path.string());
-        return true;
-      }
-      if (!SplitActiveEditor(orientation)) {
-        LogMessage(command + " only works in editor tabs");
-        return true;
-      }
-      if (!ReplaceActiveEditorView(opened_view)) {
-        LogMessage("Failed to load file into split: " + path.string());
-        return true;
-      }
-    }
-
-    LogMessage(split_label + " split opened");
-    return true;
-  }
-
-  if (command == "unsplit") {
-    if (!UnsplitActiveEditor()) {
-      LogMessage("No editor split is active");
-    } else {
-      LogMessage("Editor split closed");
-    }
-    return true;
-  }
-
-  if (command == "split-next") {
-    if (!CycleEditorSplit(1)) {
-      LogMessage("No other split is available");
-    } else {
-      LogMessage("Focus moved to the next split");
-    }
-    return true;
-  }
-
-  if (command == "split-prev") {
-    if (!CycleEditorSplit(-1)) {
-      LogMessage("No other split is available");
-    } else {
-      LogMessage("Focus moved to the previous split");
-    }
-    return true;
-  }
-
-  if (command == "split-first") {
-    if (!ActivateOrderedEditorSplit(0)) {
-      LogMessage("No other split is available");
-    } else {
-      LogMessage("Focus moved to the first split");
-    }
-    return true;
-  }
-
-  if (command == "split-last") {
-    auto* editor_tab = ActiveEditorTab();
-    const std::size_t last_index =
-        editor_tab == nullptr || editor_tab->views.empty() ? 0 : editor_tab->views.size() - 1;
-    if (!ActivateOrderedEditorSplit(last_index)) {
-      LogMessage("No other split is available");
-    } else {
-      LogMessage("Focus moved to the last split");
-    }
-    return true;
-  }
-
-  if (command == "quit") {
-    RequestQuit();
-    return true;
-  }
-
-  if (command == "goto" || command == "jump") {
-    if (ActiveTabIsCompare()) {
-      LogMessage(command + " only works in editor tabs");
-      return true;
-    }
-    if (args.size() < 2) {
-      LogMessage("usage: " + command + " <line[:col]>");
-      return true;
-    }
-
-    long long requested_line = 0;
-    std::size_t column = 0;
-    if (!ParseLineColumnSpec(args[1], &requested_line, &column, command == "jump")) {
-      LogMessage("Invalid " + command + " target");
-      return true;
-    }
-
-    if (command == "goto" && requested_line == 0) {
-      LogMessage("goto expects 1-based positions");
-      return true;
-    }
-
-    const std::size_t line_count = std::max<std::size_t>(1, text_viewport_.line_count());
-    std::size_t line = 0;
-    if (command == "jump") {
-      const long long current_line = static_cast<long long>(text_viewport_.cursor_line()) + 1;
-      const long long target_line = current_line + requested_line;
-      line = static_cast<std::size_t>(
-          std::clamp(target_line - 1, 0LL, static_cast<long long>(line_count - 1)));
-    } else if (requested_line > 0) {
-      line = static_cast<std::size_t>(requested_line - 1);
-    } else {
-      const std::size_t from_end = static_cast<std::size_t>(-requested_line);
-      line = from_end >= line_count ? 0 : line_count - from_end;
-    }
-
-    text_viewport_.MoveCursorTo(line, column > 0 ? column - 1 : 0);
-    focus_ = FocusTarget::Editor;
-    LogMessage("Cursor moved to requested location");
-    return true;
-  }
-
-  LogMessage("Unknown command: " + command);
-  return true;
+  return ExecuteAction(action->id, args, ActionSource::Command);
 }
 
 void WorkspaceShell::LogMessage(std::string message) {
@@ -7775,6 +9190,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       !(CurrentTextInputSurface() == TextInputSurface::Editor && !text_composition_.text.empty());
 
   DrawFilledRect(renderer, layout.full, theme_.window_background);
+  DrawFilledRect(renderer, layout.menu_bar, theme_.chrome_background);
+  DrawFilledRect(renderer,
+                 MakeRect(layout.menu_bar.x, layout.menu_bar.y + layout.menu_bar.h - kDivider,
+                          layout.menu_bar.w, kDivider),
+                 theme_.border);
   DrawFilledRect(renderer, layout.project_tab_strip, theme_.chrome_background);
   DrawFilledRect(renderer,
                  MakeRect(layout.project_tab_strip.x,
@@ -8162,6 +9582,59 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
     flush_segment();
   };
+
+  const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
+  const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
+  for (const VisibleMenuBarItem& item : visible_menu_items) {
+    const MenuSpec* menu = FindMenuSpec(item.id);
+    if (menu == nullptr) {
+      continue;
+    }
+    const SDL_Color background = item.active ? theme_.chrome_active : theme_.chrome_background;
+    DrawFilledRect(renderer, item.rect, background);
+    if (item.active) {
+      DrawFilledRect(renderer,
+                     MakeRect(item.rect.x, item.rect.y + item.rect.h - 2.0f, item.rect.w, 2.0f),
+                     theme_.accent);
+    }
+    draw_text_on(item.rect.x + 10.0f, item.rect.y + 4.0f,
+                 item.active ? theme_.text_primary : theme_.text_secondary, background,
+                 menu->label);
+  }
+
+  if (custom_window_chrome_enabled_) {
+    const std::string title = "microide";
+    const float title_width = text_renderer_.MeasureWidth(title);
+    const float left_limit =
+        visible_menu_items.empty() ? layout.menu_bar.x + 12.0f
+                                   : visible_menu_items.back().rect.x +
+                                         visible_menu_items.back().rect.w + 16.0f;
+    const float right_limit =
+        window_buttons.empty() ? layout.menu_bar.x + layout.menu_bar.w - 12.0f
+                               : window_buttons.front().rect.x - 16.0f;
+    const float title_x =
+        std::floor(layout.menu_bar.x + (layout.menu_bar.w - title_width) * 0.5f);
+    if (title_x >= left_limit && title_x + title_width <= right_limit) {
+      draw_text_on(title_x, layout.menu_bar.y + 4.0f, theme_.text_muted, theme_.chrome_background,
+                   title);
+    }
+  }
+
+  for (const VisibleWindowControlButton& button : window_buttons) {
+    SDL_Color background = button.hovered ? theme_.row_highlight : theme_.chrome_background;
+    SDL_Color glyph = button.hovered ? theme_.text_primary : theme_.text_secondary;
+    if (button.id == WindowControlButtonId::Close && button.hovered) {
+      background = theme_.diff_deleted;
+      glyph = theme_.text_primary;
+    } else if (button.id == WindowControlButtonId::Maximize && window_maximized_ &&
+               !button.hovered) {
+      background = theme_.chrome_active;
+      glyph = theme_.text_primary;
+    }
+
+    DrawFilledRect(renderer, button.rect, background);
+    DrawWindowControlGlyph(renderer, button.rect, button.id, glyph, window_maximized_);
+  }
 
   if (ActiveTabIsCompare()) {
     CompareTabState* compare_tab = ActiveCompareTab();
@@ -8764,6 +10237,90 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         static_cast<float>(scroll_row), drag_target_ == DragTarget::BottomPanelScrollbar);
   }
 
+  if (menu_bar_open_) {
+    const MenuSpec* menu = FindMenuSpec(active_menu_id_);
+    const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
+    if (menu != nullptr && popup_rect.has_value()) {
+      DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
+      DrawRect(renderer, *popup_rect, theme_.border);
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
+        if (item.separator) {
+          DrawFilledRect(renderer,
+                         MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,
+                                  std::max(0.0f, item.rect.w - 16.0f), 1.0f),
+                         theme_.border);
+          continue;
+        }
+
+        const MenuItemSpec& spec = menu->items[item.index];
+        const SDL_Color background =
+            item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
+        const SDL_Color text_color = !item.enabled ? theme_.text_disabled
+                                   : item.hovered ? theme_.text_primary
+                                                  : theme_.text_secondary;
+        const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
+        DrawFilledRect(renderer, item.rect, background);
+        if (item.checked) {
+          draw_text_on(item.rect.x + 8.0f, item.rect.y + 3.0f,
+                       item.enabled ? theme_.accent : theme_.text_disabled, background, "x");
+        }
+        const std::string accelerator = MenuItemAccelerator(spec);
+        const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
+        const float label_width =
+            std::max(0.0f, item.rect.w - 42.0f - accelerator_width - 16.0f);
+        draw_text_on(item.rect.x + 24.0f, item.rect.y + 3.0f, text_color, background,
+                     TruncateLabel(MenuItemLabel(spec), label_width));
+        if (!accelerator.empty()) {
+          draw_text_on(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y + 3.0f,
+                       accel_color, background, accelerator);
+        }
+      }
+    }
+  }
+
+  if (tree_context_menu_.open) {
+    const auto items = TreeContextMenuItems(tree_context_menu_.target);
+    const auto popup_rect = ComputeTreeContextMenuRect();
+    if (!items.empty() && popup_rect.has_value()) {
+      DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
+      DrawRect(renderer, *popup_rect, theme_.border);
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(items, tree_context_menu_.active_item_index, *popup_rect)) {
+        if (item.separator) {
+          DrawFilledRect(renderer,
+                         MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,
+                                  std::max(0.0f, item.rect.w - 16.0f), 1.0f),
+                         theme_.border);
+          continue;
+        }
+
+        const MenuItemSpec& spec = items[item.index];
+        const SDL_Color background =
+            item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
+        const SDL_Color text_color = !item.enabled ? theme_.text_disabled
+                                   : item.hovered ? theme_.text_primary
+                                                  : theme_.text_secondary;
+        const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
+        DrawFilledRect(renderer, item.rect, background);
+        if (item.checked) {
+          draw_text_on(item.rect.x + 8.0f, item.rect.y + 3.0f,
+                       item.enabled ? theme_.accent : theme_.text_disabled, background, "x");
+        }
+        const std::string accelerator = MenuItemAccelerator(spec);
+        const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
+        const float label_width =
+            std::max(0.0f, item.rect.w - 42.0f - accelerator_width - 16.0f);
+        draw_text_on(item.rect.x + 24.0f, item.rect.y + 3.0f, text_color, background,
+                     TruncateLabel(MenuItemLabel(spec), label_width));
+        if (!accelerator.empty()) {
+          draw_text_on(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y + 3.0f,
+                       accel_color, background, accelerator);
+        }
+      }
+    }
+  }
+
   const std::string focus_text =
       focus_ == FocusTarget::Sidebar ? "sidebar"
       : focus_ == FocusTarget::Panel ? "panel"
@@ -8775,7 +10332,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                            : "none";
   const std::string left_status =
       ProjectLabel() + "  |  " + std::string(text_renderer_.BackendName()) + "  |  focus " +
-      focus_text + "  |  sidebar " + sidebar_text;
+      focus_text + "  |  sidebar " + sidebar_text + "  |  scale " + UiScaleLabel(ui_scale_);
   std::string right_status;
   if (ActiveTabIsCompare()) {
     right_status =
@@ -9381,6 +10938,48 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+
+  if (tree_context_menu_.open) {
+    if (const auto popup_rect = ComputeTreeContextMenuRect();
+        popup_rect.has_value() && Contains(*popup_rect, x, y)) {
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(TreeContextMenuItems(tree_context_menu_.target),
+                                        tree_context_menu_.active_item_index, *popup_rect)) {
+        if (Contains(item.rect, x, y)) {
+          return item.separator ? CursorKind::Default : CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Default;
+    }
+  }
+
+  if (menu_bar_open_) {
+    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
+        popup_rect.has_value() && Contains(*popup_rect, x, y)) {
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
+        if (Contains(item.rect, x, y)) {
+          return item.separator ? CursorKind::Default : CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Default;
+    }
+  }
+
+  if (Contains(layout.menu_bar, x, y)) {
+    for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (Contains(item.rect, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    for (const VisibleWindowControlButton& button :
+         ComputeVisibleWindowControlButtons(layout.menu_bar)) {
+      if (Contains(button.rect, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    return CursorKind::Default;
+  }
 
   if (overlay_visible_) {
     const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);

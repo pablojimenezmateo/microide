@@ -128,9 +128,9 @@ These migration pieces are already present and should not be tracked as missing:
 - `[x]` tree command parity with `tree ['root']`
 - `[x]` file-finder command parity with `files ['root']`
 - `[x]` tree-driven compare entry point (`d` on a file in the tree)
-- `[ ]` tree context menus for files, directories, and the project root
-- `[ ]` direct tree/menu compare action for `Compare Against HEAD`
-- `[ ]` tree/menu compare action for `Compare Against...` wired to the existing picker flow
+- `[~]` tree context menus now exist for files, directories, the project root, and empty tree background, but they currently cover non-mutating actions only
+- `[~]` direct tree/menu compare action for `Compare Against HEAD` now exists through the file context menu; the main Project menu shortcut is still pending
+- `[~]` tree/menu compare action for `Compare Against...` now exists through the file context menu and reuses the existing picker flow; the main Project menu entry is still pending
 - `[ ]` rename/create/delete flows in the tree, with dirty-tab safeguards and compare-tab retarget/close rules if they remain part of the accepted product scope
 - `[ ]` delete flows that move files and directories to the OS trash/recycle bin instead of permanently removing them
 
@@ -209,14 +209,14 @@ The command bar now has shell-style quoted/escaped parsing, history recall, and 
 
 ### 9A. Menu And Action Surfaces
 
-- `[ ]` shared action registry behind command bar, keyboard shortcuts, menus, and context menus
-- `[ ]` custom top menu bar with context-aware enablement and accelerator labels
-- `[ ]` reusable popup menu and prompt surfaces for context menus, rename/create flows, and future open-project prompts
+- `[~]` shared action registry now backs the command bar, the core keyboard shortcuts, and the first menu-bar dispatch path, and exposes action metadata plus enablement hooks for upcoming context menus
+- `[~]` custom top menu bar now exists with click-driven menus, context-aware enablement, and accelerator labels; broader menu coverage and keyboard polish are still pending
+- `[~]` reusable popup menu surfaces now back both the menu bar and the first tree context menus; prompt surfaces for rename/create flows and future open-project prompts are still pending
 
 ### 10. Persistence And Config
 
-- `[~]` config loading now exists for project-local editor preferences plus colorscheme selection, but broader app/user config is still missing
-- `[~]` config save/update now exists for the same project-local editor preferences plus colorscheme selection, but broader app/user config is still missing
+- `[~]` config loading now exists for project-local editor preferences plus colorscheme selection, and initial app-level user config now restores UI scale, but broader user settings are still missing
+- `[~]` config save/update now exists for the same project-local editor preferences plus colorscheme selection, and initial app-level user config now persists UI scale, but broader user settings are still missing
 - `[x]` session restore for open tabs now restores editor tabs and compare tabs from a project-local session file
 - `[~]` session restore for sidebar visibility/width now exists through the same project-local session file
 - `[~]` persistent workspace state across launches now covers editor tabs, compare tabs, sidebar/bottom-panel visibility and sizing, plus project-local editor preferences and colorscheme selection, but not terminal session restore or broader app config
@@ -254,7 +254,7 @@ These are real implementation gaps in the current SDL app, but they are architec
 These are the biggest migration blockers relative to the original IDE fork:
 
 - `[ ]` project-tab workspace extraction
-- `[ ]` menu and context-menu action model
+- `[~]` menu and context-menu action model
 - `[~]` integrated terminal pane
 - `[~]` config/session persistence
 - `[ ]` richer project-search options

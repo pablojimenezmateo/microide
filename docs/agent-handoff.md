@@ -45,6 +45,9 @@ The current SDL rewrite already has:
 - the main editor viewport now keeps bounded caches for visible-line layout and syntax tokens to reduce repeated large-file scroll/render work
 - crisp `SDL3_ttf` LCD/subpixel text rendering on stable background surfaces
 - project-local session restore for editor tabs plus sidebar/bottom-panel visibility and sizing
+- a first shared action registry now backs command dispatch, command completion/help metadata, and the core shortcut set that upcoming menus/context menus should reuse
+- a first custom menu bar now exists with click-driven File/Edit/View/Search/Project/Terminal/Help menus backed by the shared action model, including accelerator labels and context-aware enablement
+- first tree context menus now exist for files, directories, the project root, and empty tree background, covering open/compare/refresh/close-project/copy-path actions on the same popup plumbing as the menu bar
 
 ## Important Code Anchors
 
@@ -64,7 +67,8 @@ Partially complete areas:
 
 - terminal support now has per-tab fresh sessions, text selection/copy, common CSI cursor/erase/edit handling, cursor visibility, alternate-screen switching/save-restore behavior, and xterm-style app mouse reporting, but it is still not a full terminal emulator
 - UTF-8 text entry now works in the editor too, and IME composition/preedit handling exists for the editor plus built-in prompt surfaces, but the buffer model is still byte-backed and real-IME validation is still pending
-- project-local persistence now restores editor tabs, compare tabs, workspace chrome, editor preferences, and colorscheme selection, but it still does not cover terminal session restore or broader user config
+- project-local persistence now restores editor tabs, compare tabs, workspace chrome, editor preferences, and colorscheme selection, and app-level user config now persists UI scale, but it still does not cover terminal session restore or broader user settings
+- the app can now use a custom borderless title row with in-window minimize/maximize/close controls on the same row as the menus; if SDL hit-testing is unavailable, it falls back to the normal system-decorated window
 - text sharpness is much better on stable backgrounds, but highlighted editor fragments still use the older blended fallback
 - split navigation command parity is still narrower than the old editor even though the split tree is now in place
 
@@ -72,11 +76,10 @@ Partially complete areas:
 
 If the goal is the best user-visible progress per unit of work, take the tasks in roughly this order:
 
-1. Build a shared action registry that can back commands, shortcuts, menus, and context menus
-2. Add the custom menu bar and tree context menus on top of that action model
-3. Add tree file mutations with dirty-tab safeguards and compare-tab path updates
-4. Add a visible open-project affordance outside the command prompt, likely through the upcoming menu bar
-5. Return to terminal polish, large-file validation, and broader command parity after the shell architecture is stable
+1. Add tree file mutations with dirty-tab safeguards and compare-tab path updates
+2. Add a visible open-project affordance outside the command prompt, likely through the menu bar or the upcoming prompt surface
+3. Fill out the remaining menu parity gaps, especially the direct `Compare Against HEAD` / `Compare Against...` actions in the main Project menu
+4. Return to terminal polish, large-file validation, and broader command parity after the shell architecture is stable
 
 ## Validation Checklist
 
@@ -100,13 +103,16 @@ Manual checks worth doing in the real window:
 - manually run a full-screen terminal app such as `less docs/todo.md` and confirm enter/exit alternate-screen behavior restores the previous shell contents
 - manually run a mouse-aware terminal app that enables xterm mouse mode and confirm clicks, drag tracking, and wheel events reach the PTY instead of starting text selection
 - run `tab-size`, `indent-width`, `soft-tabs`, and `colorscheme bubblegum`, restart the app, and confirm the project-local editor settings and colorscheme persist for the same project
+- run `ui-scale 1.5`, restart the app, and confirm the larger chrome persists from the app-level user config; also confirm `Ctrl+-`, `Ctrl+=`, and `Ctrl+0` adjust it live
 - run `project-open <path>` twice for different roots, switch project tabs with clicks plus `project-next` / `project-prev`, and confirm file tabs, tree state, search state, panel state, and terminal tabs all stay with the correct project
 - while two projects are open, also confirm overlay state, command prompt state, logs, and panel visibility stay with the correct project
 - while two projects are open, also confirm colorscheme changes with the active project when different projects persist different themes
 - close a non-last project tab, then close the final project tab, and confirm the app returns to the welcome window instead of quitting
 - restart after multiple project tabs are open and confirm the project-tab order plus active-project selection are restored from the app-level workspace session
 - after menus/context menus land, confirm menu enablement changes with focus and active tab kind, and confirm tree rename/delete flows update or close affected tabs correctly
-- after compare menu/context actions land, confirm `Compare Against HEAD` opens directly while `Compare Against...` still opens the picker
+- right-click tree files, directories, the project root, and empty tree background and confirm the context menu item set matches the current partial implementation for each target
+- on a normal desktop backend, confirm the system title bar is gone, the menu row hosts minimize/maximize/close on the right, blank space in that row drags the window, and edge resize still works; on unsupported backends, confirm it falls back to the system title bar instead of leaving an unmovable borderless window
+- in the tree file context menu, confirm `Compare Against HEAD` opens directly while `Compare Against...` still opens the picker
 - after tree delete lands, confirm deleted files and directories go to the OS trash/recycle bin rather than being permanently removed
 
 ## Documentation Expectations

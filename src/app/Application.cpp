@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 
@@ -90,6 +92,18 @@ bool Application::Initialize() {
     return false;
   }
 
+  custom_window_chrome_enabled_ = false;
+  if (!SDL_SetWindowBordered(window_, false)) {
+    SDL_Log("SDL_SetWindowBordered(false) failed: %s", SDL_GetError());
+  } else if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
+    SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
+    SDL_SetWindowBordered(window_, true);
+  } else {
+    custom_window_chrome_enabled_ = true;
+  }
+
+  UpdateRendererPresentation();
+
   if (!SDL_StartTextInput(window_)) {
     SDL_Log("SDL_StartTextInput failed: %s", SDL_GetError());
   }
@@ -134,10 +148,18 @@ bool Application::HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_WINDOW_EXPOSED:
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+      UpdateRendererPresentation();
       return true;
   }
 
-  const bool handled = workspace_shell_.HandleEvent(event);
+  UpdateRendererPresentation();
+  SDL_Event converted_event = event;
+  if (renderer_ != nullptr) {
+    SDL_ConvertEventToRenderCoordinates(renderer_, &converted_event);
+  }
+
+  const bool handled = workspace_shell_.HandleEvent(converted_event);
+  ConsumeWindowActions();
   if (workspace_shell_.ConsumeQuitRequested()) {
     running_ = false;
     return true;
@@ -152,13 +174,97 @@ void Application::Render() {
 
   int width = 0;
   int height = 0;
-  if (!SDL_GetRenderOutputSize(renderer_, &width, &height)) {
-    SDL_Log("SDL_GetRenderOutputSize failed: %s", SDL_GetError());
+  if (!UpdateRendererPresentation(&width, &height)) {
     return;
   }
 
   workspace_shell_.Render(renderer_, width, height);
   SDL_RenderPresent(renderer_);
+}
+
+bool Application::UpdateRendererPresentation(int* logical_width, int* logical_height) {
+  if (window_ == nullptr || renderer_ == nullptr) {
+    return false;
+  }
+
+  int window_width = 0;
+  int window_height = 0;
+  if (!SDL_GetWindowSize(window_, &window_width, &window_height)) {
+    SDL_Log("SDL_GetWindowSize failed: %s", SDL_GetError());
+    return false;
+  }
+
+  const float ui_scale = std::max(0.1f, workspace_shell_.UiScale());
+  const int resolved_width =
+      std::max(1, static_cast<int>(std::lround(static_cast<float>(window_width) / ui_scale)));
+  const int resolved_height =
+      std::max(1, static_cast<int>(std::lround(static_cast<float>(window_height) / ui_scale)));
+  const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
+  workspace_shell_.SetWindowChromeState(resolved_width, resolved_height,
+                                        (flags & SDL_WINDOW_MAXIMIZED) != 0,
+                                        custom_window_chrome_enabled_);
+
+  if (!SDL_SetRenderLogicalPresentation(renderer_, resolved_width, resolved_height,
+                                        SDL_LOGICAL_PRESENTATION_STRETCH)) {
+    SDL_Log("SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
+    return false;
+  }
+
+  if (logical_width != nullptr) {
+    *logical_width = resolved_width;
+  }
+  if (logical_height != nullptr) {
+    *logical_height = resolved_height;
+  }
+  return true;
+}
+
+void Application::ConsumeWindowActions() {
+  if (window_ == nullptr) {
+    return;
+  }
+
+  switch (workspace_shell_.ConsumeWindowAction()) {
+    case workspace::WorkspaceShell::WindowAction::None:
+      return;
+    case workspace::WorkspaceShell::WindowAction::Minimize:
+      SDL_MinimizeWindow(window_);
+      return;
+    case workspace::WorkspaceShell::WindowAction::ToggleMaximize: {
+      const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
+      if ((flags & SDL_WINDOW_MAXIMIZED) != 0) {
+        SDL_RestoreWindow(window_);
+      } else {
+        SDL_MaximizeWindow(window_);
+      }
+      return;
+    }
+  }
+}
+
+SDL_HitTestResult Application::WindowHitTest(const SDL_Point& area) const {
+  if (!custom_window_chrome_enabled_ || renderer_ == nullptr) {
+    return SDL_HITTEST_NORMAL;
+  }
+
+  float render_x = static_cast<float>(area.x);
+  float render_y = static_cast<float>(area.y);
+  if (!SDL_RenderCoordinatesFromWindow(renderer_, static_cast<float>(area.x),
+                                       static_cast<float>(area.y), &render_x, &render_y)) {
+    return SDL_HITTEST_NORMAL;
+  }
+
+  return workspace_shell_.WindowHitTest(render_x, render_y);
+}
+
+SDL_HitTestResult SDLCALL Application::WindowHitTestCallback(SDL_Window* window,
+                                                             const SDL_Point* area,
+                                                             void* data) {
+  (void) window;
+  if (area == nullptr || data == nullptr) {
+    return SDL_HITTEST_NORMAL;
+  }
+  return static_cast<Application*>(data)->WindowHitTest(*area);
 }
 
 }  // namespace microide::app

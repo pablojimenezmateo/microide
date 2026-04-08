@@ -100,11 +100,12 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     }
   };
 
-  static constexpr std::array<CheatRow, 18> kCoreShortcuts = {{
+  static constexpr std::array<CheatRow, 19> kCoreShortcuts = {{
       {"Ctrl+E", "command palette"},
       {"F6", "file finder overlay"},
       {"F8", "toggle sidebar"},
       {"F9", "toggle bottom panel"},
+      {"Ctrl+0 / - / =", "reset / shrink / grow UI"},
       {"Ctrl+Tab", "switch editor/sidebar/panel focus"},
       {"Ctrl+S", "save active file"},
       {"Ctrl+W", "close active tab"},
@@ -158,8 +159,9 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       {"Dirty prompt Tab / Enter / Esc", "pick / confirm / cancel"},
   }};
 
-  static constexpr std::array<CheatRow, 37> kCommands = {{
+  static constexpr std::array<CheatRow, 38> kCommands = {{
       {"colorscheme [name]", ""},
+      {"ui-scale [n|up|down|reset]", ""},
       {"help", ""},
       {"open <path>", ""},
       {"tab [path]", ""},

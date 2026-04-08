@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,6 +28,18 @@ namespace microide::workspace {
 
 class WorkspaceShell {
  public:
+  enum class WindowAction {
+    None,
+    Minimize,
+    ToggleMaximize,
+  };
+
+  enum class WindowControlButtonId {
+    Minimize,
+    Maximize,
+    Close,
+  };
+
   WorkspaceShell() = default;
 
   bool Initialize(const std::filesystem::path& project_root);
@@ -36,6 +49,10 @@ class WorkspaceShell {
   std::optional<Uint32> NextAnimationDelayMs() const;
   void RequestQuit();
   bool ConsumeQuitRequested();
+  float UiScale() const { return ui_scale_; }
+  void SetWindowChromeState(int width, int height, bool maximized, bool custom_enabled);
+  SDL_HitTestResult WindowHitTest(float x, float y) const;
+  WindowAction ConsumeWindowAction();
 
  private:
   enum class FocusTarget {
@@ -62,6 +79,25 @@ class WorkspaceShell {
   enum class BufferSearchField {
     Search,
     Replace,
+  };
+
+  enum class MenuId {
+    None,
+    File,
+    Edit,
+    View,
+    Search,
+    Project,
+    Terminal,
+    Help,
+  };
+
+  enum class TreeContextTargetKind {
+    None,
+    File,
+    Directory,
+    Root,
+    Background,
   };
 
   enum class BottomPanelMode {
@@ -179,6 +215,18 @@ class WorkspaceShell {
     bool active = false;
   };
 
+  struct VisibleMenuBarItem {
+    MenuId id = MenuId::None;
+    SDL_FRect rect{};
+    bool active = false;
+  };
+
+  struct VisibleWindowControlButton {
+    WindowControlButtonId id = WindowControlButtonId::Minimize;
+    SDL_FRect rect{};
+    bool hovered = false;
+  };
+
   struct VisibleTerminalTab {
     std::size_t index = 0;
     SDL_FRect rect{};
@@ -246,6 +294,116 @@ class WorkspaceShell {
     bool soft_tabs = false;
   };
 
+  enum class ActionId {
+    Colorscheme,
+    Compare,
+    CompareHead,
+    CopyAbsolutePath,
+    CopyRelativePath,
+    Files,
+    Find,
+    Focus,
+    Goto,
+    Grep,
+    Help,
+    Hsplit,
+    IndentWidth,
+    Jump,
+    Open,
+    OpenSelectedTreeItem,
+    OpenSelectedTreeItemInNewTab,
+    PanelHide,
+    PanelShow,
+    ProjectClose,
+    ProjectNext,
+    ProjectOpen,
+    ProjectPrev,
+    Quit,
+    Reopen,
+    Rg,
+    Save,
+    Search,
+    SidebarClose,
+    SidebarHide,
+    SidebarShow,
+    SidebarToggle,
+    SidebarWidth,
+    SoftTabs,
+    SplitFirst,
+    SplitLast,
+    SplitNext,
+    SplitPrev,
+    Tab,
+    TabSize,
+    TabMove,
+    TabSwitch,
+    Term,
+    Tree,
+    TreeRefresh,
+    UiScale,
+    Unsplit,
+    Vsplit,
+    CloseActiveTab,
+    CopySelection,
+    CutSelection,
+    OpenCommandPrompt,
+    PasteClipboard,
+    Redo,
+    ReplaceInBuffer,
+    SelectAll,
+    ToggleBottomPanel,
+    Undo,
+  };
+
+  enum class ActionSource {
+    Command,
+    Shortcut,
+    Menu,
+    ContextMenu,
+  };
+
+  struct ActionSpec {
+    ActionId id;
+    std::string_view command_name;
+    std::string_view command_usage;
+    std::string_view label;
+    std::string_view accelerator;
+    bool checkable = false;
+  };
+
+  struct MenuItemSpec {
+    ActionId action = ActionId::Help;
+    std::string_view label;
+    std::string_view accelerator;
+    std::array<std::string_view, 2> args{};
+    std::size_t arg_count = 0;
+    bool separator = false;
+    bool checkable = false;
+  };
+
+  struct MenuSpec {
+    MenuId id = MenuId::None;
+    std::string_view label;
+    std::span<const MenuItemSpec> items;
+  };
+
+  struct VisiblePopupMenuItem {
+    std::size_t index = 0;
+    SDL_FRect rect{};
+    bool enabled = false;
+    bool checked = false;
+    bool hovered = false;
+    bool separator = false;
+  };
+
+  struct TreeContextMenuState {
+    bool open = false;
+    TreeContextTargetKind target = TreeContextTargetKind::None;
+    std::filesystem::path path;
+    SDL_FRect anchor_rect{};
+    int active_item_index = -1;
+  };
+
   struct ProjectWorkspaceState {
     std::filesystem::path root;
     project::DirectoryTree directory_tree;
@@ -302,6 +460,54 @@ class WorkspaceShell {
     EditorPreferences editor_preferences;
   };
 
+  static std::span<const ActionSpec> ActionSpecs();
+  static const ActionSpec* FindActionSpec(ActionId id);
+  static const ActionSpec* FindActionByCommand(std::string_view command_name);
+  static const std::vector<std::string>& CommandNames();
+  static const std::string& CommandHelpSummary();
+  bool IsActionEnabled(ActionId id) const;
+  bool ExecuteAction(ActionId id,
+                     const std::vector<std::string>& args,
+                     ActionSource source);
+  static std::span<const MenuSpec> MenuSpecs();
+  static const MenuSpec* FindMenuSpec(MenuId id);
+  static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
+  std::vector<VisibleMenuBarItem> ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
+  std::vector<VisibleWindowControlButton> ComputeVisibleWindowControlButtons(
+      const SDL_FRect& menu_bar) const;
+  std::optional<SDL_FRect> ComputePopupMenuRect(const SDL_FRect& anchor_rect,
+                                                std::span<const MenuItemSpec> items,
+                                                const SDL_FRect& bounds) const;
+  std::optional<SDL_FRect> ComputePopupMenuRect(const SDL_FRect& menu_bar, MenuId id) const;
+  std::vector<VisiblePopupMenuItem> ComputeVisiblePopupMenuItems(
+      std::span<const MenuItemSpec> items,
+      int active_item_index,
+      const SDL_FRect& popup_rect) const;
+  std::vector<VisiblePopupMenuItem> ComputeVisiblePopupMenuItems(MenuId id,
+                                                                 const SDL_FRect& popup_rect) const;
+  std::string MenuItemLabel(const MenuItemSpec& item) const;
+  std::string MenuItemAccelerator(const MenuItemSpec& item) const;
+  bool IsMenuItemEnabled(const MenuItemSpec& item) const;
+  bool IsMenuItemChecked(const MenuItemSpec& item) const;
+  int FirstEnabledMenuItemIndex(MenuId id) const;
+  int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
+  void OpenMenuBarMenu(MenuId id);
+  void CloseMenuBar();
+  bool ExecuteMenuItem(MenuId menu_id, std::size_t item_index);
+  bool SwitchMenuBarMenu(int delta);
+  bool MoveActiveMenuItem(int delta);
+  const project::TreeEntry* SelectedTreeEntry() const;
+  std::filesystem::path SelectedTreePath() const;
+  TreeContextTargetKind SelectedTreeTargetKind() const;
+  std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
+  std::optional<SDL_FRect> ComputeTreeContextMenuRect() const;
+  void OpenTreeContextMenu(TreeContextTargetKind target,
+                           const std::filesystem::path& path,
+                           const SDL_FRect& anchor_rect);
+  void CloseTreeContextMenu();
+  bool ExecuteTreeContextMenuItem(std::size_t item_index);
+  int FirstEnabledTreeContextMenuItemIndex() const;
+  int NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const;
   static char KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers);
   std::filesystem::path ResolveProjectRootInput(const std::filesystem::path& project_root) const;
   bool SetProjectRoot(const std::filesystem::path& project_root);
@@ -440,8 +646,12 @@ class WorkspaceShell {
   void OpenTerminal(std::string command);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
+  std::filesystem::path UserConfigPath() const;
   void RefreshAvailableColorschemeNames();
   bool ApplyColorscheme(std::string_view name, bool persist, bool log_feedback);
+  bool ApplyUiScale(float scale, bool persist, bool log_feedback);
+  bool RestoreUserConfig();
+  void SaveUserConfig() const;
   bool RestoreConfigState();
   void SaveConfigState() const;
   std::filesystem::path SessionStatePath() const;
@@ -543,6 +753,10 @@ class WorkspaceShell {
   BottomPanelMode bottom_panel_mode_ = BottomPanelMode::Logs;
   bool overlay_visible_ = false;
   OverlayMode overlay_mode_ = OverlayMode::FileFinder;
+  bool menu_bar_open_ = false;
+  MenuId active_menu_id_ = MenuId::None;
+  int active_menu_item_index_ = -1;
+  TreeContextMenuState tree_context_menu_;
   BufferSearchField buffer_search_field_ = BufferSearchField::Search;
   bool command_mode_ = false;
   bool mouse_selecting_ = false;
@@ -596,6 +810,10 @@ class WorkspaceShell {
   std::vector<std::string> available_colorscheme_names_;
   std::string active_colorscheme_name_ = "default";
   EditorPreferences editor_preferences_;
+  float ui_scale_ = 1.0f;
+  bool custom_window_chrome_enabled_ = false;
+  bool window_maximized_ = false;
+  WindowAction pending_window_action_ = WindowAction::None;
   TextInputSurface active_text_input_surface_ = TextInputSurface::None;
   TextCompositionState text_composition_;
   Uint64 caret_blink_epoch_ms_ = 0;
