@@ -40,18 +40,24 @@ void CollectFiles(const std::filesystem::path& root,
       continue;
     }
 
-    IgnoreMatcher child_matcher = matcher;
-    if (is_directory) {
-      child_matcher.LoadIgnoreFile(path / ".gitignore");
-    }
-
-    if (child_matcher.Ignored(relative, is_directory) || IsHiddenName(path)) {
+    if (IsHiddenName(path)) {
       ++iterator;
       continue;
     }
 
     if (is_directory) {
+      IgnoreMatcher child_matcher = matcher;
+      child_matcher.LoadIgnoreFile(path / ".gitignore");
+      if (child_matcher.Ignored(relative, true)) {
+        ++iterator;
+        continue;
+      }
       CollectFiles(root, path, child_matcher, files);
+      ++iterator;
+      continue;
+    }
+
+    if (matcher.Ignored(relative, false)) {
       ++iterator;
       continue;
     }
@@ -107,7 +113,7 @@ void FileIndex::EnsureFresh() const {
   CollectFiles(root_, root_, matcher, files_);
 
   std::sort(files_.begin(), files_.end(), [](const auto& lhs, const auto& rhs) {
-    return lhs.string() < rhs.string();
+    return lhs.native() < rhs.native();
   });
   needs_refresh_ = false;
 }

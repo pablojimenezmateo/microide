@@ -44,7 +44,7 @@ class DirectoryTree {
   std::size_t selected_index() const { return selected_index_; }
 
  private:
-  void RebuildEntries();
+  void RebuildEntries(bool refresh_git_statuses);
   void AppendDirectory(const std::filesystem::path& directory,
                        int depth,
                        const IgnoreMatcher& matcher);

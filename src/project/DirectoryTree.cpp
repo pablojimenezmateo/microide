@@ -13,6 +13,7 @@ namespace {
 
 struct SortableEntry {
   std::filesystem::path path;
+  std::string sort_key;
   bool is_directory = false;
   IgnoreMatcher matcher;
 };
@@ -44,7 +45,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   root_ = absolute_root;
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
-  RebuildEntries();
+  RebuildEntries(true);
   return true;
 }
 
@@ -52,7 +53,7 @@ void DirectoryTree::Refresh() {
   if (root_.empty()) {
     return;
   }
-  RebuildEntries();
+  RebuildEntries(true);
 }
 
 void DirectoryTree::MoveSelection(int delta) {
@@ -101,7 +102,7 @@ bool DirectoryTree::SelectPath(const std::filesystem::path& path) {
     expanded_paths_.insert(NormalizePathKey(current));
   }
 
-  RebuildEntries();
+  RebuildEntries(false);
   for (std::size_t i = 0; i < entries_.size(); ++i) {
     if (entries_[i].path == normalized_path) {
       selected_index_ = i;
@@ -123,7 +124,7 @@ void DirectoryTree::ExpandSelection() {
 
   const auto key = NormalizePathKey(entry.path);
   if (expanded_paths_.insert(key).second) {
-    RebuildEntries();
+    RebuildEntries(false);
     return;
   }
 
@@ -140,7 +141,7 @@ void DirectoryTree::CollapseSelection() {
   const auto& entry = entries_[selected_index_];
   if (entry.is_directory && entry.expanded && entry.path != root_) {
     expanded_paths_.erase(NormalizePathKey(entry.path));
-    RebuildEntries();
+    RebuildEntries(false);
     return;
   }
 
@@ -170,28 +171,30 @@ std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
     } else {
       expanded_paths_.insert(key);
     }
-    RebuildEntries();
+    RebuildEntries(false);
     return std::nullopt;
   }
 
   return entry.path;
 }
 
-void DirectoryTree::RebuildEntries() {
+void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
   util::StartupTrace::Scope trace_scope("DirectoryTree::RebuildEntries");
   const auto selected_path =
       entries_.empty() ? std::filesystem::path{} : entries_[selected_index_].path;
 
   entries_.clear();
-  git_statuses_.clear();
   if (root_.empty()) {
+    git_statuses_.clear();
     selected_index_ = 0;
     return;
   }
 
   IgnoreMatcher matcher;
   matcher.SetRoot(root_);
-  git_statuses_ = CollectGitStatuses(root_);
+  if (refresh_git_statuses) {
+    git_statuses_ = CollectGitStatuses(root_);
+  }
   entries_.push_back(TreeEntry{
       .path = root_,
       .label = DisplayName(root_),
@@ -226,6 +229,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     }
 
     const auto path = entry.path();
+    const std::string sort_key = path.filename().string();
     std::error_code relative_error;
     const auto relative = std::filesystem::relative(path, root_, relative_error);
     if (relative_error || relative.empty()) {
@@ -237,19 +241,34 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       continue;
     }
 
-    IgnoreMatcher child_matcher = matcher;
-    if (is_directory) {
-      child_matcher.LoadIgnoreFile(path / ".gitignore");
+    if (IsHidden(path)) {
+      continue;
     }
 
-    if (child_matcher.Ignored(relative, is_directory) || IsHidden(path)) {
+    if (is_directory) {
+      IgnoreMatcher child_matcher = matcher;
+      child_matcher.LoadIgnoreFile(path / ".gitignore");
+      if (child_matcher.Ignored(relative, true)) {
+        continue;
+      }
+      children.push_back(SortableEntry{
+          .path = path,
+          .sort_key = sort_key,
+          .is_directory = true,
+          .matcher = std::move(child_matcher),
+      });
+      continue;
+    }
+
+    if (matcher.Ignored(relative, false)) {
       continue;
     }
 
     children.push_back(SortableEntry{
         .path = path,
-        .is_directory = is_directory,
-        .matcher = std::move(child_matcher),
+        .sort_key = sort_key,
+        .is_directory = false,
+        .matcher = IgnoreMatcher{},
     });
   }
 
@@ -257,7 +276,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     if (lhs.is_directory != rhs.is_directory) {
       return lhs.is_directory > rhs.is_directory;
     }
-    return lhs.path.filename().string() < rhs.path.filename().string();
+    return lhs.sort_key < rhs.sort_key;
   });
 
   for (const auto& child : children) {

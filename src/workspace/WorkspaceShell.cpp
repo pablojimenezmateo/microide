@@ -2219,11 +2219,32 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   return true;
 }
 
+bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
+                                          bool activate_restored_tab) {
+  if (!state.initialized) {
+    if (!InitializeCurrentProject(
+            state.root, state.restore_persistence_on_activate, false, activate_restored_tab)) {
+      return false;
+    }
+    state.initialized = true;
+    state.restore_persistence_on_activate = false;
+    return true;
+  }
+
+  LoadProjectState(state);
+  if (activate_restored_tab) {
+    ActivateCurrentTabAfterStateLoad();
+  }
+  return true;
+}
+
 void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   SyncActiveEditorTab();
   StopProjectSearch();
   CloseTreeContextMenu();
 
+  state.initialized = true;
+  state.restore_persistence_on_activate = false;
   state.root = project_root_;
   state.directory_tree = std::move(directory_tree_);
   state.file_index = std::move(file_index_);
@@ -2410,7 +2431,7 @@ void WorkspaceShell::Shutdown() {
   }
 
   for (std::size_t i = 0; i < projects_.size(); ++i) {
-    if (projects_[i] == nullptr) {
+    if (projects_[i] == nullptr || !projects_[i]->initialized || i == active_project_index_) {
       continue;
     }
     LoadProjectState(*projects_[i]);
@@ -2638,6 +2659,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
   auto project_state = std::make_unique<ProjectWorkspaceState>();
   project_state->root = normalized_root;
+  project_state->initialized = true;
   projects_.push_back(std::move(project_state));
   active_project_index_ = projects_.size() - 1;
 
@@ -2645,8 +2667,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     projects_.pop_back();
     if (had_active_project && previous_active_index < projects_.size()) {
       active_project_index_ = previous_active_index;
-      LoadProjectState(*projects_[active_project_index_]);
-      ActivateCurrentTabAfterStateLoad();
+      ActivateProjectState(*projects_[active_project_index_], true);
     } else {
       active_project_index_ = 0;
       ResetProjectScopedState(true);
@@ -2678,9 +2699,18 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
     StoreCurrentProjectState(*projects_[active_project_index_]);
   }
 
+  const std::size_t previous_active_index = active_project_index_;
   active_project_index_ = index;
-  LoadProjectState(*projects_[index]);
-  ActivateCurrentTabAfterStateLoad();
+  if (!ActivateProjectState(*projects_[index], true)) {
+    if (!project_root_.empty() && previous_active_index < projects_.size()) {
+      active_project_index_ = previous_active_index;
+      ActivateProjectState(*projects_[active_project_index_], true);
+    } else {
+      active_project_index_ = 0;
+      ResetProjectScopedState(true);
+    }
+    return false;
+  }
   EnsureActiveProjectVisible();
   SaveWorkspaceSession();
   if (log_feedback) {
@@ -2730,8 +2760,19 @@ void WorkspaceShell::CloseProject(std::size_t index) {
 
   if (closing_active) {
     active_project_index_ = std::min(index, projects_.size() - 1);
-    LoadProjectState(*projects_[active_project_index_]);
-    ActivateCurrentTabAfterStateLoad();
+    if (!ActivateProjectState(*projects_[active_project_index_], true)) {
+      projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
+      if (projects_.empty()) {
+        active_project_index_ = 0;
+        project_tab_scroll_index_ = 0;
+        ResetProjectScopedState(true);
+        SaveWorkspaceSession();
+        LogMessage("Closed project: " + closed_label);
+        return;
+      }
+      active_project_index_ = std::min(active_project_index_, projects_.size() - 1);
+      ActivateProjectState(*projects_[active_project_index_], true);
+    }
   } else if (active_project_index_ > index) {
     --active_project_index_;
   }
@@ -3426,11 +3467,15 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
   }
 
   for (const auto& root : project_roots) {
-    if (!InitializeCurrentProject(root, true, false, false)) {
+    const std::filesystem::path normalized_root = ResolveProjectRootInput(root);
+    std::error_code error;
+    if (normalized_root.empty() || !std::filesystem::exists(normalized_root, error) ||
+        error || !std::filesystem::is_directory(normalized_root, error)) {
       continue;
     }
     auto project_state = std::make_unique<ProjectWorkspaceState>();
-    StoreCurrentProjectState(*project_state);
+    project_state->root = normalized_root;
+    project_state->restore_persistence_on_activate = true;
     projects_.push_back(std::move(project_state));
   }
 
@@ -3441,8 +3486,15 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
 
   active_project_index_ =
       std::min(restored_active_project.value_or(0), projects_.size() - 1);
-  LoadProjectState(*projects_[active_project_index_]);
-  ActivateCurrentTabAfterStateLoad();
+  if (!ActivateProjectState(*projects_[active_project_index_], true)) {
+    projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
+    if (projects_.empty()) {
+      ResetProjectScopedState(true);
+      return true;
+    }
+    active_project_index_ = std::min(active_project_index_, projects_.size() - 1);
+    ActivateProjectState(*projects_[active_project_index_], true);
+  }
   EnsureActiveProjectVisible();
   LogMessage("Restored workspace session");
   return true;
@@ -3465,9 +3517,7 @@ void WorkspaceShell::SaveWorkspaceSession() {
   file << "version 1\n";
   for (std::size_t i = 0; i < projects_.size(); ++i) {
     const std::filesystem::path project_root =
-        (!project_root_.empty() && i == active_project_index_) ? project_root_
-        : projects_[i] != nullptr                               ? projects_[i]->root
-                                                               : std::filesystem::path{};
+        projects_[i] != nullptr ? projects_[i]->root : std::filesystem::path{};
     if (project_root.empty()) {
       continue;
     }
@@ -4456,6 +4506,9 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
 
   if (index == active_tab_index_) {
     SyncActiveEditorTab();
+  }
+  if (attempted_save) {
+    directory_tree_.Refresh();
   }
   return attempted_save || !editor_state->views.empty();
 }

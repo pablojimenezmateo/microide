@@ -438,6 +438,8 @@ class WorkspaceShell {
 
   struct ProjectWorkspaceState {
     std::filesystem::path root;
+    bool initialized = false;
+    bool restore_persistence_on_activate = false;
     project::DirectoryTree directory_tree;
     project::FileIndex file_index;
     project::FileFinder file_finder;
@@ -552,6 +554,7 @@ class WorkspaceShell {
                                 bool restore_persistence,
                                 bool log_feedback,
                                 bool activate_restored_tab = true);
+  bool ActivateProjectState(ProjectWorkspaceState& state, bool activate_restored_tab);
   void StoreCurrentProjectState(ProjectWorkspaceState& state);
   void LoadProjectState(ProjectWorkspaceState& state);
   bool OpenProjectTab(const std::filesystem::path& project_root,
