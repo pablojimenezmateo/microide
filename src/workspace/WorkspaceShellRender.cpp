@@ -916,9 +916,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   const std::string project_label = ProjectLabel();
   const float project_label_width = text_renderer_.MeasureWidth(project_label);
   if (!project_root_.empty()) {
-    draw_text_on(layout.tab_strip.x + layout.tab_strip.w - project_label_width - 16.0f,
-                 layout.tab_strip.y + 9.0f, theme_.text_muted, theme_.chrome_background,
-                 project_label);
+    draw_vcentered_text_on(
+        MakeRect(layout.tab_strip.x + layout.tab_strip.w - project_label_width - 16.0f,
+                 layout.tab_strip.y, project_label_width, layout.tab_strip.h),
+        0.0f, theme_.text_muted, theme_.chrome_background, project_label);
   }
 
   const float breadcrumb_label_x = layout.breadcrumb.x + 12.0f;
@@ -936,17 +937,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   const float breadcrumb_right_limit =
       status_message_.empty() ? layout.breadcrumb.x + layout.breadcrumb.w - 12.0f
                               : status_message_x - 16.0f;
-  draw_text_on(breadcrumb_label_x, layout.breadcrumb.y + 7.0f, theme_.text_muted,
-               theme_.chrome_background, project_label);
+  draw_vcentered_text_on(MakeRect(breadcrumb_label_x, layout.breadcrumb.y, project_label_width,
+                                  layout.breadcrumb.h),
+                         0.0f, theme_.text_muted, theme_.chrome_background, project_label);
   const float breadcrumb_text_x =
       breadcrumb_label_x + project_label_width + (project_label.empty() ? 0.0f : 14.0f);
-  draw_text_on(breadcrumb_text_x, layout.breadcrumb.y + 7.0f, theme_.text_primary,
-               theme_.chrome_background,
-               TruncateLabel(BreadcrumbLabel(),
-                             std::max(0.0f, breadcrumb_right_limit - breadcrumb_text_x)));
+  const float breadcrumb_text_width = std::max(0.0f, breadcrumb_right_limit - breadcrumb_text_x);
+  draw_vcentered_text_on(
+      MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
+      0.0f, theme_.text_primary, theme_.chrome_background,
+      TruncateLabel(BreadcrumbLabel(), breadcrumb_text_width));
   if (!status_message_label.empty()) {
-    draw_text_on(status_message_x, layout.breadcrumb.y + 7.0f, theme_.text_muted,
-                 theme_.chrome_background, status_message_label);
+    draw_vcentered_text_on(
+        MakeRect(status_message_x, layout.breadcrumb.y, status_message_width, layout.breadcrumb.h),
+        0.0f, theme_.text_muted, theme_.chrome_background, status_message_label);
   }
 
   if (sidebar_visible_) {
@@ -1239,10 +1243,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const float root_label_right = refresh_rect.x - 10.0f;
       const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
       const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
-      const float root_label_width = text_renderer_.MeasureWidth(root_label);
       if (!root_label.empty()) {
-        draw_text_on(root_label_right - root_label_width, layout.sidebar.y + 8.0f,
-                     theme_.text_muted, theme_.chrome_background, root_label);
+        draw_centered_text_on(
+            MakeRect(root_label_left, layout.sidebar.y + 4.0f, root_label_max_width, 18.0f),
+            theme_.text_muted, theme_.chrome_background, root_label);
       }
 
       const auto& entries = directory_tree_.entries();
