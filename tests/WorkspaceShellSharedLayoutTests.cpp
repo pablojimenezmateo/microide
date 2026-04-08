@@ -56,6 +56,22 @@ void TestWorkspaceSharedScrollbarHelpers() {
   Expect(horizontal->track.h == 10.0f, "horizontal scrollbar should use the shared thickness");
 }
 
+void TestWorkspaceSharedScrollbarReserveGeometry() {
+  const SDL_FRect area = MakeRect(0.0f, 0.0f, 240.0f, 140.0f);
+  const auto vertical =
+      MakeVerticalScrollbarGeometry(area, 120.0f, 24.0f, 18.0f, true);
+  Expect(vertical.has_value(), "vertical scrollbar geometry should exist with reserved horizontal space");
+  Expect(vertical->track.h == 124.0f,
+         "vertical scrollbar track should reserve the shared horizontal scrollbar height");
+
+  const auto horizontal =
+      MakeHorizontalScrollbarGeometry(area, 160.0f, 32.0f, 24.0f, true);
+  Expect(horizontal.has_value(),
+         "horizontal scrollbar geometry should exist with reserved vertical space");
+  Expect(horizontal->track.w == 224.0f,
+         "horizontal scrollbar track should reserve the shared vertical scrollbar width");
+}
+
 void TestWorkspaceSharedCompareScrollbarMarkers() {
   const auto make_row = [](microide::compare::CompareRowKind kind) {
     return microide::compare::CompareRow{
@@ -160,6 +176,8 @@ void TestWorkspaceSharedOverlayRectHelpers() {
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/LayoutHelpers", TestWorkspaceSharedLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarHelpers", TestWorkspaceSharedScrollbarHelpers);
+  AddTest(tests, "WorkspaceShared/ScrollbarReserveGeometry",
+          TestWorkspaceSharedScrollbarReserveGeometry);
   AddTest(tests, "WorkspaceShared/CompareScrollbarMarkers",
           TestWorkspaceSharedCompareScrollbarMarkers);
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);

@@ -20,6 +20,26 @@ bool ShouldSyntaxHighlightCompareTab(std::string_view left_content,
          model.rows.size() <= kLargeCompareRowThreshold;
 }
 
+std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
+  std::size_t max_columns = 0;
+  for (const auto& row : model.rows) {
+    max_columns = std::max(
+        max_columns,
+        std::max(Utf8CodepointCount(row.left_text), Utf8CodepointCount(row.right_text)));
+  }
+  return max_columns;
+}
+
+std::size_t MergeMaxVisualColumns(const compare::MergeDisplayModel& model) {
+  std::size_t max_columns = 0;
+  for (const auto& row : model.rows) {
+    max_columns =
+        std::max({max_columns, Utf8CodepointCount(row.incoming_text),
+                  Utf8CodepointCount(row.result_text), Utf8CodepointCount(row.current_text)});
+  }
+  return max_columns;
+}
+
 }  // namespace
 
 void WorkspaceShell::OpenComparePicker() {
@@ -184,6 +204,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
                                  ? 0
                                  : std::min(selected_row, compare_tab.model.rows.size() - 1);
   compare_tab.scroll_row = 0;
+  compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
 
   return TabEntry{
       .kind = TabEntry::Kind::Compare,
@@ -216,6 +237,7 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
   const std::optional<std::string> persisted_output = ReadFileText(merge_tab.output_path);
   merge_tab.result_viewport.SetDirty(!persisted_output.has_value() || *persisted_output != result_text);
   merge_tab.result_tokens = HighlightBufferTokens(merge_tab.output_path, merge_tab.result_viewport.lines());
+  merge_tab.max_visual_columns = MergeMaxVisualColumns(merge_tab.display_model);
   if (merge_tab.display_model.hunks.empty()) {
     merge_tab.selected_hunk = 0;
     merge_tab.scroll_row = 0;
@@ -479,9 +501,29 @@ void WorkspaceShell::ScrollCompareRows(int delta) {
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
-  const int visible_rows = CompareVisibleRows(layout.editor_surface);
-  const int max_scroll = CompareMaxScrollRow(*compare_tab, visible_rows);
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+  const int max_scroll = CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows);
   compare_tab->scroll_row = std::clamp(compare_tab->scroll_row + delta, 0, max_scroll);
+}
+
+void WorkspaceShell::ScrollCompareColumns(int delta) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || delta == 0 || last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+  const std::size_t max_scroll =
+      CompareMaxScrollColumn(*compare_tab, surface_layout.visible_columns);
+  const long long target_scroll =
+      static_cast<long long>(compare_tab->horizontal_scroll) + static_cast<long long>(delta);
+  compare_tab->horizontal_scroll = static_cast<std::size_t>(
+      std::clamp(target_scroll, 0LL, static_cast<long long>(max_scroll)));
 }
 
 void WorkspaceShell::MoveMergeSelection(int delta) {
@@ -494,6 +536,25 @@ void WorkspaceShell::MoveMergeSelection(int delta) {
   const int max_index = static_cast<int>(merge_tab->display_model.hunks.size()) - 1;
   merge_tab->selected_hunk = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealActiveMergeSelection();
+}
+
+void WorkspaceShell::ScrollMergeColumns(int delta) {
+  MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr || delta == 0 || last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+  const MergeSurfaceLayout surface_layout =
+      ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+  const std::size_t max_scroll =
+      MergeMaxScrollColumn(*merge_tab, surface_layout.visible_columns);
+  const long long target_scroll =
+      static_cast<long long>(merge_tab->horizontal_scroll) + static_cast<long long>(delta);
+  merge_tab->horizontal_scroll = static_cast<std::size_t>(
+      std::clamp(target_scroll, 0LL, static_cast<long long>(max_scroll)));
 }
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {

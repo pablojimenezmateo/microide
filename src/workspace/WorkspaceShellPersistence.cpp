@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -359,6 +360,21 @@ bool WorkspaceShell::RestoreSessionState() {
       }
       continue;
     }
+    if (command == "compare-scroll-row" && tokens.size() == 2) {
+      try {
+        current_tab->compare_scroll_row = static_cast<std::size_t>(std::stoull(tokens[1].text));
+      } catch (...) {
+      }
+      continue;
+    }
+    if (command == "compare-horizontal-scroll" && tokens.size() == 2) {
+      try {
+        current_tab->compare_horizontal_scroll =
+            static_cast<std::size_t>(std::stoull(tokens[1].text));
+      } catch (...) {
+      }
+      continue;
+    }
     if (command == "merge-base" && tokens.size() == 2) {
       current_tab->merge_base_path = std::filesystem::path(tokens[1].text);
       continue;
@@ -378,6 +394,21 @@ bool WorkspaceShell::RestoreSessionState() {
     if (command == "merge-selected-hunk" && tokens.size() == 2) {
       try {
         current_tab->merge_selected_hunk = static_cast<std::size_t>(std::stoull(tokens[1].text));
+      } catch (...) {
+      }
+      continue;
+    }
+    if (command == "merge-scroll-row" && tokens.size() == 2) {
+      try {
+        current_tab->merge_scroll_row = static_cast<std::size_t>(std::stoull(tokens[1].text));
+      } catch (...) {
+      }
+      continue;
+    }
+    if (command == "merge-horizontal-scroll" && tokens.size() == 2) {
+      try {
+        current_tab->merge_horizontal_scroll =
+            static_cast<std::size_t>(std::stoull(tokens[1].text));
       } catch (...) {
       }
       continue;
@@ -446,6 +477,9 @@ bool WorkspaceShell::RestoreSessionState() {
       if (!compare_tab.has_value()) {
         continue;
       }
+      compare_tab->compare->scroll_row = static_cast<int>(std::min<std::size_t>(
+          persisted_tab.compare_scroll_row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+      compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
       open_tabs_.push_back(std::move(*compare_tab));
       continue;
     }
@@ -500,6 +534,9 @@ bool WorkspaceShell::RestoreSessionState() {
                                       : std::min(persisted_tab.merge_selected_hunk,
                                                  merge_state.model.hunks.size() - 1);
       RefreshMergeTabDerivedState(merge_state);
+      merge_state.scroll_row = static_cast<int>(std::min<std::size_t>(
+          persisted_tab.merge_scroll_row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+      merge_state.horizontal_scroll = persisted_tab.merge_horizontal_scroll;
       open_tabs_.push_back(std::move(*merge_tab));
       continue;
     }
@@ -655,6 +692,8 @@ void WorkspaceShell::SaveSessionState() {
       file << "compare-commit " << QuoteCommandArg(tab.compare->commit_hash) << ' '
            << QuoteCommandArg(tab.compare->left_label) << '\n';
       file << "compare-selected-row " << tab.compare->selected_row << '\n';
+      file << "compare-scroll-row " << tab.compare->scroll_row << '\n';
+      file << "compare-horizontal-scroll " << tab.compare->horizontal_scroll << '\n';
       file << "tab-end\n";
       ++persisted_tab_count;
       continue;
@@ -675,6 +714,8 @@ void WorkspaceShell::SaveSessionState() {
       file << "merge-output "
            << QuoteCommandArg(tab.merge->output_path.lexically_normal().string()) << '\n';
       file << "merge-selected-hunk " << tab.merge->selected_hunk << '\n';
+      file << "merge-scroll-row " << tab.merge->scroll_row << '\n';
+      file << "merge-horizontal-scroll " << tab.merge->horizontal_scroll << '\n';
       for (std::size_t i = 0; i < tab.merge->model.hunks.size(); ++i) {
         file << "merge-choice " << i << ' '
              << QuoteCommandArg(compare::MergeChoiceLabel(tab.merge->model.hunks[i].choice))

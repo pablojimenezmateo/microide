@@ -801,11 +801,60 @@ const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const 
   return &open_tabs_[active_tab_index_].compare.value();
 }
 
-int WorkspaceShell::CompareVisibleRows(const SDL_FRect& rect) const {
-  const float line_height = text_renderer_.LineHeight();
-  const float rows_y = rect.y + line_height + 12.0f;
-  return std::max(
-      1, static_cast<int>((rect.h - (rows_y - rect.y) - 8.0f) / std::max(1.0f, line_height)));
+WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(
+    const SDL_FRect& rect,
+    const CompareTabState& compare_tab) const {
+  const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
+    CompareSurfaceLayout layout;
+    layout.line_height = text_renderer_.LineHeight();
+    layout.gutter_width = std::max(
+        28.0f,
+        text_renderer_.MeasureWidth(std::to_string(compare_tab.model.rows.size() + 1)) + 12.0f);
+    layout.divider_width = 18.0f;
+    layout.left_x = rect.x + 8.0f;
+    layout.header_y = rect.y + 6.0f;
+    layout.rows_y = rect.y + layout.line_height + 12.0f;
+
+    const float reserved_width =
+        reserve_vertical ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+    const float reserved_height =
+        reserve_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+    const float content_width = std::max(
+        40.0f, rect.w - reserved_width - layout.gutter_width * 2.0f - layout.divider_width - 16.0f);
+    layout.left_width = std::floor(content_width * 0.5f);
+    layout.right_width = content_width - layout.left_width;
+    layout.center_x = layout.left_x + layout.gutter_width + layout.left_width;
+    layout.right_x = layout.center_x + layout.divider_width + layout.gutter_width;
+
+    const float row_region_height =
+        rect.h - reserved_height - (layout.rows_y - rect.y) - 8.0f;
+    layout.visible_rows = std::max(
+        1, static_cast<int>(row_region_height / std::max(1.0f, layout.line_height)));
+
+    const float pane_text_width = std::max(0.0f, std::min(layout.left_width, layout.right_width) - 8.0f);
+    layout.visible_columns = std::max<std::size_t>(
+        1, static_cast<std::size_t>(
+               std::floor(pane_text_width / std::max(1.0f, text_renderer_.CharWidth()))));
+    layout.show_vertical = reserve_vertical;
+    layout.show_horizontal = reserve_horizontal;
+    return layout;
+  };
+
+  bool show_vertical = false;
+  bool show_horizontal = false;
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    const CompareSurfaceLayout layout = measure(show_vertical, show_horizontal);
+    const bool next_vertical =
+        compare_tab.model.rows.size() > static_cast<std::size_t>(layout.visible_rows);
+    const bool next_horizontal = compare_tab.max_visual_columns > layout.visible_columns;
+    if (next_vertical == show_vertical && next_horizontal == show_horizontal) {
+      return layout;
+    }
+    show_vertical = next_vertical;
+    show_horizontal = next_horizontal;
+  }
+
+  return measure(show_vertical, show_horizontal);
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
@@ -817,6 +866,20 @@ void WorkspaceShell::ClampCompareScrollRow(CompareTabState& compare_tab, int vis
       std::clamp(compare_tab.scroll_row, 0, CompareMaxScrollRow(compare_tab, visible_rows));
 }
 
+std::size_t WorkspaceShell::CompareMaxScrollColumn(const CompareTabState& compare_tab,
+                                                   std::size_t visible_columns) const {
+  if (compare_tab.max_visual_columns <= visible_columns) {
+    return 0;
+  }
+  return compare_tab.max_visual_columns - visible_columns;
+}
+
+void WorkspaceShell::ClampCompareHorizontalScroll(CompareTabState& compare_tab,
+                                                  std::size_t visible_columns) const {
+  compare_tab.horizontal_scroll =
+      std::min(compare_tab.horizontal_scroll, CompareMaxScrollColumn(compare_tab, visible_columns));
+}
+
 void WorkspaceShell::RevealActiveCompareSelection() {
   CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr || last_window_width_ <= 0 || last_window_height_ <= 0) {
@@ -826,15 +889,18 @@ void WorkspaceShell::RevealActiveCompareSelection() {
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
-  const int visible_rows = CompareVisibleRows(layout.editor_surface);
-  ClampCompareScrollRow(*compare_tab, visible_rows);
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+  ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
+  ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
   if (compare_tab->selected_row < static_cast<std::size_t>(compare_tab->scroll_row)) {
     compare_tab->scroll_row = static_cast<int>(compare_tab->selected_row);
   } else if (compare_tab->selected_row >=
-             static_cast<std::size_t>(compare_tab->scroll_row + visible_rows)) {
-    compare_tab->scroll_row = static_cast<int>(compare_tab->selected_row) - visible_rows + 1;
+             static_cast<std::size_t>(compare_tab->scroll_row + surface_layout.visible_rows)) {
+    compare_tab->scroll_row =
+        static_cast<int>(compare_tab->selected_row) - surface_layout.visible_rows + 1;
   }
-  ClampCompareScrollRow(*compare_tab, visible_rows);
+  ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
 }
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
@@ -857,11 +923,69 @@ const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
   return &open_tabs_[active_tab_index_].merge.value();
 }
 
-int WorkspaceShell::MergeVisibleRows(const SDL_FRect& rect) const {
-  const float line_height = text_renderer_.LineHeight();
-  const float rows_y = rect.y + kMergeToolbarHeight + line_height + 12.0f;
-  return std::max(
-      1, static_cast<int>((rect.h - (rows_y - rect.y) - 8.0f) / std::max(1.0f, line_height)));
+WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
+    const SDL_FRect& rect,
+    const MergeTabState& merge_tab) const {
+  const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
+    MergeSurfaceLayout layout;
+    layout.line_height = text_renderer_.LineHeight();
+    const std::size_t max_line_count =
+        std::max({merge_tab.model.incoming_lines.size(), merge_tab.result_viewport.lines().size(),
+                  merge_tab.model.current_lines.size(), std::size_t{1}});
+    layout.gutter_width =
+        std::max(28.0f, text_renderer_.MeasureWidth(std::to_string(max_line_count + 1)) + 12.0f);
+    layout.divider_width = 16.0f;
+    layout.left_x = rect.x + 8.0f;
+    layout.button_y = rect.y + 6.0f;
+    layout.secondary_button_y = layout.button_y + kMergeToolbarButtonHeight + 6.0f;
+    layout.header_y = rect.y + kMergeToolbarHeight + 4.0f;
+    layout.rows_y = rect.y + kMergeToolbarHeight + layout.line_height + 12.0f;
+
+    const float reserved_width =
+        reserve_vertical ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+    const float reserved_height =
+        reserve_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+    const float content_width = std::max(
+        60.0f, rect.w - reserved_width - layout.gutter_width * 3.0f - layout.divider_width * 2.0f -
+                   16.0f);
+    const float pane_width = std::floor(content_width / 3.0f);
+    layout.left_width = pane_width;
+    layout.center_width = pane_width;
+    layout.right_width = content_width - layout.left_width - layout.center_width;
+    layout.center_x = layout.left_x + layout.gutter_width + layout.left_width + layout.divider_width;
+    layout.right_x =
+        layout.center_x + layout.gutter_width + layout.center_width + layout.divider_width;
+
+    const float row_region_height =
+        rect.h - reserved_height - (layout.rows_y - rect.y) - 8.0f;
+    layout.visible_rows = std::max(
+        1, static_cast<int>(row_region_height / std::max(1.0f, layout.line_height)));
+
+    const float pane_text_width = std::max(
+        0.0f, std::min({layout.left_width, layout.center_width, layout.right_width}) - 8.0f);
+    layout.visible_columns = std::max<std::size_t>(
+        1, static_cast<std::size_t>(
+               std::floor(pane_text_width / std::max(1.0f, text_renderer_.CharWidth()))));
+    layout.show_vertical = reserve_vertical;
+    layout.show_horizontal = reserve_horizontal;
+    return layout;
+  };
+
+  bool show_vertical = false;
+  bool show_horizontal = false;
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    const MergeSurfaceLayout layout = measure(show_vertical, show_horizontal);
+    const bool next_vertical =
+        merge_tab.display_model.rows.size() > static_cast<std::size_t>(layout.visible_rows);
+    const bool next_horizontal = merge_tab.max_visual_columns > layout.visible_columns;
+    if (next_vertical == show_vertical && next_horizontal == show_horizontal) {
+      return layout;
+    }
+    show_vertical = next_vertical;
+    show_horizontal = next_horizontal;
+  }
+
+  return measure(show_vertical, show_horizontal);
 }
 
 int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
@@ -874,6 +998,20 @@ void WorkspaceShell::ClampMergeScrollRow(MergeTabState& merge_tab, int visible_r
       std::clamp(merge_tab.scroll_row, 0, MergeMaxScrollRow(merge_tab, visible_rows));
 }
 
+std::size_t WorkspaceShell::MergeMaxScrollColumn(const MergeTabState& merge_tab,
+                                                 std::size_t visible_columns) const {
+  if (merge_tab.max_visual_columns <= visible_columns) {
+    return 0;
+  }
+  return merge_tab.max_visual_columns - visible_columns;
+}
+
+void WorkspaceShell::ClampMergeHorizontalScroll(MergeTabState& merge_tab,
+                                                std::size_t visible_columns) const {
+  merge_tab.horizontal_scroll =
+      std::min(merge_tab.horizontal_scroll, MergeMaxScrollColumn(merge_tab, visible_columns));
+}
+
 void WorkspaceShell::RevealActiveMergeSelection() {
   MergeTabState* merge_tab = ActiveMergeTab();
   if (merge_tab == nullptr || last_window_width_ <= 0 || last_window_height_ <= 0 ||
@@ -884,17 +1022,19 @@ void WorkspaceShell::RevealActiveMergeSelection() {
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
-  const int visible_rows = MergeVisibleRows(layout.editor_surface);
-  ClampMergeScrollRow(*merge_tab, visible_rows);
+  const MergeSurfaceLayout surface_layout =
+      ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+  ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
+  ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
   const auto& selected_hunk =
       merge_tab->display_model.hunks[std::min(merge_tab->selected_hunk,
                                               merge_tab->display_model.hunks.size() - 1)];
   if (selected_hunk.start_row < merge_tab->scroll_row) {
     merge_tab->scroll_row = selected_hunk.start_row;
-  } else if (selected_hunk.end_row >= merge_tab->scroll_row + visible_rows) {
-    merge_tab->scroll_row = selected_hunk.end_row - visible_rows + 1;
+  } else if (selected_hunk.end_row >= merge_tab->scroll_row + surface_layout.visible_rows) {
+    merge_tab->scroll_row = selected_hunk.end_row - surface_layout.visible_rows + 1;
   }
-  ClampMergeScrollRow(*merge_tab, visible_rows);
+  ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
 }
 
 std::string WorkspaceShell::ActiveTabTitle() const {
@@ -2754,13 +2894,28 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (compare_tab == nullptr) {
       return CursorKind::Default;
     }
-    const int visible_rows = CompareVisibleRows(layout.editor_surface);
-    const int scroll_row =
-        std::clamp(compare_tab->scroll_row, 0, CompareMaxScrollRow(*compare_tab, visible_rows));
-    const auto scrollbar = MakeVerticalScrollbarGeometry(
+    const CompareSurfaceLayout surface_layout =
+        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+    const int scroll_row = std::clamp(compare_tab->scroll_row, 0,
+                                      CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows));
+    const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
         layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
-        static_cast<float>(visible_rows), static_cast<float>(scroll_row));
-    if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
+        static_cast<float>(surface_layout.visible_rows), static_cast<float>(scroll_row),
+        surface_layout.show_horizontal);
+    if (vertical_scrollbar.has_value() && Contains(vertical_scrollbar->track, x, y)) {
+      return CursorKind::Default;
+    }
+    const auto horizontal_scrollbar =
+        surface_layout.show_horizontal
+            ? MakeHorizontalScrollbarGeometry(
+                  layout.editor_surface, static_cast<float>(compare_tab->max_visual_columns),
+                  static_cast<float>(surface_layout.visible_columns),
+                  static_cast<float>(std::min(compare_tab->horizontal_scroll,
+                                              CompareMaxScrollColumn(*compare_tab,
+                                                                     surface_layout.visible_columns))),
+                  surface_layout.show_vertical)
+            : std::nullopt;
+    if (horizontal_scrollbar.has_value() && Contains(horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
     return CursorKind::Pointer;
@@ -2770,13 +2925,28 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (merge_tab == nullptr) {
       return CursorKind::Default;
     }
-    const int visible_rows = MergeVisibleRows(layout.editor_surface);
-    const int scroll_row =
-        std::clamp(merge_tab->scroll_row, 0, MergeMaxScrollRow(*merge_tab, visible_rows));
-    const auto scrollbar = MakeVerticalScrollbarGeometry(
+    const MergeSurfaceLayout surface_layout =
+        ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+    const int scroll_row = std::clamp(merge_tab->scroll_row, 0,
+                                      MergeMaxScrollRow(*merge_tab, surface_layout.visible_rows));
+    const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
         layout.editor_surface, static_cast<float>(merge_tab->display_model.rows.size()),
-        static_cast<float>(visible_rows), static_cast<float>(scroll_row));
-    if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
+        static_cast<float>(surface_layout.visible_rows), static_cast<float>(scroll_row),
+        surface_layout.show_horizontal);
+    if (vertical_scrollbar.has_value() && Contains(vertical_scrollbar->track, x, y)) {
+      return CursorKind::Default;
+    }
+    const auto horizontal_scrollbar =
+        surface_layout.show_horizontal
+            ? MakeHorizontalScrollbarGeometry(
+                  layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),
+                  static_cast<float>(surface_layout.visible_columns),
+                  static_cast<float>(std::min(merge_tab->horizontal_scroll,
+                                              MergeMaxScrollColumn(*merge_tab,
+                                                                   surface_layout.visible_columns))),
+                  surface_layout.show_vertical)
+            : std::nullopt;
+    if (horizontal_scrollbar.has_value() && Contains(horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
     return CursorKind::Pointer;

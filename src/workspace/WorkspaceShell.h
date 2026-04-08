@@ -140,7 +140,8 @@ class WorkspaceShell {
     EditorVerticalScrollbar,
     EditorHorizontalScrollbar,
     EditorSplitDivider,
-    CompareScrollbar,
+    CompareVerticalScrollbar,
+    CompareHorizontalScrollbar,
   };
 
   enum class CursorKind {
@@ -165,6 +166,8 @@ class WorkspaceShell {
     std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
     std::size_t selected_row = 0;
     int scroll_row = 0;
+    std::size_t horizontal_scroll = 0;
+    std::size_t max_visual_columns = 0;
     bool persistable = true;
   };
 
@@ -186,7 +189,46 @@ class WorkspaceShell {
     editor::TextViewport result_viewport;
     std::size_t selected_hunk = 0;
     int scroll_row = 0;
+    std::size_t horizontal_scroll = 0;
+    std::size_t max_visual_columns = 0;
     bool persistable = true;
+  };
+
+  struct CompareSurfaceLayout {
+    float line_height = 14.0f;
+    float gutter_width = 28.0f;
+    float divider_width = 18.0f;
+    float left_width = 0.0f;
+    float right_width = 0.0f;
+    float left_x = 0.0f;
+    float center_x = 0.0f;
+    float right_x = 0.0f;
+    float header_y = 0.0f;
+    float rows_y = 0.0f;
+    int visible_rows = 1;
+    std::size_t visible_columns = 1;
+    bool show_vertical = false;
+    bool show_horizontal = false;
+  };
+
+  struct MergeSurfaceLayout {
+    float line_height = 14.0f;
+    float gutter_width = 28.0f;
+    float divider_width = 16.0f;
+    float left_width = 0.0f;
+    float center_width = 0.0f;
+    float right_width = 0.0f;
+    float left_x = 0.0f;
+    float center_x = 0.0f;
+    float right_x = 0.0f;
+    float button_y = 0.0f;
+    float secondary_button_y = 0.0f;
+    float header_y = 0.0f;
+    float rows_y = 0.0f;
+    int visible_rows = 1;
+    std::size_t visible_columns = 1;
+    bool show_vertical = false;
+    bool show_horizontal = false;
   };
 
   struct TabEntry {
@@ -718,16 +760,25 @@ class WorkspaceShell {
   bool ActiveTabIsCompare() const;
   CompareTabState* ActiveCompareTab();
   const CompareTabState* ActiveCompareTab() const;
-  int CompareVisibleRows(const SDL_FRect& rect) const;
+  CompareSurfaceLayout ComputeCompareSurfaceLayout(const SDL_FRect& rect,
+                                                   const CompareTabState& compare_tab) const;
   int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const;
   void ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows) const;
+  std::size_t CompareMaxScrollColumn(const CompareTabState& compare_tab,
+                                     std::size_t visible_columns) const;
+  void ClampCompareHorizontalScroll(CompareTabState& compare_tab,
+                                    std::size_t visible_columns) const;
   void RevealActiveCompareSelection();
   bool ActiveTabIsMerge() const;
   MergeTabState* ActiveMergeTab();
   const MergeTabState* ActiveMergeTab() const;
-  int MergeVisibleRows(const SDL_FRect& rect) const;
+  MergeSurfaceLayout ComputeMergeSurfaceLayout(const SDL_FRect& rect,
+                                               const MergeTabState& merge_tab) const;
   int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;
   void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const;
+  std::size_t MergeMaxScrollColumn(const MergeTabState& merge_tab,
+                                   std::size_t visible_columns) const;
+  void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_columns) const;
   void RevealActiveMergeSelection();
   std::string ActiveTabTitle() const;
   void OpenComparePicker();
@@ -748,6 +799,7 @@ class WorkspaceShell {
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
   void ScrollCompareRows(int delta);
+  void ScrollCompareColumns(int delta);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,
@@ -757,6 +809,7 @@ class WorkspaceShell {
       const std::filesystem::path& path,
       const std::vector<std::string>& lines) const;
   void MoveMergeSelection(int delta);
+  void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
   void ApplyMergeChoiceToAll(compare::MergeChoice choice);
   void OpenMergeResultFile();

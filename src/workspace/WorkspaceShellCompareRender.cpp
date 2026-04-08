@@ -14,6 +14,7 @@ namespace {
 constexpr float kMergeToolbarHeight = 54.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
+constexpr float kScrollbarReserve = 12.0f;
 
 SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
   const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
@@ -89,6 +90,23 @@ std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset) {
   return 1;
 }
 
+struct VisibleTextWindow {
+  std::string_view text;
+  std::size_t byte_offset = 0;
+};
+
+VisibleTextWindow SliceVisibleColumns(std::string_view text,
+                                      std::size_t start_column,
+                                      std::size_t visible_columns) {
+  const std::size_t byte_offset = Utf8ByteOffsetForCodepointCount(text, start_column);
+  const std::size_t byte_length =
+      Utf8ByteOffsetForCodepointCount(text.substr(byte_offset), visible_columns);
+  return VisibleTextWindow{
+      .text = text.substr(byte_offset, byte_length),
+      .byte_offset = byte_offset,
+  };
+}
+
 SDL_Color CompareTokenColor(const render::Theme& theme,
                             editor::SyntaxTokenKind kind,
                             SDL_Color fallback,
@@ -128,44 +146,38 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
-  const float line_height = text_renderer_.LineHeight();
-  const float gutter_width = std::max(
-      28.0f,
-      text_renderer_.MeasureWidth(std::to_string(compare_tab->model.rows.size() + 1)) + 12.0f);
-  const float divider_width = 18.0f;
-  const float content_width = std::max(40.0f, rect.w - gutter_width * 2.0f - divider_width - 16.0f);
-  const float left_width = std::floor(content_width * 0.5f);
-  const float right_width = content_width - left_width;
-  const float left_x = rect.x + 8.0f;
-  const float center_x = left_x + gutter_width + left_width;
-  const float right_x = center_x + divider_width + gutter_width;
-  const float header_y = rect.y + 6.0f;
-  const float rows_y = rect.y + line_height + 12.0f;
-  const int visible_rows = CompareVisibleRows(rect);
-  ClampCompareScrollRow(*compare_tab, visible_rows);
+  const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(rect, *compare_tab);
+  ClampCompareScrollRow(*compare_tab, surface.visible_rows);
+  ClampCompareHorizontalScroll(*compare_tab, surface.visible_columns);
+  const float bottom_reserved = surface.show_horizontal ? kScrollbarReserve : 0.0f;
+  const float right_reserved = surface.show_vertical ? kScrollbarReserve : 0.0f;
+  const float content_width = std::max(0.0f, rect.w - right_reserved);
+  const float content_height = std::max(0.0f, rect.h - bottom_reserved);
 
-  DrawFilledRect(renderer, MakeRect(rect.x, rows_y - 6.0f, rect.w, 1.0f), theme_.border);
-  DrawFilledRect(renderer, MakeRect(center_x - 6.0f, rect.y, 1.0f, rect.h), theme_.border);
-  DrawFilledRect(renderer, MakeRect(right_x - 6.0f, rect.y, 1.0f, rect.h), theme_.border);
+  DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f), theme_.border);
+  DrawFilledRect(renderer, MakeRect(surface.center_x - 6.0f, rect.y, 1.0f, content_height), theme_.border);
+  DrawFilledRect(renderer, MakeRect(surface.right_x - 6.0f, rect.y, 1.0f, content_height), theme_.border);
 
-  text_renderer_.DrawString(renderer, left_x + gutter_width, header_y,
+  text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(compare_tab->left_label, left_width - 8.0f));
-  text_renderer_.DrawString(renderer, right_x + gutter_width, header_y,
+                            TruncateLabel(compare_tab->left_label, surface.left_width - 8.0f));
+  text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
-                            TruncateLabel(compare_tab->right_label, right_width - 8.0f));
+                            TruncateLabel(compare_tab->right_label, surface.right_width - 8.0f));
 
-  for (int row = 0; row < visible_rows; ++row) {
+  for (int row = 0; row < surface.visible_rows; ++row) {
     const int model_index = compare_tab->scroll_row + row;
     if (model_index >= static_cast<int>(compare_tab->model.rows.size())) {
       break;
     }
 
     const auto& compare_row = compare_tab->model.rows[static_cast<std::size_t>(model_index)];
-    const float y = rows_y + static_cast<float>(row) * line_height;
+    const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
     const bool selected = static_cast<std::size_t>(model_index) == compare_tab->selected_row;
     if (selected) {
-      DrawFilledRect(renderer, MakeRect(rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, line_height),
+      DrawFilledRect(renderer,
+                     MakeRect(rect.x + 1.0f, y - 1.0f, std::max(0.0f, content_width - 2.0f),
+                              surface.line_height),
                      theme_.row_highlight);
     }
 
@@ -178,7 +190,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       text_renderer_.DrawStringOn(renderer, x, y, color, row_background, display_text);
     };
     const auto draw_syntax_text = [&](float x,
-                                      float width,
                                       SDL_Color plain_color,
                                       const std::string& text,
                                       const std::vector<editor::SyntaxTokenKind>& full_tokens,
@@ -188,44 +199,40 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
         return;
       }
 
-      const std::string display_text = TruncateLabel(text, width);
-      if (display_text.empty()) {
+      const VisibleTextWindow window = SliceVisibleColumns(
+          text, compare_tab->horizontal_scroll, surface.visible_columns);
+      if (window.text.empty()) {
         return;
       }
 
-      const std::size_t visible_text_bytes =
-          display_text != text && EndsWith(display_text, "...") && display_text.size() >= 3
-              ? display_text.size() - 3
-              : display_text.size();
       const auto token_kind_at = [&](std::size_t byte_offset) {
-        if (byte_offset < visible_text_bytes && byte_offset < full_tokens.size()) {
-          return full_tokens[byte_offset];
+        const std::size_t absolute_offset = window.byte_offset + byte_offset;
+        if (absolute_offset < full_tokens.size()) {
+          return full_tokens[absolute_offset];
         }
         return editor::SyntaxTokenKind::Plain;
       };
       std::size_t changed_span_index = 0;
       const auto byte_is_changed = [&](std::size_t byte_offset) {
-        if (byte_offset >= visible_text_bytes) {
-          return false;
-        }
+        const std::size_t absolute_offset = window.byte_offset + byte_offset;
         while (changed_span_index < changed_spans.size() &&
-               changed_spans[changed_span_index].end <= byte_offset) {
+               changed_spans[changed_span_index].end <= absolute_offset) {
           ++changed_span_index;
         }
         return changed_span_index < changed_spans.size() &&
-               byte_offset >= changed_spans[changed_span_index].start &&
-               byte_offset < changed_spans[changed_span_index].end;
+               absolute_offset >= changed_spans[changed_span_index].start &&
+               absolute_offset < changed_spans[changed_span_index].end;
       };
 
       float segment_x = x;
-      for (std::size_t segment_start = 0; segment_start < display_text.size();) {
+      for (std::size_t segment_start = 0; segment_start < window.text.size();) {
         const editor::SyntaxTokenKind kind = token_kind_at(segment_start);
         const bool changed = byte_is_changed(segment_start);
         std::size_t segment_end = segment_start;
-        while (segment_end < display_text.size()) {
-          const std::size_t next = segment_end + Utf8SequenceLength(display_text, segment_end);
-          if (next >= display_text.size()) {
-            segment_end = display_text.size();
+        while (segment_end < window.text.size()) {
+          const std::size_t next = segment_end + Utf8SequenceLength(window.text, segment_end);
+          if (next >= window.text.size()) {
+            segment_end = window.text.size();
             break;
           }
           if (token_kind_at(next) != kind || byte_is_changed(next) != changed) {
@@ -235,7 +242,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
           segment_end = next;
         }
 
-        const std::string_view segment_text(display_text.data() + segment_start,
+        const std::string_view segment_text(window.text.data() + segment_start,
                                             segment_end - segment_start);
         text_renderer_.DrawStringOn(
             renderer, segment_x, y,
@@ -247,12 +254,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
     };
 
     if (compare_row.left_line > 0) {
-      draw_text(left_x, gutter_width - 4.0f,
+      draw_text(surface.left_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,
                 std::to_string(compare_row.left_line));
     }
     if (compare_row.right_line > 0) {
-      draw_text(right_x, gutter_width - 4.0f,
+      draw_text(surface.right_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,
                 std::to_string(compare_row.right_line));
     }
@@ -299,7 +306,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
           static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
               ? &compare_tab->left_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      draw_syntax_text(left_x + gutter_width, left_width - 8.0f, left_color, compare_row.left_text,
+      draw_syntax_text(surface.left_x + surface.gutter_width, left_color, compare_row.left_text,
                        *cached_tokens, compare_row.left_changed_spans, left_changed_background);
     }
     if (compare_row.right_line > 0) {
@@ -307,11 +314,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
           static_cast<std::size_t>(model_index) < compare_tab->right_tokens_by_row.size()
               ? &compare_tab->right_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      draw_syntax_text(right_x + gutter_width, right_width - 8.0f, right_color,
+      draw_syntax_text(surface.right_x + surface.gutter_width, right_color,
                        compare_row.right_text, *cached_tokens, compare_row.right_changed_spans,
                        right_changed_background);
     }
-    draw_text(center_x + 4.0f, divider_width - 6.0f, marker_color, std::string(1, marker));
+    draw_text(surface.center_x + 4.0f, surface.divider_width - 6.0f, marker_color,
+              std::string(1, marker));
   }
 }
 
@@ -325,28 +333,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
-  const float line_height = text_renderer_.LineHeight();
-  const std::size_t max_line_count =
-      std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.lines().size(),
-                merge_tab->model.current_lines.size(), std::size_t{1}});
-  const float gutter_width =
-      std::max(28.0f, text_renderer_.MeasureWidth(std::to_string(max_line_count + 1)) + 12.0f);
-  const float divider_width = 16.0f;
-  const float content_width =
-      std::max(60.0f, rect.w - gutter_width * 3.0f - divider_width * 2.0f - 16.0f);
-  const float pane_width = std::floor(content_width / 3.0f);
-  const float left_width = pane_width;
-  const float center_width = pane_width;
-  const float right_width = content_width - left_width - center_width;
-  const float left_x = rect.x + 8.0f;
-  const float center_x = left_x + gutter_width + left_width + divider_width;
-  const float right_x = center_x + gutter_width + center_width + divider_width;
-  const float button_y = rect.y + 6.0f;
-  const float secondary_button_y = button_y + kMergeToolbarButtonHeight + 6.0f;
-  const float header_y = rect.y + kMergeToolbarHeight + 4.0f;
-  const float rows_y = rect.y + kMergeToolbarHeight + line_height + 12.0f;
-  const int visible_rows = MergeVisibleRows(rect);
-  ClampMergeScrollRow(*merge_tab, visible_rows);
+  const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(rect, *merge_tab);
+  ClampMergeScrollRow(*merge_tab, surface.visible_rows);
+  ClampMergeHorizontalScroll(*merge_tab, surface.visible_columns);
+  const float bottom_reserved = surface.show_horizontal ? kScrollbarReserve : 0.0f;
+  const float right_reserved = surface.show_vertical ? kScrollbarReserve : 0.0f;
+  const float content_width = std::max(0.0f, rect.w - right_reserved);
+  const float content_height = std::max(0.0f, rect.h - bottom_reserved);
   const std::size_t selected_hunk =
       merge_tab->model.hunks.empty()
           ? 0
@@ -372,14 +365,14 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   };
 
   float button_x = rect.x + 8.0f;
-  const SDL_FRect incoming_all_rect = make_button_rect(button_x, button_y, "All Incoming");
+  const SDL_FRect incoming_all_rect = make_button_rect(button_x, surface.button_y, "All Incoming");
   button_x += incoming_all_rect.w + kMergeToolbarButtonGap;
-  const SDL_FRect auto_rect = make_button_rect(button_x, button_y, "All Auto");
+  const SDL_FRect auto_rect = make_button_rect(button_x, surface.button_y, "All Auto");
   button_x += auto_rect.w + kMergeToolbarButtonGap;
-  const SDL_FRect current_all_rect = make_button_rect(button_x, button_y, "All Current");
+  const SDL_FRect current_all_rect = make_button_rect(button_x, surface.button_y, "All Current");
   button_x += current_all_rect.w + kMergeToolbarButtonGap;
-  const SDL_FRect base_all_rect = make_button_rect(button_x, button_y, "All Base");
-  const SDL_FRect save_rect = make_button_rect(rect.x + rect.w - 92.0f, button_y, "Save");
+  const SDL_FRect base_all_rect = make_button_rect(button_x, surface.button_y, "All Base");
+  const SDL_FRect save_rect = make_button_rect(rect.x + rect.w - 92.0f, surface.button_y, "Save");
   draw_button(incoming_all_rect, "All Incoming", false, true);
   draw_button(auto_rect, "All Auto", false, true);
   draw_button(current_all_rect, "All Current", false, true);
@@ -389,15 +382,18 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   if (!merge_tab->model.hunks.empty()) {
     button_x = rect.x + 8.0f;
     const compare::MergeChoice active_choice = merge_tab->model.hunks[selected_hunk].choice;
-    const SDL_FRect incoming_rect = make_button_rect(button_x, secondary_button_y, "Incoming");
+    const SDL_FRect incoming_rect =
+        make_button_rect(button_x, surface.secondary_button_y, "Incoming");
     button_x += incoming_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect base_rect = make_button_rect(button_x, secondary_button_y, "Base");
+    const SDL_FRect base_rect = make_button_rect(button_x, surface.secondary_button_y, "Base");
     button_x += base_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect current_rect = make_button_rect(button_x, secondary_button_y, "Current");
+    const SDL_FRect current_rect =
+        make_button_rect(button_x, surface.secondary_button_y, "Current");
     button_x += current_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect both_rect = make_button_rect(button_x, secondary_button_y, "Both");
+    const SDL_FRect both_rect = make_button_rect(button_x, surface.secondary_button_y, "Both");
     button_x += both_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect open_rect = make_button_rect(button_x, secondary_button_y, "Open Result");
+    const SDL_FRect open_rect =
+        make_button_rect(button_x, surface.secondary_button_y, "Open Result");
 
     draw_button(incoming_rect, "Incoming", active_choice == compare::MergeChoice::Incoming);
     draw_button(base_rect, "Base", active_choice == compare::MergeChoice::Base);
@@ -406,16 +402,22 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
     draw_button(open_rect, "Open Result", false);
   }
 
-  DrawFilledRect(renderer, MakeRect(rect.x, rows_y - 6.0f, rect.w, 1.0f), theme_.border);
-  DrawFilledRect(renderer, MakeRect(center_x - 6.0f, rect.y, 1.0f, rect.h), theme_.border);
-  DrawFilledRect(renderer, MakeRect(right_x - 6.0f, rect.y, 1.0f, rect.h), theme_.border);
+  DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f),
+                 theme_.border);
+  DrawFilledRect(renderer, MakeRect(surface.center_x - 6.0f, rect.y, 1.0f, content_height),
+                 theme_.border);
+  DrawFilledRect(renderer, MakeRect(surface.right_x - 6.0f, rect.y, 1.0f, content_height),
+                 theme_.border);
 
-  text_renderer_.DrawString(renderer, left_x + gutter_width, header_y, theme_.text_secondary,
-                            TruncateLabel(merge_tab->incoming_label, left_width - 8.0f));
-  text_renderer_.DrawString(renderer, center_x + gutter_width, header_y, theme_.text_secondary,
-                            TruncateLabel(merge_tab->result_label, center_width - 8.0f));
-  text_renderer_.DrawString(renderer, right_x + gutter_width, header_y, theme_.text_secondary,
-                            TruncateLabel(merge_tab->current_label, right_width - 8.0f));
+  text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
+                            theme_.text_secondary,
+                            TruncateLabel(merge_tab->incoming_label, surface.left_width - 8.0f));
+  text_renderer_.DrawString(renderer, surface.center_x + surface.gutter_width, surface.header_y,
+                            theme_.text_secondary,
+                            TruncateLabel(merge_tab->result_label, surface.center_width - 8.0f));
+  text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
+                            theme_.text_secondary,
+                            TruncateLabel(merge_tab->current_label, surface.right_width - 8.0f));
 
   const auto draw_text = [&](float x, float y, float width, SDL_Color color, SDL_Color background,
                              const std::string& text) {
@@ -427,7 +429,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   };
   const auto draw_syntax_text = [&](float x,
                                     float y,
-                                    float width,
                                     SDL_Color plain_color,
                                     SDL_Color background,
                                     const std::string& text,
@@ -436,30 +437,28 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       return;
     }
 
-    const std::string display_text = TruncateLabel(text, width);
-    if (display_text.empty()) {
+    const VisibleTextWindow window =
+        SliceVisibleColumns(text, merge_tab->horizontal_scroll, surface.visible_columns);
+    if (window.text.empty()) {
       return;
     }
 
-    const std::size_t visible_text_bytes =
-        display_text != text && EndsWith(display_text, "...") && display_text.size() >= 3
-            ? display_text.size() - 3
-            : display_text.size();
     const auto token_kind_at = [&](std::size_t byte_offset) {
-      if (byte_offset < visible_text_bytes && byte_offset < full_tokens.size()) {
-        return full_tokens[byte_offset];
+      const std::size_t absolute_offset = window.byte_offset + byte_offset;
+      if (absolute_offset < full_tokens.size()) {
+        return full_tokens[absolute_offset];
       }
       return editor::SyntaxTokenKind::Plain;
     };
 
     float segment_x = x;
-    for (std::size_t segment_start = 0; segment_start < display_text.size();) {
+    for (std::size_t segment_start = 0; segment_start < window.text.size();) {
       const editor::SyntaxTokenKind kind = token_kind_at(segment_start);
       std::size_t segment_end = segment_start;
-      while (segment_end < display_text.size()) {
-        const std::size_t next = segment_end + Utf8SequenceLength(display_text, segment_end);
-        if (next >= display_text.size()) {
-          segment_end = display_text.size();
+      while (segment_end < window.text.size()) {
+        const std::size_t next = segment_end + Utf8SequenceLength(window.text, segment_end);
+        if (next >= window.text.size()) {
+          segment_end = window.text.size();
           break;
         }
         if (token_kind_at(next) != kind) {
@@ -469,7 +468,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
         segment_end = next;
       }
 
-      const std::string_view segment_text(display_text.data() + segment_start,
+      const std::string_view segment_text(window.text.data() + segment_start,
                                           segment_end - segment_start);
       text_renderer_.DrawStringOn(
           renderer, segment_x, y, CompareTokenColor(theme_, kind, plain_color, false), background,
@@ -479,19 +478,21 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
     }
   };
 
-  for (int row = 0; row < visible_rows; ++row) {
+  for (int row = 0; row < surface.visible_rows; ++row) {
     const int model_index = merge_tab->scroll_row + row;
     if (model_index >= static_cast<int>(merge_tab->display_model.rows.size())) {
       break;
     }
 
     const auto& merge_row = merge_tab->display_model.rows[static_cast<std::size_t>(model_index)];
-    const float y = rows_y + static_cast<float>(row) * line_height;
+    const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
     const bool selected = merge_row.hunk >= 0 &&
                           static_cast<std::size_t>(merge_row.hunk) == merge_tab->selected_hunk;
     const SDL_Color row_background = selected ? theme_.row_highlight : theme_.editor_background;
     if (selected) {
-      DrawFilledRect(renderer, MakeRect(rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, line_height),
+      DrawFilledRect(renderer,
+                     MakeRect(rect.x + 1.0f, y - 1.0f, std::max(0.0f, content_width - 2.0f),
+                              surface.line_height),
                      row_background);
     }
 
@@ -536,17 +537,17 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
     }
 
     if (merge_row.incoming_line > 0) {
-      draw_text(left_x, y, gutter_width - 4.0f,
+      draw_text(surface.left_x, y, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number, row_background,
                 std::to_string(merge_row.incoming_line));
     }
     if (merge_row.result_line > 0) {
-      draw_text(center_x, y, gutter_width - 4.0f,
+      draw_text(surface.center_x, y, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number, row_background,
                 std::to_string(merge_row.result_line));
     }
     if (merge_row.current_line > 0) {
-      draw_text(right_x, y, gutter_width - 4.0f,
+      draw_text(surface.right_x, y, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number, row_background,
                 std::to_string(merge_row.current_line));
     }
@@ -556,7 +557,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           static_cast<std::size_t>(merge_row.incoming_line - 1) < merge_tab->incoming_tokens.size()
               ? &merge_tab->incoming_tokens[static_cast<std::size_t>(merge_row.incoming_line - 1)]
               : &kEmptyTokens;
-      draw_syntax_text(left_x + gutter_width, y, left_width - 8.0f, incoming_color,
+      draw_syntax_text(surface.left_x + surface.gutter_width, y,
+                       incoming_color,
                        incoming_background, merge_row.incoming_text, *tokens);
     }
     if (merge_row.result_line > 0) {
@@ -564,7 +566,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           static_cast<std::size_t>(merge_row.result_line - 1) < merge_tab->result_tokens.size()
               ? &merge_tab->result_tokens[static_cast<std::size_t>(merge_row.result_line - 1)]
               : &kEmptyTokens;
-      draw_syntax_text(center_x + gutter_width, y, center_width - 8.0f, result_color,
+      draw_syntax_text(surface.center_x + surface.gutter_width, y,
+                       result_color,
                        result_background, merge_row.result_text, *tokens);
     }
     if (merge_row.current_line > 0) {
@@ -572,7 +575,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           static_cast<std::size_t>(merge_row.current_line - 1) < merge_tab->current_tokens.size()
               ? &merge_tab->current_tokens[static_cast<std::size_t>(merge_row.current_line - 1)]
               : &kEmptyTokens;
-      draw_syntax_text(right_x + gutter_width, y, right_width - 8.0f, current_color,
+      draw_syntax_text(surface.right_x + surface.gutter_width, y,
+                       current_color,
                        current_background, merge_row.current_text, *tokens);
     }
   }

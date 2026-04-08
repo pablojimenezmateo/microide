@@ -818,44 +818,60 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   if (ActiveTabIsCompare()) {
     CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab != nullptr) {
-      const int visible_rows = CompareVisibleRows(layout.editor_surface);
-      ClampCompareScrollRow(*compare_tab, visible_rows);
-      const SDL_FRect scrollbar_track = MakeRect(
-          layout.editor_surface.x + layout.editor_surface.w - kScrollbarThickness - kScrollbarInset,
-          layout.editor_surface.y + kScrollbarInset, kScrollbarThickness,
-          std::max(0.0f, layout.editor_surface.h - kScrollbarInset * 2.0f));
-      const SDL_FRect marker_lane = MakeRect(
-          std::max(layout.editor_surface.x,
-                   scrollbar_track.x - kCompareMarkerLaneGap - kCompareMarkerLaneWidth),
-          scrollbar_track.y, kCompareMarkerLaneWidth, scrollbar_track.h);
-      const SDL_FRect marker_inner_lane =
-          MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
-                   std::max(0.0f, marker_lane.w - 2.0f),
-                   std::max(0.0f, marker_lane.h - 2.0f));
-      DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
-      DrawRect(renderer, marker_lane, theme_.border);
-      DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
+      const CompareSurfaceLayout surface_layout =
+          ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+      ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
+      ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
       if (const auto geometry =
               MakeVerticalScrollbarGeometry(layout.editor_surface,
                                             static_cast<float>(compare_tab->model.rows.size()),
-                                            static_cast<float>(visible_rows),
-                                            static_cast<float>(compare_tab->scroll_row));
+                                            static_cast<float>(surface_layout.visible_rows),
+                                            static_cast<float>(compare_tab->scroll_row),
+                                            surface_layout.show_horizontal);
           geometry.has_value()) {
+        const SDL_FRect marker_lane = MakeRect(
+            std::max(layout.editor_surface.x,
+                     geometry->track.x - kCompareMarkerLaneGap - kCompareMarkerLaneWidth),
+            geometry->track.y, kCompareMarkerLaneWidth, geometry->track.h);
+        const SDL_FRect marker_inner_lane =
+            MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
+                     std::max(0.0f, marker_lane.w - 2.0f),
+                     std::max(0.0f, marker_lane.h - 2.0f));
+        DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
+        DrawRect(renderer, marker_lane, theme_.border);
+        DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
         DrawScrollbarTrack(renderer, theme_, geometry->track);
         DrawScrollbarThumb(renderer, theme_, geometry->thumb,
-                           drag_target_ == DragTarget::CompareScrollbar);
+                           drag_target_ == DragTarget::CompareVerticalScrollbar);
+      }
+      if (surface_layout.show_horizontal) {
+        draw_horizontal_scrollbar(
+            layout.editor_surface, static_cast<float>(compare_tab->max_visual_columns),
+            static_cast<float>(surface_layout.visible_columns),
+            static_cast<float>(compare_tab->horizontal_scroll),
+            drag_target_ == DragTarget::CompareHorizontalScrollbar, surface_layout.show_vertical);
       }
     }
   } else if (ActiveTabIsMerge()) {
     MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab != nullptr) {
-      const int visible_rows = MergeVisibleRows(layout.editor_surface);
-      ClampMergeScrollRow(*merge_tab, visible_rows);
+      const MergeSurfaceLayout surface_layout =
+          ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+      ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
+      ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
       draw_vertical_scrollbar(layout.editor_surface,
                               static_cast<float>(merge_tab->display_model.rows.size()),
-                              static_cast<float>(visible_rows),
+                              static_cast<float>(surface_layout.visible_rows),
                               static_cast<float>(merge_tab->scroll_row),
-                              drag_target_ == DragTarget::CompareScrollbar);
+                              drag_target_ == DragTarget::CompareVerticalScrollbar,
+                              surface_layout.show_horizontal);
+      if (surface_layout.show_horizontal) {
+        draw_horizontal_scrollbar(
+            layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),
+            static_cast<float>(surface_layout.visible_columns),
+            static_cast<float>(merge_tab->horizontal_scroll),
+            drag_target_ == DragTarget::CompareHorizontalScrollbar, surface_layout.show_vertical);
+      }
     }
   } else {
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
