@@ -15,6 +15,12 @@ This document captures durable practices for keeping `microide` maintainable as 
 - Decide where new state belongs before adding it. If ownership is unclear, the design is not ready.
 - Prefer explicit inputs and outputs over hidden coupling through global or cross-cutting mutable state.
 
+## Keep External Dependencies Behind Services
+
+- Keep search, git, trash, and other OS or tool integrations behind small service interfaces.
+- UI code should consume structured results rather than parse command output directly.
+- If a fast external path and a built-in fallback both exist, test the shared contract and both execution paths.
+
 ## Prefer Small, Safe Refactors
 
 - Refactor in behavior-preserving steps that compile cleanly.
