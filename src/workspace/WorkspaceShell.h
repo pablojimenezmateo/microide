@@ -160,6 +160,7 @@ class WorkspaceShell {
     std::filesystem::path path;
     std::string title;
     std::string commit_hash;
+    std::string right_ref;
     std::string left_label;
     std::string right_label;
     editor::SyntaxState left_initial_syntax_state;
@@ -552,6 +553,7 @@ class WorkspaceShell {
     std::string command_completion_feedback;
     std::vector<std::string> log_messages;
     std::string active_colorscheme_name = "default";
+    std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
   };
 
@@ -587,7 +589,10 @@ class WorkspaceShell {
   int FirstEnabledMenuItemIndex(MenuId id) const;
   int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
   void OpenMenuBarMenu(MenuId id);
+  void OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect);
+  void CloseSubmenu();
   void CloseMenuBar();
+  std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
   bool ExecuteMenuItem(MenuId menu_id, std::size_t item_index);
   bool SwitchMenuBarMenu(int delta);
   bool MoveActiveMenuItem(int delta);
@@ -778,6 +783,10 @@ class WorkspaceShell {
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
+  std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,
+                                                     std::string_view left_ref,
+                                                     std::string_view right_ref) const;
+  std::optional<std::size_t> FindOpenMergeTabIndex(const std::filesystem::path& path) const;
   std::optional<TabEntry> BuildCompareTabFromBuffers(const std::filesystem::path& path,
                                                      std::string left_content,
                                                      std::string right_content,
@@ -835,6 +844,7 @@ class WorkspaceShell {
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
+  std::filesystem::path ProjectStateDirectory() const;
   void RefreshAvailableColorschemeNames();
   bool ApplyColorscheme(std::string_view name, bool persist, bool log_feedback);
   bool ApplyUiScale(float scale, bool persist, bool log_feedback);
@@ -944,7 +954,10 @@ class WorkspaceShell {
   bool menu_bar_open_ = false;
   MenuId active_menu_id_ = MenuId::None;
   int active_menu_item_index_ = -1;
+  MenuId active_submenu_id_ = MenuId::None;
+  int active_submenu_item_index_ = -1;
   std::optional<SDL_FRect> active_menu_anchor_rect_;
+  std::optional<SDL_FRect> active_submenu_anchor_rect_;
   TreeContextMenuState tree_context_menu_;
   BufferSearchField buffer_search_field_ = BufferSearchField::Search;
   bool command_mode_ = false;
@@ -1006,6 +1019,7 @@ class WorkspaceShell {
   std::vector<std::string> log_messages_;
   std::vector<std::string> available_colorscheme_names_;
   std::string active_colorscheme_name_ = "default";
+  std::optional<SDL_Color> project_base_color_;
   EditorPreferences editor_preferences_;
   float ui_scale_ = 1.0f;
   bool custom_window_chrome_enabled_ = false;

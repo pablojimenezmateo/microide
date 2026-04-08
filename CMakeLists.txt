@@ -152,3 +152,27 @@ elseif(MSVC)
 endif()
 
 add_test(NAME microide_tests COMMAND microide_tests)
+
+add_executable(microide_diff_bench
+  src/editor/RuntimeSyntaxGenerated.cpp
+  src/editor/RuntimeSyntaxRegistry.cpp
+  src/editor/SyntaxHighlighter.cpp
+  src/compare/CompareModel.cpp
+  src/project/GitCompareService.cpp
+  tools/CompareBench.cpp
+)
+
+target_include_directories(microide_diff_bench PRIVATE src)
+target_link_libraries(microide_diff_bench PRIVATE PkgConfig::PCRE2)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_diff_bench PRIVATE -Werror)
+  endif()
+elseif(MSVC)
+  target_compile_options(microide_diff_bench PRIVATE /W4)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_diff_bench PRIVATE /WX)
+  endif()
+endif()

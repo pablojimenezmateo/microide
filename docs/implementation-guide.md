@@ -246,7 +246,7 @@ The next accepted shell expansion adds:
 - a compact custom menu bar backed by shared actions
 - a project-tab strip above file tabs
 - project-scoped workspace state so everything currently visible below the project-tab strip, including tabs, search, tree state, overlays, command prompt state, panel state, logs, and terminals, moves with the active project tab
-- project-local colorscheme state, so switching project tabs can also switch the full shell theme
+- project-local colorscheme state, including a persisted per-project base accent color, so switching project tabs can also switch the full shell theme
 - tree context menus with file and directory operations routed through the OS trash/recycle-bin flow for delete actions
 - compare actions in menus/context menus for both `Compare Against HEAD` and `Compare Against...`
 - app-level multi-project restore across restarts
@@ -267,7 +267,11 @@ As of the current repo-root state, these parts of the behavior target are alread
 - pressing `d` on a file in the tree opens a commit picker overlay
 - selecting a commit opens a compare tab in the normal tab strip
 - compare tabs support side-by-side aligned rows, hunk jumps, and opening the live working-tree file at the corresponding line
+- git sidebar compare and conflict entries reuse an existing tab for the same file/ref pair instead of opening duplicates
 - activating or opening a file tab now reveals and selects the matching file in the tree
+- per-project config/session persistence now lives under `~/.local/state/microide/projects/<project-name>-<hash>/`
+- compare tabs skip syntax highlighting automatically for very large diffs to keep large-text workloads responsive
+- `microide_diff_bench` provides a CLI benchmark for compare preparation and syntax-highlighting cost on real repository files
 - the tab strip now keeps the active tab visible while still showing as many earlier tabs as will fit
 - editor tabs now retain unsaved buffer state when switching between files
 - editor tabs now support nested shared-buffer split trees with mouse focus switching, divider drag, and `vsplit` / `hsplit` / `unsplit` / `split-next`

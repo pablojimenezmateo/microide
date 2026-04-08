@@ -1,11 +1,16 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -75,6 +80,8 @@ constexpr float kMergeToolbarHeight = 54.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
+constexpr std::size_t kLargeCompareByteThreshold = 512 * 1024;
+constexpr std::size_t kLargeCompareRowThreshold = 6000;
 
 struct WorkspaceLayout {
   SDL_FRect full;
@@ -1291,6 +1298,17 @@ void DrawWindowControlGlyph(SDL_Renderer* renderer,
 
 }  // namespace
 
+std::uint64_t StablePathHash(std::string_view text);
+std::string HashToHex(std::uint64_t value);
+std::string ProjectStateDirectoryName(const std::filesystem::path& project_root);
+std::optional<SDL_Color> ParseProjectColor(std::string_view text);
+std::string FormatProjectColor(SDL_Color color);
+SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root);
+void ApplyProjectAccent(render::Theme& theme, SDL_Color accent);
+bool ShouldSyntaxHighlightCompareTab(std::string_view left_content,
+                                     std::string_view right_content,
+                                     const compare::CompareModel& model);
+
 std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
   static const auto kSpecs = std::to_array<ActionSpec>({
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]", "Colorscheme",
@@ -1689,7 +1707,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
       continue;
     }
     const float width =
-        std::clamp(text_renderer_.MeasureWidth(spec.label) + 22.0f, 52.0f, 108.0f);
+        std::clamp(text_renderer_.MeasureWidth(spec.label) + 28.0f, 56.0f, 116.0f);
     if (x + width > max_x) {
       break;
     }
@@ -1952,6 +1970,19 @@ void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
   active_menu_id_ = id;
   active_menu_item_index_ = FirstEnabledMenuItemIndex(id);
   active_menu_anchor_rect_.reset();
+  CloseSubmenu();
+}
+
+void WorkspaceShell::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
+  active_submenu_id_ = id;
+  active_submenu_item_index_ = FirstEnabledMenuItemIndex(id);
+  active_submenu_anchor_rect_ = anchor_rect;
+}
+
+void WorkspaceShell::CloseSubmenu() {
+  active_submenu_id_ = MenuId::None;
+  active_submenu_item_index_ = -1;
+  active_submenu_anchor_rect_.reset();
 }
 
 void WorkspaceShell::CloseMenuBar() {
@@ -1959,6 +1990,26 @@ void WorkspaceShell::CloseMenuBar() {
   active_menu_id_ = MenuId::None;
   active_menu_item_index_ = -1;
   active_menu_anchor_rect_.reset();
+  CloseSubmenu();
+}
+
+std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu_bar) const {
+  if (active_submenu_id_ == MenuId::None || !active_submenu_anchor_rect_.has_value()) {
+    return std::nullopt;
+  }
+  const MenuSpec* submenu = FindMenuSpec(active_submenu_id_);
+  if (submenu == nullptr) {
+    return std::nullopt;
+  }
+  const SDL_FRect bounds =
+      MakeRect(0.0f, 0.0f,
+               last_window_width_ > 0 ? static_cast<float>(last_window_width_) : menu_bar.w,
+               last_window_height_ > 0
+                   ? static_cast<float>(last_window_height_)
+                   : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
+  SDL_FRect anchor = *active_submenu_anchor_rect_;
+  anchor.x += anchor.w - 1.0f;
+  return ComputePopupMenuRect(anchor, submenu->items, bounds);
 }
 
 bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
@@ -1982,15 +2033,12 @@ bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
           if (visible_item.index != item_index) {
             continue;
           }
-          active_menu_id_ = item.submenu;
-          active_menu_item_index_ = FirstEnabledMenuItemIndex(item.submenu);
-          active_menu_anchor_rect_ = visible_item.rect;
+          OpenSubmenu(item.submenu, visible_item.rect);
           return true;
         }
       }
     }
-    active_menu_id_ = item.submenu;
-    active_menu_item_index_ = FirstEnabledMenuItemIndex(item.submenu);
+    CloseSubmenu();
     return true;
   }
 
@@ -2254,6 +2302,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   command_completion_feedback_.clear();
   log_messages_.clear();
   active_colorscheme_name_ = "default";
+  project_base_color_ = std::nullopt;
   editor_preferences_ = EditorPreferences{};
   file_finder_.SetIndex(&file_index_);
   ApplyColorscheme(active_colorscheme_name_, false, false);
@@ -2275,6 +2324,8 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       return false;
     }
   }
+
+  project_base_color_ = DefaultProjectBaseColor(project_root_);
 
   ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferences(text_viewport_);
@@ -2414,6 +2465,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.command_completion_feedback = std::move(command_completion_feedback_);
   state.log_messages = std::move(log_messages_);
   state.active_colorscheme_name = active_colorscheme_name_;
+  state.project_base_color = project_base_color_;
   state.editor_preferences = editor_preferences_;
   RebindProjectState(state);
 }
@@ -2480,6 +2532,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   command_completion_feedback_ = std::move(state.command_completion_feedback);
   log_messages_ = std::move(state.log_messages);
   active_colorscheme_name_ = state.active_colorscheme_name;
+  project_base_color_ = state.project_base_color;
   editor_preferences_ = state.editor_preferences;
 
   state.root = project_root_;
@@ -2906,8 +2959,7 @@ void WorkspaceShell::CloseProject(std::size_t index) {
 }
 
 std::filesystem::path WorkspaceShell::ConfigStatePath() const {
-  return project_root_.empty() ? std::filesystem::path{}
-                               : project_root_ / ".microide-config";
+  return project_root_.empty() ? std::filesystem::path{} : ProjectStateDirectory() / "config";
 }
 
 std::filesystem::path WorkspaceShell::UserConfigPath() const {
@@ -2917,6 +2969,21 @@ std::filesystem::path WorkspaceShell::UserConfigPath() const {
   }
   if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
     return std::filesystem::path(home) / ".config" / "microide" / "config";
+  }
+  return {};
+}
+
+std::filesystem::path WorkspaceShell::ProjectStateDirectory() const {
+  if (project_root_.empty()) {
+    return {};
+  }
+  const std::string directory_name = ProjectStateDirectoryName(project_root_);
+  if (const char* xdg_state_home = std::getenv("XDG_STATE_HOME");
+      xdg_state_home != nullptr && *xdg_state_home != '\0') {
+    return std::filesystem::path(xdg_state_home) / "microide" / "projects" / directory_name;
+  }
+  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+    return std::filesystem::path(home) / ".local" / "state" / "microide" / "projects" / directory_name;
   }
   return {};
 }
@@ -2939,6 +3006,12 @@ bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool 
 
   theme_ = loaded_theme;
   active_colorscheme_name_ = resolved_name.empty() ? requested_name : resolved_name;
+  if (!project_base_color_.has_value() && !project_root_.empty()) {
+    project_base_color_ = DefaultProjectBaseColor(project_root_);
+  }
+  if (project_base_color_.has_value()) {
+    ApplyProjectAccent(theme_, *project_base_color_);
+  }
   if (std::find(available_colorscheme_names_.begin(), available_colorscheme_names_.end(),
                 active_colorscheme_name_) == available_colorscheme_names_.end()) {
     available_colorscheme_names_.push_back(active_colorscheme_name_);
@@ -3032,6 +3105,9 @@ void WorkspaceShell::SaveUserConfig() const {
 
 bool WorkspaceShell::RestoreConfigState() {
   const std::filesystem::path config_path = ConfigStatePath();
+  if (config_path.empty()) {
+    return false;
+  }
   std::ifstream file(config_path);
   if (!file) {
     return false;
@@ -3040,6 +3116,7 @@ bool WorkspaceShell::RestoreConfigState() {
   bool version_ok = false;
   EditorPreferences restored = editor_preferences_;
   std::string restored_colorscheme = active_colorscheme_name_;
+  std::optional<SDL_Color> restored_project_base_color = project_base_color_;
   std::string line;
   while (std::getline(file, line)) {
     const ParsedCommandLine parsed = ParseCommandLine(line);
@@ -3079,6 +3156,10 @@ bool WorkspaceShell::RestoreConfigState() {
     }
     if (command == "colorscheme" && tokens.size() == 2) {
       restored_colorscheme = tokens[1].text;
+      continue;
+    }
+    if (command == "project-base-color" && tokens.size() == 2) {
+      restored_project_base_color = ParseProjectColor(tokens[1].text);
     }
   }
 
@@ -3087,6 +3168,7 @@ bool WorkspaceShell::RestoreConfigState() {
   }
 
   editor_preferences_ = restored;
+  project_base_color_ = restored_project_base_color;
   ApplyEditorPreferencesToAllTabs();
   ApplyColorscheme(restored_colorscheme, false, false);
   return true;
@@ -3097,7 +3179,14 @@ void WorkspaceShell::SaveConfigState() const {
     return;
   }
 
-  std::ofstream file(ConfigStatePath(), std::ios::trunc);
+  const std::filesystem::path config_path = ConfigStatePath();
+  if (config_path.empty()) {
+    return;
+  }
+  std::error_code error;
+  std::filesystem::create_directories(config_path.parent_path(), error);
+
+  std::ofstream file(config_path, std::ios::trunc);
   if (!file) {
     return;
   }
@@ -3107,11 +3196,13 @@ void WorkspaceShell::SaveConfigState() const {
   file << "editor-indent-width " << editor_preferences_.indent_width << '\n';
   file << "editor-soft-tabs " << (editor_preferences_.soft_tabs ? 1 : 0) << '\n';
   file << "colorscheme " << QuoteCommandArg(active_colorscheme_name_) << '\n';
+  file << "project-base-color "
+       << QuoteCommandArg(FormatProjectColor(project_base_color_.value_or(DefaultProjectBaseColor(project_root_))))
+       << '\n';
 }
 
 std::filesystem::path WorkspaceShell::SessionStatePath() const {
-  return project_root_.empty() ? std::filesystem::path{}
-                               : project_root_ / ".microide-session";
+  return project_root_.empty() ? std::filesystem::path{} : ProjectStateDirectory() / "session";
 }
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
@@ -3135,6 +3226,9 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
 bool WorkspaceShell::RestoreSessionState() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreSessionState");
   const std::filesystem::path session_path = SessionStatePath();
+  if (session_path.empty()) {
+    return false;
+  }
   std::ifstream file(session_path);
   if (!file) {
     return false;
@@ -3510,7 +3604,14 @@ void WorkspaceShell::SaveSessionState() {
 
   SyncActiveEditorTab();
 
-  std::ofstream file(SessionStatePath(), std::ios::trunc);
+  const std::filesystem::path session_path = SessionStatePath();
+  if (session_path.empty()) {
+    return;
+  }
+  std::error_code error;
+  std::filesystem::create_directories(session_path.parent_path(), error);
+
+  std::ofstream file(session_path, std::ios::trunc);
   if (!file) {
     return;
   }
@@ -6730,6 +6831,133 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
   return std::nullopt;
 }
 
+std::uint64_t StablePathHash(std::string_view text) {
+  constexpr std::uint64_t kOffsetBasis = 14695981039346656037ull;
+  constexpr std::uint64_t kPrime = 1099511628211ull;
+  std::uint64_t hash = kOffsetBasis;
+  for (const unsigned char c : text) {
+    hash ^= static_cast<std::uint64_t>(c);
+    hash *= kPrime;
+  }
+  return hash;
+}
+
+std::string HashToHex(std::uint64_t value) {
+  static constexpr char kDigits[] = "0123456789abcdef";
+  std::string hex(16, '0');
+  for (int i = 15; i >= 0; --i) {
+    hex[static_cast<std::size_t>(i)] = kDigits[value & 0xfu];
+    value >>= 4;
+  }
+  return hex;
+}
+
+std::string ProjectStateDirectoryName(const std::filesystem::path& project_root) {
+  const std::string label = project_root.filename().empty() ? "project" : project_root.filename().string();
+  std::string sanitized;
+  sanitized.reserve(label.size());
+  for (const unsigned char c : label) {
+    if (std::isalnum(c) != 0 || c == '-' || c == '_') {
+      sanitized.push_back(static_cast<char>(c));
+    } else {
+      sanitized.push_back('-');
+    }
+  }
+  if (sanitized.empty()) {
+    sanitized = "project";
+  }
+  return sanitized + "-" + HashToHex(StablePathHash(project_root.lexically_normal().string()));
+}
+
+std::optional<SDL_Color> ParseProjectColor(std::string_view text) {
+  std::size_t start = 0;
+  while (start < text.size() &&
+         std::isspace(static_cast<unsigned char>(text[start])) != 0) {
+    ++start;
+  }
+  std::size_t end = text.size();
+  while (end > start &&
+         std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+    --end;
+  }
+  const std::string token(text.substr(start, end - start));
+  if (token.size() != 7 || token.front() != '#') {
+    return std::nullopt;
+  }
+  const auto parse_pair = [&](std::size_t offset) -> std::optional<Uint8> {
+    const std::string pair = token.substr(offset, 2);
+    char* end = nullptr;
+    const long value = std::strtol(pair.c_str(), &end, 16);
+    if (end == nullptr || *end != '\0' || value < 0 || value > 255) {
+      return std::nullopt;
+    }
+    return static_cast<Uint8>(value);
+  };
+
+  const auto red = parse_pair(1);
+  const auto green = parse_pair(3);
+  const auto blue = parse_pair(5);
+  if (!red.has_value() || !green.has_value() || !blue.has_value()) {
+    return std::nullopt;
+  }
+  return SDL_Color{*red, *green, *blue, 0xff};
+}
+
+std::string FormatProjectColor(SDL_Color color) {
+  std::ostringstream stream;
+  stream << '#'
+         << std::hex << std::setfill('0') << std::nouppercase
+         << std::setw(2) << static_cast<int>(color.r)
+         << std::setw(2) << static_cast<int>(color.g)
+         << std::setw(2) << static_cast<int>(color.b);
+  return stream.str();
+}
+
+SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
+  static constexpr std::array<SDL_Color, 8> kPalette = {
+      SDL_Color{0x66, 0xa4, 0xff, 0xff},
+      SDL_Color{0x5d, 0xd0, 0xb4, 0xff},
+      SDL_Color{0xff, 0x9d, 0x5c, 0xff},
+      SDL_Color{0xe7, 0x7a, 0x9f, 0xff},
+      SDL_Color{0xf0, 0xc3, 0x55, 0xff},
+      SDL_Color{0x9c, 0x8d, 0xff, 0xff},
+      SDL_Color{0xff, 0x75, 0x75, 0xff},
+      SDL_Color{0x7a, 0xd5, 0xff, 0xff},
+  };
+  const std::uint64_t hash = StablePathHash(project_root.lexically_normal().string());
+  return kPalette[static_cast<std::size_t>(hash % kPalette.size())];
+}
+
+void ApplyProjectAccent(render::Theme& theme, SDL_Color accent) {
+  const auto blend = [&](SDL_Color base, SDL_Color tint, float amount) {
+    const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
+    const auto mix_component = [&](Uint8 base_component, Uint8 tint_component) {
+      return static_cast<Uint8>(
+          std::lround(static_cast<float>(base_component) * (1.0f - clamped_amount) +
+                      static_cast<float>(tint_component) * clamped_amount));
+    };
+    return SDL_Color{mix_component(base.r, tint.r), mix_component(base.g, tint.g),
+                     mix_component(base.b, tint.b), 0xff};
+  };
+  theme.accent = accent;
+  theme.chrome_active = blend(theme.chrome_background, accent, 0.18f);
+  theme.row_highlight = blend(theme.editor_background, accent, 0.14f);
+  const SDL_Color selection = blend(theme.editor_background, accent, 0.36f);
+  theme.selection_fill = SDL_Color{selection.r, selection.g, selection.b, 0xb4};
+  const SDL_Color search_match = blend(accent, theme.editor_background, 0.52f);
+  theme.search_match = SDL_Color{search_match.r, search_match.g, search_match.b, 0x8f};
+  const SDL_Color search_match_active = blend(accent, theme.editor_background, 0.38f);
+  theme.search_match_active =
+      SDL_Color{search_match_active.r, search_match_active.g, search_match_active.b, 0xc8};
+}
+
+bool ShouldSyntaxHighlightCompareTab(std::string_view left_content,
+                                     std::string_view right_content,
+                                     const compare::CompareModel& model) {
+  return left_content.size() + right_content.size() <= kLargeCompareByteThreshold &&
+         model.rows.size() <= kLargeCompareRowThreshold;
+}
+
 const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry() const {
   if (git_sidebar_selected_index_ >= git_sidebar_entries_.size()) {
     return nullptr;
@@ -6788,10 +7016,52 @@ void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
   }
 }
 
+std::optional<std::size_t> WorkspaceShell::FindOpenCompareTabIndex(
+    const std::filesystem::path& path,
+    std::string_view left_ref,
+    std::string_view right_ref) const {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    const auto& tab = open_tabs_[i];
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
+      continue;
+    }
+    if (tab.compare->path == normalized_path && tab.compare->commit_hash == left_ref &&
+        tab.compare->right_ref == right_ref) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t> WorkspaceShell::FindOpenMergeTabIndex(
+    const std::filesystem::path& path) const {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    const auto& tab = open_tabs_[i];
+    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+      continue;
+    }
+    if (tab.merge->output_path == normalized_path) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
 bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path,
                                                const std::string& left_ref,
                                                const std::string& left_label) {
   const std::filesystem::path normalized_path = path.lexically_normal();
+  if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, "WORKTREE");
+      existing_index.has_value()) {
+    SyncActiveEditorTab();
+    active_tab_index_ = *existing_index;
+    RevealActiveCompareSelection();
+    EnsureActiveTabVisible();
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
   const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
   if (!left_content.has_value()) {
     LogMessage("Failed to read git content for comparison");
@@ -6806,6 +7076,7 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
     return false;
   }
   compare_tab->compare->commit_hash = left_ref;
+  compare_tab->compare->right_ref = "WORKTREE";
   SyncActiveEditorTab();
   open_tabs_.push_back(std::move(*compare_tab));
   active_tab_index_ = open_tabs_.size() - 1;
@@ -6822,6 +7093,15 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
                                               const std::string& right_ref,
                                               const std::string& right_label) {
   const std::filesystem::path normalized_path = path.lexically_normal();
+  if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
+      existing_index.has_value()) {
+    SyncActiveEditorTab();
+    active_tab_index_ = *existing_index;
+    RevealActiveCompareSelection();
+    EnsureActiveTabVisible();
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
   const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
   const auto right_content = project::ReadGitFileAtCommit(project_root_, normalized_path, right_ref);
   if (!left_content.has_value() || !right_content.has_value()) {
@@ -6836,6 +7116,7 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
     return false;
   }
   compare_tab->compare->commit_hash = left_ref;
+  compare_tab->compare->right_ref = right_ref;
   SyncActiveEditorTab();
   open_tabs_.push_back(std::move(*compare_tab));
   active_tab_index_ = open_tabs_.size() - 1;
@@ -6848,6 +7129,14 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
 
 bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
+  if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {
+    SyncActiveEditorTab();
+    active_tab_index_ = *existing_index;
+    RevealActiveMergeSelection();
+    EnsureActiveTabVisible();
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
   const auto base_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":1");
   const auto current_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":2");
   const auto incoming_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":3");
@@ -7031,6 +7320,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
                                                 "Working tree", selected_row, true);
   if (compare_tab.has_value() && compare_tab->compare.has_value()) {
     compare_tab->compare->commit_hash = commit.hash;
+    compare_tab->compare->right_ref = "WORKTREE";
   }
   return compare_tab;
 }
@@ -7052,47 +7342,51 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
   compare_tab.left_label = std::move(left_label);
   compare_tab.right_label = std::move(right_label);
   compare_tab.persistable = persistable;
-  compare_tab.left_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_path, SplitSyntaxLines(left_content));
-  compare_tab.right_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_path, SplitSyntaxLines(right_content));
   compare_tab.model = compare::BuildCompareModel(left_content, right_content);
-  compare_tab.left_tokens_by_row.reserve(compare_tab.model.rows.size());
-  compare_tab.right_tokens_by_row.reserve(compare_tab.model.rows.size());
-  editor::SyntaxState left_state = compare_tab.left_initial_syntax_state;
-  editor::SyntaxState right_state = compare_tab.right_initial_syntax_state;
-  for (const auto& compare_row : compare_tab.model.rows) {
-    const bool reuse_tokens =
-        compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
-        compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
-        left_state.definition_id == right_state.definition_id &&
-        left_state.region_id == right_state.region_id;
-    if (reuse_tokens) {
-      editor::HighlightedLine highlighted =
-          editor::SyntaxHighlighter::HighlightLine(compare_row.left_text, normalized_path, left_state);
-      left_state = highlighted.end_state;
-      right_state = highlighted.end_state;
-      compare_tab.left_tokens_by_row.push_back(highlighted.tokens);
-      compare_tab.right_tokens_by_row.push_back(std::move(highlighted.tokens));
-      continue;
-    }
+  if (ShouldSyntaxHighlightCompareTab(left_content, right_content, compare_tab.model)) {
+    const auto left_lines = SplitSyntaxLines(left_content);
+    const auto right_lines = SplitSyntaxLines(right_content);
+    compare_tab.left_initial_syntax_state =
+        editor::SyntaxHighlighter::InitialState(normalized_path, left_lines);
+    compare_tab.right_initial_syntax_state =
+        editor::SyntaxHighlighter::InitialState(normalized_path, right_lines);
+    compare_tab.left_tokens_by_row.reserve(compare_tab.model.rows.size());
+    compare_tab.right_tokens_by_row.reserve(compare_tab.model.rows.size());
+    editor::SyntaxState left_state = compare_tab.left_initial_syntax_state;
+    editor::SyntaxState right_state = compare_tab.right_initial_syntax_state;
+    for (const auto& compare_row : compare_tab.model.rows) {
+      const bool reuse_tokens =
+          compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
+          compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
+          left_state.definition_id == right_state.definition_id &&
+          left_state.region_id == right_state.region_id;
+      if (reuse_tokens) {
+        editor::HighlightedLine highlighted =
+            editor::SyntaxHighlighter::HighlightLine(compare_row.left_text, normalized_path, left_state);
+        left_state = highlighted.end_state;
+        right_state = highlighted.end_state;
+        compare_tab.left_tokens_by_row.push_back(highlighted.tokens);
+        compare_tab.right_tokens_by_row.push_back(std::move(highlighted.tokens));
+        continue;
+      }
 
-    if (compare_row.left_line > 0) {
-      editor::HighlightedLine highlighted =
-          editor::SyntaxHighlighter::HighlightLine(compare_row.left_text, normalized_path, left_state);
-      left_state = highlighted.end_state;
-      compare_tab.left_tokens_by_row.push_back(std::move(highlighted.tokens));
-    } else {
-      compare_tab.left_tokens_by_row.push_back({});
-    }
+      if (compare_row.left_line > 0) {
+        editor::HighlightedLine highlighted =
+            editor::SyntaxHighlighter::HighlightLine(compare_row.left_text, normalized_path, left_state);
+        left_state = highlighted.end_state;
+        compare_tab.left_tokens_by_row.push_back(std::move(highlighted.tokens));
+      } else {
+        compare_tab.left_tokens_by_row.push_back({});
+      }
 
-    if (compare_row.right_line > 0) {
-      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
-          compare_row.right_text, normalized_path, right_state);
-      right_state = highlighted.end_state;
-      compare_tab.right_tokens_by_row.push_back(std::move(highlighted.tokens));
-    } else {
-      compare_tab.right_tokens_by_row.push_back({});
+      if (compare_row.right_line > 0) {
+        editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+            compare_row.right_text, normalized_path, right_state);
+        right_state = highlighted.end_state;
+        compare_tab.right_tokens_by_row.push_back(std::move(highlighted.tokens));
+      } else {
+        compare_tab.right_tokens_by_row.push_back({});
+      }
     }
   }
   compare_tab.selected_row =
@@ -7269,6 +7563,16 @@ void WorkspaceShell::OpenSelectedCompareCommit() {
 }
 
 void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
+  if (const auto existing_index = FindOpenCompareTabIndex(compare_picker_path_, commit.hash, "WORKTREE");
+      existing_index.has_value()) {
+    SyncActiveEditorTab();
+    active_tab_index_ = *existing_index;
+    RevealActiveCompareSelection();
+    EnsureActiveTabVisible();
+    overlay_visible_ = false;
+    focus_ = FocusTarget::Editor;
+    return;
+  }
   auto compare_tab = BuildCompareTabEntry(compare_picker_path_, commit);
   if (!compare_tab.has_value()) {
     LogMessage("Failed to read file content at selected commit");
@@ -7289,6 +7593,14 @@ bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
                                      const std::filesystem::path& incoming_path,
                                      const std::filesystem::path& current_path,
                                      const std::filesystem::path& output_path) {
+  if (const auto existing_index = FindOpenMergeTabIndex(output_path); existing_index.has_value()) {
+    SyncActiveEditorTab();
+    active_tab_index_ = *existing_index;
+    RevealActiveMergeSelection();
+    EnsureActiveTabVisible();
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
   auto merge_tab = BuildMergeTabEntry(base_path, incoming_path, current_path, output_path);
   if (!merge_tab.has_value()) {
     LogMessage("Failed to open merge inputs");
@@ -7535,6 +7847,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           CloseMenuBar();
         } else {
           OpenMenuBarMenu(item.id);
+        }
+        return true;
+      }
+
+      if (const auto submenu_rect = ActiveSubmenuRect(layout.menu_bar);
+          submenu_rect.has_value() && Contains(*submenu_rect, event.button.x, event.button.y)) {
+        for (const VisiblePopupMenuItem& item :
+             ComputeVisiblePopupMenuItems(active_submenu_id_, *submenu_rect)) {
+          if (!Contains(item.rect, event.button.x, event.button.y)) {
+            continue;
+          }
+          active_submenu_item_index_ = item.enabled ? static_cast<int>(item.index) : -1;
+          if (!item.separator && item.enabled) {
+            ExecuteMenuItem(active_submenu_id_, item.index);
+          }
+          return true;
         }
         return true;
       }
@@ -7871,7 +8199,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       float right_edge = row_rect.x + row_rect.w - 8.0f;
       if (entry.section == GitSidebarEntry::Section::Modified) {
         if (!entry.staged) {
-          const float stage_width = std::max(42.0f, text_renderer_.MeasureWidth("Stage") + 12.0f);
+          const float stage_width = std::max(48.0f, text_renderer_.MeasureWidth("Stage") + 16.0f);
           const SDL_FRect stage_rect =
               MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
           if (Contains(stage_rect, event.button.x, event.button.y)) {
@@ -7880,7 +8208,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           }
           right_edge = stage_rect.x - 6.0f;
         }
-        const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
+        const float discard_width =
+            std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
         const SDL_FRect discard_rect =
             MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
         if (Contains(discard_rect, event.button.x, event.button.y)) {
@@ -8370,6 +8699,18 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       return true;
     }
+    if (const auto submenu_rect = ActiveSubmenuRect(layout.menu_bar);
+        submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
+      active_submenu_item_index_ = -1;
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(active_submenu_id_, *submenu_rect)) {
+        if (Contains(item.rect, event.motion.x, event.motion.y)) {
+          active_submenu_item_index_ = item.enabled ? static_cast<int>(item.index) : -1;
+          break;
+        }
+      }
+      return true;
+    }
     if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
         popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
       active_menu_item_index_ = -1;
@@ -8377,6 +8718,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
            ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
         if (Contains(item.rect, event.motion.x, event.motion.y)) {
           active_menu_item_index_ = item.enabled ? static_cast<int>(item.index) : -1;
+          const MenuSpec* menu = FindMenuSpec(active_menu_id_);
+          if (menu != nullptr && item.enabled) {
+            const MenuItemSpec& spec = menu->items[item.index];
+            if (spec.submenu != MenuId::None) {
+              OpenSubmenu(spec.submenu, item.rect);
+            } else {
+              CloseSubmenu();
+            }
+          } else {
+            CloseSubmenu();
+          }
           break;
         }
       }
@@ -11875,6 +12227,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
     flush_segment();
   };
+  const auto draw_centered_text_on = [&](const SDL_FRect& rect,
+                                         float left_padding,
+                                         SDL_Color foreground,
+                                         SDL_Color background,
+                                         std::string_view text) {
+    const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer_.LineHeight()) * 0.5f);
+    draw_text_on(rect.x + left_padding, y, foreground, background, text);
+  };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
   const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
@@ -11890,9 +12250,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                      MakeRect(item.rect.x, item.rect.y + item.rect.h - 2.0f, item.rect.w, 2.0f),
                      theme_.accent);
     }
-    draw_text_on(item.rect.x + 10.0f, item.rect.y + 4.0f,
-                 item.active ? theme_.text_primary : theme_.text_secondary, background,
-                 menu->label);
+    draw_centered_text_on(item.rect, 10.0f, item.active ? theme_.text_primary : theme_.text_secondary,
+                          background, menu->label);
   }
 
   if (custom_window_chrome_enabled_) {
@@ -12232,20 +12591,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                      std::string_view label,
                                      SDL_Color text_color) {
           DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
-          draw_text_on(button_rect.x + 6.0f, button_rect.y + 2.0f, text_color,
-                       selected ? theme_.row_highlight : theme_.surface_background,
-                       std::string(label));
+          draw_centered_text_on(button_rect, 8.0f, text_color,
+                                selected ? theme_.row_highlight : theme_.surface_background, label);
         };
 
         if (entry.section == GitSidebarEntry::Section::Modified) {
           if (!entry.staged) {
-            const float stage_width = std::max(42.0f, text_renderer_.MeasureWidth("Stage") + 12.0f);
+            const float stage_width = std::max(48.0f, text_renderer_.MeasureWidth("Stage") + 16.0f);
             const SDL_FRect stage_rect =
                 MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
             draw_button(stage_rect, "Stage", selected ? theme_.text_primary : theme_.accent);
             right_edge = stage_rect.x - 6.0f;
           }
-          const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
+          const float discard_width =
+              std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
           const SDL_FRect discard_rect = MakeRect(right_edge - discard_width, row_rect.y + 1.0f,
                                                   discard_width, row_rect.h - 2.0f);
           draw_button(discard_rect, "Discard",
@@ -12642,44 +13001,61 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   if (menu_bar_open_) {
-    const MenuSpec* menu = FindMenuSpec(active_menu_id_);
-    const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
-    if (menu != nullptr && popup_rect.has_value()) {
-      DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
-      DrawRect(renderer, *popup_rect, theme_.border);
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
-        if (item.separator) {
-          DrawFilledRect(renderer,
-                         MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,
-                                  std::max(0.0f, item.rect.w - 16.0f), 1.0f),
-                         theme_.border);
-          continue;
-        }
+    const auto draw_popup_menu =
+        [&](MenuId menu_id, int active_item_index, const std::optional<SDL_FRect>& anchor_rect) {
+          const MenuSpec* menu = FindMenuSpec(menu_id);
+          if (menu == nullptr) {
+            return;
+          }
+          const auto popup_rect =
+              anchor_rect.has_value() ? ActiveSubmenuRect(layout.menu_bar)
+                                      : ComputePopupMenuRect(layout.menu_bar, menu_id);
+          if (!popup_rect.has_value()) {
+            return;
+          }
 
-        const MenuItemSpec& spec = menu->items[item.index];
-        const SDL_Color background =
-            item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
-        const SDL_Color text_color = !item.enabled ? theme_.text_disabled
-                                   : item.hovered ? theme_.text_primary
-                                                  : theme_.text_secondary;
-        const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
-        DrawFilledRect(renderer, item.rect, background);
-        if (item.checked) {
-          draw_text_on(item.rect.x + 8.0f, item.rect.y + 3.0f,
-                       item.enabled ? theme_.accent : theme_.text_disabled, background, "x");
-        }
-        const std::string accelerator = MenuItemAccelerator(spec);
-        const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
-        const float label_width =
-            std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
-        draw_text_on(item.rect.x + 24.0f, item.rect.y + 3.0f, text_color, background,
-                     TruncateLabel(MenuItemLabel(spec), label_width));
-        if (!accelerator.empty()) {
-          draw_text_on(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y + 3.0f,
-                       accel_color, background, accelerator);
-        }
-      }
+          DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
+          DrawRect(renderer, *popup_rect, theme_.border);
+          for (const VisiblePopupMenuItem& item :
+               ComputeVisiblePopupMenuItems(menu->items, active_item_index, *popup_rect)) {
+            if (item.separator) {
+              DrawFilledRect(renderer,
+                             MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,
+                                      std::max(0.0f, item.rect.w - 16.0f), 1.0f),
+                             theme_.border);
+              continue;
+            }
+
+            const MenuItemSpec& spec = menu->items[item.index];
+            const SDL_Color background =
+                item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
+            const SDL_Color text_color = !item.enabled ? theme_.text_disabled
+                                       : item.hovered ? theme_.text_primary
+                                                      : theme_.text_secondary;
+            const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
+            DrawFilledRect(renderer, item.rect, background);
+            if (item.checked) {
+              draw_centered_text_on(item.rect, 8.0f,
+                                    item.enabled ? theme_.accent : theme_.text_disabled, background,
+                                    "x");
+            }
+            const std::string accelerator = MenuItemAccelerator(spec);
+            const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
+            const float label_width = std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
+            draw_centered_text_on(
+                MakeRect(item.rect.x + 24.0f, item.rect.y, label_width, item.rect.h), 0.0f, text_color,
+                background, TruncateLabel(MenuItemLabel(spec), label_width));
+            if (!accelerator.empty()) {
+              draw_centered_text_on(
+                  MakeRect(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y,
+                           accelerator_width, item.rect.h),
+                  0.0f, accel_color, background, accelerator);
+            }
+          }
+        };
+    draw_popup_menu(active_menu_id_, active_menu_item_index_, std::nullopt);
+    if (active_submenu_id_ != MenuId::None) {
+      draw_popup_menu(active_submenu_id_, active_submenu_item_index_, active_submenu_anchor_rect_);
     }
   }
 
@@ -13700,6 +14076,16 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (menu_bar_open_) {
+    if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar);
+        popup_rect.has_value() && Contains(*popup_rect, x, y)) {
+      for (const VisiblePopupMenuItem& item :
+           ComputeVisiblePopupMenuItems(active_submenu_id_, *popup_rect)) {
+        if (Contains(item.rect, x, y)) {
+          return item.separator ? CursorKind::Default : CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Default;
+    }
     if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :

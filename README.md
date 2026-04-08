@@ -98,6 +98,7 @@ Current controls:
 - `s` in the git sidebar or clicking `Stage`: run `git add` for the selected modified file
 - `x` in the git sidebar or clicking `Discard`: restore the selected modified file to `HEAD`
 - `r` in the git sidebar: refresh working-tree and outgoing-file status
+- reopening the same git diff or conflict file reuses the existing tab instead of opening duplicates
 - selecting an outgoing file opens a compare tab against the resolved base branch `HEAD`
 - left click on a tab: activate that file tab
 - left click on a tab `x`: close that tab
@@ -162,6 +163,18 @@ Current commands:
 - `panel-show`
 - `panel-hide`
 - `focus <editor|sidebar|panel>`
+
+Project state:
+
+- per-project config and session files now live under `~/.local/state/microide/projects/<project-name>-<hash>/`
+- each project gets a persisted default base accent color on first open; override it in the per-project `config` file with `project-base-color "#rrggbb"`
+
+Diff benchmark:
+
+- build `microide_diff_bench` and run `./build/microide/microide_diff_bench /path/to/repo path/to/file`
+- example repro:
+  `./build/microide/microide_diff_bench /home/pablo/Documents/projects/dolfin-app translations/locales/de/messages.po`
+- the benchmark reports read, diff-build, and syntax-highlight timings separately and uses the same large-file syntax-highlight cutoff as compare tabs
 
 ## Build
 
