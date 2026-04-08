@@ -89,6 +89,22 @@ add_executable(microide
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
   src/util/StartupTrace.cpp
+  src/workspace/WorkspaceShellCompare.cpp
+  src/workspace/WorkspaceShellCompareRender.cpp
+  src/workspace/WorkspaceShellChrome.cpp
+  src/workspace/WorkspaceShellCommand.cpp
+  src/workspace/WorkspaceShellEditor.cpp
+  src/workspace/WorkspaceShellInput.cpp
+  src/workspace/WorkspaceShellMenu.cpp
+  src/workspace/WorkspaceShellMouse.cpp
+  src/workspace/WorkspaceShellOverlay.cpp
+  src/workspace/WorkspaceShellPersistence.cpp
+  src/workspace/WorkspaceShellProjects.cpp
+  src/workspace/WorkspaceShellPrompts.cpp
+  src/workspace/WorkspaceShellRender.cpp
+  src/workspace/WorkspaceShellSidebar.cpp
+  src/workspace/WorkspaceShellShared.cpp
+  src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShell.cpp
 )
 
@@ -131,7 +147,17 @@ add_executable(microide_tests
   src/project/GitCompareService.cpp
   src/project/GitStatusService.cpp
   src/util/StartupTrace.cpp
+  src/workspace/WorkspaceShellShared.cpp
+  tests/CompareModelTests.cpp
+  tests/FileOperationServiceTests.cpp
+  tests/GitServiceTests.cpp
+  tests/MergeModelTests.cpp
   tests/TestMain.cpp
+  tests/TestSupport.cpp
+  tests/WorkspaceShellSharedCoreTests.cpp
+  tests/WorkspaceShellSharedLayoutTests.cpp
+  tests/WorkspaceShellSharedSearchTests.cpp
+  tests/WorkspaceShellSharedTerminalTests.cpp
 )
 
 target_include_directories(microide_tests PRIVATE src)
