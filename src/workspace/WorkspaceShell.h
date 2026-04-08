@@ -590,6 +590,7 @@ class WorkspaceShell {
   int FirstEnabledMenuItemIndex(MenuId id) const;
   int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
   void OpenMenuBarMenu(MenuId id);
+  void OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect);
   void OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect);
   void CloseSubmenu();
   void CloseMenuBar();
@@ -771,6 +772,8 @@ class WorkspaceShell {
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
   void ShowGitSidebar();
+  std::string SidebarModeControlLabel() const;
+  SDL_FRect SidebarModeControlRect(const SDL_FRect& sidebar_rect) const;
   void CloseSidebar();
   void ToggleSidebar();
   void RestorePreviousSidebar();

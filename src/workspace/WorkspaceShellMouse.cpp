@@ -159,6 +159,20 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
+    if (sidebar_visible_) {
+      const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
+      if (Contains(sidebar_mode_rect, event.button.x, event.button.y)) {
+        if (menu_bar_open_ && active_menu_id_ == MenuId::SidebarMode &&
+            active_menu_anchor_rect_.has_value()) {
+          CloseMenuBar();
+        } else {
+          OpenAnchoredMenu(MenuId::SidebarMode, sidebar_mode_rect);
+        }
+        focus_ = FocusTarget::Sidebar;
+        return true;
+      }
+    }
+
     const auto menu_bar_items = ComputeVisibleMenuBarItems(layout.menu_bar);
     const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
     for (const VisibleWindowControlButton& button : window_buttons) {

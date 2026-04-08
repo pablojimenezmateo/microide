@@ -204,6 +204,29 @@ SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_r
                   button_width, 22.0f);
 }
 
+std::string WorkspaceShell::SidebarModeControlLabel() const {
+  switch (sidebar_mode_) {
+    case SidebarMode::Search:
+      return sidebar_temporary_ ? "Search*" : "Search";
+    case SidebarMode::Git:
+      return "Source Control";
+    case SidebarMode::Tree:
+    default:
+      return "Project";
+  }
+}
+
+SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) const {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const std::string label = SidebarModeControlLabel();
+  const float width = std::clamp(text_renderer_.MeasureWidth(label) + 30.0f, 92.0f,
+                                 std::max(92.0f, sidebar_rect.w - 20.0f));
+  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + 4.0f, width, 22.0f);
+}
+
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
   std::vector<GitSidebarSection> sections;
   sections.reserve(git_sidebar_entries_.size());

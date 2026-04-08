@@ -358,6 +358,19 @@ void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
   CloseSubmenu();
 }
 
+void WorkspaceShell::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
+  if (id == MenuId::None) {
+    CloseMenuBar();
+    return;
+  }
+  CloseTreeContextMenu();
+  menu_bar_open_ = true;
+  active_menu_id_ = id;
+  active_menu_item_index_ = FirstEnabledMenuItemIndex(id);
+  active_menu_anchor_rect_ = anchor_rect;
+  CloseSubmenu();
+}
+
 void WorkspaceShell::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
   active_submenu_id_ = id;
   active_submenu_item_index_ = FirstEnabledMenuItemIndex(id);

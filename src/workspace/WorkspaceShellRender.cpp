@@ -942,6 +942,29 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
   if (sidebar_visible_) {
     const float text_y_offset = 4.0f;
+    const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
+    const bool sidebar_mode_hovered =
+        last_mouse_position_valid_ && Contains(sidebar_mode_rect, last_mouse_x_, last_mouse_y_);
+    const bool sidebar_mode_open =
+        menu_bar_open_ && active_menu_id_ == MenuId::SidebarMode && active_menu_anchor_rect_.has_value();
+    DrawFilledRect(renderer, sidebar_mode_rect,
+                   sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
+                                                            : theme_.surface_raised);
+    DrawRect(renderer, sidebar_mode_rect,
+             sidebar_mode_open ? theme_.accent
+                               : sidebar_mode_hovered ? theme_.text_secondary : theme_.border);
+    draw_text_on(sidebar_mode_rect.x + 8.0f, sidebar_mode_rect.y + 4.0f,
+                 sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary
+                                                           : theme_.text_secondary,
+                 sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
+                                                           : theme_.surface_raised,
+                 SidebarModeControlLabel());
+    draw_text_on(sidebar_mode_rect.x + sidebar_mode_rect.w - 12.0f, sidebar_mode_rect.y + 4.0f,
+                 sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary : theme_.text_muted,
+                 sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
+                                                           : theme_.surface_raised,
+                 "v");
+
     if (sidebar_mode_ == SidebarMode::Search) {
       const std::string active_query =
           project_search_editing_ && project_search_edit_field_ == ProjectSearchEditField::Query
@@ -951,9 +974,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           project_search_editing_ && project_search_edit_field_ == ProjectSearchEditField::Replace
               ? project_search_edit_buffer_
               : project_replace_text_;
-      draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,
-                   theme_.text_secondary, theme_.chrome_background,
-                   sidebar_temporary_ ? "Search*" : "Search");
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 38.0f,
                    project_search_editing_ &&
                            project_search_edit_field_ == ProjectSearchEditField::Query
@@ -1061,8 +1081,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           static_cast<float>(line_map.size()), static_cast<float>(visible_rows),
           static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
     } else if (sidebar_mode_ == SidebarMode::Git) {
-      draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,
-                   theme_.text_secondary, theme_.chrome_background, "Source Control");
       const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
       const bool refresh_hovered =
           last_mouse_position_valid_ && Contains(refresh_rect, last_mouse_x_, last_mouse_y_);
@@ -1167,8 +1185,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           static_cast<float>(lines.size()), visible_units,
           static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
     } else {
-      draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,
-                   theme_.text_secondary, theme_.chrome_background, "Project");
       const std::string tree_root_label = ProjectLabel();
       const float root_label_width = text_renderer_.MeasureWidth(tree_root_label);
       draw_text_on(layout.sidebar.x + layout.sidebar.w - root_label_width - kSidebarInset,

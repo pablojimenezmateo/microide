@@ -482,8 +482,6 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       item(ActionId::SidebarToggle, {}, {}, {}, 0, true),
-      item(ActionId::Help, "Sidebar Mode", {}, {}, 0, false, MenuId::SidebarMode),
-      separator(),
       item(ActionId::ToggleBottomPanel, {}, {}, {}, 0, true),
       separator(),
       item(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
@@ -2629,6 +2627,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (sidebar_visible_ && Contains(layout.sidebar, x, y)) {
+    if (Contains(SidebarModeControlRect(layout.sidebar), x, y)) {
+      return CursorKind::Pointer;
+    }
     if (sidebar_mode_ == SidebarMode::Search) {
       if (y < layout.sidebar.y + 66.0f) {
         return CursorKind::Text;
