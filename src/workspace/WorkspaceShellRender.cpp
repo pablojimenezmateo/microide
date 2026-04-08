@@ -34,7 +34,10 @@ constexpr float kPromptSurfaceButtonWidth = 108.0f;
 constexpr float kPromptSurfaceButtonHeight = 28.0f;
 constexpr float kPromptSurfaceButtonGap = 10.0f;
 constexpr float kScrollbarThickness = 10.0f;
+constexpr float kScrollbarInset = 2.0f;
 constexpr float kBottomPanelCommandTopPadding = 8.0f;
+constexpr float kCompareMarkerLaneWidth = 6.0f;
+constexpr float kCompareMarkerLaneGap = 3.0f;
 
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full) {
   const float width = std::min(kDirtyPromptWidth, full.w - 32.0f);
@@ -81,23 +84,68 @@ SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
                   kPromptSurfaceInputHeight);
 }
 
-void DrawScrollbar(SDL_Renderer* renderer,
-                   const render::Theme& theme,
-                   const SDL_FRect& track,
-                   const SDL_FRect& thumb,
-                   bool active = false) {
-  if (renderer == nullptr || track.w <= 0.0f || track.h <= 0.0f || thumb.w <= 0.0f ||
-      thumb.h <= 0.0f) {
+void DrawScrollbarTrack(SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& track) {
+  if (renderer == nullptr || track.w <= 0.0f || track.h <= 0.0f) {
     return;
   }
 
   SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
                          theme.surface_raised.b, theme.surface_raised.a);
   SDL_RenderFillRect(renderer, &track);
+}
+
+void DrawScrollbarThumb(SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& thumb,
+                        bool active = false) {
+  if (renderer == nullptr || thumb.w <= 0.0f || thumb.h <= 0.0f) {
+    return;
+  }
 
   const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
   SDL_SetRenderDrawColor(renderer, thumb_color.r, thumb_color.g, thumb_color.b, thumb_color.a);
   SDL_RenderFillRect(renderer, &thumb);
+}
+
+void DrawScrollbar(SDL_Renderer* renderer,
+                   const render::Theme& theme,
+                   const SDL_FRect& track,
+                   const SDL_FRect& thumb,
+                   bool active = false) {
+  DrawScrollbarTrack(renderer, theme, track);
+  DrawScrollbarThumb(renderer, theme, thumb, active);
+}
+
+SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
+  switch (kind) {
+    case compare::CompareRowKind::Added:
+      return theme.diff_added;
+    case compare::CompareRowKind::Deleted:
+      return theme.diff_deleted;
+    case compare::CompareRowKind::Modified:
+      return theme.diff_modified;
+    case compare::CompareRowKind::Unchanged:
+    default:
+      return theme.text_muted;
+  }
+}
+
+void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
+                                 const render::Theme& theme,
+                                 const SDL_FRect& track,
+                                 const compare::CompareModel& model) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  const auto markers = BuildCompareScrollbarMarkers(track, model);
+  for (const CompareScrollbarMarker& marker : markers) {
+    const SDL_Color color = CompareMarkerColor(theme, marker.kind);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderFillRect(renderer, &marker.rect);
+  }
 }
 
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
@@ -753,10 +801,31 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (compare_tab != nullptr) {
       const int visible_rows = CompareVisibleRows(layout.editor_surface);
       ClampCompareScrollRow(*compare_tab, visible_rows);
-      draw_vertical_scrollbar(layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
-                              static_cast<float>(visible_rows),
-                              static_cast<float>(compare_tab->scroll_row),
-                              drag_target_ == DragTarget::CompareScrollbar);
+      const SDL_FRect scrollbar_track = MakeRect(
+          layout.editor_surface.x + layout.editor_surface.w - kScrollbarThickness - kScrollbarInset,
+          layout.editor_surface.y + kScrollbarInset, kScrollbarThickness,
+          std::max(0.0f, layout.editor_surface.h - kScrollbarInset * 2.0f));
+      const SDL_FRect marker_lane = MakeRect(
+          std::max(layout.editor_surface.x,
+                   scrollbar_track.x - kCompareMarkerLaneGap - kCompareMarkerLaneWidth),
+          scrollbar_track.y, kCompareMarkerLaneWidth, scrollbar_track.h);
+      const SDL_FRect marker_inner_lane =
+          MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
+                   std::max(0.0f, marker_lane.w - 2.0f),
+                   std::max(0.0f, marker_lane.h - 2.0f));
+      DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
+      DrawRect(renderer, marker_lane, theme_.border);
+      DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
+      if (const auto geometry =
+              MakeVerticalScrollbarGeometry(layout.editor_surface,
+                                            static_cast<float>(compare_tab->model.rows.size()),
+                                            static_cast<float>(visible_rows),
+                                            static_cast<float>(compare_tab->scroll_row));
+          geometry.has_value()) {
+        DrawScrollbarTrack(renderer, theme_, geometry->track);
+        DrawScrollbarThumb(renderer, theme_, geometry->thumb,
+                           drag_target_ == DragTarget::CompareScrollbar);
+      }
     }
   } else if (ActiveTabIsMerge()) {
     MergeTabState* merge_tab = ActiveMergeTab();
@@ -994,22 +1063,27 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     } else if (sidebar_mode_ == SidebarMode::Git) {
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,
                    theme_.text_secondary, theme_.chrome_background, "Source Control");
+      const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
+      const bool refresh_hovered =
+          last_mouse_position_valid_ && Contains(refresh_rect, last_mouse_x_, last_mouse_y_);
+      DrawFilledRect(renderer, refresh_rect,
+                     refresh_hovered ? theme_.row_highlight : theme_.surface_raised);
+      DrawRect(renderer, refresh_rect, refresh_hovered ? theme_.accent : theme_.border);
+      draw_centered_text_on(refresh_rect, 8.0f,
+                            refresh_hovered ? theme_.text_primary : theme_.accent,
+                            refresh_hovered ? theme_.row_highlight : theme_.surface_raised,
+                            "Refresh");
       const auto lines = BuildGitSidebarLines();
       const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float visible_units =
+          std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+      const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
+      const int max_scroll = std::max(
+          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const float row_width =
           std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
       int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
-      if (const auto selected_line = SelectedGitSidebarLineIndex(); selected_line.has_value()) {
-        if (*selected_line < static_cast<std::size_t>(scroll_row)) {
-          scroll_row = static_cast<int>(*selected_line);
-        } else if (*selected_line >= static_cast<std::size_t>(scroll_row + visible_rows)) {
-          scroll_row = static_cast<int>(*selected_line) - visible_rows + 1;
-        }
-      }
       sidebar_scroll_row_ = scroll_row;
 
       for (int row = 0; row < visible_rows; ++row) {
@@ -1056,13 +1130,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         };
 
         if (entry.section == GitSidebarEntry::Section::Modified) {
-          if (!entry.staged) {
-            const float stage_width = std::max(48.0f, text_renderer_.MeasureWidth("Stage") + 16.0f);
-            const SDL_FRect stage_rect =
-                MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
-            draw_button(stage_rect, "Stage", selected ? theme_.text_primary : theme_.accent);
-            right_edge = stage_rect.x - 6.0f;
-          }
+          const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
+          const float stage_width =
+              std::max(entry.staged ? 68.0f : 48.0f,
+                       text_renderer_.MeasureWidth(stage_label) + 16.0f);
+          const SDL_FRect stage_rect =
+              MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
+          draw_button(stage_rect, stage_label, selected ? theme_.text_primary : theme_.accent);
+          right_edge = stage_rect.x - 6.0f;
           const float discard_width =
               std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
           const SDL_FRect discard_rect = MakeRect(right_edge - discard_width, row_rect.y + 1.0f,
@@ -1089,7 +1164,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       draw_vertical_scrollbar(
           MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
                    std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(lines.size()), static_cast<float>(visible_rows),
+          static_cast<float>(lines.size()), visible_units,
           static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
     } else {
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 8.0f,

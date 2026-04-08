@@ -1,12 +1,19 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "project/GitStatusService.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
+
+namespace {
+
+constexpr float kSidebarRowHeight = 20.0f;
+
+}  // namespace
 
 void WorkspaceShell::ShowSidebarMode(SidebarMode mode, bool temporary) {
   if (mode == SidebarMode::None) {
@@ -60,6 +67,7 @@ void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
 void WorkspaceShell::ShowGitSidebar() {
   RefreshGitSidebar();
   ShowSidebarMode(SidebarMode::Git, false);
+  RevealSelectedGitSidebarLine();
   LogMessage("Git sidebar opened");
 }
 
@@ -178,9 +186,22 @@ void WorkspaceShell::RefreshGitSidebar() {
     if (git_sidebar_entries_[i].path == previous_path &&
         git_sidebar_entries_[i].section == previous_section) {
       git_sidebar_selected_index_ = i;
+      RevealSelectedGitSidebarLine();
       return;
     }
   }
+
+  RevealSelectedGitSidebarLine();
+}
+
+SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const float button_width = std::max(72.0f, text_renderer_.MeasureWidth("Refresh") + 18.0f);
+  return MakeRect(sidebar_rect.x + sidebar_rect.w - 10.0f - button_width, sidebar_rect.y + 4.0f,
+                  button_width, 22.0f);
 }
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
@@ -236,6 +257,35 @@ const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry()
   return &git_sidebar_entries_[git_sidebar_selected_index_];
 }
 
+void WorkspaceShell::RevealSelectedGitSidebarLine() {
+  if (last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return;
+  }
+
+  const auto selected_line = SelectedGitSidebarLineIndex();
+  if (!selected_line.has_value()) {
+    return;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                    sidebar_visible_, bottom_panel_visible_, sidebar_width_, bottom_panel_height_);
+  if (layout.sidebar.h <= 0.0f) {
+    return;
+  }
+  const float visible_units = std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+  const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
+  const int max_scroll = std::max(
+      0, static_cast<int>(std::ceil(static_cast<float>(BuildGitSidebarLines().size()) - visible_units)));
+  int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+  if (*selected_line < static_cast<std::size_t>(scroll_row)) {
+    scroll_row = static_cast<int>(*selected_line);
+  } else if (*selected_line >= static_cast<std::size_t>(scroll_row + visible_rows)) {
+    scroll_row = static_cast<int>(*selected_line) - visible_rows + 1;
+  }
+  sidebar_scroll_row_ = std::clamp(scroll_row, 0, max_scroll);
+}
+
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {
   if (git_sidebar_entries_.empty() || delta == 0) {
     return;
@@ -244,6 +294,7 @@ void WorkspaceShell::MoveGitSidebarSelection(int delta) {
   const int max_index = static_cast<int>(git_sidebar_entries_.size()) - 1;
   git_sidebar_selected_index_ =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  RevealSelectedGitSidebarLine();
 }
 
 bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
@@ -280,6 +331,23 @@ bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
   }
   RefreshProjectFiles();
   LogMessage("Staged: " + entry.relative_path.string());
+  return true;
+}
+
+bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
+  if (entry_index >= git_sidebar_entries_.size()) {
+    return false;
+  }
+  const auto& entry = git_sidebar_entries_[entry_index];
+  if (entry.section != GitSidebarEntry::Section::Modified || !entry.staged) {
+    return false;
+  }
+  if (!project::GitUnstagePath(project_root_, entry.path)) {
+    LogMessage("Git unstage failed: " + entry.relative_path.string());
+    return false;
+  }
+  RefreshProjectFiles();
+  LogMessage("Unstaged: " + entry.relative_path.string());
   return true;
 }
 

@@ -332,14 +332,15 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     } else if (sidebar_mode_ == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
       const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float visible_units =
+          std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+      const int max_scroll = std::max(
+          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
       const auto scrollbar = MakeVerticalScrollbarGeometry(
           MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
                    std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(lines.size()), static_cast<float>(visible_rows),
+          static_cast<float>(lines.size()), visible_units,
           static_cast<float>(scroll_row));
       if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
         drag_target_ = DragTarget::SidebarScrollbar;
@@ -510,13 +511,20 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
 
     if (sidebar_mode_ == SidebarMode::Git) {
-      if (local_y < 0.0f || event.button.button != SDL_BUTTON_LEFT) {
+      if (event.button.button != SDL_BUTTON_LEFT) {
+        return true;
+      }
+      if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+        return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+      }
+      if (local_y < 0.0f) {
         return true;
       }
 
       const auto lines = BuildGitSidebarLines();
-      const int visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / row_height));
-      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float visible_units = std::max(1.0f, (layout.sidebar.h - 36.0f) / row_height);
+      const int max_scroll = std::max(
+          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
       const float row_width =
           std::max(0.0f, layout.sidebar.w - inset * 2.0f -
@@ -539,16 +547,20 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                                           row_width, row_height - 2.0f);
       float right_edge = row_rect.x + row_rect.w - 8.0f;
       if (entry.section == GitSidebarEntry::Section::Modified) {
-        if (!entry.staged) {
-          const float stage_width = std::max(48.0f, text_renderer_.MeasureWidth("Stage") + 16.0f);
-          const SDL_FRect stage_rect =
-              MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
-          if (Contains(stage_rect, event.button.x, event.button.y)) {
+        const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
+        const float stage_width =
+            std::max(entry.staged ? 68.0f : 48.0f, text_renderer_.MeasureWidth(stage_label) + 16.0f);
+        const SDL_FRect stage_rect =
+            MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
+        if (Contains(stage_rect, event.button.x, event.button.y)) {
+          if (entry.staged) {
+            UnstageGitSidebarEntry(git_sidebar_selected_index_);
+          } else {
             StageGitSidebarEntry(git_sidebar_selected_index_);
-            return true;
           }
-          right_edge = stage_rect.x - 6.0f;
+          return true;
         }
+        right_edge = stage_rect.x - 6.0f;
         const float discard_width =
             std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
         const SDL_FRect discard_rect =
@@ -1225,14 +1237,15 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       } else if (sidebar_mode_ == SidebarMode::Git) {
         const auto lines = BuildGitSidebarLines();
         const float list_y = drag_layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-        const int visible_rows =
-            std::max(1, static_cast<int>((drag_layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-        const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+        const float visible_units =
+            std::max(1.0f, (drag_layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+        const int max_scroll = std::max(
+            0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
         const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
         const auto scrollbar = MakeVerticalScrollbarGeometry(
             MakeRect(drag_layout.sidebar.x, list_y, drag_layout.sidebar.w,
                      std::max(0.0f, drag_layout.sidebar.y + drag_layout.sidebar.h - list_y)),
-            static_cast<float>(lines.size()), static_cast<float>(visible_rows),
+            static_cast<float>(lines.size()), visible_units,
             static_cast<float>(scroll_row));
         if (!scrollbar.has_value()) {
           drag_target_ = DragTarget::None;
@@ -1582,8 +1595,10 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
     } else if (sidebar_mode_ == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
-      visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / 20.0f));
-      max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float visible_units = std::max(1.0f, (layout.sidebar.h - 36.0f) / 20.0f);
+      visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
+      max_scroll = std::max(
+          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
     } else {
       const auto& entries = directory_tree_.entries();
       visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / 20.0f));

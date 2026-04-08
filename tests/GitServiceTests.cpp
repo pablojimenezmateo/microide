@@ -21,6 +21,7 @@ using microide::project::CollectGitWorkingTreeEntries;
 using microide::project::GitDiscardPath;
 using microide::project::GitFileStatus;
 using microide::project::GitStagePath;
+using microide::project::GitUnstagePath;
 using microide::project::ReadGitFileAtCommit;
 using microide::project::ResolveGitBaseReference;
 
@@ -180,6 +181,15 @@ void TestGitWorkingTreeStatusAndActions() {
   Expect(staged_it != entries.end(),
          "staged modified file should still appear in working tree view");
   Expect(staged_it->staged, "modified file should report staged after git add");
+
+  Expect(GitUnstagePath(repo_path, modified_file), "git unstage should succeed for modified file");
+  entries = CollectGitWorkingTreeEntries(repo_path);
+  const auto unstaged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+    return entry.relative_path == std::filesystem::path("README.md");
+  });
+  Expect(unstaged_it != entries.end(),
+         "unstaged modified file should still appear in working tree view");
+  Expect(!unstaged_it->staged, "modified file should report unstaged after git unstage");
 
   Expect(GitDiscardPath(repo_path, untracked_file), "discard should remove untracked file");
   Expect(!std::filesystem::exists(untracked_file), "discard should delete untracked file");

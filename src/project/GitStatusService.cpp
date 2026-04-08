@@ -295,6 +295,27 @@ bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path
   return CommandSucceeds(command);
 }
 
+bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
+  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+    return false;
+  }
+
+  const std::filesystem::path relative_path = AbsoluteToRelativePath(root, absolute_path);
+  if (relative_path.empty()) {
+    return false;
+  }
+
+  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
+  const std::string escaped_relative = EscapeShellArg(relative_path.generic_string());
+  const std::string command =
+      FileExistsAtHead(root, relative_path)
+          ? "git -C '" + escaped_root + "' restore --staged -- '" + escaped_relative +
+                "' >/dev/null 2>/dev/null"
+          : "git -C '" + escaped_root + "' rm --cached -- '" + escaped_relative +
+                "' >/dev/null 2>/dev/null";
+  return CommandSucceeds(command);
+}
+
 bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
   if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
     return false;

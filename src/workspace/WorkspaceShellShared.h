@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compare/CompareModel.h"
 #include "editor/TextViewport.h"
 #include "project/ProjectSearchService.h"
 #include "render/Theme.h"
@@ -89,6 +90,13 @@ struct ScrollbarGeometry {
   float visible_units = 0.0f;
   float scroll_units = 0.0f;
   bool vertical = true;
+};
+
+struct CompareScrollbarMarker {
+  compare::CompareRowKind kind = compare::CompareRowKind::Unchanged;
+  int start_row = 0;
+  int end_row = 0;
+  SDL_FRect rect{};
 };
 
 struct StripSlotLayout {
@@ -249,6 +257,9 @@ std::optional<ScrollbarGeometry> MakeHorizontalScrollbarGeometry(const SDL_FRect
 float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
                             float pointer_coordinate,
                             float grab_offset);
+std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
+    const SDL_FRect& track,
+    const compare::CompareModel& model);
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,

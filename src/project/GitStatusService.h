@@ -21,6 +21,7 @@ std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
     const std::filesystem::path& root);
 std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root);
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
+bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
 bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
 
 }  // namespace microide::project

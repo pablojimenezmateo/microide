@@ -392,6 +392,7 @@ class WorkspaceShell {
     Focus,
     Goto,
     Grep,
+    GitRefresh,
     Help,
     Hsplit,
     IndentWidth,
@@ -775,12 +776,15 @@ class WorkspaceShell {
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
+  SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
+  void RevealSelectedGitSidebarLine();
   void MoveGitSidebarSelection(int delta);
   bool OpenGitSidebarEntry(std::size_t entry_index);
   bool StageGitSidebarEntry(std::size_t entry_index);
+  bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,

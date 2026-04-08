@@ -130,6 +130,7 @@ Recommended behavior:
 
 - the tree stays visible while switching tabs
 - the sidebar host can switch between tree, search, and git/source-control views without changing the main layout
+- the source-control view should expose an explicit manual refresh control because git state can change outside the app
 - switching project tabs swaps the entire workspace context below the project-tab strip
 - the bottom panel can be shown or hidden without disturbing the main editor layout
 - overlays such as file finder and command palette open centered above the editor
@@ -532,6 +533,7 @@ These current workflows should remain recognizable:
 - temporary search can restore the previous sidebar tool
 - file finder reuses already-open files instead of duplicating tabs
 - compare opens in a dedicated tab and can jump back to the working file
+- compare scrollbars can show add/modify/delete diff markers as a compact change map
 - command-driven workflows remain available even in the GUI
 
 The GUI should improve the visuals and input model, but the operational model should stay close to the current fork.

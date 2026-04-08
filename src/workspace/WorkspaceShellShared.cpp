@@ -993,6 +993,64 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
   return ((thumb_start - track_start) / travel) * max_scroll;
 }
 
+std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
+    const SDL_FRect& track,
+    const compare::CompareModel& model) {
+  std::vector<CompareScrollbarMarker> markers;
+  if (track.w <= 0.0f || track.h <= 0.0f || model.rows.empty()) {
+    return markers;
+  }
+
+  const float total_rows = static_cast<float>(model.rows.size());
+  const float track_end = track.y + track.h;
+  auto push_marker = [&](int start_row, int end_row, compare::CompareRowKind kind) {
+    if (kind == compare::CompareRowKind::Unchanged || start_row < 0 || end_row <= start_row) {
+      return;
+    }
+
+    const float top = track.y + (static_cast<float>(start_row) / total_rows) * track.h;
+    const float bottom = track.y + (static_cast<float>(end_row) / total_rows) * track.h;
+    float y = std::clamp(std::floor(top), track.y, std::max(track.y, track_end - 1.0f));
+    float height = std::max(2.0f, std::ceil(bottom) - y);
+    if (y + height > track_end) {
+      y = std::max(track.y, track_end - height);
+      height = std::min(height, track_end - y);
+    }
+    if (height <= 0.0f) {
+      return;
+    }
+
+    markers.push_back(CompareScrollbarMarker{
+        .kind = kind,
+        .start_row = start_row,
+        .end_row = end_row,
+        .rect = MakeRect(track.x, y, track.w, height),
+    });
+  };
+
+  int run_start = -1;
+  compare::CompareRowKind run_kind = compare::CompareRowKind::Unchanged;
+  for (std::size_t i = 0; i < model.rows.size(); ++i) {
+    const compare::CompareRowKind kind = model.rows[i].kind;
+    if (kind == compare::CompareRowKind::Unchanged) {
+      push_marker(run_start, static_cast<int>(i), run_kind);
+      run_start = -1;
+      run_kind = compare::CompareRowKind::Unchanged;
+      continue;
+    }
+
+    if (run_start >= 0 && kind == run_kind) {
+      continue;
+    }
+
+    push_marker(run_start, static_cast<int>(i), run_kind);
+    run_start = static_cast<int>(i);
+    run_kind = kind;
+  }
+  push_marker(run_start, static_cast<int>(model.rows.size()), run_kind);
+  return markers;
+}
+
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,

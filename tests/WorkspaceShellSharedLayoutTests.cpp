@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "compare/CompareModel.h"
 #include "workspace/WorkspaceShellShared.h"
 
 #include <cmath>
@@ -11,6 +12,7 @@ namespace {
 using microide::workspace::BottomPanelCommandAreaRect;
 using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
+using microide::workspace::BuildCompareScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
 using microide::workspace::ClampSidebarWidth;
 using microide::workspace::ComputeLayout;
@@ -52,6 +54,48 @@ void TestWorkspaceSharedScrollbarHelpers() {
                                                           80.0f, 20.0f, 10.0f, false);
   Expect(horizontal.has_value(), "horizontal scrollbar geometry should exist when content overflows");
   Expect(horizontal->track.h == 10.0f, "horizontal scrollbar should use the shared thickness");
+}
+
+void TestWorkspaceSharedCompareScrollbarMarkers() {
+  const auto make_row = [](microide::compare::CompareRowKind kind) {
+    return microide::compare::CompareRow{
+        .left_text = "",
+        .right_text = "",
+        .left_line = 0,
+        .right_line = 0,
+        .kind = kind,
+        .hunk = -1,
+        .left_changed_spans = {},
+        .right_changed_spans = {},
+    };
+  };
+
+  microide::compare::CompareModel model;
+  model.rows = {
+      make_row(microide::compare::CompareRowKind::Unchanged),
+      make_row(microide::compare::CompareRowKind::Added),
+      make_row(microide::compare::CompareRowKind::Added),
+      make_row(microide::compare::CompareRowKind::Modified),
+      make_row(microide::compare::CompareRowKind::Deleted),
+      make_row(microide::compare::CompareRowKind::Deleted),
+      make_row(microide::compare::CompareRowKind::Unchanged),
+  };
+
+  const auto markers = BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 70.0f), model);
+  Expect(markers.size() == 3, "compare scrollbar markers should group contiguous changed rows");
+  Expect(markers[0].kind == microide::compare::CompareRowKind::Added &&
+             markers[0].start_row == 1 && markers[0].end_row == 3,
+         "compare scrollbar markers should preserve added-row ranges");
+  Expect(markers[1].kind == microide::compare::CompareRowKind::Modified &&
+             markers[1].start_row == 3 && markers[1].end_row == 4,
+         "compare scrollbar markers should preserve modified-row ranges");
+  Expect(markers[2].kind == microide::compare::CompareRowKind::Deleted &&
+             markers[2].start_row == 4 && markers[2].end_row == 6,
+         "compare scrollbar markers should preserve deleted-row ranges");
+  Expect(markers[0].rect.y >= 20.0f && markers[2].rect.y + markers[2].rect.h <= 90.0f,
+         "compare scrollbar markers should stay inside the track bounds");
+  Expect(markers[1].rect.h >= 2.0f,
+         "compare scrollbar markers should stay visible even for single-row changes");
 }
 
 void TestWorkspaceSharedPanelGeometryHelpers() {
@@ -116,6 +160,8 @@ void TestWorkspaceSharedOverlayRectHelpers() {
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/LayoutHelpers", TestWorkspaceSharedLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarHelpers", TestWorkspaceSharedScrollbarHelpers);
+  AddTest(tests, "WorkspaceShared/CompareScrollbarMarkers",
+          TestWorkspaceSharedCompareScrollbarMarkers);
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);

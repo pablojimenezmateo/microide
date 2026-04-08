@@ -636,11 +636,13 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         case SDLK_HOME:
           if (!git_sidebar_entries_.empty()) {
             git_sidebar_selected_index_ = 0;
+            RevealSelectedGitSidebarLine();
           }
           return true;
         case SDLK_END:
           if (!git_sidebar_entries_.empty()) {
             git_sidebar_selected_index_ = git_sidebar_entries_.size() - 1;
+            RevealSelectedGitSidebarLine();
           }
           return true;
         case SDLK_PAGEUP:
@@ -653,13 +655,14 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         case SDLK_KP_ENTER:
           return OpenGitSidebarEntry(git_sidebar_selected_index_);
         case SDLK_R:
-          RefreshProjectFiles();
-          LogMessage("Git sidebar refreshed");
-          return true;
+          return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
         default: {
           const char input_character = KeycodeToAscii(event.key.key, modifiers);
           if (input_character == 's') {
             return StageGitSidebarEntry(git_sidebar_selected_index_);
+          }
+          if (input_character == 'u') {
+            return UnstageGitSidebarEntry(git_sidebar_selected_index_);
           }
           if (input_character == 'x') {
             return DiscardGitSidebarEntry(git_sidebar_selected_index_);

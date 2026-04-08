@@ -240,6 +240,7 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Find, "find", "find <query>", "Find File By Query", ""},
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
       ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
+      ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Refresh Git", ""},
       ActionSpec{ActionId::Grep, "grep", "grep <query>", "Show Project Search", ""},
       ActionSpec{ActionId::Help, "help", "help", "Help", ""},
       ActionSpec{ActionId::Hsplit, "hsplit", "hsplit [path]", "Split Down", ""},
@@ -387,6 +388,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     }
     case ActionId::Compare:
     case ActionId::Find:
+    case ActionId::GitRefresh:
     case ActionId::Grep:
     case ActionId::Merge:
     case ActionId::Open:
@@ -512,6 +514,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   static const auto kProjectItems = std::to_array<MenuItemSpec>({
       item(ActionId::Compare, "Compare Current File..."),
       item(ActionId::TreeRefresh),
+      item(ActionId::GitRefresh),
       separator(),
       item(ActionId::ProjectNext),
       item(ActionId::ProjectPrev),
@@ -1790,6 +1793,13 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       RefreshProjectFiles();
       LogMessage("Project tree refreshed");
       return true;
+    case ActionId::GitRefresh:
+      if (require_project()) {
+        return true;
+      }
+      RefreshProjectFiles();
+      LogMessage("Git view refreshed");
+      return true;
     case ActionId::CreateFile:
     case ActionId::CreateDirectory: {
       if (require_project()) {
@@ -2647,9 +2657,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (sidebar_mode_ == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
       const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(lines.size()) - visible_rows);
+      const float visible_units =
+          std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+      const int max_scroll = std::max(
+          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const float row_width =
           std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
@@ -2671,15 +2682,15 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const auto& entry = git_sidebar_entries_[static_cast<std::size_t>(line.entry_index)];
       if (entry.section == GitSidebarEntry::Section::Modified) {
         float right_edge = row_rect.x + row_rect.w - 8.0f;
-        if (!entry.staged) {
-          const float stage_width = std::max(42.0f, text_renderer_.MeasureWidth("Stage") + 12.0f);
-          const SDL_FRect stage_rect =
-              MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
-          if (Contains(stage_rect, x, y)) {
-            return CursorKind::Pointer;
-          }
-          right_edge = stage_rect.x - 6.0f;
+        const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
+        const float stage_width =
+            std::max(entry.staged ? 60.0f : 42.0f, text_renderer_.MeasureWidth(stage_label) + 12.0f);
+        const SDL_FRect stage_rect =
+            MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
+        if (Contains(stage_rect, x, y)) {
+          return CursorKind::Pointer;
         }
+        right_edge = stage_rect.x - 6.0f;
         const float discard_width = std::max(54.0f, text_renderer_.MeasureWidth("Discard") + 12.0f);
         const SDL_FRect discard_rect =
             MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);

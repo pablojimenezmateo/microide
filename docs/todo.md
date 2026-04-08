@@ -79,7 +79,7 @@ These migration pieces are already present and should not be tracked as missing:
 - `[x]` project-local editor preferences now persist tab size, indent width, and soft-tabs
 - `[~]` command prompt now has quoted-argument parsing, per-session history recall, and first-pass Tab completion
 - `[x]` visible scrollbars exist for the main editor, compare view, sidebar tools, bottom logs, and centered overlays
-- `[x]` current commands: `help`, `open`, `tab`, `tabswitch`, `tabmove`, `compare`, `reopen`, `save`, `quit`, `term`, `find`, `files`, `tree`, `search`, `grep`, `rg`, `goto`, `jump`, `vsplit`, `hsplit`, `unsplit`, `split-next`, `split-prev`, `split-first`, `split-last`, `tree-refresh`, `sidebar-toggle`, `sidebar-show`, `sidebar-hide`, `sidebar-close`, `sidebar-width`, `panel-show`, `panel-hide`, `focus`, `tab-size`, `indent-width`, `soft-tabs`, `colorscheme`
+- `[x]` current commands: `help`, `open`, `tab`, `tabswitch`, `tabmove`, `compare`, `reopen`, `save`, `quit`, `term`, `find`, `files`, `tree`, `search`, `grep`, `rg`, `goto`, `jump`, `vsplit`, `hsplit`, `unsplit`, `split-next`, `split-prev`, `split-first`, `split-last`, `tree-refresh`, `git-refresh`, `sidebar-toggle`, `sidebar-show`, `sidebar-hide`, `sidebar-close`, `sidebar-width`, `panel-show`, `panel-hide`, `focus`, `tab-size`, `indent-width`, `soft-tabs`, `colorscheme`
 - `[x]` pluggable text renderer exists
 - `[x]` debug-text backend exists
 - `[x]` optional `SDL3_ttf` backend exists
