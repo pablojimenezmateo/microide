@@ -18,6 +18,7 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
   dirty_prompt_state_.tab_index = index;
   dirty_prompt_state_.dirty_tabs = {index};
   dirty_prompt_state_.dirty_count = 1;
+  dirty_prompt_state_.path.clear();
   dirty_prompt_state_.selected_action = 0;
   focus_ = FocusTarget::Overlay;
 }
@@ -39,6 +40,7 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
   dirty_prompt_state_.project_index = index;
   dirty_prompt_state_.dirty_tabs = dirty_tabs;
   dirty_prompt_state_.dirty_count = dirty_tabs.size();
+  dirty_prompt_state_.path.clear();
   dirty_prompt_state_.selected_action = 0;
   focus_ = FocusTarget::Overlay;
 }
@@ -59,6 +61,7 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
   dirty_prompt_state_.project_index = active_project_index_;
   dirty_prompt_state_.dirty_tabs = DirtyEditorTabIndices();
   dirty_prompt_state_.dirty_count = dirty_count;
+  dirty_prompt_state_.path.clear();
   dirty_prompt_state_.selected_action = 0;
   focus_ = FocusTarget::Overlay;
 }
@@ -78,8 +81,25 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 
   const DirtyPromptState prompt = dirty_prompt_state_;
   if (prompt.selected_action == 2) {
+    if (prompt.kind == DirtyPromptState::Kind::RenamePath ||
+        prompt.kind == DirtyPromptState::Kind::DeletePath) {
+      DismissDirtyPrompt(true);
+      return;
+    }
     DismissDirtyPrompt(true);
     LogMessage(prompt.kind == DirtyPromptState::Kind::Quit ? "Quit cancelled" : "Close cancelled");
+    return;
+  }
+
+  if (prompt.kind == DirtyPromptState::Kind::RenamePath) {
+    ConfirmPromptSurface(prompt.selected_action == 0 ? DirtyPathResolution::Save
+                                                     : DirtyPathResolution::Discard);
+    return;
+  }
+
+  if (prompt.kind == DirtyPromptState::Kind::DeletePath) {
+    ConfirmPromptSurface(prompt.selected_action == 0 ? DirtyPathResolution::Save
+                                                     : DirtyPathResolution::Discard);
     return;
   }
 
@@ -149,7 +169,9 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
   if (dirty_prompt_state_.kind == DirtyPromptState::Kind::Quit ||
-      dirty_prompt_state_.kind == DirtyPromptState::Kind::CloseProject) {
+      dirty_prompt_state_.kind == DirtyPromptState::Kind::CloseProject ||
+      dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ||
+      dirty_prompt_state_.kind == DirtyPromptState::Kind::DeletePath) {
     return {
         dirty_prompt_state_.dirty_count > 1 ? "Save all" : "Save",
         dirty_prompt_state_.dirty_count > 1 ? "Discard all" : "Discard",
@@ -166,6 +188,12 @@ std::string WorkspaceShell::DirtyPromptTitle() const {
   }
   if (dirty_prompt_state_.kind == DirtyPromptState::Kind::CloseProject) {
     return "Unsaved changes before closing project";
+  }
+  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath) {
+    return "Unsaved changes before rename";
+  }
+  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::DeletePath) {
+    return "Unsaved changes before delete";
   }
   return "Unsaved changes";
 }
@@ -189,6 +217,20 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
                ? "Save the dirty tab before closing " + label + "?"
                : "Save the " + std::to_string(dirty_prompt_state_.dirty_count) +
                      " dirty tabs before closing " + label + "?";
+  }
+
+  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ||
+      dirty_prompt_state_.kind == DirtyPromptState::Kind::DeletePath) {
+    const std::filesystem::path path =
+        dirty_prompt_state_.path.empty() ? prompt_surface_state_.path : dirty_prompt_state_.path;
+    const std::string label =
+        path == project_root_ ? ProjectLabel() : RelativePathLabel(project_root_, path);
+    const std::string action =
+        dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ? "renaming " : "deleting ";
+    return dirty_prompt_state_.dirty_count == 1
+               ? "Save the dirty tab before " + action + label + "?"
+               : "Save the " + std::to_string(dirty_prompt_state_.dirty_count) +
+                     " dirty tabs before " + action + label + "?";
   }
 
   const std::size_t index = dirty_prompt_state_.tab_index;
@@ -333,6 +375,28 @@ bool WorkspaceShell::EditorTabHasDirtyPath(std::size_t tab_index,
   return false;
 }
 
+std::vector<std::size_t> WorkspaceShell::DirtyTabIndicesForPath(
+    const std::filesystem::path& path) const {
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    if (EditorTabHasDirtyPath(i, path)) {
+      indices.push_back(i);
+      continue;
+    }
+
+    const TabEntry& tab = open_tabs_[i];
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+        tab.merge->result_viewport.dirty() &&
+        (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
+         PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), path.lexically_normal()) ||
+         PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), path.lexically_normal()) ||
+         PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), path.lexically_normal()))) {
+      indices.push_back(i);
+    }
+  }
+  return indices;
+}
+
 std::vector<std::size_t> WorkspaceShell::AffectedEditorTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
@@ -379,27 +443,46 @@ std::vector<std::size_t> WorkspaceShell::AffectedMergeTabIndices(
 
 bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                                std::string* blocking_label) const {
-  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
-    if (EditorTabHasDirtyPath(i, path)) {
-      if (blocking_label != nullptr) {
-        *blocking_label = open_tabs_[i].title;
-      }
-      return true;
+  const std::vector<std::size_t> dirty_tabs = DirtyTabIndicesForPath(path);
+  if (!dirty_tabs.empty()) {
+    if (blocking_label != nullptr) {
+      *blocking_label = open_tabs_[dirty_tabs.front()].title;
     }
-    const TabEntry& tab = open_tabs_[i];
-    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-        tab.merge->result_viewport.dirty() &&
-        (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
-         PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), path.lexically_normal()) ||
-         PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), path.lexically_normal()) ||
-         PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), path.lexically_normal()))) {
-      if (blocking_label != nullptr) {
-        *blocking_label = tab.title;
-      }
-      return true;
-    }
+    return true;
   }
   return false;
+}
+
+bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
+                                             DirtyPromptState::Kind prompt_kind,
+                                             DirtyPathResolution resolution) {
+  const std::vector<std::size_t> dirty_tabs = DirtyTabIndicesForPath(path);
+  if (dirty_tabs.empty()) {
+    return true;
+  }
+
+  if (resolution == DirtyPathResolution::RequirePrompt) {
+    dirty_prompt_visible_ = true;
+    dirty_prompt_previous_focus_ = focus_;
+    dirty_prompt_state_.kind = prompt_kind;
+    dirty_prompt_state_.dirty_tabs = dirty_tabs;
+    dirty_prompt_state_.dirty_count = dirty_tabs.size();
+    dirty_prompt_state_.path = path.lexically_normal();
+    dirty_prompt_state_.selected_action = 0;
+    focus_ = FocusTarget::Overlay;
+    return false;
+  }
+
+  if (resolution == DirtyPathResolution::Save) {
+    for (std::size_t index : dirty_tabs) {
+      if (!SaveTab(index)) {
+        LogMessage("Save failed");
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 void WorkspaceShell::RefreshProjectViewsAfterMutation(
@@ -416,7 +499,8 @@ void WorkspaceShell::RefreshProjectViewsAfterMutation(
 }
 
 void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_path,
-                                               const std::filesystem::path& new_path) {
+                                               const std::filesystem::path& new_path,
+                                               bool preserve_unsaved_state) {
   if (ActiveTabIsEditor()) {
     SyncActiveEditorTab();
   }
@@ -426,6 +510,7 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     TabEntry& tab = open_tabs_[i];
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       bool retargeted = false;
+      bool close_tab = false;
       for (auto& view : tab.editor_state->views) {
         const std::filesystem::path current_path = EditorViewPath(view);
         if (current_path.empty() || !PathEqualsOrWithin(current_path, old_path)) {
@@ -433,23 +518,50 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
         }
         const std::filesystem::path updated_path =
             ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
-        view.restored_path = updated_path;
-        if (!view.needs_restore) {
+
+        if (!preserve_unsaved_state && !view.needs_restore && view.viewport.dirty()) {
+          const std::size_t cursor_line = view.viewport.cursor_line();
+          const std::size_t cursor_column = view.viewport.cursor_column();
+          const std::size_t scroll_line = view.viewport.scroll_line();
+          const std::size_t horizontal_scroll = view.viewport.horizontal_scroll();
+          editor::TextViewport reopened_view;
+          if (!reopened_view.OpenFile(updated_path)) {
+            close_tab = true;
+            break;
+          }
+          ApplyEditorPreferences(reopened_view);
+          reopened_view.MoveCursorTo(cursor_line, cursor_column);
+          reopened_view.SetScrollLine(scroll_line);
+          reopened_view.SetHorizontalScroll(horizontal_scroll);
+          view.viewport = std::move(reopened_view);
+        } else if (!view.needs_restore) {
           view.viewport.SetPath(updated_path);
         }
-        if (i == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id) {
-          text_viewport_.SetPath(updated_path);
-          view.restored_cursor_line = text_viewport_.cursor_line();
-          view.restored_cursor_column = text_viewport_.cursor_column();
-          view.restored_scroll_line = text_viewport_.scroll_line();
-          view.restored_horizontal_scroll = text_viewport_.horizontal_scroll();
+
+        view.restored_path = updated_path;
+        if (!view.needs_restore) {
+          view.restored_cursor_line = view.viewport.cursor_line();
+          view.restored_cursor_column = view.viewport.cursor_column();
+          view.restored_scroll_line = view.viewport.scroll_line();
+          view.restored_horizontal_scroll = view.viewport.horizontal_scroll();
           view.needs_restore = false;
         }
         retargeted = true;
       }
 
+      if (close_tab) {
+        special_tabs_to_close.push_back(i);
+        continue;
+      }
+
       if (retargeted) {
         if (i == active_tab_index_) {
+          if (const auto* active_view =
+                  FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
+              active_view != nullptr && !active_view->needs_restore) {
+            text_viewport_ = active_view->viewport;
+            ApplyEditorPreferences(text_viewport_);
+          }
           SyncActiveEditorTabMetadata();
         } else if (const auto* active_view =
                        FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
@@ -503,16 +615,19 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
       continue;
     }
     auto& rebuilt_merge = rebuilt->merge.value();
-    for (std::size_t hunk_index = 0;
-         hunk_index < rebuilt_merge.model.hunks.size() && hunk_index < tab.merge->model.hunks.size();
-         ++hunk_index) {
-      rebuilt_merge.model.hunks[hunk_index].choice = tab.merge->model.hunks[hunk_index].choice;
-    }
     rebuilt_merge.selected_hunk = rebuilt_merge.model.hunks.empty()
                                       ? 0
                                       : std::min(tab.merge->selected_hunk,
                                                  rebuilt_merge.model.hunks.size() - 1);
-    RefreshMergeTabDerivedState(rebuilt_merge);
+    if (preserve_unsaved_state || !tab.merge->result_viewport.dirty()) {
+      for (std::size_t hunk_index = 0;
+           hunk_index < rebuilt_merge.model.hunks.size() &&
+           hunk_index < tab.merge->model.hunks.size();
+           ++hunk_index) {
+        rebuilt_merge.model.hunks[hunk_index].choice = tab.merge->model.hunks[hunk_index].choice;
+      }
+      RefreshMergeTabDerivedState(rebuilt_merge);
+    }
     tab = std::move(*rebuilt);
   }
 
@@ -559,7 +674,7 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
   }
 }
 
-void WorkspaceShell::ConfirmPromptSurface() {
+void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   if (!prompt_surface_visible_) {
     return;
   }
@@ -586,10 +701,7 @@ void WorkspaceShell::ConfirmPromptSurface() {
 
     std::filesystem::path destination;
     if (state.action == PromptSurfaceState::Action::RenamePath) {
-      std::string blocking_label;
-      if (HasDirtyEditorTabsForPath(state.path, &blocking_label)) {
-        DismissPromptSurface(true);
-        LogMessage("Rename blocked by dirty tab: " + blocking_label);
+      if (!ResolveDirtyTabsForPath(state.path, DirtyPromptState::Kind::RenamePath, resolution)) {
         return;
       }
       destination = (state.path.parent_path() / typed_path).lexically_normal();
@@ -616,6 +728,9 @@ void WorkspaceShell::ConfirmPromptSurface() {
       return;
     }
 
+    if (dirty_prompt_visible_) {
+      DismissDirtyPrompt(false);
+    }
     DismissPromptSurface(false);
     if (state.action == PromptSurfaceState::Action::CreateFile) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
@@ -630,16 +745,15 @@ void WorkspaceShell::ConfirmPromptSurface() {
       return;
     }
 
-    RetargetOpenTabsForRename(state.path, result.resulting_path);
+    RetargetOpenTabsForRename(state.path, result.resulting_path,
+                              resolution != DirtyPathResolution::Discard);
     RefreshProjectViewsAfterMutation(result.resulting_path);
+    focus_ = FocusTarget::Sidebar;
     LogMessage("Renamed: " + RelativePathLabel(project_root_, result.resulting_path));
     return;
   }
 
-  std::string blocking_label;
-  if (HasDirtyEditorTabsForPath(state.path, &blocking_label)) {
-    DismissPromptSurface(true);
-    LogMessage("Delete blocked by dirty tab: " + blocking_label);
+  if (!ResolveDirtyTabsForPath(state.path, DirtyPromptState::Kind::DeletePath, resolution)) {
     return;
   }
 
@@ -650,6 +764,9 @@ void WorkspaceShell::ConfirmPromptSurface() {
   }
 
   const std::filesystem::path parent = state.path.parent_path();
+  if (dirty_prompt_visible_) {
+    DismissDirtyPrompt(false);
+  }
   DismissPromptSurface(false);
   CloseOpenTabsForPath(state.path);
   RefreshProjectViewsAfterMutation(parent);

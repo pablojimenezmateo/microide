@@ -63,9 +63,7 @@ endif()
 
 pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
 
-add_executable(microide
-  src/app/main.cpp
-  src/app/Application.cpp
+set(MICROIDE_CORE_SOURCES
   src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxGenerated.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
@@ -109,6 +107,12 @@ add_executable(microide
   src/workspace/WorkspaceShell.cpp
 )
 
+add_executable(microide
+  src/app/main.cpp
+  src/app/Application.cpp
+  ${MICROIDE_CORE_SOURCES}
+)
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
   add_custom_command(TARGET microide POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -142,16 +146,7 @@ elseif(MSVC)
 endif()
 
 add_executable(microide_tests
-  src/compare/CompareModel.cpp
-  src/compare/MergeModel.cpp
-  src/project/FileOperationService.cpp
-  src/project/GitCompareService.cpp
-  src/project/ProjectFileScanner.cpp
-  src/project/GitStatusService.cpp
-  src/project/IgnoreMatcher.cpp
-  src/project/ProjectSearchService.cpp
-  src/util/StartupTrace.cpp
-  src/workspace/WorkspaceShellShared.cpp
+  ${MICROIDE_CORE_SOURCES}
   tests/CompareModelTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
@@ -159,6 +154,7 @@ add_executable(microide_tests
   tests/ProjectSearchServiceTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp
+  tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellSharedCoreTests.cpp
   tests/WorkspaceShellSharedLayoutTests.cpp
   tests/WorkspaceShellSharedSearchTests.cpp
@@ -169,6 +165,7 @@ target_include_directories(microide_tests PRIVATE src)
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
 target_compile_definitions(microide_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  MICROIDE_TESTING=1
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

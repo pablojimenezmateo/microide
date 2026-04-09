@@ -66,11 +66,10 @@ Current state:
 
 - tree context menus and prompt surfaces exist
 - rename retargets affected tabs and delete closes affected tabs
-- dirty tabs block rename and delete instead of silently discarding work
+- dirty rename and delete now prompt to save or discard affected tabs instead of silently discarding work
 
 Remaining work:
 
-- offer save or discard prompts instead of hard-blocking every dirty rename/delete case
 - tighten consequences for split tabs, compare tabs, and prompt cleanup around mutations
 - decide whether project open should graduate from a typed path flow to a dedicated picker
 

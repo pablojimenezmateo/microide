@@ -40,8 +40,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   if (dirty_prompt_visible_) {
     switch (event.key.key) {
       case SDLK_ESCAPE:
-        DismissDirtyPrompt(true);
-        LogMessage("Close cancelled");
+        dirty_prompt_state_.selected_action = 2;
+        ConfirmDirtyPrompt();
         return true;
       case SDLK_LEFT:
         dirty_prompt_state_.selected_action =
@@ -69,8 +69,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           return true;
         }
         if (input_character == 'c') {
-          DismissDirtyPrompt(true);
-          LogMessage("Close cancelled");
+          dirty_prompt_state_.selected_action = 2;
+          ConfirmDirtyPrompt();
           return true;
         }
         return true;

@@ -356,6 +356,8 @@ class WorkspaceShell {
       CloseTab,
       CloseProject,
       Quit,
+      RenamePath,
+      DeletePath,
     };
 
     Kind kind = Kind::CloseTab;
@@ -363,6 +365,7 @@ class WorkspaceShell {
     std::size_t project_index = 0;
     std::vector<std::size_t> dirty_tabs;
     std::size_t dirty_count = 0;
+    std::filesystem::path path;
     int selected_action = 0;
   };
 
@@ -385,6 +388,12 @@ class WorkspaceShell {
     std::filesystem::path path;
     std::string input;
     int selected_button = 0;
+  };
+
+  enum class DirtyPathResolution {
+    RequirePrompt,
+    Save,
+    Discard,
   };
 
   struct TerminalSelectionPosition {
@@ -691,21 +700,26 @@ class WorkspaceShell {
                          const std::filesystem::path& path,
                          std::string input = {});
   void DismissPromptSurface(bool restore_focus);
-  void ConfirmPromptSurface();
+  void ConfirmPromptSurface(DirtyPathResolution resolution = DirtyPathResolution::RequirePrompt);
   std::string PromptSurfaceTitle() const;
   std::string PromptSurfaceMessage() const;
   std::array<std::string, 2> PromptSurfaceActionLabels() const;
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   bool EditorTabReferencesPath(std::size_t tab_index, const std::filesystem::path& path) const;
   bool EditorTabHasDirtyPath(std::size_t tab_index, const std::filesystem::path& path) const;
+  std::vector<std::size_t> DirtyTabIndicesForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedEditorTabIndices(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedMergeTabIndices(const std::filesystem::path& path) const;
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
+  bool ResolveDirtyTabsForPath(const std::filesystem::path& path,
+                               DirtyPromptState::Kind prompt_kind,
+                               DirtyPathResolution resolution);
   void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
   void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
-                                 const std::filesystem::path& new_path);
+                                 const std::filesystem::path& new_path,
+                                 bool preserve_unsaved_state = true);
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   std::filesystem::path EditorViewPath(const TabEntry::EditorTabState::EditorViewState& view) const;
   bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
@@ -1100,6 +1114,10 @@ class WorkspaceShell {
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;
+
+#ifdef MICROIDE_TESTING
+  friend struct WorkspaceShellTestAccess;
+#endif
 };
 
 }  // namespace microide::workspace
