@@ -171,6 +171,27 @@ void TestTerminalSessionDisableAutoWrapOverwritesLastColumn() {
   ExpectLineText(lines, 1, "G", "re-enabled autowrap should wrap subsequent characters");
 }
 
+void TestTerminalSessionReportsCursorPositionQueries() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3;4H\x1b[6n\x1b[?6n");
+
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[3;4R\x1b[?3;4R",
+         "cursor-position queries should report the current row and column");
+}
+
+void TestTerminalSessionReportsDeviceAttributesQueries() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[c\x1b[>c\x1bZ\x1b[5n");
+
+  Expect(TerminalSessionTestAccess::SentBytes(session) ==
+             "\x1b[?1;2c\x1b[>0;10;1c\x1b[?1;2c\x1b[0n",
+         "device-attribute and status queries should emit terminal responses");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -196,6 +217,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionScrollDownSequenceUsesScrollRegion);
   AddTest(tests, "TerminalSession/DisableAutoWrapOverwritesLastColumn",
           TestTerminalSessionDisableAutoWrapOverwritesLastColumn);
+  AddTest(tests, "TerminalSession/ReportsCursorPositionQueries",
+          TestTerminalSessionReportsCursorPositionQueries);
+  AddTest(tests, "TerminalSession/ReportsDeviceAttributesQueries",
+          TestTerminalSessionReportsDeviceAttributesQueries);
 }
 
 }  // namespace microide::tests

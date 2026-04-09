@@ -50,6 +50,7 @@ Current state:
 - cursor-key input now switches between normal CSI and application SS3 sequences when terminal apps request DECCKM
 - autowrap mode control and explicit `CSI S` / `CSI T` scrolling now work for alternate-screen apps
 - terminal paste shortcuts now honor bracketed paste mode when terminal apps request it
+- basic device-attribute and cursor-position queries now receive terminal replies
 - common ANSI cursor, erase, edit, and scroll-region sequences work
 - app mouse reporting exists for mouse-aware terminal programs
 

@@ -628,6 +628,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         SaveCursorLocked();
       } else if (byte == '8') {
         RestoreCursorLocked();
+      } else if (byte == 'Z') {
+        SendBytesLocked("\x1b[?1;2c");
       } else if (byte == 'D' || byte == 'E') {
         AdvanceCursorRowLocked();
         if (byte == 'E') {
@@ -756,11 +758,28 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       for (const int mode : params) {
         HandlePrivateModeLocked(mode, enabled);
       }
+    } else if (final == 'n') {
+      for (const int mode : params) {
+        if (mode == 6) {
+          SendBytesLocked("\x1b[?" + std::to_string(cursor_row_ + 1) + ";" +
+                          std::to_string(cursor_column_ + 1) + "R");
+        }
+      }
+    }
+    return;
+  }
+
+  if (prefix == '>') {
+    if (final == 'c') {
+      SendBytesLocked("\x1b[>0;10;1c");
     }
     return;
   }
 
   switch (final) {
+    case 'c':
+      SendBytesLocked("\x1b[?1;2c");
+      return;
     case 'm': {
       if (params.empty()) {
         params.push_back(0);
@@ -952,6 +971,16 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
                                static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
       }
       return;
+    case 'n':
+      if (!params.empty()) {
+        if (params.front() == 5) {
+          SendBytesLocked("\x1b[0n");
+        } else if (params.front() == 6) {
+          SendBytesLocked("\x1b[" + std::to_string(cursor_row_ + 1) + ";" +
+                          std::to_string(cursor_column_ + 1) + "R");
+        }
+      }
+      return;
     case 'd':
       MoveCursorLocked(
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)),
@@ -1050,6 +1079,40 @@ TerminalSession::MouseTrackingMode TerminalSession::CurrentMouseTrackingModeLock
     return MouseTrackingMode::Normal;
   }
   return MouseTrackingMode::Disabled;
+}
+
+void TerminalSession::SendBytesLocked(std::string_view bytes) {
+  if (bytes.empty()) {
+    return;
+  }
+
+#ifdef MICROIDE_TESTING
+  if (master_fd_ < 0) {
+    test_sent_bytes_.append(bytes);
+    return;
+  }
+#endif
+
+#if defined(__unix__) || defined(__APPLE__)
+  if (master_fd_ < 0) {
+    return;
+  }
+
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const ssize_t written =
+        write(master_fd_, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      break;
+    }
+    offset += static_cast<std::size_t>(written);
+  }
+#else
+  (void)bytes;
+#endif
 }
 
 std::string TerminalSession::FormatKeyBytesLocked(Key key) const {

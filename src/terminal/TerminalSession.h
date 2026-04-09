@@ -122,6 +122,7 @@ class TerminalSession {
   void AppendOutputLocked(std::string_view data);
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandlePrivateModeLocked(int mode, bool enabled);
+  void SendBytesLocked(std::string_view bytes);
   MouseTrackingMode CurrentMouseTrackingModeLocked() const;
   std::string FormatKeyBytesLocked(Key key) const;
   std::string FormatPasteBytesLocked(std::string_view text) const;
