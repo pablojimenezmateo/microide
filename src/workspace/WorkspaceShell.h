@@ -369,6 +369,17 @@ class WorkspaceShell {
     int selected_action = 0;
   };
 
+  struct DirtyPathTarget {
+    enum class Kind {
+      EditorView,
+      MergeTab,
+    };
+
+    Kind kind = Kind::EditorView;
+    std::size_t tab_index = 0;
+    std::size_t leaf_id = 0;
+  };
+
   struct PromptSurfaceState {
     enum class Kind {
       None,
@@ -707,6 +718,7 @@ class WorkspaceShell {
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   bool EditorTabReferencesPath(std::size_t tab_index, const std::filesystem::path& path) const;
   bool EditorTabHasDirtyPath(std::size_t tab_index, const std::filesystem::path& path) const;
+  std::vector<DirtyPathTarget> DirtyPathTargetsForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> DirtyTabIndicesForPath(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedEditorTabIndices(const std::filesystem::path& path) const;
   std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;

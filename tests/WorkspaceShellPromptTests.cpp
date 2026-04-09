@@ -100,6 +100,72 @@ void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
          "rename save flow should clear the dirty flag after saving");
 }
 
+void TestWorkspaceShellRenamePromptOnlySavesAffectedSplitEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path keep = root / "keep.txt";
+  const std::filesystem::path source = root / "rename-me.txt";
+  WriteFile(keep, "keep text\n");
+  WriteFile(source, "source text\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, keep);
+  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
+         "split rename fixture should open a second editor pane");
+  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, source),
+         "split rename fixture should load the renamed file into the active pane");
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("renamed ");
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "split rename fixture should move focus to the first pane");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("keep ");
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
+         "split rename fixture should move focus back to the renamed pane");
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "split rename should still prompt for the affected dirty pane");
+  Expect(WorkspaceShellTestAccess::DirtyPromptMessage(shell).find("affected dirty editor") !=
+             std::string::npos,
+         "split rename prompt should describe affected editors instead of tabs");
+
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  const std::filesystem::path renamed = root / "renamed.txt";
+  Expect(std::filesystem::is_regular_file(renamed),
+         "split rename save flow should create the destination path");
+  Expect(ReadFile(renamed) == "renamed source text\n",
+         "split rename save flow should persist the affected dirty pane");
+  Expect(ReadFile(keep) == "keep text\n",
+         "split rename save flow should not save unrelated dirty panes");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "split rename save flow should keep the editor tab open");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).front().editor_state->views.size() == 2,
+         "split rename save flow should preserve unaffected split panes");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == renamed.lexically_normal(),
+         "split rename save flow should keep the renamed pane active");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "split rename save flow should clear the renamed pane dirty flag");
+
+  bool kept_view_found = false;
+  bool kept_view_dirty = false;
+  for (const auto& view : WorkspaceShellTestAccess::OpenTabs(shell).front().editor_state->views) {
+    const std::filesystem::path view_path =
+        (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
+    if (view_path == keep.lexically_normal()) {
+      kept_view_found = true;
+      kept_view_dirty = view.viewport.dirty();
+      break;
+    }
+  }
+  Expect(kept_view_found, "split rename save flow should keep the unrelated pane");
+  Expect(kept_view_dirty, "split rename save flow should preserve unrelated dirty pane state");
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   TemporaryDirectory temp_dir;
@@ -151,6 +217,72 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   Expect(trashed_file.has_value(), "delete discard flow should create a trash entry");
   Expect(ReadFile(*trashed_file) == "original text\n",
          "delete discard flow should discard unsaved editor changes before trashing");
+}
+
+void TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path keep = root / "keep.txt";
+  const std::filesystem::path source = root / "delete-me.txt";
+  WriteFile(keep, "keep text\n");
+  WriteFile(source, "source text\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_data_home = temp_dir.path() / "xdg-data-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_data_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", xdg_data_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, keep);
+  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
+         "split delete fixture should open a second editor pane");
+  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, source),
+         "split delete fixture should load the deleted file into the active pane");
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "split delete fixture should move focus to the first pane");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("keep ");
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
+         "split delete fixture should move focus back to the deleted pane");
+
+  WorkspaceShellTestAccess::PrepareDeletePrompt(shell, source);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "split delete should still prompt for the affected dirty pane");
+  Expect(WorkspaceShellTestAccess::DirtyPromptMessage(shell).find("affected dirty editor") !=
+             std::string::npos,
+         "split delete prompt should describe affected editors instead of tabs");
+
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(!std::filesystem::exists(source),
+         "split delete save flow should remove the deleted project path");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "split delete save flow should keep the split editor tab open");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).front().editor_state->views.size() == 1,
+         "split delete save flow should remove only the affected split pane");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == keep.lexically_normal(),
+         "split delete save flow should activate the remaining pane");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "split delete save flow should preserve unrelated dirty panes");
+  Expect(ReadFile(keep) == "keep text\n",
+         "split delete save flow should not save unrelated dirty panes");
+
+#if defined(__linux__)
+  const std::filesystem::path trash_files = xdg_data_home / "Trash" / "files";
+#else
+  const std::filesystem::path trash_files = home / ".Trash";
+#endif
+  const auto trashed_file = FirstRegularFileIn(trash_files);
+  Expect(trashed_file.has_value(), "split delete save flow should create a trash entry");
+  Expect(ReadFile(*trashed_file) == "saved source text\n",
+         "split delete save flow should save the affected pane before trashing it");
 }
 #endif
 
@@ -315,6 +447,8 @@ void TestWorkspaceShellLargeFileBreadcrumbLabel() {
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
+  AddTest(tests, "WorkspaceShell/RenamePromptOnlySavesAffectedSplitEditor",
+          TestWorkspaceShellRenamePromptOnlySavesAffectedSplitEditor);
   AddTest(tests, "WorkspaceShell/RenamePreservesWorkingTreeCompareState",
           TestWorkspaceShellRenamePreservesWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/RenamePreservesBranchCompareSemantics",
@@ -326,6 +460,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
 #if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);
+  AddTest(tests, "WorkspaceShell/DeletePromptOnlyClosesAffectedSplitEditor",
+          TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor);
 #endif
 }
 

@@ -228,9 +228,9 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
     const std::string action =
         dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ? "renaming " : "deleting ";
     return dirty_prompt_state_.dirty_count == 1
-               ? "Save the dirty tab before " + action + label + "?"
+               ? "Save the affected dirty editor before " + action + label + "?"
                : "Save the " + std::to_string(dirty_prompt_state_.dirty_count) +
-                     " dirty tabs before " + action + label + "?";
+                     " affected dirty editors before " + action + label + "?";
   }
 
   const std::size_t index = dirty_prompt_state_.tab_index;
@@ -375,23 +375,55 @@ bool WorkspaceShell::EditorTabHasDirtyPath(std::size_t tab_index,
   return false;
 }
 
-std::vector<std::size_t> WorkspaceShell::DirtyTabIndicesForPath(
+std::vector<WorkspaceShell::DirtyPathTarget> WorkspaceShell::DirtyPathTargetsForPath(
     const std::filesystem::path& path) const {
-  std::vector<std::size_t> indices;
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  std::vector<DirtyPathTarget> targets;
   for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
-    if (EditorTabHasDirtyPath(i, path)) {
-      indices.push_back(i);
+    const TabEntry& tab = open_tabs_[i];
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      for (const auto& view : tab.editor_state->views) {
+        const bool active_live_view =
+            i == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id &&
+            !view.needs_restore;
+        const editor::TextViewport& viewport = active_live_view ? text_viewport_ : view.viewport;
+        if (view.needs_restore || viewport.path().empty() || !viewport.dirty()) {
+          continue;
+        }
+        if (PathEqualsOrWithin(viewport.path().lexically_normal(), normalized_path)) {
+          targets.push_back(DirtyPathTarget{
+              .kind = DirtyPathTarget::Kind::EditorView,
+              .tab_index = i,
+              .leaf_id = view.leaf_id,
+          });
+        }
+      }
       continue;
     }
 
-    const TabEntry& tab = open_tabs_[i];
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
         tab.merge->result_viewport.dirty() &&
-        (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
-         PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), path.lexically_normal()) ||
-         PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), path.lexically_normal()) ||
-         PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), path.lexically_normal()))) {
-      indices.push_back(i);
+        (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
+         PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
+         PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), normalized_path) ||
+         PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), normalized_path))) {
+      targets.push_back(DirtyPathTarget{
+          .kind = DirtyPathTarget::Kind::MergeTab,
+          .tab_index = i,
+      });
+    }
+  }
+  return targets;
+}
+
+std::vector<std::size_t> WorkspaceShell::DirtyTabIndicesForPath(
+    const std::filesystem::path& path) const {
+  const std::vector<DirtyPathTarget> targets = DirtyPathTargetsForPath(path);
+  std::vector<std::size_t> indices;
+  indices.reserve(targets.size());
+  for (const DirtyPathTarget& target : targets) {
+    if (std::find(indices.begin(), indices.end(), target.tab_index) == indices.end()) {
+      indices.push_back(target.tab_index);
     }
   }
   return indices;
@@ -456,8 +488,8 @@ bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path
 bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
                                              DirtyPromptState::Kind prompt_kind,
                                              DirtyPathResolution resolution) {
-  const std::vector<std::size_t> dirty_tabs = DirtyTabIndicesForPath(path);
-  if (dirty_tabs.empty()) {
+  const std::vector<DirtyPathTarget> dirty_targets = DirtyPathTargetsForPath(path);
+  if (dirty_targets.empty()) {
     return true;
   }
 
@@ -465,8 +497,8 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
     dirty_prompt_visible_ = true;
     dirty_prompt_previous_focus_ = focus_;
     dirty_prompt_state_.kind = prompt_kind;
-    dirty_prompt_state_.dirty_tabs = dirty_tabs;
-    dirty_prompt_state_.dirty_count = dirty_tabs.size();
+    dirty_prompt_state_.dirty_tabs = DirtyTabIndicesForPath(path);
+    dirty_prompt_state_.dirty_count = dirty_targets.size();
     dirty_prompt_state_.path = path.lexically_normal();
     dirty_prompt_state_.selected_action = 0;
     focus_ = FocusTarget::Overlay;
@@ -474,11 +506,70 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
   }
 
   if (resolution == DirtyPathResolution::Save) {
-    for (std::size_t index : dirty_tabs) {
-      if (!SaveTab(index)) {
+    bool saved_any = false;
+    for (const DirtyPathTarget& target : dirty_targets) {
+      if (target.tab_index >= open_tabs_.size()) {
+        continue;
+      }
+
+      auto& tab = open_tabs_[target.tab_index];
+      if (target.kind == DirtyPathTarget::Kind::MergeTab) {
+        if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+          continue;
+        }
+        if (!tab.merge->result_viewport.dirty()) {
+          continue;
+        }
+        if (!tab.merge->result_viewport.Save()) {
+          LogMessage("Save failed");
+          return false;
+        }
+        saved_any = true;
+        continue;
+      }
+
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          tab.editor_state->views.empty()) {
+        continue;
+      }
+
+      if (target.tab_index == active_tab_index_) {
+        SyncActiveEditorTab();
+      }
+
+      auto* view_state = FindEditorViewState(*tab.editor_state, target.leaf_id);
+      if (view_state == nullptr) {
+        continue;
+      }
+
+      editor::TextViewport* viewport = &view_state->viewport;
+      if (target.tab_index == active_tab_index_ &&
+          target.leaf_id == tab.editor_state->active_leaf_id && !view_state->needs_restore) {
+        viewport = &text_viewport_;
+      }
+
+      if (view_state->needs_restore || viewport->path().empty() || !viewport->dirty()) {
+        continue;
+      }
+
+      if (!viewport->Save()) {
         LogMessage("Save failed");
         return false;
       }
+      saved_any = true;
+
+      view_state->restored_path = viewport->path().lexically_normal();
+      view_state->restored_cursor_line = viewport->cursor_line();
+      view_state->restored_cursor_column = viewport->cursor_column();
+      view_state->restored_scroll_line = viewport->scroll_line();
+      view_state->restored_horizontal_scroll = viewport->horizontal_scroll();
+      view_state->needs_restore = false;
+      if (viewport == &text_viewport_) {
+        view_state->viewport = text_viewport_;
+      }
+    }
+    if (saved_any) {
+      directory_tree_.Refresh();
     }
   }
 
@@ -648,7 +739,96 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
     SyncActiveEditorTab();
   }
 
-  std::vector<std::size_t> indices = AffectedEditorTabIndices(path);
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    auto& tab = open_tabs_[i];
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+      continue;
+    }
+
+    std::vector<std::size_t> removed_leaf_ids;
+    for (const auto& view : tab.editor_state->views) {
+      const std::filesystem::path current_path = EditorViewPath(view);
+      if (!current_path.empty() && PathEqualsOrWithin(current_path, normalized_path)) {
+        removed_leaf_ids.push_back(view.leaf_id);
+      }
+    }
+    if (removed_leaf_ids.empty()) {
+      continue;
+    }
+
+    const auto leaf_removed = [&](std::size_t leaf_id) {
+      return std::find(removed_leaf_ids.begin(), removed_leaf_ids.end(), leaf_id) !=
+             removed_leaf_ids.end();
+    };
+
+    tab.editor_state->views.erase(
+        std::remove_if(tab.editor_state->views.begin(), tab.editor_state->views.end(),
+                       [&](const auto& view) { return leaf_removed(view.leaf_id); }),
+        tab.editor_state->views.end());
+
+    const auto prune_node = [&](auto&& self,
+                                std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>& node)
+        -> void {
+      if (node == nullptr) {
+        return;
+      }
+      if (node->IsLeaf()) {
+        if (leaf_removed(node->leaf_id)) {
+          node.reset();
+        }
+        return;
+      }
+
+      for (auto& child : node->children) {
+        self(self, child);
+      }
+      node->children.erase(std::remove(node->children.begin(), node->children.end(), nullptr),
+                           node->children.end());
+      if (node->children.empty()) {
+        node.reset();
+        return;
+      }
+      if (node->children.size() == 1) {
+        auto child = std::move(node->children.front());
+        child->size_fraction = std::max(node->size_fraction, child->size_fraction);
+        node = std::move(child);
+      }
+    };
+    prune_node(prune_node, tab.editor_state->split_root);
+
+    if (tab.editor_state->views.empty() || tab.editor_state->split_root == nullptr) {
+      indices.push_back(i);
+      continue;
+    }
+
+    NormalizeEditorSplitTree(*tab.editor_state);
+    if (leaf_removed(tab.editor_state->active_leaf_id)) {
+      const std::vector<std::size_t> leaf_order = EditorLeafOrder(*tab.editor_state);
+      if (!leaf_order.empty()) {
+        tab.editor_state->active_leaf_id = leaf_order.front();
+      } else {
+        tab.editor_state->active_leaf_id = tab.editor_state->views.front().leaf_id;
+      }
+    }
+
+    if (i == active_tab_index_) {
+      if (auto* active_view = FindEditorView(*tab.editor_state, tab.editor_state->active_leaf_id);
+          active_view != nullptr) {
+        text_viewport_ = *active_view;
+        ApplyEditorPreferences(text_viewport_);
+      }
+      SyncActiveEditorTabMetadata();
+      ResetCaretBlink();
+    } else if (const auto* active_view =
+                   FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
+               active_view != nullptr) {
+      tab.path = EditorViewPath(*active_view);
+      tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+    }
+  }
+
   const std::vector<std::size_t> compare_indices = AffectedCompareTabIndices(path);
   const std::vector<std::size_t> merge_indices = AffectedMergeTabIndices(path);
   indices.insert(indices.end(), compare_indices.begin(), compare_indices.end());

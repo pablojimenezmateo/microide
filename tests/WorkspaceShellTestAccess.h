@@ -62,6 +62,21 @@ struct WorkspaceShellTestAccess {
   }
 
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
+  static bool SplitActiveEditor(WorkspaceShell& shell, bool vertical = true) {
+    return shell.SplitActiveEditor(vertical ? WorkspaceShell::EditorSplitOrientation::Vertical
+                                            : WorkspaceShell::EditorSplitOrientation::Horizontal);
+  }
+  static bool ActivateOrderedEditorSplit(WorkspaceShell& shell, std::size_t order_index) {
+    return shell.ActivateOrderedEditorSplit(order_index);
+  }
+  static bool ReplaceActiveEditorWithFile(WorkspaceShell& shell, const std::filesystem::path& path) {
+    editor::TextViewport opened_view;
+    if (!opened_view.OpenFile(path)) {
+      return false;
+    }
+    shell.ApplyEditorPreferences(opened_view);
+    return shell.ReplaceActiveEditorView(opened_view);
+  }
   static bool OpenWorkingTreeComparison(WorkspaceShell& shell,
                                         const std::filesystem::path& path,
                                         const std::string& left_ref,
@@ -110,6 +125,9 @@ struct WorkspaceShellTestAccess {
   }
 
   static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.dirty_prompt_visible_; }
+  static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
+    return shell.DirtyPromptMessage();
+  }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
     return shell.prompt_surface_visible_;
   }
