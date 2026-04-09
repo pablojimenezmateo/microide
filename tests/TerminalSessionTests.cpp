@@ -192,6 +192,30 @@ void TestTerminalSessionReportsDeviceAttributesQueries() {
          "device-attribute and status queries should emit terminal responses");
 }
 
+void TestTerminalSessionOriginModeMakesCupRelativeToScrollRegion() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;4r\x1b[?6h\x1b[1;1HZ");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "A", "origin mode should preserve rows above the scroll region");
+  ExpectLineText(lines, 1, "Z", "origin mode should make CUP row 1 target the top margin");
+  Expect(session.cursor_row() == 1 && session.cursor_column() == 1,
+         "origin mode should keep the cursor relative to the scroll region");
+}
+
+void TestTerminalSessionDisableOriginModeRestoresAbsoluteCup() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;4r\x1b[?6h\x1b[?6l\x1b[1;1HZ");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "Z", "disabling origin mode should restore absolute CUP addressing");
+  ExpectLineText(lines, 1, "B", "disabling origin mode should stop rebasing row 1 to the margin");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -221,6 +245,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionReportsCursorPositionQueries);
   AddTest(tests, "TerminalSession/ReportsDeviceAttributesQueries",
           TestTerminalSessionReportsDeviceAttributesQueries);
+  AddTest(tests, "TerminalSession/OriginModeMakesCupRelativeToScrollRegion",
+          TestTerminalSessionOriginModeMakesCupRelativeToScrollRegion);
+  AddTest(tests, "TerminalSession/DisableOriginModeRestoresAbsoluteCup",
+          TestTerminalSessionDisableOriginModeRestoresAbsoluteCup);
 }
 
 }  // namespace microide::tests

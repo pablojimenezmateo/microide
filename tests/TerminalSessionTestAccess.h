@@ -34,6 +34,7 @@ struct TerminalSessionTestAccess {
     session.mouse_tracking_any_ = false;
     session.mouse_sgr_ext_mode_ = false;
     session.application_cursor_keys_mode_ = false;
+    session.origin_mode_ = false;
     session.auto_wrap_mode_ = true;
     session.bracketed_paste_mode_ = false;
     session.cursor_visible_ = true;

@@ -155,6 +155,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
     application_cursor_keys_mode_ = false;
+    origin_mode_ = false;
     auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
@@ -234,6 +235,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
     application_cursor_keys_mode_ = false;
+    origin_mode_ = false;
     auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
@@ -293,6 +295,7 @@ void TerminalSession::Stop() {
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
     application_cursor_keys_mode_ = false;
+    origin_mode_ = false;
     auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
@@ -325,6 +328,7 @@ void TerminalSession::Stop() {
   mouse_tracking_any_ = false;
   mouse_sgr_ext_mode_ = false;
   application_cursor_keys_mode_ = false;
+  origin_mode_ = false;
   auto_wrap_mode_ = true;
   bracketed_paste_mode_ = false;
   cursor_visible_ = true;
@@ -888,7 +892,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'H':
     case 'f':
       MoveCursorLocked(
-          static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)),
+          static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)) +
+              ((use_alternate_screen_ && origin_mode_) ? ActiveScrollRegionTopLocked() : 0),
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 1, 1) - 1)));
       return;
     case 'J':
@@ -983,7 +988,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       return;
     case 'd':
       MoveCursorLocked(
-          static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)),
+          static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)) +
+              ((use_alternate_screen_ && origin_mode_) ? ActiveScrollRegionTopLocked() : 0),
           cursor_column_);
       return;
     case 'r': {
@@ -1021,6 +1027,14 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
   switch (mode) {
     case 1:
       application_cursor_keys_mode_ = enabled;
+      return;
+    case 6:
+      origin_mode_ = enabled;
+      if (enabled) {
+        MoveCursorLocked(ActiveScrollRegionTopLocked(), 0);
+      } else {
+        MoveCursorLocked(0, 0);
+      }
       return;
     case 7:
       auto_wrap_mode_ = enabled;
@@ -1358,7 +1372,14 @@ void TerminalSession::AdvanceCursorRowLocked() {
 }
 
 void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
-  cursor_row_ = use_alternate_screen_ ? std::min(row, std::max<std::size_t>(1, rows_) - 1) : row;
+  if (use_alternate_screen_) {
+    const std::size_t max_row = origin_mode_ ? ActiveScrollRegionBottomLocked()
+                                             : std::max<std::size_t>(1, rows_) - 1;
+    const std::size_t min_row = origin_mode_ ? ActiveScrollRegionTopLocked() : 0;
+    cursor_row_ = std::clamp(row, min_row, max_row);
+  } else {
+    cursor_row_ = row;
+  }
   cursor_column_ =
       columns_ > 0 ? std::min(column, columns_ - 1) : column;
   EnsureCursorLineExistsLocked();

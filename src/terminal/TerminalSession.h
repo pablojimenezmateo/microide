@@ -178,6 +178,7 @@ class TerminalSession {
   bool mouse_tracking_any_ = false;
   bool mouse_sgr_ext_mode_ = false;
   bool application_cursor_keys_mode_ = false;
+  bool origin_mode_ = false;
   bool auto_wrap_mode_ = true;
   bool bracketed_paste_mode_ = false;
   bool cursor_visible_ = true;
