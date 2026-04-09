@@ -22,6 +22,7 @@ This scaffold provides:
 - project-local editor preferences for tab size, indent width, and soft-tabs
 - tab-aware text layout with visual-column cursor positioning
 - editor load/save now preserves detected line endings
+- editor large-file mode disables syntax highlighting above size or line-count thresholds
 - extracted text renderer and editor view renderer modules
 - optional `SDL3_ttf` text backend with debug-text fallback
 - cached file-finder overlay

@@ -71,6 +71,7 @@ struct WorkspaceShellTestAccess {
     return shell.open_tabs_;
   }
   static const std::string& StatusMessage(const WorkspaceShell& shell) { return shell.status_message_; }
+  static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
 };
 
 }  // namespace microide::workspace
@@ -190,11 +191,25 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
 }
 #endif
 
+void TestWorkspaceShellLargeFileBreadcrumbLabel() {
+  WorkspaceShell shell;
+  const std::filesystem::path project_root = FixturePath("large");
+  const std::filesystem::path file_path = FixturePath("large/code/large_sample.cpp");
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+
+  const std::string breadcrumb = WorkspaceShellTestAccess::BreadcrumbLabel(shell);
+  Expect(breadcrumb.find("large file mode") != std::string::npos,
+         "large file editors should surface the mode in the breadcrumb");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
+  AddTest(tests, "WorkspaceShell/LargeFileBreadcrumbLabel",
+          TestWorkspaceShellLargeFileBreadcrumbLabel);
 #if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);

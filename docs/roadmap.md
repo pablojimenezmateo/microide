@@ -77,9 +77,7 @@ Remaining work:
 
 The biggest remaining editor-facing gaps are:
 
-- soft wrap
-- explicit large-file behavior validation and, if needed, large-file mode heuristics
-- recent project or recent file affordances if the current typed-path workflow proves too thin
+- explicit validation and threshold tuning for editor large-file mode
 - continued UTF-8 and IME hardening while the buffer model is still byte-oriented
 
 Diagnostics and problem styling belong here only if a diagnostics phase is intentionally started.
@@ -128,3 +126,5 @@ These are not roadmap items for the current product:
 - plugin runtimes or marketplaces
 - cloud sync and collaboration
 - built-in chat surfaces
+- recent project or recent file affordances
+- soft wrap

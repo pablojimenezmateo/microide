@@ -154,6 +154,7 @@ add_executable(microide_tests
   tests/ProjectSearchServiceTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp
+  tests/TextViewportTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellSharedCoreTests.cpp
   tests/WorkspaceShellSharedLayoutTests.cpp

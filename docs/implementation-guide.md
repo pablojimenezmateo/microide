@@ -78,6 +78,8 @@ These are out of scope unless deliberately added as a separate phase:
 - AI/chat surfaces
 - account systems and sync
 - native GitHub-style review dashboards
+- recent-project and recent-file surfaces
+- soft wrap
 
 LSP-backed diagnostics are also a separate phase, not an implicit requirement of the current shell.
 

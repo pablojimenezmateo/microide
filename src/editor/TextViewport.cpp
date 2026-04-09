@@ -15,6 +15,8 @@ constexpr std::size_t kHorizontalScrollMargin = 6;
 constexpr std::size_t kMaxHistoryEntries = 128;
 constexpr std::size_t kVisibleLineCacheLimit = 256;
 constexpr std::size_t kHighlightCacheLimit = 256;
+constexpr std::size_t kLargeFileByteThreshold = 384 * 1024;
+constexpr std::size_t kLargeFileLineThreshold = 4000;
 
 std::string ToLower(std::string_view text) {
   std::string lowered(text);
@@ -22,6 +24,10 @@ std::string ToLower(std::string_view text) {
     return static_cast<char>(std::tolower(c));
   });
   return lowered;
+}
+
+bool ShouldUseLargeFileMode(std::string_view content, std::size_t line_count) {
+  return content.size() >= kLargeFileByteThreshold || line_count >= kLargeFileLineThreshold;
 }
 
 }  // namespace
@@ -44,13 +50,15 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
 
   std::ostringstream buffer;
   buffer << file.rdbuf();
-  const DecodedDocument decoded = DecodeDocument(buffer.str());
+  const std::string content = buffer.str();
+  const DecodedDocument decoded = DecodeDocument(content);
 
   document_->path = path;
   document_->lines = decoded.lines;
   document_->line_ending = decoded.line_ending;
   document_->mixed_line_endings = decoded.mixed_line_endings;
   document_->encoding = decoded.encoding;
+  document_->large_file_mode = ShouldUseLargeFileMode(content, document_->lines.size());
   cursor_line_ = 0;
   cursor_column_ = 0;
   preferred_column_ = 0;
@@ -109,6 +117,7 @@ void TextViewport::LoadContent(std::string_view content,
   document_->line_ending = line_ending.value_or(decoded.line_ending);
   document_->mixed_line_endings = line_ending.has_value() ? false : decoded.mixed_line_endings;
   document_->encoding = decoded.encoding;
+  document_->large_file_mode = ShouldUseLargeFileMode(content, document_->lines.size());
   cursor_line_ = 0;
   cursor_column_ = 0;
   preferred_column_ = 0;
@@ -153,6 +162,7 @@ void TextViewport::SetPlaceholderText(std::string text) {
   document_->redo_stack.clear();
   document_->placeholder = true;
   document_->dirty = false;
+  document_->large_file_mode = false;
   InvalidateLayoutCaches();
 }
 
@@ -173,6 +183,7 @@ void TextViewport::SetUntitledBuffer() {
   document_->redo_stack.clear();
   document_->placeholder = false;
   document_->dirty = false;
+  document_->large_file_mode = false;
   InvalidateLayoutCaches();
 }
 
@@ -662,6 +673,9 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   if (line_index >= document_->lines.size()) {
     return kEmptyTokens;
   }
+  if (!syntax_highlighting_enabled()) {
+    return kEmptyTokens;
+  }
 
   EnsureInitialHighlightState();
   if (line_index > 0) {
@@ -778,6 +792,10 @@ void TextViewport::MarkDirty() {
 }
 
 void TextViewport::EnsureInitialHighlightState() const {
+  if (!syntax_highlighting_enabled()) {
+    initial_highlight_state_.reset();
+    return;
+  }
   if (initial_highlight_state_.has_value()) {
     return;
   }
@@ -785,7 +803,7 @@ void TextViewport::EnsureInitialHighlightState() const {
 }
 
 void TextViewport::EnsureHighlightStatesThrough(std::size_t line_index) const {
-  if (document_->lines.empty()) {
+  if (!syntax_highlighting_enabled() || document_->lines.empty()) {
     return;
   }
 

@@ -2533,7 +2533,11 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
   if (text_viewport_.path().empty()) {
     return text_viewport_.is_placeholder() ? "welcome" : "untitled";
   }
-  return RelativePathLabel(project_root_, text_viewport_.path());
+  std::string label = RelativePathLabel(project_root_, text_viewport_.path());
+  if (text_viewport_.large_file_mode()) {
+    label += "  |  large file mode";
+  }
+  return label;
 }
 
 std::string WorkspaceShell::ProjectLabel() const {

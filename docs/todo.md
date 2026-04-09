@@ -50,8 +50,8 @@ These are done and should not be treated as open migration work:
 ### Tree And Project Workflows
 
 - `[~]` create, rename, and delete flows exist; dirty rename/delete now offer save or discard prompts, but split-tab, compare-tab, and follow-up workflow polish still remains
-- `[~]` open-project exists through the command bar and File menu, but still relies on typed paths rather than a dedicated picker or recent-project flow
-- `[ ]` recent files or recent projects, if that workflow still feels worth adding after more usage
+- `[~]` open-project exists through the command bar and File menu, but still relies on typed paths rather than a dedicated picker
+- `[-]` recent files and recent projects
 
 ### Terminal
 
@@ -61,8 +61,8 @@ These are done and should not be treated as open migration work:
 ### Editor
 
 - `[~]` UTF-8 entry and IME preedit rendering exist, but the underlying text model is still byte-oriented
-- `[ ]` soft wrap
-- `[ ]` explicit large-file behavior validation and, if needed, large-file mode heuristics
+- `[~]` editor large-file mode now disables syntax highlighting above size or line-count thresholds, but the thresholds still need more validation on real repositories
+- `[-]` soft wrap
 - `[ ]` diagnostics or problem styling only if a diagnostics phase is intentionally started
 
 ### Git And Project Services

@@ -97,6 +97,10 @@ class TextViewport {
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;
+  bool large_file_mode() const { return document_->large_file_mode; }
+  bool syntax_highlighting_enabled() const {
+    return !document_->placeholder && !document_->large_file_mode;
+  }
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
   bool has_selection() const;
@@ -130,6 +134,7 @@ class TextViewport {
     TextEncoding encoding = TextEncoding::ASCII;
     bool placeholder = true;
     bool dirty = false;
+    bool large_file_mode = false;
     std::size_t layout_revision = 0;
   };
 
