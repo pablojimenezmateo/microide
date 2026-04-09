@@ -7,6 +7,10 @@
 namespace microide::workspace {
 
 bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
+  if (project_open_dialog_event_type_ != 0 && event.type == project_open_dialog_event_type_) {
+    ConsumePendingProjectOpenDialogResult();
+    return true;
+  }
   if (project_search_event_type_ != 0 && event.type == project_search_event_type_) {
     ConsumeProjectSearchUpdates();
     return true;

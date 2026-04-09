@@ -108,6 +108,7 @@ bool Application::Initialize() {
       return false;
     }
   }
+  workspace_shell_.SetDialogWindow(window_);
 
   custom_window_chrome_enabled_ = false;
   {
@@ -144,6 +145,7 @@ void Application::Shutdown() {
     return;
   }
 
+  workspace_shell_.SetDialogWindow(nullptr);
   workspace_shell_.Shutdown();
 
   if (window_ != nullptr) {

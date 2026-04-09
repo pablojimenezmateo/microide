@@ -5,7 +5,9 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -52,6 +54,7 @@ class WorkspaceShell {
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
   void SetWindowChromeState(int width, int height, bool maximized, bool custom_enabled);
+  void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
   WindowAction ConsumeWindowAction();
 
@@ -407,6 +410,19 @@ class WorkspaceShell {
     Discard,
   };
 
+  enum class ProjectOpenDialogLaunchResult {
+    Launched,
+    AlreadyOpen,
+    Unavailable,
+  };
+
+  struct PendingProjectOpenDialogResult {
+    bool ready = false;
+    bool cancelled = false;
+    std::filesystem::path selected_path;
+    std::string error_message;
+  };
+
   struct TerminalSelectionPosition {
     std::size_t row = 0;
     std::size_t column = 0;
@@ -669,6 +685,11 @@ class WorkspaceShell {
   int NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const;
   static char KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers);
   std::filesystem::path ResolveProjectRootInput(const std::filesystem::path& project_root) const;
+  ProjectOpenDialogLaunchResult OpenNativeProjectPicker(std::string* error_message = nullptr);
+  static void SDLCALL OnProjectOpenDialogComplete(void* userdata,
+                                                  const char* const* filelist,
+                                                  int filter);
+  void ConsumePendingProjectOpenDialogResult();
   bool SetProjectRoot(const std::filesystem::path& project_root);
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
@@ -1090,7 +1111,13 @@ class WorkspaceShell {
   std::uint64_t project_search_run_id_ = 0;
   Uint32 project_search_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
+  Uint32 project_open_dialog_event_type_ = 0;
   project::ProjectSearchService project_search_service_;
+  std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
+  SDL_Window* dialog_window_ = nullptr;
+  bool project_open_dialog_active_ = false;
+  std::mutex project_open_dialog_mutex_;
+  PendingProjectOpenDialogResult pending_project_open_dialog_result_;
   std::filesystem::path compare_picker_path_;
   std::string compare_picker_query_;
   std::vector<project::GitCommitEntry> compare_picker_commits_;

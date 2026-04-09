@@ -13,6 +13,7 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests);
@@ -31,6 +32,7 @@ int main() {
   microide::tests::RegisterProjectSearchServiceTests(tests);
   microide::tests::RegisterTextViewportTests(tests);
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
+  microide::tests::RegisterWorkspaceShellProjectTests(tests);
   microide::tests::RegisterWorkspaceShellSessionTests(tests);
   microide::tests::RegisterGitServiceTests(tests);
   microide::tests::RegisterMergeModelTests(tests);

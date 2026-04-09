@@ -291,6 +291,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     return;
   }
 
+  ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer);
   last_window_width_ = width;

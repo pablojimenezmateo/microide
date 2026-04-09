@@ -3,6 +3,8 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <filesystem>
+#include <functional>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -104,6 +106,41 @@ struct WorkspaceShellTestAccess {
                              bool log_feedback = false) {
     return shell.OpenProjectTab(project_root, restore_persistence, log_feedback);
   }
+  static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteProjectOpenFromCommand(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
+                               WorkspaceShell::ActionSource::Command);
+  }
+  static void SetProjectOpenDialogLauncher(
+      WorkspaceShell& shell,
+      std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
+    shell.project_open_dialog_launcher_ = std::move(launcher);
+  }
+  static void QueueProjectOpenDialogSelection(WorkspaceShell& shell,
+                                              const std::filesystem::path& path) {
+    std::lock_guard<std::mutex> lock(shell.project_open_dialog_mutex_);
+    shell.pending_project_open_dialog_result_ = WorkspaceShell::PendingProjectOpenDialogResult{
+        .ready = true,
+        .cancelled = false,
+        .selected_path = path.lexically_normal(),
+        .error_message = {},
+    };
+  }
+  static void QueueProjectOpenDialogCancel(WorkspaceShell& shell) {
+    std::lock_guard<std::mutex> lock(shell.project_open_dialog_mutex_);
+    shell.pending_project_open_dialog_result_ = WorkspaceShell::PendingProjectOpenDialogResult{
+        .ready = true,
+        .cancelled = true,
+        .selected_path = {},
+        .error_message = {},
+    };
+  }
+  static void ConsumePendingProjectOpenDialogResult(WorkspaceShell& shell) {
+    shell.ConsumePendingProjectOpenDialogResult();
+  }
   static bool SwitchProject(WorkspaceShell& shell,
                             std::size_t index,
                             bool log_feedback = false) {
@@ -143,6 +180,11 @@ struct WorkspaceShellTestAccess {
   static const std::filesystem::path& ProjectRoot(const WorkspaceShell& shell) {
     return shell.project_root_;
   }
+  static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
+    return shell.project_open_dialog_active_;
+  }
+  static bool CommandMode(const WorkspaceShell& shell) { return shell.command_mode_; }
+  static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_input_; }
 };
 
 }  // namespace microide::workspace

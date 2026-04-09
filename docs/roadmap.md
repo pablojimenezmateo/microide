@@ -68,10 +68,7 @@ Current state:
 - rename retargets affected tabs and delete closes affected tabs
 - dirty rename and delete now prompt to save or discard affected editors instead of silently discarding work
 - split editor tabs now keep unaffected panes open during rename or delete flows instead of treating the whole tab as disposable
-
-Remaining work:
-
-- decide whether project open should graduate from a typed path flow to a dedicated picker
+- project open now prefers a native folder picker from the File menu and bare `project-open`, while `project-open [path]` remains available as a direct fallback
 
 ### 4. Fill the editor gaps that still matter for a micro-IDE
 

@@ -49,8 +49,8 @@ These are done and should not be treated as open migration work:
 
 ### Tree And Project Workflows
 
-- `[~]` create, rename, and delete flows exist; dirty rename/delete now target only the affected editors inside split tabs while preserving compare and merge tab state, but open-project still relies on typed paths
-- `[~]` open-project exists through the command bar and File menu, but still relies on typed paths rather than a dedicated picker
+- `[x]` create, rename, and delete flows now target only the affected editors inside split tabs while preserving compare and merge tab state
+- `[x]` open-project now uses a native folder picker from the File menu and bare `project-open`, while `project-open [path]` still works as a direct fallback
 - `[-]` recent files and recent projects
 
 ### Terminal
@@ -87,6 +87,7 @@ These are done and should not be treated as open migration work:
 
 - `[ ]` editor-core unit tests for text editing primitives and undo/redo
 - `[~]` project-search backend coverage exists, but cancellation and larger-project behavior still need more validation
+- `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, and compare/merge rename state, but broader workflows still need more validation
 - `[ ]` broader compare and merge workflow tests

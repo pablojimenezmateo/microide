@@ -248,7 +248,7 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::OpenSelectedTreeItemInNewTab, "", "", "Open in New Tab", ""},
       ActionSpec{ActionId::ProjectClose, "project-close", "project-close", "Close Project", ""},
       ActionSpec{ActionId::ProjectNext, "project-next", "project-next", "Next Project", ""},
-      ActionSpec{ActionId::ProjectOpen, "project-open", "project-open <path>", "Open Project",
+      ActionSpec{ActionId::ProjectOpen, "project-open", "project-open [path]", "Open Project",
                  ""},
       ActionSpec{ActionId::ProjectPrev, "project-prev", "project-prev", "Previous Project", ""},
       ActionSpec{ActionId::ProjectSearch, "project-search", "project-search [query]",
@@ -578,6 +578,11 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
   terminal_event_type_ = SDL_RegisterEvents(1);
   if (terminal_event_type_ == static_cast<Uint32>(-1)) {
     terminal_event_type_ = 0;
+  }
+
+  project_open_dialog_event_type_ = SDL_RegisterEvents(1);
+  if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
+    project_open_dialog_event_type_ = 0;
   }
 
   {
@@ -1720,15 +1725,28 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::ProjectOpen:
       if (args.empty()) {
-        if (source == ActionSource::Menu) {
-          command_mode_ = true;
-          focus_ = FocusTarget::Panel;
-          command_input_ = "project-open ";
-          ResetCommandSessionState();
-          LogMessage("Enter a project path");
-          return true;
+        std::string picker_error;
+        switch (OpenNativeProjectPicker(&picker_error)) {
+          case ProjectOpenDialogLaunchResult::Launched:
+            LogMessage("Project picker opened");
+            return true;
+          case ProjectOpenDialogLaunchResult::AlreadyOpen:
+            LogMessage("Project picker already open");
+            return true;
+          case ProjectOpenDialogLaunchResult::Unavailable:
+            if (source == ActionSource::Menu) {
+              command_mode_ = true;
+              focus_ = FocusTarget::Panel;
+              command_input_ = "project-open ";
+              ResetCommandSessionState();
+              LogMessage(picker_error.empty() ? "Enter a project path"
+                                              : "Project picker unavailable. Enter a project path");
+              return true;
+            }
+            LogMessage(picker_error.empty() ? "usage: project-open [path]"
+                                            : "Project picker unavailable: " + picker_error);
+            return true;
         }
-        LogMessage("usage: project-open <path>");
         return true;
       }
       OpenProjectTab(std::filesystem::path(args[0]), true, true);
