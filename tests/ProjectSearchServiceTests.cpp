@@ -20,6 +20,7 @@ using microide::project::ProjectSearchService;
 struct SearchRunResult {
   std::vector<ProjectSearchResult> results;
   std::string error;
+  bool truncated = false;
   bool finished = false;
 };
 
@@ -40,6 +41,7 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
       if (!update.error.empty()) {
         result.error = std::move(update.error);
       }
+      result.truncated = result.truncated || update.truncated;
       if (update.finished) {
         result.finished = true;
         break;
@@ -156,6 +158,114 @@ void TestProjectSearchServiceHiddenAndBinaryFiles() {
   Expect(has_hidden_match, "hidden-inclusive project search should include hidden matches");
 }
 
+void TestProjectSearchServicePublishesStableResultOrdering() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha alpha\nbeta alpha\n");
+  WriteFile(root / "b.txt", "gamma\nalpha\n");
+  WriteFile(root / "c.txt", "Alpha\n");
+
+  const auto ordered = RunProjectSearch(root, "alpha");
+  Expect(ordered.finished, "ordered project search should finish");
+  Expect(ordered.error.empty(), "ordered project search should not error");
+  Expect(!ordered.truncated, "ordered project search should not truncate small result sets");
+  Expect(ordered.results.size() == 5,
+         "ordered project search should report every match across files and lines");
+
+  Expect(ordered.results[0].relative_path == std::filesystem::path("a.txt") &&
+             ordered.results[0].line == 0 && ordered.results[0].column == 0,
+         "project search should report the first file-leading match first");
+  Expect(ordered.results[1].relative_path == std::filesystem::path("a.txt") &&
+             ordered.results[1].line == 0 && ordered.results[1].column == 6,
+         "project search should keep later matches on the same line in column order");
+  Expect(ordered.results[2].relative_path == std::filesystem::path("a.txt") &&
+             ordered.results[2].line == 1 && ordered.results[2].column == 5,
+         "project search should keep later lines in the same file in order");
+  Expect(ordered.results[3].relative_path == std::filesystem::path("b.txt") &&
+             ordered.results[3].line == 1 && ordered.results[3].column == 0,
+         "project search should move to the next file in lexical path order");
+  Expect(ordered.results[4].relative_path == std::filesystem::path("c.txt") &&
+             ordered.results[4].line == 0 && ordered.results[4].column == 0,
+         "project search should preserve sorted file ordering across the full result set");
+}
+
+void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::string repeated_lines;
+  for (int line = 0; line < 25; ++line) {
+    repeated_lines += "alpha\n";
+  }
+  for (int file_index = 0; file_index < 10; ++file_index) {
+    const std::string label = file_index < 10 ? "0" + std::to_string(file_index)
+                                              : std::to_string(file_index);
+    WriteFile(root / ("file" + label + ".txt"), repeated_lines);
+  }
+
+  const auto capped = RunProjectSearch(root, "alpha");
+  Expect(capped.finished, "large project search should finish");
+  Expect(capped.error.empty(), "large project search should not error");
+  Expect(capped.truncated, "large project search should report when the result set is capped");
+  Expect(capped.results.size() == 200,
+         "large project search should publish the full capped result set");
+  Expect(capped.results.front().relative_path == std::filesystem::path("file00.txt") &&
+             capped.results.front().line == 0 && capped.results.front().column == 0,
+         "large project search should keep the first capped match");
+  Expect(capped.results.back().relative_path == std::filesystem::path("file07.txt") &&
+             capped.results.back().line == 24 && capped.results.back().column == 0,
+         "large project search should keep the last published capped match");
+}
+
+void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::string repeated_lines;
+  for (int line = 0; line < 25; ++line) {
+    repeated_lines += "alpha\n";
+  }
+  for (int file_index = 0; file_index < 10; ++file_index) {
+    const std::string label = "0" + std::to_string(file_index);
+    WriteFile(root / ("file" + label + ".txt"), repeated_lines);
+  }
+  WriteFile(root / "omega.txt", "omega\n");
+
+  ProjectSearchService service;
+  const std::uint64_t first_run_id = service.Start(root, "alpha");
+  const std::uint64_t second_run_id = service.Start(root, "omega");
+
+  SearchRunResult latest;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto update = service.TakePendingUpdate();
+    if (update.run_id == first_run_id) {
+      Expect(false, "restarted project search should discard the previous run updates");
+    }
+    if (update.run_id == second_run_id) {
+      latest.results.insert(latest.results.end(), std::make_move_iterator(update.results.begin()),
+                            std::make_move_iterator(update.results.end()));
+      latest.truncated = latest.truncated || update.truncated;
+      if (!update.error.empty()) {
+        latest.error = std::move(update.error);
+      }
+      if (update.finished) {
+        latest.finished = true;
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  service.Stop();
+  Expect(latest.finished, "restarted project search should finish the latest run");
+  Expect(latest.error.empty(), "restarted project search should not error");
+  Expect(!latest.truncated, "restarted project search should not inherit truncation from the old run");
+  Expect(latest.results.size() == 1,
+         "restarted project search should only publish results from the latest query");
+  Expect(latest.results[0].relative_path == std::filesystem::path("omega.txt") &&
+             latest.results[0].line == 0 && latest.results[0].column == 0,
+         "restarted project search should keep the latest query match");
+}
+
 }  // namespace
 
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
@@ -165,6 +275,12 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceRegexModeAndInvalidRegex);
   AddTest(tests, "ProjectSearchService/HiddenAndBinaryFiles",
           TestProjectSearchServiceHiddenAndBinaryFiles);
+  AddTest(tests, "ProjectSearchService/PublishesStableResultOrdering",
+          TestProjectSearchServicePublishesStableResultOrdering);
+  AddTest(tests, "ProjectSearchService/FlagsTruncatedLargeResultSets",
+          TestProjectSearchServiceFlagsTruncatedLargeResultSets);
+  AddTest(tests, "ProjectSearchService/RestartPublishesOnlyLatestRun",
+          TestProjectSearchServiceRestartPublishesOnlyLatestRun);
 }
 
 }  // namespace microide::tests

@@ -71,6 +71,7 @@ void WorkspaceShell::RefreshProjectSearch() {
   StopProjectSearch();
   project_search_results_.clear();
   project_search_selected_index_ = 0;
+  project_search_truncated_ = false;
   project_search_error_.clear();
 
   if (project_root_.empty() || project_search_query_.empty()) {
@@ -98,12 +99,14 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
 
   for (auto& result : update.results) {
     if (project_search_results_.size() >= kMaxProjectSearchResults) {
+      project_search_truncated_ = true;
       StopProjectSearch();
       break;
     }
     project_search_results_.push_back(std::move(result));
   }
 
+  project_search_truncated_ = project_search_truncated_ || update.truncated;
   if (!update.error.empty()) {
     project_search_error_ = std::move(update.error);
   }

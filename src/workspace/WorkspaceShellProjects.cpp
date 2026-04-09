@@ -207,6 +207,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   project_search_results_.clear();
   project_search_selected_index_ = 0;
   project_search_running_ = false;
+  project_search_truncated_ = false;
   project_search_error_.clear();
   git_sidebar_entries_.clear();
   git_base_ref_.clear();
@@ -377,6 +378,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.project_search_results = std::move(project_search_results_);
   state.project_search_selected_index = project_search_selected_index_;
   state.project_search_running = false;
+  state.project_search_truncated = project_search_truncated_;
   state.project_search_error = std::move(project_search_error_);
   state.git_sidebar_entries = std::move(git_sidebar_entries_);
   state.git_base_ref = std::move(git_base_ref_);
@@ -440,6 +442,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   project_search_results_ = std::move(state.project_search_results);
   project_search_selected_index_ = state.project_search_selected_index;
   project_search_running_ = false;
+  project_search_truncated_ = state.project_search_truncated;
   project_search_error_ = std::move(state.project_search_error);
   git_sidebar_entries_ = std::move(state.git_sidebar_entries);
   git_base_ref_ = std::move(state.git_base_ref);

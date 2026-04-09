@@ -1069,6 +1069,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       draw_search_button(ProjectSearchHiddenButtonRect(layout.sidebar),
                          ProjectSearchHiddenButtonLabel(), project_search_options_.show_hidden);
 
+      const std::string match_actions =
+          ProjectSearchCanReplaceAll()
+              ? "/ query  = replace  r rerun  R replace all"
+              : "/ query  = replace  r rerun  R needs literal mode";
       const std::string status_text =
           project_search_editing_
               ? (project_search_edit_field_ == ProjectSearchEditField::Query
@@ -1081,13 +1085,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           : project_search_results_.empty()
               ? (project_search_query_.empty()
                      ? "/ query  = replace  |  buttons change mode, case, hidden"
-                     : ProjectSearchCanReplaceAll()
-                           ? "No matches  |  / query  = replace  r rerun  R replace all"
-                           : "No matches  |  / query  = replace  r rerun  R needs literal mode")
-              : std::to_string(project_search_results_.size()) +
-                    (ProjectSearchCanReplaceAll()
-                         ? " matches  |  / query  = replace  r rerun  R replace all"
-                         : " matches  |  / query  = replace  r rerun  R needs literal mode");
+                     : "No matches  |  " + match_actions)
+          : project_search_truncated_
+              ? "Showing first " + std::to_string(project_search_results_.size()) +
+                    " matches  |  " + match_actions
+              : std::to_string(project_search_results_.size()) + " matches  |  " + match_actions;
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + kProjectSearchStatusTop,
                    theme_.text_muted,
                    theme_.surface_background,
@@ -1473,6 +1475,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const std::string summary =
           project_search_results_.empty()
               ? "No results"
+          : project_search_truncated_
+              ? std::to_string(project_search_selected_index_ + 1) + " / " +
+                    std::to_string(project_search_results_.size()) + " shown (capped)"
               : std::to_string(project_search_selected_index_ + 1) + " / " +
                     std::to_string(project_search_results_.size()) + " results";
       draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_muted,

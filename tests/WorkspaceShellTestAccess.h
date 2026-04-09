@@ -154,6 +154,23 @@ struct WorkspaceShellTestAccess {
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
   }
+  static void ShowSearchSidebar(WorkspaceShell& shell,
+                                std::string query,
+                                bool temporary = false) {
+    shell.ShowSearchSidebar(std::move(query), temporary);
+  }
+  static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
+    shell.ConsumeProjectSearchUpdates();
+  }
+  static void ToggleProjectSearchPatternMode(WorkspaceShell& shell) {
+    shell.ToggleProjectSearchPatternMode();
+  }
+  static void CycleProjectSearchCaseMode(WorkspaceShell& shell) {
+    shell.CycleProjectSearchCaseMode();
+  }
+  static void ToggleProjectSearchHiddenFiles(WorkspaceShell& shell) {
+    shell.ToggleProjectSearchHiddenFiles();
+  }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
     if (shell.terminal_tabs_.empty()) {
       shell.terminal_tabs_.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
@@ -208,6 +225,19 @@ struct WorkspaceShellTestAccess {
   }
   static const std::filesystem::path& ProjectRoot(const WorkspaceShell& shell) {
     return shell.project_root_;
+  }
+  static const std::vector<project::ProjectSearchResult>& ProjectSearchResults(
+      const WorkspaceShell& shell) {
+    return shell.project_search_results_;
+  }
+  static bool ProjectSearchRunning(const WorkspaceShell& shell) {
+    return shell.project_search_running_;
+  }
+  static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
+    return shell.project_search_truncated_;
+  }
+  static const std::string& ProjectSearchError(const WorkspaceShell& shell) {
+    return shell.project_search_error_;
   }
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_open_dialog_active_;

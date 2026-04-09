@@ -39,6 +39,7 @@ struct ProjectSearchResult {
 struct ProjectSearchUpdate {
   std::uint64_t run_id = 0;
   std::vector<ProjectSearchResult> results;
+  bool truncated = false;
   bool finished = false;
   std::string error;
 };
@@ -55,16 +56,21 @@ class ProjectSearchService {
   ProjectSearchUpdate TakePendingUpdate();
 
  private:
+  struct SearchCompletion {
+    std::string error;
+    bool truncated = false;
+  };
+
   void WorkerMain(std::filesystem::path root,
                   std::string query,
                   ProjectSearchOptions options,
                   std::uint64_t run_id);
-  std::string RunSearch(const std::filesystem::path& root,
-                        const std::string& query,
-                        const ProjectSearchOptions& options,
-                        std::uint64_t run_id);
+  SearchCompletion RunSearch(const std::filesystem::path& root,
+                             const std::string& query,
+                             const ProjectSearchOptions& options,
+                             std::uint64_t run_id);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);
-  void PublishFinished(std::uint64_t run_id, std::string error = {});
+  void PublishFinished(std::uint64_t run_id, SearchCompletion completion);
   void PushWakeEvent() const;
   bool StopRequested() const;
 

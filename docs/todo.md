@@ -44,8 +44,11 @@ These are done and should not be treated as open migration work:
 
 - `[x]` async project search now uses one built-in PCRE2-backed backend and no longer depends on `rg` being installed
 - `[x]` project search exposes literal or regex mode, explicit case mode, and hidden-file inclusion from the sidebar
+- `[x]` sidebar and overlay project search now report when results are capped to the first 200 matches
 - `[~]` replace-in-project is intentionally limited to literal search mode; regex-aware replace is still out of scope
-- `[~]` project-search backend coverage now includes literal mode, regex mode, case controls, hidden files, invalid patterns, and binary skipping
+- `[x]` project-search backend coverage now includes literal mode, regex mode, case controls, hidden files, invalid patterns, binary skipping, stable result ordering, capped result sets, and latest-run restart behavior
+- `[x]` workspace search coverage now checks option-driven reruns for pattern mode, case mode, hidden files, and truncation reset
+- `[x]` `microide_search_bench` provides repeatable larger-repo timing runs for the built-in search backend
 
 ### Tree And Project Workflows
 
@@ -86,7 +89,7 @@ These are done and should not be treated as open migration work:
 ### Testing
 
 - `[~]` editor-core coverage now checks large-file mode on open plus edit-time threshold crossings and undo, but broader text editing primitives and undo/redo still need dedicated tests
-- `[~]` project-search backend coverage exists, but cancellation and larger-project behavior still need more validation
+- `[x]` project-search coverage now checks capped-result handling, stable ordering, latest-run restart behavior, and workspace option reruns
 - `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, device/cursor query replies, and charset-designation escape handling; workspace coverage now checks terminal paste shortcuts, DECCKM-aware navigation keys, and `Esc` delivery, but broader real-app validation is still needed
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation

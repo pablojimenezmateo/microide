@@ -158,6 +158,7 @@ add_executable(microide_tests
   tests/TextViewportTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellProjectTests.cpp
+  tests/WorkspaceShellSearchTests.cpp
   tests/WorkspaceShellSessionTests.cpp
   tests/WorkspaceShellSharedCoreTests.cpp
   tests/WorkspaceShellSharedLayoutTests.cpp
@@ -208,5 +209,27 @@ elseif(MSVC)
   target_compile_options(microide_diff_bench PRIVATE /W4)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_diff_bench PRIVATE /WX)
+  endif()
+endif()
+
+add_executable(microide_search_bench
+  src/project/IgnoreMatcher.cpp
+  src/project/ProjectFileScanner.cpp
+  src/project/ProjectSearchService.cpp
+  tools/ProjectSearchBench.cpp
+)
+
+target_include_directories(microide_search_bench PRIVATE src)
+target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_search_bench PRIVATE -Werror)
+  endif()
+elseif(MSVC)
+  target_compile_options(microide_search_bench PRIVATE /W4)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_search_bench PRIVATE /WX)
   endif()
 endif()

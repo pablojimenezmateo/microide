@@ -14,7 +14,8 @@ This scaffold provides:
 - filesystem-backed sidebar tree
 - startup uses the launch working directory as the project root
 - `.gitignore`-aware tree and file indexing
-- async built-in project search with literal-by-default matching, optional regex, explicit case mode, and hidden-file toggles
+- async built-in project search with literal-by-default matching, optional regex, explicit case mode, hidden-file toggles, and capped-result feedback
+- standalone project-search benchmark utility for repeatable timing runs on larger repositories
 - git-aware tree status markers
 - file-backed editor viewport with a pluggable text backend
 - nested shared-buffer editor split trees
@@ -174,6 +175,13 @@ Diff benchmark:
 - example repro:
   `./build/microide/microide_diff_bench /home/pablo/Documents/projects/dolfin-app translations/locales/de/messages.po`
 - the benchmark reports read, diff-build, and syntax-highlight timings separately and uses the same large-file syntax-highlight cutoff as compare tabs
+
+Project search benchmark:
+
+- build `microide_search_bench` and run `./build/microide/microide_search_bench /path/to/repo query [--regex] [--case=smart|sensitive|insensitive] [--hidden] [--runs=5]`
+- example repro:
+  `./build/microide/microide_search_bench /home/pablo/Documents/projects/microide search --runs=5`
+- the benchmark reports result count, truncation, per-run timings, and min/max/avg search time using the same built-in backend as the sidebar
 
 ## Build
 

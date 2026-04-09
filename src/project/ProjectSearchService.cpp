@@ -255,25 +255,26 @@ void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       ProjectSearchOptions options,
                                       std::uint64_t run_id) {
   if (query.empty()) {
-    PublishFinished(run_id);
+    PublishFinished(run_id, SearchCompletion{});
     return;
   }
 
-  const std::string error = RunSearch(root, query, options, run_id);
+  const SearchCompletion completion = RunSearch(root, query, options, run_id);
   if (!StopRequested()) {
-    PublishFinished(run_id, error);
+    PublishFinished(run_id, completion);
   }
 }
 
-std::string ProjectSearchService::RunSearch(const std::filesystem::path& root,
-                                            const std::string& query,
-                                            const ProjectSearchOptions& options,
-                                            std::uint64_t run_id) {
+ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
+    const std::filesystem::path& root,
+    const std::string& query,
+    const ProjectSearchOptions& options,
+    std::uint64_t run_id) {
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
   if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||
       !std::filesystem::is_directory(absolute_root, error)) {
-    return "Failed to index project files";
+    return SearchCompletion{.error = "Failed to index project files"};
   }
 
   std::unique_ptr<CompiledSearchPattern> regex_pattern;
@@ -288,18 +289,18 @@ std::string ProjectSearchService::RunSearch(const std::filesystem::path& root,
   if (options.pattern_mode == ProjectSearchPatternMode::Regex) {
     regex_pattern = std::make_unique<CompiledSearchPattern>(query, options.case_mode);
     if (!regex_pattern->valid()) {
-      return regex_pattern->error();
+      return SearchCompletion{.error = regex_pattern->error()};
     }
 
     pcre2_match_data* match_data = regex_pattern->CreateMatchData();
     if (match_data == nullptr) {
-      return "Failed to initialize project search matcher";
+      return SearchCompletion{.error = "Failed to initialize project search matcher"};
     }
     match_data_guard.reset(match_data);
   } else {
     literal_query = std::make_unique<PreparedLiteralQuery>(query, options.case_mode);
     if (!literal_query->valid()) {
-      return literal_query->error();
+      return SearchCompletion{.error = literal_query->error()};
     }
   }
 
@@ -361,7 +362,7 @@ std::string ProjectSearchService::RunSearch(const std::filesystem::path& root,
           if (!batch.empty()) {
             PublishResults(run_id, std::move(batch));
           }
-          return {};
+          return SearchCompletion{.error = {}, .truncated = true};
         }
       }
       ++line_index;
@@ -371,7 +372,7 @@ std::string ProjectSearchService::RunSearch(const std::filesystem::path& root,
   if (!batch.empty() && !StopRequested()) {
     PublishResults(run_id, std::move(batch));
   }
-  return {};
+  return SearchCompletion{};
 }
 
 void ProjectSearchService::PublishResults(std::uint64_t run_id,
@@ -396,7 +397,7 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
   PushWakeEvent();
 }
 
-void ProjectSearchService::PublishFinished(std::uint64_t run_id, std::string error) {
+void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletion completion) {
   if (StopRequested()) {
     return;
   }
@@ -407,8 +408,9 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, std::string err
       pending_update_ = {};
     }
     pending_update_.run_id = run_id;
+    pending_update_.truncated = pending_update_.truncated || completion.truncated;
     pending_update_.finished = true;
-    pending_update_.error = std::move(error);
+    pending_update_.error = std::move(completion.error);
   }
   PushWakeEvent();
 }

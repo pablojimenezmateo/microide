@@ -602,6 +602,7 @@ class WorkspaceShell {
     std::vector<project::ProjectSearchResult> project_search_results;
     std::size_t project_search_selected_index = 0;
     bool project_search_running = false;
+    bool project_search_truncated = false;
     std::string project_search_error;
     std::vector<GitSidebarEntry> git_sidebar_entries;
     std::string git_base_ref;
@@ -1104,6 +1105,7 @@ class WorkspaceShell {
   std::vector<project::ProjectSearchResult> project_search_results_;
   std::size_t project_search_selected_index_ = 0;
   bool project_search_running_ = false;
+  bool project_search_truncated_ = false;
   std::string project_search_error_;
   std::vector<GitSidebarEntry> git_sidebar_entries_;
   std::string git_base_ref_;

@@ -1,0 +1,167 @@
+#include "TestSupport.h"
+
+#include "WorkspaceShellTestAccess.h"
+
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace microide::tests {
+namespace {
+
+using microide::workspace::WorkspaceShell;
+using microide::workspace::WorkspaceShellTestAccess;
+
+void WaitForProjectSearch(WorkspaceShell& shell) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
+    if (!WorkspaceShellTestAccess::ProjectSearchRunning(shell)) {
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(false, "workspace project search should finish");
+}
+
+void TestWorkspaceShellProjectSearchHiddenToggleReruns() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "visible.txt", "alpha\n");
+  WriteFile(root / ".hidden.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
+         "initial hidden-toggle search should not error");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
+         "initial hidden-toggle search should not truncate");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "hidden files should be excluded before the toggle");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell)[0].relative_path ==
+             std::filesystem::path("visible.txt"),
+         "hidden-toggle search should keep the visible match first");
+
+  WorkspaceShellTestAccess::ToggleProjectSearchHiddenFiles(shell);
+  WaitForProjectSearch(shell);
+
+  const auto& hidden_results = WorkspaceShellTestAccess::ProjectSearchResults(shell);
+  Expect(hidden_results.size() == 2,
+         "hidden-file toggle should rerun the search and include hidden matches");
+  const bool has_hidden = std::any_of(hidden_results.begin(), hidden_results.end(),
+                                      [](const auto& result) {
+                                        return result.relative_path ==
+                                               std::filesystem::path(".hidden.txt");
+                                      });
+  Expect(has_hidden, "hidden-file toggle should surface the hidden result");
+}
+
+void TestWorkspaceShellProjectSearchPatternModeToggleReruns() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "notes.txt", "alp.a\nalpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alp.a", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "literal project search should treat dots as plain characters");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell)[0].line == 0,
+         "literal project search should keep the literal-only match");
+
+  WorkspaceShellTestAccess::ToggleProjectSearchPatternMode(shell);
+  WaitForProjectSearch(shell);
+
+  const auto& regex_results = WorkspaceShellTestAccess::ProjectSearchResults(shell);
+  Expect(regex_results.size() == 2,
+         "pattern-mode toggle should rerun the search in regex mode");
+  Expect(regex_results[0].line == 0 && regex_results[1].line == 1,
+         "regex project search should include both literal and regex-expanded matches");
+}
+
+void TestWorkspaceShellProjectSearchCaseModeCycleReruns() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "notes.txt", "Alpha alpha ALPHA\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "Alpha", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "smart-case project search should start case-sensitive for uppercase queries");
+
+  WorkspaceShellTestAccess::CycleProjectSearchCaseMode(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "explicit sensitive case mode should preserve the exact-case result count");
+
+  WorkspaceShellTestAccess::CycleProjectSearchCaseMode(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 3,
+         "explicit insensitive case mode should rerun and match every case variant");
+
+  WorkspaceShellTestAccess::CycleProjectSearchCaseMode(shell);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "cycling back to smart case should restore the original result count");
+}
+
+void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  std::string repeated_lines;
+  for (int line = 0; line < 25; ++line) {
+    repeated_lines += "alpha\n";
+  }
+  for (int file_index = 0; file_index < 10; ++file_index) {
+    const std::string label = "0" + std::to_string(file_index);
+    WriteFile(root / ("file" + label + ".txt"), repeated_lines);
+  }
+  WriteFile(root / "nomatch.txt", "omega\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
+         "workspace search should remember when the backend capped results");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 200,
+         "workspace search should keep the full capped result set");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "omega", false);
+  WaitForProjectSearch(shell);
+
+  Expect(!WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
+         "rerunning project search with a smaller query should clear truncation state");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "rerunning project search should replace the old capped results");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell)[0].relative_path ==
+             std::filesystem::path("nomatch.txt"),
+         "rerunning project search should publish only the new query results");
+}
+
+}  // namespace
+
+void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ProjectSearchHiddenToggleReruns",
+          TestWorkspaceShellProjectSearchHiddenToggleReruns);
+  AddTest(tests, "WorkspaceShell/ProjectSearchPatternModeToggleReruns",
+          TestWorkspaceShellProjectSearchPatternModeToggleReruns);
+  AddTest(tests, "WorkspaceShell/ProjectSearchCaseModeCycleReruns",
+          TestWorkspaceShellProjectSearchCaseModeCycleReruns);
+  AddTest(tests, "WorkspaceShell/ProjectSearchRerunClearsTruncation",
+          TestWorkspaceShellProjectSearchRerunClearsTruncation);
+}
+
+}  // namespace microide::tests

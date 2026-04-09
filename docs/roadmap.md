@@ -23,9 +23,10 @@ This roadmap was rechecked against the current codebase on 2026-04-08 with empha
 
 ## Near-Term Priorities
 
-### 1. Polish built-in project search
+### 1. Built-in project search is now in good enough shape
 
-The first backend unification is done: project search no longer depends on `rg` being installed.
+The backend unification and polish pass are done: project search no longer depends on `rg`
+being installed, and it no longer blocks other roadmap work.
 
 Current state:
 
@@ -33,12 +34,15 @@ Current state:
 - the sidebar now exposes literal or regex mode, explicit case mode, and hidden-file inclusion
 - literal mode avoids regex compilation for common text searches
 - file enumeration stays aligned with project ignore handling
+- capped searches now report that only the first 200 matches are shown
+- backend coverage now checks stable ordering, latest-run restart behavior, capped result sets,
+  and workspace-driven option reruns
+- `microide_search_bench` now provides repeatable larger-repo timing runs outside the UI
 
-Remaining work:
+Search-specific future work is now optional scope expansion rather than a blocking priority:
 
-- decide whether replace-in-project should stay literal-only or grow regex-aware replace behavior
-- broaden backend coverage with more tests for result ordering, cancellation, and larger projects
-- benchmark literal-mode search on bigger repositories before adding more search UI or search syntax
+- keep regex-aware replace out of scope unless it is deliberately started as a separate phase
+- rerun `microide_search_bench` before adding more search UI or search syntax
 
 ### 2. Finish terminal polish without turning it into a second product
 
@@ -106,7 +110,6 @@ Remaining work:
 
 The highest-value missing automated coverage is:
 
-- project search behavior under cancellation, large repositories, and UI-driven option changes
 - broaden session restore and multi-project workflow coverage
 - tree mutation flows
 - compare and merge workflow coverage beyond the current model-level tests
