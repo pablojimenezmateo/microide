@@ -4,9 +4,16 @@
 
 #include <cstdint>
 #include <filesystem>
+#ifdef MICROIDE_TESTING
+#include <functional>
+#endif
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace microide::tests {
+struct GitBlameServiceTestAccess;
+}
 
 namespace microide::project {
 
@@ -66,8 +73,16 @@ class GitBlameService {
   void Stop();
 
  private:
+#ifdef MICROIDE_TESTING
+  void SetBeforeCacheApplyHook(std::function<void()> hook);
+#endif
+
   struct Impl;
   Impl* impl_ = nullptr;
+
+#ifdef MICROIDE_TESTING
+  friend struct ::microide::tests::GitBlameServiceTestAccess;
+#endif
 };
 
 }  // namespace microide::project

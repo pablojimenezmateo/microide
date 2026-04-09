@@ -57,6 +57,8 @@ struct PendingRequest {
   std::string file_key;
   std::string request_key;
   Span window;
+  std::uint64_t file_generation = 0;
+  std::uint64_t clear_generation = 0;
 };
 
 struct FileCache {
@@ -240,8 +242,12 @@ std::string BuildFileKey(const std::filesystem::path& root,
   return root.lexically_normal().string() + '\n' + relative_path.generic_string();
 }
 
-std::string BuildRequestKey(const std::string& file_key, Span window) {
-  return file_key + '\n' + std::to_string(window.start) + ':' + std::to_string(window.end);
+std::string BuildRequestKey(const std::string& file_key,
+                            Span window,
+                            std::uint64_t file_generation,
+                            std::uint64_t clear_generation) {
+  return file_key + '\n' + std::to_string(window.start) + ':' + std::to_string(window.end) +
+         '\n' + std::to_string(file_generation) + ':' + std::to_string(clear_generation);
 }
 
 bool SpansCoverWindow(const std::vector<Span>& spans, Span window) {
@@ -517,6 +523,32 @@ struct GitBlameService::Impl {
     wake_event_type = event_type;
   }
 
+  std::uint64_t CurrentFileGenerationLocked(std::string_view file_key) const {
+    const auto it = file_generations.find(std::string(file_key));
+    return it == file_generations.end() ? 0 : it->second;
+  }
+
+  bool RequestStillCurrentLocked(const PendingRequest& request) const {
+    return request.clear_generation == clear_generation &&
+           request.file_generation == CurrentFileGenerationLocked(request.file_key);
+  }
+
+  bool RequestStillCurrent(const PendingRequest& request) const {
+    std::lock_guard lock(mutex);
+    return RequestStillCurrentLocked(request);
+  }
+
+  void RemovePendingRequestsForFileLocked(std::string_view file_key) {
+    for (auto it = pending_requests.begin(); it != pending_requests.end();) {
+      if (it->file_key == file_key) {
+        pending_request_keys.erase(it->request_key);
+        it = pending_requests.erase(it);
+        continue;
+      }
+      ++it;
+    }
+  }
+
   void Request(const GitBlameRequest& request) {
     const auto relative_path = AbsoluteToRelativePath(request.root, request.absolute_path);
     if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
@@ -527,10 +559,13 @@ struct GitBlameService::Impl {
     const Span window =
         NormalizeWindow(request.visible_start_line, request.visible_line_count, request.total_line_count);
     const std::string file_key = BuildFileKey(request.root, *relative_path);
-    const std::string request_key = BuildRequestKey(file_key, window);
     const auto now = Clock::now();
 
     std::lock_guard lock(mutex);
+    const std::uint64_t file_generation = CurrentFileGenerationLocked(file_key);
+    const std::uint64_t request_clear_generation = clear_generation;
+    const std::string request_key =
+        BuildRequestKey(file_key, window, file_generation, request_clear_generation);
     FileCache* cache = nullptr;
     if (auto it = file_caches.find(file_key); it != file_caches.end()) {
       cache = &it->second;
@@ -552,6 +587,8 @@ struct GitBlameService::Impl {
         .file_key = file_key,
         .request_key = request_key,
         .window = window,
+        .file_generation = file_generation,
+        .clear_generation = request_clear_generation,
     });
     pending_request_keys.insert(request_key);
     cv.notify_one();
@@ -577,9 +614,11 @@ struct GitBlameService::Impl {
     const Span normalized_window =
         NormalizeWindow(request.visible_start_line, request.visible_line_count, request.total_line_count);
     const std::string file_key = BuildFileKey(request.root, *relative_path);
-    const std::string request_key = BuildRequestKey(file_key, normalized_window);
 
     std::lock_guard lock(mutex);
+    const std::string request_key = BuildRequestKey(file_key, normalized_window,
+                                                    CurrentFileGenerationLocked(file_key),
+                                                    clear_generation);
     const auto cache_it = file_caches.find(file_key);
     if (cache_it != file_caches.end()) {
       const FileCache& cache = cache_it->second;
@@ -609,12 +648,16 @@ struct GitBlameService::Impl {
 
     const std::string file_key = BuildFileKey(root, *relative_path);
     std::lock_guard lock(mutex);
+    ++file_generations[file_key];
     file_caches.erase(file_key);
+    RemovePendingRequestsForFileLocked(file_key);
   }
 
   void Clear() {
     std::lock_guard lock(mutex);
+    ++clear_generation;
     file_caches.clear();
+    file_generations.clear();
     pending_requests.clear();
     pending_request_keys.clear();
     active_request_key.clear();
@@ -669,10 +712,12 @@ struct GitBlameService::Impl {
 
   void ProcessRequest(const PendingRequest& request) {
     bool changed = false;
+    if (!RequestStillCurrent(request)) {
+      return;
+    }
 
     if (!HasGitMarker(request.request.root)) {
-      changed = UpdateEligibility(request.file_key, request.request.root, request.request.absolute_path,
-                                  request.relative_path, false, std::nullopt, std::nullopt, {}, {});
+      changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {});
       if (changed) {
         PushWakeEvent();
       }
@@ -681,10 +726,12 @@ struct GitBlameService::Impl {
 
     const auto head_id = ResolveHeadId(request.request.root);
     const auto stamp = ReadFileStamp(request.request.absolute_path);
+    if (!RequestStillCurrent(request)) {
+      return;
+    }
     if (!head_id.has_value() || !stamp.has_value() ||
         !FileIsTracked(request.request.root, request.relative_path)) {
-      changed = UpdateEligibility(request.file_key, request.request.root, request.request.absolute_path,
-                                  request.relative_path, false, head_id, stamp, {}, {});
+      changed = UpdateEligibility(request, false, head_id, stamp, {}, {});
       if (changed) {
         PushWakeEvent();
       }
@@ -693,10 +740,16 @@ struct GitBlameService::Impl {
 
     const bool working_tree_clean =
         FileIsWorkingTreeClean(request.request.root, request.relative_path);
+    if (!RequestStillCurrent(request)) {
+      return;
+    }
 
     std::vector<Span> missing_spans;
     {
       std::lock_guard lock(mutex);
+      if (!RequestStillCurrentLocked(request)) {
+        return;
+      }
       auto& cache = file_caches[request.file_key];
       cache.root = request.request.root.lexically_normal();
       cache.absolute_path = request.request.absolute_path.lexically_normal();
@@ -713,6 +766,9 @@ struct GitBlameService::Impl {
     }
 
     for (const Span& span : missing_spans) {
+      if (!RequestStillCurrent(request)) {
+        return;
+      }
       const std::string command =
           working_tree_clean
               ? "git -C '" + EscapeShellArg(request.request.root.lexically_normal().string()) +
@@ -727,10 +783,11 @@ struct GitBlameService::Impl {
                     std::to_string(span.end + 1) + " -- '" +
                     EscapeShellArg(request.relative_path.generic_string()) + "' 2>/dev/null";
       const CommandOutput output = ReadCommandOutput(command);
+      if (!RequestStillCurrent(request)) {
+        return;
+      }
       if (!output.success) {
-        const bool now_changed = UpdateEligibility(
-            request.file_key, request.request.root, request.request.absolute_path, request.relative_path,
-            false, head_id, stamp, {}, {});
+        const bool now_changed = UpdateEligibility(request, false, head_id, stamp, {}, {});
         changed = changed || now_changed;
         if (changed) {
           PushWakeEvent();
@@ -740,7 +797,13 @@ struct GitBlameService::Impl {
 
       const std::vector<GitBlameAttribution> attributions =
           ParseGitBlameIncrementalOutput(output.output);
+#ifdef MICROIDE_TESTING
+      RunBeforeCacheApplyHook();
+#endif
       std::lock_guard lock(mutex);
+      if (!RequestStillCurrentLocked(request)) {
+        return;
+      }
       auto& cache = file_caches[request.file_key];
       for (const GitBlameAttribution& attribution : attributions) {
         for (std::size_t offset = 0; offset < attribution.line_count; ++offset) {
@@ -760,6 +823,9 @@ struct GitBlameService::Impl {
 
     {
       std::lock_guard lock(mutex);
+      if (!RequestStillCurrentLocked(request)) {
+        return;
+      }
       auto& cache = file_caches[request.file_key];
       cache.last_validated_at = Clock::now();
       cache.eligible = true;
@@ -773,23 +839,23 @@ struct GitBlameService::Impl {
     }
   }
 
-  bool UpdateEligibility(const std::string& file_key,
-                         const std::filesystem::path& root,
-                         const std::filesystem::path& absolute_path,
-                         const std::filesystem::path& relative_path,
+  bool UpdateEligibility(const PendingRequest& request,
                          bool eligible,
                          const std::optional<std::string>& head_id,
                          const std::optional<FileStamp>& stamp,
                          std::vector<Span> loaded_spans,
                          std::unordered_map<std::size_t, GitBlameLine> blame_by_line) {
     std::lock_guard lock(mutex);
-    auto& cache = file_caches[file_key];
+    if (!RequestStillCurrentLocked(request)) {
+      return false;
+    }
+    auto& cache = file_caches[request.file_key];
     const bool changed = cache.eligible != eligible || cache.head_id != head_id.value_or("") ||
                          (stamp.has_value() && !(cache.stamp == *stamp)) ||
                          cache.loaded_spans != loaded_spans || cache.blame_by_line != blame_by_line;
-    cache.root = root.lexically_normal();
-    cache.absolute_path = absolute_path.lexically_normal();
-    cache.relative_path = relative_path;
+    cache.root = request.request.root.lexically_normal();
+    cache.absolute_path = request.request.absolute_path.lexically_normal();
+    cache.relative_path = request.relative_path;
     cache.eligible = eligible;
     cache.head_id = head_id.value_or("");
     if (stamp.has_value()) {
@@ -802,6 +868,24 @@ struct GitBlameService::Impl {
     EnforceCacheBudgets();
     return changed;
   }
+
+#ifdef MICROIDE_TESTING
+  void SetBeforeCacheApplyHook(std::function<void()> hook) {
+    std::lock_guard lock(mutex);
+    before_cache_apply_hook = std::move(hook);
+  }
+
+  void RunBeforeCacheApplyHook() {
+    std::function<void()> hook;
+    {
+      std::lock_guard lock(mutex);
+      hook = before_cache_apply_hook;
+    }
+    if (hook) {
+      hook();
+    }
+  }
+#endif
 
   void EnforceCacheBudgets() {
     if (file_caches.empty()) {
@@ -849,7 +933,12 @@ struct GitBlameService::Impl {
   std::unordered_set<std::string> pending_request_keys;
   std::string active_request_key;
   std::unordered_map<std::string, FileCache> file_caches;
+  std::unordered_map<std::string, std::uint64_t> file_generations;
+  std::uint64_t clear_generation = 0;
   std::uint64_t access_generation = 0;
+#ifdef MICROIDE_TESTING
+  std::function<void()> before_cache_apply_hook;
+#endif
 };
 
 GitBlameService::~GitBlameService() {
@@ -900,5 +989,14 @@ void GitBlameService::Stop() {
   }
   impl_->Stop();
 }
+
+#ifdef MICROIDE_TESTING
+void GitBlameService::SetBeforeCacheApplyHook(std::function<void()> hook) {
+  if (impl_ == nullptr) {
+    impl_ = new Impl();
+  }
+  impl_->SetBeforeCacheApplyHook(std::move(hook));
+}
+#endif
 
 }  // namespace microide::project

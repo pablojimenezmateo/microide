@@ -1,10 +1,13 @@
 #include "TestSupport.h"
 
 #include "project/GitBlameService.h"
+#include "GitBlameServiceTestAccess.h"
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -249,6 +252,156 @@ void TestGitBlameServiceInvalidateDropsStaleCache() {
          "invalidated blame snapshot should reflect the new commit metadata");
 }
 
+void TestGitBlameServiceInvalidateDropsInFlightResults() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "main.cpp";
+  WriteFile(file_path, "int main() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Initial blame", "initial blame");
+
+  GitBlameService service;
+  std::mutex hook_mutex;
+  std::condition_variable hook_cv;
+  bool hook_entered = false;
+  bool release_hook = false;
+  bool hook_used = false;
+  GitBlameServiceTestAccess::SetBeforeCacheApplyHook(service, [&]() {
+    std::unique_lock lock(hook_mutex);
+    if (hook_used) {
+      return;
+    }
+    hook_used = true;
+    hook_entered = true;
+    hook_cv.notify_all();
+    hook_cv.wait(lock, [&]() { return release_hook; });
+  });
+
+  const GitBlameRequest request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 1,
+      .visible_line_count = 1,
+      .total_line_count = 3,
+      .dirty = false,
+      .large_file_mode = false,
+  };
+
+  service.Request(request);
+  {
+    std::unique_lock lock(hook_mutex);
+    const bool entered = hook_cv.wait_for(lock, std::chrono::seconds(2),
+                                          [&]() { return hook_entered; });
+    Expect(entered, "test hook should observe the in-flight blame request");
+  }
+
+  WriteFile(file_path, "int main() {\n  return 2;\n}\n");
+  CommitAll(repo_path, "Change return value", "change return value");
+  service.InvalidatePath(repo_path, file_path);
+
+  {
+    std::lock_guard lock(hook_mutex);
+    release_hook = true;
+  }
+  hook_cv.notify_all();
+
+  const auto stale_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  microide::project::GitBlameSnapshot stale_snapshot;
+  while (std::chrono::steady_clock::now() < stale_deadline) {
+    stale_snapshot = service.Snapshot(request);
+    if (!stale_snapshot.loading) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  Expect(stale_snapshot.lines.empty(),
+         "invalidating an in-flight blame request should not repopulate stale blame lines");
+
+  const auto refreshed_snapshot = WaitForSnapshot(service, request);
+  service.Stop();
+
+  Expect(refreshed_snapshot.eligible && refreshed_snapshot.lines.size() == 1,
+         "requesting after invalidation should still reload blame");
+  Expect(refreshed_snapshot.lines[0].summary == "Change return value",
+         "reloaded blame after invalidation should reflect the newer commit");
+}
+
+void TestGitBlameServiceClearDropsInFlightResults() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "main.cpp";
+  WriteFile(file_path, "int main() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Initial blame", "initial blame");
+
+  GitBlameService service;
+  std::mutex hook_mutex;
+  std::condition_variable hook_cv;
+  bool hook_entered = false;
+  bool release_hook = false;
+  bool hook_used = false;
+  GitBlameServiceTestAccess::SetBeforeCacheApplyHook(service, [&]() {
+    std::unique_lock lock(hook_mutex);
+    if (hook_used) {
+      return;
+    }
+    hook_used = true;
+    hook_entered = true;
+    hook_cv.notify_all();
+    hook_cv.wait(lock, [&]() { return release_hook; });
+  });
+
+  const GitBlameRequest request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 1,
+      .visible_line_count = 1,
+      .total_line_count = 3,
+      .dirty = false,
+      .large_file_mode = false,
+  };
+
+  service.Request(request);
+  {
+    std::unique_lock lock(hook_mutex);
+    const bool entered = hook_cv.wait_for(lock, std::chrono::seconds(2),
+                                          [&]() { return hook_entered; });
+    Expect(entered, "test hook should observe the in-flight blame request before clear");
+  }
+
+  service.Clear();
+
+  {
+    std::lock_guard lock(hook_mutex);
+    release_hook = true;
+  }
+  hook_cv.notify_all();
+
+  const auto stale_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  microide::project::GitBlameSnapshot stale_snapshot;
+  while (std::chrono::steady_clock::now() < stale_deadline) {
+    stale_snapshot = service.Snapshot(request);
+    if (!stale_snapshot.loading) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  Expect(stale_snapshot.lines.empty(),
+         "clearing during an in-flight blame request should drop the stale result");
+
+  const auto reloaded_snapshot = WaitForSnapshot(service, request);
+  service.Stop();
+
+  Expect(reloaded_snapshot.eligible && reloaded_snapshot.lines.size() == 1,
+         "requesting after clear should reload blame");
+  Expect(reloaded_snapshot.lines[0].summary == "Initial blame",
+         "reloaded blame after clear should still reflect the current commit");
+}
+
 }  // namespace
 
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
@@ -262,6 +415,10 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges);
   AddTest(tests, "GitBlame/InvalidateDropsStaleCache",
           TestGitBlameServiceInvalidateDropsStaleCache);
+  AddTest(tests, "GitBlame/InvalidateDropsInFlightResults",
+          TestGitBlameServiceInvalidateDropsInFlightResults);
+  AddTest(tests, "GitBlame/ClearDropsInFlightResults",
+          TestGitBlameServiceClearDropsInFlightResults);
 }
 
 }  // namespace microide::tests
