@@ -64,6 +64,7 @@ class TerminalSession {
   bool cursor_visible() const;
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
+  void PasteText(std::string_view text);
   bool SendMouseButton(MouseButton button,
                        bool pressed,
                        std::size_t row,
@@ -104,6 +105,7 @@ class TerminalSession {
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandlePrivateModeLocked(int mode, bool enabled);
   MouseTrackingMode CurrentMouseTrackingModeLocked() const;
+  std::string FormatPasteBytesLocked(std::string_view text) const;
   bool EncodeMouseEventLocked(MouseButton button,
                               bool pressed,
                               bool motion,
@@ -155,6 +157,7 @@ class TerminalSession {
   bool mouse_tracking_drag_ = false;
   bool mouse_tracking_any_ = false;
   bool mouse_sgr_ext_mode_ = false;
+  bool bracketed_paste_mode_ = false;
   bool cursor_visible_ = true;
   std::size_t rows_ = 24;
   std::size_t columns_ = 80;
@@ -164,6 +167,10 @@ class TerminalSession {
   std::size_t saved_cursor_column_ = 0;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
+
+#ifdef MICROIDE_TESTING
+  std::string test_sent_bytes_;
+#endif
 
 #ifdef MICROIDE_TESTING
   friend struct ::microide::tests::TerminalSessionTestAccess;

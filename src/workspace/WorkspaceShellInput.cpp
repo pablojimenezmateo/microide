@@ -1095,6 +1095,14 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
     return true;
   }
 
+  if ((modifiers & SDL_KMOD_CTRL) && (modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_V) {
+    return PasteClipboardIntoTerminal();
+  }
+
+  if ((modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_INSERT) {
+    return PasteClipboardIntoTerminal();
+  }
+
   if (modifiers & SDL_KMOD_CTRL) {
     if (event.key >= SDLK_A && event.key <= SDLK_Z) {
       const char control =
@@ -1179,6 +1187,23 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
   }
 
   return false;
+}
+
+bool WorkspaceShell::PasteClipboardIntoTerminal() {
+  auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return false;
+  }
+
+  const std::optional<std::string> clipboard_text = ReadClipboardText();
+  if (!clipboard_text.has_value()) {
+    return true;
+  }
+
+  ClearTerminalSelection();
+  terminal_tab->session.PasteText(*clipboard_text);
+  LogMessage("Terminal clipboard pasted");
+  return true;
 }
 
 }  // namespace microide::workspace

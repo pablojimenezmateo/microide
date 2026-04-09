@@ -30,8 +30,8 @@ This scaffold provides:
 - three-way merge tabs with incoming/result/current panes, per-hunk picks, and whole-side apply actions
 - sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
 - docked command prompt
-- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, and common cursor/erase repaint handling
-- terminal text selection and clipboard copy
+- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, bracketed paste mode, and common cursor/erase repaint handling
+- terminal text selection, clipboard copy, and clipboard paste shortcuts
 - SDL text input wired into command/search/finder/sidebar-edit fields, the terminal, and editor insertion
 - editor cursor movement, layout, and backspace/delete now respect UTF-8 codepoint boundaries
 - editor and built-in text prompts now render IME preedit text and advertise caret-aligned text-input areas for candidate placement
@@ -58,6 +58,7 @@ Current controls:
 - `Ctrl+x`: cut the current selection
 - `Ctrl+v`: paste clipboard text into the editor
 - `Ctrl+c` in the terminal with an active terminal selection: copy the selected terminal text
+- `Ctrl+Shift+v` or `Shift+Insert` in the terminal: paste clipboard text, using bracketed paste when the app requests it
 - `Ctrl+z`: undo the last edit
 - `Ctrl+y` or `Ctrl+Shift+z`: redo the last undone edit
 - `Ctrl+s`: save the current file

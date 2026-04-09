@@ -163,6 +163,7 @@ add_executable(microide_tests
   tests/WorkspaceShellSharedLayoutTests.cpp
   tests/WorkspaceShellSharedSearchTests.cpp
   tests/WorkspaceShellSharedTerminalTests.cpp
+  tests/WorkspaceShellTerminalTests.cpp
 )
 
 target_include_directories(microide_tests PRIVATE src)

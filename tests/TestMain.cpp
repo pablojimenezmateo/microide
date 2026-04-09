@@ -20,6 +20,7 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedTerminalTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -36,6 +37,7 @@ int main() {
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
   microide::tests::RegisterWorkspaceShellProjectTests(tests);
   microide::tests::RegisterWorkspaceShellSessionTests(tests);
+  microide::tests::RegisterWorkspaceShellTerminalTests(tests);
   microide::tests::RegisterGitServiceTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);

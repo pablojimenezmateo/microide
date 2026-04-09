@@ -45,7 +45,7 @@ The current SDL shell already includes:
 - literal replace-in-project tied to literal search mode
 - a git sidebar for working-tree changes, conflicts, and outgoing branch files
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files
-- a PTY-backed terminal panel with tabs, scrollback, selection, alternate-screen support, and common ANSI scroll-region handling
+- a PTY-backed terminal panel with tabs, scrollback, selection, clipboard paste shortcuts, alternate-screen support, bracketed paste mode, and common ANSI scroll-region handling
 - project-local editor preferences, colorscheme persistence, and session restore
 - runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets
 - an optional `SDL3_ttf` backend with a debug-text fallback

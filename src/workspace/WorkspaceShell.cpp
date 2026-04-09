@@ -2517,11 +2517,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     }
     case ActionId::PasteClipboard: {
-      char* clipboard_text = SDL_GetClipboardText();
-      if (clipboard_text != nullptr) {
-        text_viewport_.InsertText(clipboard_text);
+      if (const std::optional<std::string> clipboard_text = ReadClipboardText();
+          clipboard_text.has_value()) {
+        text_viewport_.InsertText(*clipboard_text);
         ResetCaretBlink();
-        SDL_free(clipboard_text);
         LogMessage("Clipboard pasted");
       }
       return true;
@@ -2529,6 +2528,21 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
   }
 
   return true;
+}
+
+std::optional<std::string> WorkspaceShell::ReadClipboardText() const {
+  if (clipboard_text_reader_) {
+    return clipboard_text_reader_();
+  }
+
+  char* clipboard_text = SDL_GetClipboardText();
+  if (clipboard_text == nullptr) {
+    return std::nullopt;
+  }
+
+  std::string copied_text(clipboard_text);
+  SDL_free(clipboard_text);
+  return copied_text;
 }
 
 std::string WorkspaceShell::BreadcrumbLabel() const {

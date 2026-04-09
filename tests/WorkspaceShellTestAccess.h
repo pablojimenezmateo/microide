@@ -114,6 +114,11 @@ struct WorkspaceShellTestAccess {
     return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
                                WorkspaceShell::ActionSource::Command);
   }
+  static void SetClipboardTextReader(
+      WorkspaceShell& shell,
+      std::function<std::optional<std::string>()> reader) {
+    shell.clipboard_text_reader_ = std::move(reader);
+  }
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
@@ -148,6 +153,23 @@ struct WorkspaceShellTestAccess {
   }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
+  }
+  static void EnsureTerminalTab(WorkspaceShell& shell) {
+    if (shell.terminal_tabs_.empty()) {
+      shell.terminal_tabs_.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
+    }
+    shell.active_terminal_tab_index_ = shell.terminal_tabs_.size() - 1;
+    shell.focus_ = WorkspaceShell::FocusTarget::Panel;
+  }
+  static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
+    return shell.terminal_tabs_[shell.active_terminal_tab_index_]->session;
+  }
+  static bool HandleTerminalKeyDown(WorkspaceShell& shell,
+                                    SDL_Keycode key,
+                                    SDL_Keymod modifiers) {
+    SDL_KeyboardEvent event{};
+    event.key = key;
+    return shell.HandleTerminalKeyDown(event, modifiers);
   }
   static bool RestoreSessionState(WorkspaceShell& shell) { return shell.RestoreSessionState(); }
   static void SaveSessionState(WorkspaceShell& shell) { shell.SaveSessionState(); }

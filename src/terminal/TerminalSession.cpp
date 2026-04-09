@@ -154,6 +154,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_drag_ = false;
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
+    bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
@@ -230,6 +231,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_drag_ = false;
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
+    bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
@@ -286,6 +288,7 @@ void TerminalSession::Stop() {
     mouse_tracking_drag_ = false;
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
+    bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
@@ -315,6 +318,7 @@ void TerminalSession::Stop() {
   mouse_tracking_drag_ = false;
   mouse_tracking_any_ = false;
   mouse_sgr_ext_mode_ = false;
+  bracketed_paste_mode_ = false;
   cursor_visible_ = true;
   primary_screen_ = ScreenState{};
   alternate_screen_ = ScreenState{};
@@ -399,6 +403,13 @@ void TerminalSession::SendBytes(std::string_view bytes) {
     std::scoped_lock lock(mutex_);
     master_fd = master_fd_;
   }
+#ifdef MICROIDE_TESTING
+  if (master_fd < 0) {
+    std::scoped_lock lock(mutex_);
+    test_sent_bytes_.append(bytes);
+    return;
+  }
+#endif
   if (master_fd < 0) {
     return;
   }
@@ -418,6 +429,19 @@ void TerminalSession::SendBytes(std::string_view bytes) {
 #else
   (void)bytes;
 #endif
+}
+
+void TerminalSession::PasteText(std::string_view text) {
+  if (text.empty()) {
+    return;
+  }
+
+  std::string bytes;
+  {
+    std::scoped_lock lock(mutex_);
+    bytes = FormatPasteBytesLocked(text);
+  }
+  SendBytes(bytes);
 }
 
 bool TerminalSession::running() const {
@@ -949,6 +973,9 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
     case 1006:
       mouse_sgr_ext_mode_ = enabled;
       return;
+    case 2004:
+      bracketed_paste_mode_ = enabled;
+      return;
     case 25:
       cursor_visible_ = enabled;
       return;
@@ -988,6 +1015,19 @@ TerminalSession::MouseTrackingMode TerminalSession::CurrentMouseTrackingModeLock
     return MouseTrackingMode::Normal;
   }
   return MouseTrackingMode::Disabled;
+}
+
+std::string TerminalSession::FormatPasteBytesLocked(std::string_view text) const {
+  if (!bracketed_paste_mode_) {
+    return std::string(text);
+  }
+
+  std::string bytes;
+  bytes.reserve(text.size() + 12);
+  bytes.append("\x1b[200~");
+  bytes.append(text);
+  bytes.append("\x1b[201~");
+  return bytes;
 }
 
 bool TerminalSession::EncodeMouseEventLocked(MouseButton button,
