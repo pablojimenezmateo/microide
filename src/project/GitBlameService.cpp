@@ -1,11 +1,9 @@
 #include "project/GitBlameService.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cctype>
 #include <condition_variable>
-#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -21,9 +19,13 @@
 #include <utility>
 #include <vector>
 
+#include "project/GitCommandUtil.h"
+
 namespace microide::project {
 
 namespace {
+
+namespace gitutil = microide::project::internal;
 
 using Clock = std::chrono::steady_clock;
 
@@ -87,81 +89,10 @@ bool IsHexCommitPrefix(std::string_view line) {
   return line.size() == 40 || line[40] == ' ';
 }
 
-std::string EscapeShellArg(std::string_view text) {
-  std::string escaped;
-  escaped.reserve(text.size() + 8);
-  for (char c : text) {
-    if (c == '\'') {
-      escaped += "'\\''";
-    } else {
-      escaped.push_back(c);
-    }
-  }
-  return escaped;
-}
-
-struct CommandOutput {
-  bool success = false;
-  std::string output;
-};
-
-CommandOutput ReadCommandOutput(const std::string& command) {
-  CommandOutput result;
-  FILE* pipe = popen(command.c_str(), "r");
-  if (pipe == nullptr) {
-    return result;
-  }
-
-  std::array<char, 4096> buffer{};
-  while (true) {
-    const std::size_t bytes_read = fread(buffer.data(), 1, buffer.size(), pipe);
-    if (bytes_read > 0) {
-      result.output.append(buffer.data(), bytes_read);
-    }
-    if (bytes_read < buffer.size()) {
-      break;
-    }
-  }
-
-  result.success = pclose(pipe) == 0;
-  return result;
-}
-
-bool CommandSucceeds(const std::string& command) {
-  FILE* pipe = popen(command.c_str(), "r");
-  if (pipe == nullptr) {
-    return false;
-  }
-  std::array<char, 256> buffer{};
-  while (fread(buffer.data(), 1, buffer.size(), pipe) > 0) {
-  }
-  return pclose(pipe) == 0;
-}
-
-bool HasGitMarker(const std::filesystem::path& root) {
-  return !root.empty() && std::filesystem::exists(root / ".git");
-}
-
-std::optional<std::filesystem::path> AbsoluteToRelativePath(const std::filesystem::path& root,
-                                                            const std::filesystem::path& path) {
-  if (root.empty() || path.empty()) {
-    return std::nullopt;
-  }
-  std::error_code error;
-  const std::filesystem::path relative =
-      std::filesystem::relative(path.lexically_normal(), root.lexically_normal(), error);
-  if (error || relative.empty() || relative.native().rfind("..", 0) == 0) {
-    return std::nullopt;
-  }
-  return relative.lexically_normal();
-}
-
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' rev-parse --verify HEAD 2>/dev/null";
-  const CommandOutput output = ReadCommandOutput(command);
-  if (!output.success || output.output.empty()) {
+  const auto output =
+      gitutil::ReadCommandOutput(gitutil::BuildGitCommand(root, "rev-parse --verify HEAD"));
+  if (!output.success() || output.output.empty()) {
     return std::nullopt;
   }
 
@@ -173,21 +104,19 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
 }
 
 bool FileIsTracked(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' ls-files --error-unmatch -- '" + EscapeShellArg(relative_path.generic_string()) +
-      "' >/dev/null 2>/dev/null";
-  return CommandSucceeds(command);
+  const std::string command = gitutil::BuildGitCommand(
+      root, "ls-files --error-unmatch -- '" +
+                gitutil::EscapeShellArg(relative_path.generic_string()) + "' >/dev/null");
+  return gitutil::CommandSucceeds(command);
 }
 
 bool FileIsWorkingTreeClean(const std::filesystem::path& root,
                             const std::filesystem::path& relative_path) {
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' status --porcelain=v1 -z --untracked-files=all -- '" +
-      EscapeShellArg(relative_path.generic_string()) + "' 2>/dev/null";
-  const CommandOutput output = ReadCommandOutput(command);
-  return output.success && output.output.empty();
+  const std::string command = gitutil::BuildGitCommand(
+      root, "status --porcelain=v1 -z --untracked-files=all -- '" +
+                gitutil::EscapeShellArg(relative_path.generic_string()) + "'");
+  const auto output = gitutil::ReadCommandOutput(command);
+  return output.success() && output.output.empty();
 }
 
 std::optional<FileStamp> ReadFileStamp(const std::filesystem::path& path) {
@@ -550,7 +479,7 @@ struct GitBlameService::Impl {
   }
 
   void Request(const GitBlameRequest& request) {
-    const auto relative_path = AbsoluteToRelativePath(request.root, request.absolute_path);
+    const auto relative_path = gitutil::AbsoluteToRelativePath(request.root, request.absolute_path);
     if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
         request.dirty || request.large_file_mode) {
       return;
@@ -600,7 +529,7 @@ struct GitBlameService::Impl {
     snapshot.visible_start_line = request.visible_start_line;
     snapshot.visible_line_count = request.visible_line_count;
 
-    const auto relative_path = AbsoluteToRelativePath(request.root, request.absolute_path);
+    const auto relative_path = gitutil::AbsoluteToRelativePath(request.root, request.absolute_path);
     if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
         request.dirty || request.large_file_mode) {
       return snapshot;
@@ -641,7 +570,7 @@ struct GitBlameService::Impl {
   }
 
   void InvalidatePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
-    const auto relative_path = AbsoluteToRelativePath(root, absolute_path);
+    const auto relative_path = gitutil::AbsoluteToRelativePath(root, absolute_path);
     if (!relative_path.has_value()) {
       return;
     }
@@ -716,7 +645,7 @@ struct GitBlameService::Impl {
       return;
     }
 
-    if (!HasGitMarker(request.request.root)) {
+    if (!gitutil::HasGitMarker(request.request.root)) {
       changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {});
       if (changed) {
         PushWakeEvent();
@@ -771,22 +700,24 @@ struct GitBlameService::Impl {
       }
       const std::string command =
           working_tree_clean
-              ? "git -C '" + EscapeShellArg(request.request.root.lexically_normal().string()) +
-                    "' blame --incremental --encoding=UTF-8 -L " +
-                    std::to_string(span.start + 1) + "," + std::to_string(span.end + 1) +
-                    " -- '" + EscapeShellArg(request.relative_path.generic_string()) +
-                    "' 2>/dev/null"
-              : "git -C '" + EscapeShellArg(request.request.root.lexically_normal().string()) +
-                    "' blame --incremental --encoding=UTF-8 --contents '" +
-                    EscapeShellArg(request.request.absolute_path.lexically_normal().string()) +
-                    "' -L " + std::to_string(span.start + 1) + "," +
-                    std::to_string(span.end + 1) + " -- '" +
-                    EscapeShellArg(request.relative_path.generic_string()) + "' 2>/dev/null";
-      const CommandOutput output = ReadCommandOutput(command);
+              ? gitutil::BuildGitCommand(
+                    request.request.root,
+                    "blame --incremental --encoding=UTF-8 -L " +
+                        std::to_string(span.start + 1) + "," + std::to_string(span.end + 1) +
+                        " -- '" + gitutil::EscapeShellArg(request.relative_path.generic_string()) + "'")
+              : gitutil::BuildGitCommand(
+                    request.request.root,
+                    "blame --incremental --encoding=UTF-8 --contents '" +
+                        gitutil::EscapeShellArg(
+                            request.request.absolute_path.lexically_normal().string()) +
+                        "' -L " + std::to_string(span.start + 1) + "," +
+                        std::to_string(span.end + 1) + " -- '" +
+                        gitutil::EscapeShellArg(request.relative_path.generic_string()) + "'");
+      const auto output = gitutil::ReadCommandOutput(command);
       if (!RequestStillCurrent(request)) {
         return;
       }
-      if (!output.success) {
+      if (!output.success()) {
         const bool now_changed = UpdateEligibility(request, false, head_id, stamp, {}, {});
         changed = changed || now_changed;
         if (changed) {

@@ -1,47 +1,19 @@
 #include "project/GitStatusService.h"
 
 #include <algorithm>
-#include <array>
-#include <cstdio>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "project/GitCommandUtil.h"
 #include "util/StartupTrace.h"
 
 namespace microide::project {
 
 namespace {
 
-std::string EscapeShellArg(std::string_view text) {
-  std::string escaped;
-  escaped.reserve(text.size() + 8);
-  for (char c : text) {
-    if (c == '\'') {
-      escaped += "'\\''";
-    } else {
-      escaped.push_back(c);
-    }
-  }
-  return escaped;
-}
-
-bool HasGitMarker(const std::filesystem::path& root) {
-  return std::filesystem::exists(root / ".git");
-}
-
-std::filesystem::path AbsoluteToRelativePath(const std::filesystem::path& root,
-                                             const std::filesystem::path& absolute_path) {
-  std::error_code error;
-  const std::filesystem::path relative =
-      std::filesystem::relative(absolute_path.lexically_normal(), root.lexically_normal(), error);
-  if (error || relative.empty() || relative.native().rfind("..", 0) == 0) {
-    return {};
-  }
-  return relative.lexically_normal();
-}
+namespace gitutil = microide::project::internal;
 
 bool StatusUsesTargetPath(std::string_view code) {
   return code.find('R') != std::string_view::npos || code.find('C') != std::string_view::npos;
@@ -199,56 +171,16 @@ std::vector<GitWorkingTreeEntry> ParseGitWorkingTreeEntries(std::string_view out
   return entries;
 }
 
-std::string ReadCommandOutput(const std::string& command) {
-  std::string output;
-  FILE* pipe = popen(command.c_str(), "r");
-  if (pipe == nullptr) {
-    return output;
-  }
-
-  std::array<char, 4096> buffer{};
-  while (true) {
-    const std::size_t bytes_read = fread(buffer.data(), 1, buffer.size(), pipe);
-    if (bytes_read > 0) {
-      output.append(buffer.data(), bytes_read);
-    }
-    if (bytes_read < buffer.size()) {
-      break;
-    }
-  }
-
-  const int status = pclose(pipe);
-  if (status != 0) {
-    return {};
-  }
-
-  return output;
-}
-
-bool CommandSucceeds(const std::string& command) {
-  FILE* pipe = popen(command.c_str(), "r");
-  if (pipe == nullptr) {
-    return false;
-  }
-  std::array<char, 256> buffer{};
-  while (fread(buffer.data(), 1, buffer.size(), pipe) > 0) {
-  }
-  return pclose(pipe) == 0;
-}
-
 bool FileExistsAtHead(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
   const std::string spec = "HEAD:" + relative_path.generic_string();
   const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' cat-file -e '" + EscapeShellArg(spec) + "' 2>/dev/null";
-  return CommandSucceeds(command);
+      gitutil::BuildGitCommand(root, "cat-file -e '" + gitutil::EscapeShellArg(spec) + "'");
+  return gitutil::CommandSucceeds(command);
 }
 
 bool HasHeadCommit(const std::filesystem::path& root) {
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' rev-parse --verify HEAD >/dev/null 2>/dev/null";
-  return CommandSucceeds(command);
+  const std::string command = gitutil::BuildGitCommand(root, "rev-parse --verify HEAD >/dev/null");
+  return gitutil::CommandSucceeds(command);
 }
 
 }  // namespace
@@ -256,133 +188,117 @@ bool HasHeadCommit(const std::filesystem::path& root) {
 std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
     const std::filesystem::path& root) {
   util::StartupTrace::Scope trace_scope("CollectGitStatuses");
-  if (root.empty() || !HasGitMarker(root)) {
+  if (root.empty() || !gitutil::HasGitMarker(root)) {
     return {};
   }
 
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' status --porcelain=v1 -z --untracked-files=all 2>/dev/null";
-  const std::string output = ReadCommandOutput(command);
-  if (output.empty()) {
+  const auto result = gitutil::ReadCommandOutput(
+      gitutil::BuildGitCommand(root, "status --porcelain=v1 -z --untracked-files=all"));
+  if (!result.success() || result.output.empty()) {
     return {};
   }
 
-  return ParseGitPorcelainStatus(output);
+  return ParseGitPorcelainStatus(result.output);
 }
 
 std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root) {
-  if (root.empty() || !HasGitMarker(root)) {
+  if (root.empty() || !gitutil::HasGitMarker(root)) {
     return {};
   }
 
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' status --porcelain=v1 -z --untracked-files=all 2>/dev/null";
-  const std::string output = ReadCommandOutput(command);
-  if (output.empty()) {
+  const auto result = gitutil::ReadCommandOutput(
+      gitutil::BuildGitCommand(root, "status --porcelain=v1 -z --untracked-files=all"));
+  if (!result.success() || result.output.empty()) {
     return {};
   }
-  return ParseGitWorkingTreeEntries(output);
+  return ParseGitWorkingTreeEntries(result.output);
 }
 
 bool GitStageAll(const std::filesystem::path& root) {
-  if (root.empty() || !HasGitMarker(root)) {
+  if (root.empty() || !gitutil::HasGitMarker(root)) {
     return false;
   }
 
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' add -A -- . >/dev/null 2>/dev/null";
-  return CommandSucceeds(command);
+  const std::string command = gitutil::BuildGitCommand(root, "add -A -- . >/dev/null");
+  return gitutil::CommandSucceeds(command);
 }
 
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
-  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+  if (root.empty() || absolute_path.empty() || !gitutil::HasGitMarker(root)) {
     return false;
   }
 
-  const std::filesystem::path relative_path = AbsoluteToRelativePath(root, absolute_path);
-  if (relative_path.empty()) {
+  const auto relative_path = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  if (!relative_path.has_value()) {
     return false;
   }
 
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) + "' add -- '" +
-      EscapeShellArg(relative_path.generic_string()) + "' >/dev/null 2>/dev/null";
-  return CommandSucceeds(command);
+  const std::string command = gitutil::BuildGitCommand(
+      root, "add -- '" + gitutil::EscapeShellArg(relative_path->generic_string()) + "' >/dev/null");
+  return gitutil::CommandSucceeds(command);
 }
 
 bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
-  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+  if (root.empty() || absolute_path.empty() || !gitutil::HasGitMarker(root)) {
     return false;
   }
 
-  const std::filesystem::path relative_path = AbsoluteToRelativePath(root, absolute_path);
-  if (relative_path.empty()) {
+  const auto relative_path = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  if (!relative_path.has_value()) {
     return false;
   }
 
-  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
-  const std::string escaped_relative = EscapeShellArg(relative_path.generic_string());
+  const std::string escaped_relative = gitutil::EscapeShellArg(relative_path->generic_string());
   const std::string command =
-      FileExistsAtHead(root, relative_path)
-          ? "git -C '" + escaped_root + "' restore --staged -- '" + escaped_relative +
-                "' >/dev/null 2>/dev/null"
-          : "git -C '" + escaped_root + "' rm --cached -- '" + escaped_relative +
-                "' >/dev/null 2>/dev/null";
-  return CommandSucceeds(command);
+      FileExistsAtHead(root, *relative_path)
+          ? gitutil::BuildGitCommand(root, "restore --staged -- '" + escaped_relative + "' >/dev/null")
+          : gitutil::BuildGitCommand(root, "rm --cached -- '" + escaped_relative + "' >/dev/null");
+  return gitutil::CommandSucceeds(command);
 }
 
 bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
-  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+  if (root.empty() || absolute_path.empty() || !gitutil::HasGitMarker(root)) {
     return false;
   }
 
-  const std::filesystem::path relative_path = AbsoluteToRelativePath(root, absolute_path);
-  if (relative_path.empty()) {
+  const auto relative_path = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  if (!relative_path.has_value()) {
     return false;
   }
 
-  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
-  const std::string escaped_relative = EscapeShellArg(relative_path.generic_string());
-  if (FileExistsAtHead(root, relative_path)) {
-    const std::string command =
-        "git -C '" + escaped_root + "' restore --source=HEAD --staged --worktree -- '" +
-        escaped_relative + "' >/dev/null 2>/dev/null";
-    return CommandSucceeds(command);
+  const std::string escaped_relative = gitutil::EscapeShellArg(relative_path->generic_string());
+  if (FileExistsAtHead(root, *relative_path)) {
+    const std::string command = gitutil::BuildGitCommand(
+        root, "restore --source=HEAD --staged --worktree -- '" + escaped_relative + "' >/dev/null");
+    return gitutil::CommandSucceeds(command);
   }
 
-  const std::string unstage_command =
-      "git -C '" + escaped_root + "' rm -f --cached --ignore-unmatch -- '" + escaped_relative +
-      "' >/dev/null 2>/dev/null";
+  const std::string unstage_command = gitutil::BuildGitCommand(
+      root, "rm -f --cached --ignore-unmatch -- '" + escaped_relative + "' >/dev/null");
   const std::string clean_command =
-      "git -C '" + escaped_root + "' clean -fd -- '" + escaped_relative + "' >/dev/null 2>/dev/null";
-  return CommandSucceeds(unstage_command) && CommandSucceeds(clean_command);
+      gitutil::BuildGitCommand(root, "clean -fd -- '" + escaped_relative + "' >/dev/null");
+  return gitutil::CommandSucceeds(unstage_command) && gitutil::CommandSucceeds(clean_command);
 }
 
 bool GitDiscardAll(const std::filesystem::path& root) {
-  if (root.empty() || !HasGitMarker(root)) {
+  if (root.empty() || !gitutil::HasGitMarker(root)) {
     return false;
   }
 
-  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
   if (HasHeadCommit(root)) {
     const std::string reset_command =
-        "git -C '" + escaped_root + "' reset --quiet HEAD -- . >/dev/null 2>/dev/null";
+        gitutil::BuildGitCommand(root, "reset --quiet HEAD -- . >/dev/null");
     const std::string restore_command =
-        "git -C '" + escaped_root + "' restore --source=HEAD --worktree -- . >/dev/null 2>/dev/null";
-    const std::string clean_command =
-        "git -C '" + escaped_root + "' clean -fd -- . >/dev/null 2>/dev/null";
-    return CommandSucceeds(reset_command) && CommandSucceeds(restore_command) &&
-           CommandSucceeds(clean_command);
+        gitutil::BuildGitCommand(root, "restore --source=HEAD --worktree -- . >/dev/null");
+    const std::string clean_command = gitutil::BuildGitCommand(root, "clean -fd -- . >/dev/null");
+    return gitutil::CommandSucceeds(reset_command) && gitutil::CommandSucceeds(restore_command) &&
+           gitutil::CommandSucceeds(clean_command);
   }
 
   const std::string unstage_command =
-      "git -C '" + escaped_root + "' rm -r -f --cached --ignore-unmatch -- . >/dev/null 2>/dev/null";
-  const std::string clean_command =
-      "git -C '" + escaped_root + "' clean -fd -- . >/dev/null 2>/dev/null";
-  return CommandSucceeds(unstage_command) && CommandSucceeds(clean_command);
+      gitutil::BuildGitCommand(root, "rm -r -f --cached --ignore-unmatch -- . >/dev/null");
+  const std::string clean_command = gitutil::BuildGitCommand(root, "clean -fd -- . >/dev/null");
+  return gitutil::CommandSucceeds(unstage_command) && gitutil::CommandSucceeds(clean_command);
 }
 
 }  // namespace microide::project

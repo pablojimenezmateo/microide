@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <sstream>
@@ -10,53 +9,13 @@
 #include <string_view>
 #include <vector>
 
+#include "project/GitCommandUtil.h"
+
 namespace microide::project {
 
 namespace {
 
-std::string EscapeShellArg(std::string_view text) {
-  std::string escaped;
-  escaped.reserve(text.size() + 8);
-  for (char c : text) {
-    if (c == '\'') {
-      escaped += "'\\''";
-    } else {
-      escaped.push_back(c);
-    }
-  }
-  return escaped;
-}
-
-struct CommandResult {
-  int exit_code = -1;
-  std::string output;
-};
-
-CommandResult ReadCommandOutput(const std::string& command) {
-  CommandResult result;
-  FILE* pipe = popen(command.c_str(), "r");
-  if (pipe == nullptr) {
-    return result;
-  }
-
-  std::array<char, 4096> buffer{};
-  while (true) {
-    const std::size_t bytes_read = fread(buffer.data(), 1, buffer.size(), pipe);
-    if (bytes_read > 0) {
-      result.output.append(buffer.data(), bytes_read);
-    }
-    if (bytes_read < buffer.size()) {
-      break;
-    }
-  }
-
-  result.exit_code = pclose(pipe);
-  return result;
-}
-
-bool HasGitMarker(const std::filesystem::path& root) {
-  return std::filesystem::exists(root / ".git");
-}
+namespace gitutil = microide::project::internal;
 
 std::string TrimTrailingWhitespace(std::string text) {
   while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
@@ -102,22 +61,20 @@ GitFileStatus StatusFromDiffCode(char code) {
 
 std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& root,
                                                   const std::filesystem::path& absolute_path) {
-  if (root.empty() || absolute_path.empty() || !HasGitMarker(root)) {
+  if (root.empty() || absolute_path.empty() || !gitutil::HasGitMarker(root)) {
     return {};
   }
 
-  std::error_code error;
-  auto relative = std::filesystem::relative(absolute_path, root, error);
-  if (error || relative.empty()) {
+  const auto relative = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  if (!relative.has_value()) {
     return {};
   }
 
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' log --follow --no-color --pretty=format:%H%x09%h%x09%s -- '" +
-      EscapeShellArg(relative.generic_string()) + "' 2>/dev/null";
-  const CommandResult result = ReadCommandOutput(command);
-  if (result.exit_code != 0 || result.output.empty()) {
+  const std::string command = gitutil::BuildGitCommand(
+      root, "log --follow --no-color --pretty=format:%H%x09%h%x09%s -- '" +
+                gitutil::EscapeShellArg(relative->generic_string()) + "'");
+  const gitutil::CommandResult result = gitutil::ReadCommandOutput(command);
+  if (!result.success() || result.output.empty()) {
     return {};
   }
 
@@ -150,26 +107,23 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     return std::nullopt;
   }
 
-  std::error_code error;
-  auto relative = std::filesystem::relative(absolute_path, root, error);
-  if (error || relative.empty()) {
+  const auto relative = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  if (!relative.has_value()) {
     return std::nullopt;
   }
 
-  const std::string spec = hash + ":" + relative.generic_string();
+  const std::string spec = hash + ":" + relative->generic_string();
   const std::string exists_command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' cat-file -e '" + EscapeShellArg(spec) + "' 2>/dev/null";
-  const CommandResult exists_result = ReadCommandOutput(exists_command);
-  if (exists_result.exit_code != 0) {
+      gitutil::BuildGitCommand(root, "cat-file -e '" + gitutil::EscapeShellArg(spec) + "'");
+  const gitutil::CommandResult exists_result = gitutil::ReadCommandOutput(exists_command);
+  if (!exists_result.success()) {
     return GitFileContentAtCommit{.exists = false, .content = ""};
   }
 
   const std::string show_command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' show '" + EscapeShellArg(spec) + "' 2>/dev/null";
-  const CommandResult show_result = ReadCommandOutput(show_command);
-  if (show_result.exit_code != 0) {
+      gitutil::BuildGitCommand(root, "show '" + gitutil::EscapeShellArg(spec) + "'");
+  const gitutil::CommandResult show_result = gitutil::ReadCommandOutput(show_command);
+  if (!show_result.success()) {
     return std::nullopt;
   }
 
@@ -177,16 +131,15 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
 }
 
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root) {
-  if (root.empty() || !HasGitMarker(root)) {
+  if (root.empty() || !gitutil::HasGitMarker(root)) {
     return std::nullopt;
   }
 
-  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
   const std::string origin_head_command =
-      "git -C '" + escaped_root + "' symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null";
-  const CommandResult origin_head_result = ReadCommandOutput(origin_head_command);
+      gitutil::BuildGitCommand(root, "symbolic-ref --quiet refs/remotes/origin/HEAD");
+  const gitutil::CommandResult origin_head_result = gitutil::ReadCommandOutput(origin_head_command);
   const std::string origin_head = TrimTrailingWhitespace(origin_head_result.output);
-  if (origin_head_result.exit_code == 0 && !origin_head.empty()) {
+  if (origin_head_result.success() && !origin_head.empty()) {
     return GitBranchReference{
         .ref = origin_head,
         .label = ShortRefLabel(origin_head),
@@ -195,11 +148,10 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
   const std::array<std::string_view, 2> local_defaults = {"main", "master"};
   for (std::string_view candidate : local_defaults) {
-    const std::string exists_command =
-        "git -C '" + escaped_root + "' show-ref --verify --quiet 'refs/heads/" +
-        std::string(candidate) + "' 2>/dev/null";
-    const CommandResult exists_result = ReadCommandOutput(exists_command);
-    if (exists_result.exit_code == 0) {
+    const std::string exists_command = gitutil::BuildGitCommand(
+        root, "show-ref --verify --quiet 'refs/heads/" + std::string(candidate) + "'");
+    const gitutil::CommandResult exists_result = gitutil::ReadCommandOutput(exists_command);
+    if (exists_result.success()) {
       return GitBranchReference{
           .ref = std::string(candidate),
           .label = std::string(candidate),
@@ -207,12 +159,11 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
     }
   }
 
-  const std::string upstream_command =
-      "git -C '" + escaped_root +
-      "' rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null";
-  const CommandResult upstream_result = ReadCommandOutput(upstream_command);
+  const std::string upstream_command = gitutil::BuildGitCommand(
+      root, "rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'");
+  const gitutil::CommandResult upstream_result = gitutil::ReadCommandOutput(upstream_command);
   const std::string upstream = TrimTrailingWhitespace(upstream_result.output);
-  if (upstream_result.exit_code == 0 && !upstream.empty()) {
+  if (upstream_result.success() && !upstream.empty()) {
     return GitBranchReference{
         .ref = upstream,
         .label = ShortRefLabel(upstream),
@@ -224,16 +175,15 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
                                                               std::string_view base_ref) {
-  if (root.empty() || base_ref.empty() || !HasGitMarker(root)) {
+  if (root.empty() || base_ref.empty() || !gitutil::HasGitMarker(root)) {
     return {};
   }
 
-  const std::string command =
-      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
-      "' diff --name-status --find-renames '" + EscapeShellArg(std::string(base_ref)) +
-      "...HEAD' 2>/dev/null";
-  const CommandResult result = ReadCommandOutput(command);
-  if (result.exit_code != 0 || result.output.empty()) {
+  const std::string command = gitutil::BuildGitCommand(
+      root, "diff --name-status --find-renames '" +
+                gitutil::EscapeShellArg(std::string(base_ref)) + "...HEAD'");
+  const gitutil::CommandResult result = gitutil::ReadCommandOutput(command);
+  if (!result.success() || result.output.empty()) {
     return {};
   }
 
