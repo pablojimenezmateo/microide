@@ -1,7 +1,9 @@
 #include "TestSupport.h"
 
+#include "project/GitCompareService.h"
 #include "workspace/WorkspaceShell.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -42,6 +44,12 @@ struct WorkspaceShellTestAccess {
   }
 
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) { return shell.text_viewport_; }
+  static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
+    return shell.open_tabs_[shell.active_tab_index_].compare.value();
+  }
+  static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
+    return shell.open_tabs_[shell.active_tab_index_].merge.value();
+  }
 
   static void PrepareRenamePrompt(WorkspaceShell& shell,
                                   const std::filesystem::path& path,
@@ -57,6 +65,27 @@ struct WorkspaceShellTestAccess {
   }
 
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
+  static bool OpenWorkingTreeComparison(WorkspaceShell& shell,
+                                        const std::filesystem::path& path,
+                                        const std::string& left_ref,
+                                        const std::string& left_label) {
+    return shell.OpenWorkingTreeComparison(path, left_ref, left_label);
+  }
+  static bool OpenBranchHeadComparison(WorkspaceShell& shell,
+                                       const std::filesystem::path& path,
+                                       const std::string& left_ref,
+                                       const std::string& left_label,
+                                       const std::string& right_ref,
+                                       const std::string& right_label) {
+    return shell.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+  }
+  static bool OpenMergeEditor(WorkspaceShell& shell,
+                              const std::filesystem::path& base_path,
+                              const std::filesystem::path& incoming_path,
+                              const std::filesystem::path& current_path,
+                              const std::filesystem::path& output_path) {
+    return shell.OpenMergeEditor(base_path, incoming_path, current_path, output_path);
+  }
 
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
     shell.dirty_prompt_state_.selected_action = selected_action;
@@ -81,6 +110,36 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
+
+std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
+  return ShellEscape(repo_path.string());
+}
+
+void InitializeGitRepo(const std::filesystem::path& repo_path) {
+  const std::string escaped_repo = EscapedRepoPath(repo_path);
+  RequireCommandSuccess(
+      "git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
+      "git init");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
+      "git config user.name");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo +
+          "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
+      "git config user.email");
+}
+
+void CommitAll(const std::filesystem::path& repo_path,
+               std::string_view message,
+               std::string_view context) {
+  const std::string escaped_repo = EscapedRepoPath(repo_path);
+  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null",
+                        std::string(context) + " add");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' commit -m '" + std::string(message) +
+          "' >/dev/null 2>/dev/null",
+      std::string(context) + " commit");
+}
 
 std::optional<std::filesystem::path> FirstRegularFileIn(const std::filesystem::path& directory) {
   std::error_code error;
@@ -191,6 +250,150 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
 }
 #endif
 
+void TestWorkspaceShellRenamePreservesWorkingTreeCompareState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "compare.txt";
+  WriteFile(source, "zero\none\ntwo\nthree\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "zero\none changed\ntwo changed\nthree changed\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::size_t expected_row =
+      compare.model.rows.empty() ? 0 : std::min<std::size_t>(2, compare.model.rows.size() - 1);
+  compare.selected_row = expected_row;
+  compare.scroll_row = 2;
+  compare.horizontal_scroll = 5;
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "compare-renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const std::filesystem::path renamed = root / "src" / "compare-renamed.txt";
+  Expect(std::filesystem::is_regular_file(renamed),
+         "rename should create the working-tree compare destination path");
+
+  const auto& rebuilt = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(rebuilt.path == renamed.lexically_normal(),
+         "working-tree compare should retarget to the renamed path");
+  Expect(rebuilt.commit_hash == "HEAD",
+         "working-tree compare should preserve the left-side ref");
+  Expect(rebuilt.right_ref == "WORKTREE",
+         "working-tree compare should stay attached to the working tree");
+  Expect(rebuilt.left_label == "HEAD",
+         "working-tree compare should preserve the left label");
+  Expect(rebuilt.right_label == "Working tree",
+         "working-tree compare should preserve the right label");
+  Expect(rebuilt.selected_row == expected_row,
+         "working-tree compare should preserve the selected row when still valid");
+  Expect(rebuilt.scroll_row == 2,
+         "working-tree compare should preserve vertical scroll on rename");
+  Expect(rebuilt.horizontal_scroll == 5,
+         "working-tree compare should preserve horizontal scroll on rename");
+}
+
+void TestWorkspaceShellRenamePreservesBranchCompareSemantics() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "history.txt";
+  WriteFile(source, "base line\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "head line\n");
+  CommitAll(root, "head fixture", "head fixture");
+
+  const auto history = microide::project::CollectGitFileHistory(root, source);
+  Expect(history.size() == 2, "branch compare fixture should have two commits");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, history[1].hash, "base",
+                                                            history[0].hash, "head"),
+         "branch comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.scroll_row = 3;
+  compare.horizontal_scroll = 7;
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "history-renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const std::filesystem::path renamed = root / "src" / "history-renamed.txt";
+  Expect(std::filesystem::is_regular_file(renamed),
+         "rename should create the branch compare destination path");
+
+  const auto& rebuilt = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(rebuilt.path == renamed.lexically_normal(),
+         "branch compare should retarget to the renamed path");
+  Expect(rebuilt.commit_hash == history[1].hash,
+         "branch compare should preserve the left-side ref");
+  Expect(rebuilt.right_ref == history[0].hash,
+         "branch compare should preserve the right-side ref");
+  Expect(rebuilt.left_label == "base",
+         "branch compare should preserve the left label");
+  Expect(rebuilt.right_label == "head",
+         "branch compare should preserve the right label");
+  Expect(!rebuilt.persistable,
+         "branch compare should preserve its non-persistable session flag");
+  Expect(rebuilt.scroll_row == 3,
+         "branch compare should preserve vertical scroll on rename");
+  Expect(rebuilt.horizontal_scroll == 7,
+         "branch compare should preserve horizontal scroll on rename");
+}
+
+void TestWorkspaceShellRenamePreservesMergeTabState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "alpha\nshared\n");
+  WriteFile(incoming, "incoming\nshared\n");
+  WriteFile(current, "current\nshared\n");
+  WriteFile(output, "current\nshared\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const std::size_t expected_hunk = 0;
+  merge.selected_hunk = expected_hunk;
+  merge.scroll_row = 4;
+  merge.horizontal_scroll = 6;
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, output, "resolved.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+    WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+  }
+
+  const std::filesystem::path renamed = root / "resolved.txt";
+  Expect(std::filesystem::is_regular_file(renamed),
+         "rename should create the merge output destination path");
+
+  const auto& rebuilt = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(rebuilt.output_path == renamed.lexically_normal(),
+         "merge tab should retarget the output path on rename");
+  Expect(rebuilt.selected_hunk == expected_hunk,
+         "merge tab should preserve the selected hunk on rename");
+  Expect(rebuilt.scroll_row == 4,
+         "merge tab should preserve vertical scroll on rename");
+  Expect(rebuilt.horizontal_scroll == 6,
+         "merge tab should preserve horizontal scroll on rename");
+  Expect(rebuilt.persistable,
+         "merge tab should preserve its persistable flag on rename");
+}
+
 void TestWorkspaceShellLargeFileBreadcrumbLabel() {
   WorkspaceShell shell;
   const std::filesystem::path project_root = FixturePath("large");
@@ -208,6 +411,12 @@ void TestWorkspaceShellLargeFileBreadcrumbLabel() {
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
+  AddTest(tests, "WorkspaceShell/RenamePreservesWorkingTreeCompareState",
+          TestWorkspaceShellRenamePreservesWorkingTreeCompareState);
+  AddTest(tests, "WorkspaceShell/RenamePreservesBranchCompareSemantics",
+          TestWorkspaceShellRenamePreservesBranchCompareSemantics);
+  AddTest(tests, "WorkspaceShell/RenamePreservesMergeTabState",
+          TestWorkspaceShellRenamePreservesMergeTabState);
   AddTest(tests, "WorkspaceShell/LargeFileBreadcrumbLabel",
           TestWorkspaceShellLargeFileBreadcrumbLabel);
 #if defined(__linux__) || defined(__APPLE__)

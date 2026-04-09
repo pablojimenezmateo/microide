@@ -576,13 +576,8 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path = ReplacePathPrefix(tab.compare->path, old_path, new_path);
-      const project::GitCommitEntry commit{
-          .hash = tab.compare->commit_hash,
-          .short_hash = tab.compare->left_label,
-          .subject = tab.compare->left_label,
-      };
-      auto rebuilt = BuildCompareTabEntry(updated_path, commit, tab.compare->selected_row);
-      if (!rebuilt.has_value()) {
+      auto rebuilt = BuildCompareTabEntry(updated_path, *tab.compare);
+      if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
         special_tabs_to_close.push_back(i);
         continue;
       }
@@ -628,6 +623,9 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
       }
       RefreshMergeTabDerivedState(rebuilt_merge);
     }
+    rebuilt_merge.scroll_row = tab.merge->scroll_row;
+    rebuilt_merge.horizontal_scroll = tab.merge->horizontal_scroll;
+    rebuilt_merge.persistable = tab.merge->persistable;
     tab = std::move(*rebuilt);
   }
 

@@ -136,6 +136,46 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   return compare_tab;
 }
 
+std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
+    const std::filesystem::path& path,
+    const CompareTabState& compare_tab) const {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const auto left_content =
+      project::ReadGitFileAtCommit(project_root_, normalized_path, compare_tab.commit_hash);
+  if (!left_content.has_value()) {
+    return std::nullopt;
+  }
+
+  std::string right_content;
+  if (compare_tab.right_ref == "WORKTREE") {
+    right_content = ReadFileText(normalized_path).value_or("");
+  } else {
+    const auto right_commit_content =
+        project::ReadGitFileAtCommit(project_root_, normalized_path, compare_tab.right_ref);
+    if (!right_commit_content.has_value()) {
+      return std::nullopt;
+    }
+    right_content =
+        right_commit_content->exists ? right_commit_content->content : std::string{};
+  }
+
+  auto rebuilt = BuildCompareTabFromBuffers(normalized_path,
+                                            left_content->exists ? left_content->content : "",
+                                            std::move(right_content), compare_tab.left_label,
+                                            compare_tab.right_label, compare_tab.selected_row,
+                                            compare_tab.persistable);
+  if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+    return std::nullopt;
+  }
+
+  rebuilt->compare->commit_hash = compare_tab.commit_hash;
+  rebuilt->compare->right_ref = compare_tab.right_ref;
+  rebuilt->compare->scroll_row = compare_tab.scroll_row;
+  rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
+  rebuilt->compare->persistable = compare_tab.persistable;
+  return rebuilt;
+}
+
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffers(
     const std::filesystem::path& path,
     std::string left_content,

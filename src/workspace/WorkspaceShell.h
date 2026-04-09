@@ -801,6 +801,8 @@ class WorkspaceShell {
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
                                                const project::GitCommitEntry& commit,
                                                std::size_t selected_row = 0) const;
+  std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
+                                               const CompareTabState& compare_tab) const;
   std::optional<TabEntry> BuildMergeTabEntry(const std::filesystem::path& base_path,
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,

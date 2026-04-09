@@ -70,7 +70,7 @@ Current state:
 
 Remaining work:
 
-- tighten consequences for split tabs, compare tabs, and prompt cleanup around mutations
+- tighten consequences for split tabs and final prompt cleanup around mutations
 - decide whether project open should graduate from a typed path flow to a dedicated picker
 
 ### 4. Fill the editor gaps that still matter for a micro-IDE
