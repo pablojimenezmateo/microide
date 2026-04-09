@@ -3023,6 +3023,15 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
+  if (const auto popup = ActiveEditorBlamePopupLayout(); popup.has_value()) {
+    if (Contains(popup->copy_sha_rect, x, y)) {
+      return CursorKind::Pointer;
+    }
+    if (Contains(popup->rect, x, y)) {
+      return CursorKind::Default;
+    }
+  }
+
   if (!Contains(layout.editor_surface, x, y)) {
     return CursorKind::Default;
   }
@@ -3138,6 +3147,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
   }
+  if (const editor::EditorBlameLine* blame_line = EditorBlameLineAtPosition(x, y);
+      blame_line != nullptr) {
+    return blame_line->interactive ? CursorKind::Pointer : CursorKind::Default;
+  }
   return CursorKind::Text;
 }
 
@@ -3174,6 +3187,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y) {
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
+  UpdateEditorBlameHover(x, y);
 
   const CursorKind next_kind = CursorKindForPosition(x, y);
   if (next_kind == cursor_kind_) {

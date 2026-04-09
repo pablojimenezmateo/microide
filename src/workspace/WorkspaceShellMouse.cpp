@@ -197,6 +197,26 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
+    if (const auto popup = ActiveEditorBlamePopupLayout();
+        popup.has_value() && Contains(popup->rect, event.button.x, event.button.y)) {
+      if (Contains(popup->copy_sha_rect, event.button.x, event.button.y)) {
+        if (const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->line_index);
+            blame_line != nullptr && !blame_line->commit_id.empty() &&
+            WriteClipboardText(blame_line->commit_id)) {
+          LogMessage("Blame commit SHA copied");
+        }
+      }
+      focus_ = FocusTarget::Editor;
+      return true;
+    }
+    if (EditorBlameLineAtPosition(static_cast<float>(event.button.x),
+                                  static_cast<float>(event.button.y)) != nullptr) {
+      focus_ = FocusTarget::Editor;
+      return true;
+    }
+  }
+
+  if (event.button.button == SDL_BUTTON_LEFT) {
     if (sidebar_visible_) {
       const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
       if (Contains(sidebar_mode_rect, event.button.x, event.button.y)) {

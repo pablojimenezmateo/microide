@@ -24,7 +24,7 @@ This scaffold provides:
 - tab-aware text layout with visual-column cursor positioning
 - editor load/save now preserves detected line endings
 - editor large-file mode disables syntax highlighting above size or line-count thresholds
-- editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, loaded asynchronously per viewport window and cached by file or line span, while dirty, untracked, large-file, and narrow-pane cases stay suppressed
+- editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, loaded asynchronously per viewport window and cached by file or line span, with only the caret line plus one line above and below annotated inline and hover details for author, date, commit message, and SHA copy
 - extracted text renderer and editor view renderer modules
 - optional `SDL3_ttf` text backend with debug-text fallback
 - cached file-finder overlay
@@ -61,6 +61,7 @@ Current controls:
 - `Ctrl+x`: cut the current selection
 - `Ctrl+v`: paste clipboard text into the editor
 - `Edit > Copy with Context` or right click in the editor and choose `Copy with Context`: copy the selection prefixed with `relative/path:line` or `relative/path:start-end`
+- hover editor blame shadow text: show the blamed commit author, date, message, and a `Copy SHA` button
 - `Ctrl+c` in the terminal with an active terminal selection: copy the selected terminal text
 - `Ctrl+Shift+v` or `Shift+Insert` in the terminal: paste clipboard text, using bracketed paste when the app requests it
 - right click a terminal tab and choose `Copy Last Command + Output`: copy the submitted command plus its rendered transcript, or only the invoked command while a full-screen terminal app owns the alternate screen

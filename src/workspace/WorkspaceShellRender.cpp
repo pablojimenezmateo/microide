@@ -322,6 +322,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           ? ActiveTerminalTab()->session.SnapshotLines()
           : std::vector<terminal::TerminalLine>{};
   std::optional<SDL_FRect> active_editor_pane_rect;
+  visible_editor_blame_overlay_.reset();
   const bool draw_editor_caret =
       CaretVisibleNow() &&
       !(CurrentTextInputSurface() == TextInputSurface::Editor && !text_composition_.text.empty());
@@ -403,7 +404,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       if (pane.active) {
         active_editor_pane_rect = pane.rect;
       }
-      const auto blame_overlay = BuildEditorBlameOverlay(*viewport, pane.rect);
+      const auto blame_overlay = pane.active ? BuildEditorBlameOverlay(*viewport, pane.rect)
+                                             : std::nullopt;
+      if (pane.active) {
+        visible_editor_blame_overlay_ = blame_overlay;
+      }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active && (overlay_mode_ == OverlayMode::BufferSearch ||
@@ -413,6 +418,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay);
     }
+  }
+  if (last_mouse_position_valid_) {
+    UpdateEditorBlameHover(last_mouse_x_, last_mouse_y_);
   }
 
   const auto draw_text_on =
@@ -591,6 +599,34 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         std::max(0, static_cast<int>(std::round(visual->cursor_x - visual->area.x)));
     SDL_SetTextInputArea(render_window, &area, cursor);
   };
+
+  if (const auto popup = ActiveEditorBlamePopupLayout(); popup.has_value()) {
+    const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->line_index);
+    if (blame_line != nullptr) {
+      DrawFilledRect(renderer, popup->rect, theme_.overlay_background);
+      DrawRect(renderer, popup->rect, theme_.border);
+      const float text_x = popup->rect.x + 12.0f;
+      const float text_width = std::max(0.0f, popup->rect.w - 24.0f);
+      float text_y = popup->rect.y + 12.0f;
+      draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
+                   text_renderer_.TruncateToWidth(blame_line->author, text_width));
+      text_y += text_renderer_.LineHeight();
+      draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
+                   text_renderer_.TruncateToWidth(blame_line->date, text_width));
+      text_y += text_renderer_.LineHeight();
+      draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
+                   text_renderer_.TruncateToWidth(blame_line->summary, text_width));
+
+      const bool copy_hovered = last_mouse_position_valid_ &&
+                                Contains(popup->copy_sha_rect, last_mouse_x_, last_mouse_y_);
+      DrawFilledRect(renderer, popup->copy_sha_rect,
+                     copy_hovered ? theme_.row_highlight : theme_.surface_raised);
+      DrawRect(renderer, popup->copy_sha_rect, copy_hovered ? theme_.accent : theme_.border);
+      draw_text_on(popup->copy_sha_rect.x + 9.0f, popup->copy_sha_rect.y + 4.0f,
+                   copy_hovered ? theme_.text_primary : theme_.text_secondary,
+                   copy_hovered ? theme_.row_highlight : theme_.surface_raised, "Copy SHA");
+    }
+  }
   const auto render_text_composition = [&](const std::optional<TextInputVisual>& visual) {
     if (!visual.has_value() || text_composition_.text.empty() ||
         text_composition_.surface != visual->surface) {

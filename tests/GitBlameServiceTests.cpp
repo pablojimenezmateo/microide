@@ -126,8 +126,10 @@ void TestGitBlameServiceLoadsVisibleLinesForCleanTrackedFile() {
          "clean tracked file snapshot should keep visible line indices");
   Expect(snapshot.lines[0].text.find("Microide Tests") != std::string::npos,
          "clean tracked file snapshot should include author text");
-  Expect(snapshot.lines[0].text.find("Add blame fixture") != std::string::npos,
-         "clean tracked file snapshot should include commit summary text");
+  Expect(snapshot.lines[0].summary == "Add blame fixture",
+         "clean tracked file snapshot should keep the commit summary metadata");
+  Expect(!snapshot.lines[0].commit_id.empty(),
+         "clean tracked file snapshot should keep the full commit id");
 }
 
 void TestGitBlameServiceSuppressesDirtyAndUntrackedFiles() {
@@ -202,6 +204,8 @@ void TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges() {
          "unchanged saved lines should keep normal commit attribution");
   Expect(snapshot.lines[1].text == "Saved changes",
          "modified saved lines should use the synthetic saved-changes label");
+  Expect(snapshot.lines[1].synthetic && snapshot.lines[1].commit_id.empty(),
+         "modified saved lines should not expose synthetic blame ids as normal commits");
   Expect(snapshot.lines[2].text.find("Microide Tests") != std::string::npos,
          "later unchanged saved lines should still keep commit attribution");
 }
@@ -229,8 +233,8 @@ void TestGitBlameServiceInvalidateDropsStaleCache() {
   const auto first_snapshot = WaitForSnapshot(service, request);
   Expect(first_snapshot.eligible && first_snapshot.lines.size() == 1,
          "initial blame snapshot should load the visible line");
-  Expect(first_snapshot.lines[0].text.find("Initial blame") != std::string::npos,
-         "initial snapshot should reflect the first commit");
+  Expect(first_snapshot.lines[0].summary == "Initial blame",
+         "initial snapshot should reflect the first commit metadata");
 
   WriteFile(file_path, "int main() {\n  return 2;\n}\n");
   CommitAll(repo_path, "Change return value", "change return value");
@@ -241,8 +245,8 @@ void TestGitBlameServiceInvalidateDropsStaleCache() {
 
   Expect(second_snapshot.eligible && second_snapshot.lines.size() == 1,
          "blame snapshot after invalidation should reload");
-  Expect(second_snapshot.lines[0].text.find("Change return value") != std::string::npos,
-         "invalidated blame snapshot should reflect the new commit");
+  Expect(second_snapshot.lines[0].summary == "Change return value",
+         "invalidated blame snapshot should reflect the new commit metadata");
 }
 
 }  // namespace

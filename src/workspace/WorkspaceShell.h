@@ -373,6 +373,12 @@ class WorkspaceShell {
     bool reordered = false;
   };
 
+  struct EditorBlamePopupLayout {
+    std::size_t line_index = 0;
+    SDL_FRect rect{};
+    SDL_FRect copy_sha_rect{};
+  };
+
   struct DirtyPromptState {
     enum class Kind {
       CloseTab,
@@ -929,8 +935,12 @@ class WorkspaceShell {
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool EditorBlameFitsPane(const editor::TextViewport& viewport, const SDL_FRect& rect) const;
   std::optional<editor::EditorBlameOverlay> BuildEditorBlameOverlay(
-      const editor::TextViewport& viewport,
+      editor::TextViewport& viewport,
       const SDL_FRect& rect);
+  const editor::EditorBlameLine* VisibleEditorBlameLine(std::size_t line_index) const;
+  const editor::EditorBlameLine* EditorBlameLineAtPosition(float x, float y) const;
+  std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
+  void UpdateEditorBlameHover(float x, float y);
   void InvalidateEditorBlamePath(const std::filesystem::path& path);
   void ClearEditorBlame();
   std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,
@@ -1170,6 +1180,8 @@ class WorkspaceShell {
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
   project::GitBlameService git_blame_service_;
+  std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
+  std::optional<std::size_t> active_editor_blame_popup_line_;
   project::ProjectSearchService project_search_service_;
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;

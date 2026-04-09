@@ -18,20 +18,23 @@ struct EditorViewMetrics {
   float text_x = 0.0f;
   float first_line_y = 0.0f;
   float line_height = 14.0f;
-  float blame_x = 0.0f;
-  float blame_width = 0.0f;
   std::size_t visible_rows = 1;
   std::size_t visible_columns = 8;
 };
 
 struct EditorBlameLine {
   std::size_t line_index = 0;
+  SDL_FRect rect{};
   std::string text;
+  std::string commit_id;
+  std::string author;
+  std::string summary;
+  std::string date;
+  bool interactive = false;
 };
 
 struct EditorBlameOverlay {
   bool visible = false;
-  std::size_t reserved_columns = 28;
   std::vector<EditorBlameLine> lines;
 };
 
@@ -39,8 +42,7 @@ class EditorViewRenderer {
  public:
   static EditorViewMetrics ComputeMetrics(const render::TextRenderer& text_renderer,
                                           const TextViewport& viewport,
-                                          const SDL_FRect& rect,
-                                          std::size_t blame_columns = 0);
+                                          const SDL_FRect& rect);
 
   void Render(SDL_Renderer* renderer,
               const render::TextRenderer& text_renderer,

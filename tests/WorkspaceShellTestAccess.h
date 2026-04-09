@@ -286,6 +286,34 @@ struct WorkspaceShellTestAccess {
     }
     return {};
   }
+  static SDL_FRect ActiveEditorPaneRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    if (!shell.ActiveTabIsEditor()) {
+      return {};
+    }
+    shell.SyncActiveEditorTab();
+    auto* editor_tab = shell.ActiveEditorTab();
+    if (editor_tab == nullptr) {
+      return {};
+    }
+    shell.NormalizeEditorSplitTree(*editor_tab);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    for (const auto& pane : panes) {
+      if (pane.active) {
+        return pane.rect;
+      }
+    }
+    return layout.editor_surface;
+  }
+  static microide::editor::EditorViewMetrics ActiveEditorMetrics(WorkspaceShell& shell) {
+    const SDL_FRect pane = ActiveEditorPaneRect(shell);
+    return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,
+                                                                shell.text_viewport_, pane);
+  }
+  static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveEditorBlameOverlay(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout =
@@ -310,6 +338,19 @@ struct WorkspaceShellTestAccess {
     return shell.text_viewport_.is_placeholder()
                ? shell.BuildEditorBlameOverlay(shell.text_viewport_, layout.editor_surface)
                : std::nullopt;
+  }
+  static void SetVisibleEditorBlameOverlay(
+      WorkspaceShell& shell,
+      std::optional<microide::editor::EditorBlameOverlay> overlay) {
+    shell.visible_editor_blame_overlay_ = std::move(overlay);
+  }
+  static std::optional<SDL_FRect> ActiveEditorBlamePopupRect(WorkspaceShell& shell) {
+    const auto popup = shell.ActiveEditorBlamePopupLayout();
+    return popup.has_value() ? std::make_optional(popup->rect) : std::nullopt;
+  }
+  static std::optional<SDL_FRect> ActiveEditorBlamePopupCopyShaRect(WorkspaceShell& shell) {
+    const auto popup = shell.ActiveEditorBlamePopupLayout();
+    return popup.has_value() ? std::make_optional(popup->copy_sha_rect) : std::nullopt;
   }
   static SDL_FRect ActiveTerminalTabRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout =

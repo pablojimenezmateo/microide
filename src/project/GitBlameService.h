@@ -35,6 +35,13 @@ struct GitBlameRequest {
 struct GitBlameLine {
   std::size_t line = 0;
   std::string text;
+  std::string commit_id;
+  std::string author;
+  std::string summary;
+  std::int64_t author_time = 0;
+  bool synthetic = false;
+
+  bool operator==(const GitBlameLine& other) const = default;
 };
 
 struct GitBlameSnapshot {

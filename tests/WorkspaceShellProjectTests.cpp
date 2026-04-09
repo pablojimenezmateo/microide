@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -46,11 +47,12 @@ void CommitAll(const std::filesystem::path& repo_path,
 }
 
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
-    WorkspaceShell& shell) {
+    WorkspaceShell& shell,
+    std::size_t minimum_line_count = 1) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
     const auto overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
-    if (overlay.has_value() && !overlay->lines.empty()) {
+    if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
       return overlay;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -255,7 +257,7 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "src" / "main.cpp";
-  WriteFile(source, "int main() {\n  return 1;\n}\n");
+  WriteFile(source, "int alpha() {\n  return 1;\n}\nint beta() {\n  return 2;\n}\n");
 
   InitializeGitRepo(root);
   CommitAll(root, "Add editor blame fixture", "editor blame fixture");
@@ -264,14 +266,28 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
 
-  const auto overlay = WaitForActiveEditorBlameOverlay(shell);
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
   Expect(overlay.has_value(), "clean tracked editor should eventually expose blame overlay");
-  Expect(!overlay->lines.empty(), "clean tracked editor should render visible blame lines");
-  Expect(overlay->lines.front().text.find("Microide Tests") != std::string::npos,
-         "editor blame overlay should include the author");
-  Expect(overlay->lines.front().text.find("Add editor blame fixture") != std::string::npos,
-         "editor blame overlay should include the commit summary");
+  Expect(overlay->lines.size() == 3,
+         "editor blame overlay should stay focused on the caret line and adjacent rows");
+  Expect(overlay->lines[0].line_index == 1 && overlay->lines[1].line_index == 2 &&
+             overlay->lines[2].line_index == 3,
+         "editor blame overlay should only include the caret line, above, and below");
+  Expect(overlay->lines[1].author == "Microide Tests",
+         "editor blame overlay should keep the blame author metadata");
+  Expect(overlay->lines[1].summary == "Add editor blame fixture",
+         "editor blame overlay should keep the blame summary metadata");
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  WorkspaceShellTestAccess::ActiveEditor(shell).SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const auto layout = WorkspaceShellTestAccess::ActiveEditor(shell).VisibleLineLayout(2);
+  const float expected_x = metrics.text_x +
+                           static_cast<float>(layout.visual_columns + 8) *
+                               WorkspaceShellTestAccess::TextCharWidth(shell);
+  Expect(std::fabs(overlay->lines[1].rect.x - expected_x) < 0.5f,
+         "editor blame overlay should anchor eight columns after the visible line end");
 }
 
 void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
@@ -302,6 +318,9 @@ void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   Expect(overlay.has_value(),
          "saved tracked editor should resume blame after the file reaches disk");
   Expect(!overlay->lines.empty(), "saved tracked editor should publish visible blame lines");
+  Expect(std::any_of(overlay->lines.begin(), overlay->lines.end(),
+                     [](const auto& line) { return line.text == "Saved changes"; }),
+         "saved tracked editor should still mark working-tree-only lines as saved changes");
 }
 
 void TestWorkspaceShellEditorBlameSuppressesNarrowPanes() {
@@ -320,6 +339,54 @@ void TestWorkspaceShellEditorBlameSuppressesNarrowPanes() {
 
   Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
          "narrow editor panes should suppress blame instead of stealing code width");
+}
+
+void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
+  Expect(overlay.has_value() && overlay->lines.size() == 3,
+         "hover popup fixture should have visible inline blame");
+
+  WorkspaceShellTestAccess::SetVisibleEditorBlameOverlay(shell, overlay);
+  const auto& blame_line = overlay->lines[1];
+  const float hover_x = blame_line.rect.x + 4.0f;
+  const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0);
+
+  const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell);
+  Expect(popup_rect.has_value(), "hovering blame text should open the blame popup");
+  const auto copy_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupCopyShaRect(shell);
+  Expect(copy_rect.has_value(), "blame popup should expose a copy-SHA button");
+
+  std::string copied_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        copied_text = std::string(text);
+        return true;
+      });
+
+  const float copy_x = copy_rect->x + copy_rect->w * 0.5f;
+  const float copy_y = copy_rect->y + copy_rect->h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, copy_x, copy_y, SDL_BUTTON_LEFT),
+         "clicking the blame popup copy button should be handled");
+
+  Expect(copied_text == blame_line.commit_id,
+         "clicking the blame popup copy button should copy the full commit SHA");
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Blame commit SHA copied",
+         "clicking the blame popup copy button should report clipboard feedback");
 }
 
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
@@ -431,6 +498,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave);
   AddTest(tests, "WorkspaceShell/EditorBlameSuppressesNarrowPanes",
           TestWorkspaceShellEditorBlameSuppressesNarrowPanes);
+  AddTest(tests, "WorkspaceShell/EditorBlameHoverPopupCopiesCommitSha",
+          TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

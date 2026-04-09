@@ -7,7 +7,10 @@ Status today:
 
 - implemented for tracked on-disk editor files, including saved but uncommitted content
 - loaded asynchronously through `GitBlameService`
-- rendered only for the visible viewport window
+- fetched only for the visible viewport window plus cache padding
+- rendered only for the caret line plus one line above and below
+- shown inline near the visible end of each annotated line instead of in a permanent right-side gutter
+- hover on blame text opens a small commit card with author, date, summary, and `Copy SHA`
 - suppressed for dirty, untracked, large-file, and narrow-pane cases
 
 The short version:
@@ -32,8 +35,11 @@ viewport motion is far more frequent than a search query change.
 Initial scope:
 
 - show muted per-line shadow text only in normal editor tabs
-- format each visible line as `Author, relative age • Summary`
-- render the text on the right side of the editor, clipped to the available width
+- format inline text as `Author, relative age`
+- render blame only for the caret line plus one line above and below
+- place inline blame about eight monospace columns after the visible end of the rendered code line
+- show author, date, commit summary, and `Copy SHA` in a hover popup instead of cramming the
+  summary into the inline label
 - show nothing while data is missing instead of blocking or painting per-line spinners
 
 Initial exclusions:
@@ -42,7 +48,7 @@ Initial exclusions:
 - no blame for untracked files
 - no blame while the buffer is dirty
 - no blame for files already in large-file mode
-- no blame when the pane is too narrow to reserve a readable shadow-text column
+- no blame when the pane is too narrow to keep inline blame readable
 
 The shipped first release supports tracked on-disk editor files, including saved but uncommitted
 content, while still avoiding full in-memory blame during active editing.
@@ -70,7 +76,7 @@ Eligibility rules:
 - buffer has no unsaved edits
 - `TextViewport::large_file_mode()` is false
 - file stays under the existing editor large-file thresholds: `384 KiB` or `4000` lines
-- pane width can still leave roughly `28` monospace columns for blame text after the code area
+- pane width is large enough to keep inline blame readable without collapsing the code area
 
 These limits mirror the existing syntax-highlighting cutoff strategy on purpose. If syntax gets
 disabled for a large buffer, blame should be disabled too.
@@ -187,7 +193,7 @@ Each file cache should store:
 - sparse loaded line spans
 - per-line blame entries for loaded spans
 - deduplicated commit metadata keyed by commit id
-- a small preformatted display string for each visible-line entry
+- a small preformatted inline label for each visible-line entry
 - last access time for LRU eviction
 
 Recommended initial cache key:
@@ -225,9 +231,10 @@ The renderer should receive immutable blame data that is already parsed and form
 
 Rendering should only do cheap work:
 
-- look up a visible line in the current blame snapshot
+- look up only the caret line plus one line above and below in the current blame snapshot
 - choose the muted blame color
-- draw the clipped string in the reserved right-side column
+- draw the clipped string a short distance after the visible end of the rendered code line
+- use the cached commit metadata to drive a hover popup, without doing more git work
 
 Formatting details should stay out of the render loop as much as possible. Relative age strings and
 summary truncation should be prepared when the blame snapshot is built or refreshed.

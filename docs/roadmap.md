@@ -93,8 +93,9 @@ The biggest remaining editor-facing gaps are:
 - explicit threshold tuning for editor large-file mode after the new edit-time reevaluation path
 - continued UTF-8 and IME hardening while the buffer model is still byte-oriented
 - validate the new blame shadow-text implementation on larger real repositories and decide whether
-  it should stay limited to tracked small on-disk files or grow into deeper modes such as
-  `--ignore-revs-file`, broader cache policies, or richer blame presentation
+  the shipped caret-local hover-card presentation should stay limited to tracked small on-disk
+  files or grow into deeper modes such as `--ignore-revs-file`, broader cache policies, or richer
+  commit-detail affordances
 
 Diagnostics and problem styling belong here only if a diagnostics phase is intentionally started.
 
@@ -104,6 +105,8 @@ The blame item is performance-sensitive enough to keep hard constraints even aft
 - no dirty-buffer blame in the shipped first release
 - no default `-M` or `-C` move or copy detection on the normal viewport path
 - no blame for files already in editor large-file mode
+- no editor-wide blame gutter; keep the presentation local to the caret neighborhood unless a new
+  mode is justified and benchmarked
 
 ### 5. Polish workspace and source-control ergonomics
 

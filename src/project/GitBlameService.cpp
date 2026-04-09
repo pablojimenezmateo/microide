@@ -67,7 +67,7 @@ struct FileCache {
   std::string head_id;
   FileStamp stamp;
   std::vector<Span> loaded_spans;
-  std::unordered_map<std::size_t, std::string> display_by_line;
+  std::unordered_map<std::size_t, GitBlameLine> blame_by_line;
   std::uint64_t last_access_generation = 0;
   Clock::time_point last_validated_at = Clock::time_point::min();
 };
@@ -346,14 +346,21 @@ std::string FormatDisplayText(const GitBlameAttribution& attribution) {
   if (IsSyntheticContentsAttribution(attribution)) {
     return "Saved changes";
   }
-  std::string text = attribution.author.empty() ? "Unknown" : attribution.author;
-  text += ", ";
-  text += FormatRelativeAge(attribution.author_time);
-  if (!attribution.summary.empty()) {
-    text += " • ";
-    text += attribution.summary;
-  }
-  return text;
+  return (attribution.author.empty() ? std::string("Unknown") : attribution.author) + ", " +
+         FormatRelativeAge(attribution.author_time);
+}
+
+GitBlameLine MakeBlameLine(std::size_t line, const GitBlameAttribution& attribution) {
+  const bool synthetic = IsSyntheticContentsAttribution(attribution);
+  return GitBlameLine{
+      .line = line,
+      .text = FormatDisplayText(attribution),
+      .commit_id = synthetic ? std::string{} : attribution.commit_id,
+      .author = synthetic ? std::string{} : attribution.author,
+      .summary = synthetic ? std::string{} : attribution.summary,
+      .author_time = synthetic ? 0 : attribution.author_time,
+      .synthetic = synthetic,
+  };
 }
 
 bool StartsWith(std::string_view text, std::string_view prefix) {
@@ -578,9 +585,9 @@ struct GitBlameService::Impl {
       const FileCache& cache = cache_it->second;
       snapshot.eligible = cache.eligible;
       for (std::size_t line = visible_window.start; line <= visible_window.end; ++line) {
-        const auto text_it = cache.display_by_line.find(line);
-        if (text_it != cache.display_by_line.end()) {
-          snapshot.lines.push_back(GitBlameLine{.line = line, .text = text_it->second});
+        const auto blame_it = cache.blame_by_line.find(line);
+        if (blame_it != cache.blame_by_line.end()) {
+          snapshot.lines.push_back(blame_it->second);
         }
       }
       snapshot.loading =
@@ -697,7 +704,7 @@ struct GitBlameService::Impl {
       cache.last_access_generation = ++access_generation;
       if (cache.head_id != *head_id || !(cache.stamp == *stamp)) {
         cache.loaded_spans.clear();
-        cache.display_by_line.clear();
+        cache.blame_by_line.clear();
       }
       cache.head_id = *head_id;
       cache.stamp = *stamp;
@@ -736,9 +743,9 @@ struct GitBlameService::Impl {
       std::lock_guard lock(mutex);
       auto& cache = file_caches[request.file_key];
       for (const GitBlameAttribution& attribution : attributions) {
-        const std::string display = FormatDisplayText(attribution);
         for (std::size_t offset = 0; offset < attribution.line_count; ++offset) {
-          cache.display_by_line[attribution.result_line + offset] = display;
+          const std::size_t line = attribution.result_line + offset;
+          cache.blame_by_line[line] = MakeBlameLine(line, attribution);
         }
       }
       MergeSpan(&cache.loaded_spans, span);
@@ -774,12 +781,12 @@ struct GitBlameService::Impl {
                          const std::optional<std::string>& head_id,
                          const std::optional<FileStamp>& stamp,
                          std::vector<Span> loaded_spans,
-                         std::unordered_map<std::size_t, std::string> display_by_line) {
+                         std::unordered_map<std::size_t, GitBlameLine> blame_by_line) {
     std::lock_guard lock(mutex);
     auto& cache = file_caches[file_key];
     const bool changed = cache.eligible != eligible || cache.head_id != head_id.value_or("") ||
                          (stamp.has_value() && !(cache.stamp == *stamp)) ||
-                         cache.loaded_spans != loaded_spans || cache.display_by_line != display_by_line;
+                         cache.loaded_spans != loaded_spans || cache.blame_by_line != blame_by_line;
     cache.root = root.lexically_normal();
     cache.absolute_path = absolute_path.lexically_normal();
     cache.relative_path = relative_path;
@@ -789,7 +796,7 @@ struct GitBlameService::Impl {
       cache.stamp = *stamp;
     }
     cache.loaded_spans = std::move(loaded_spans);
-    cache.display_by_line = std::move(display_by_line);
+    cache.blame_by_line = std::move(blame_by_line);
     cache.last_access_generation = ++access_generation;
     cache.last_validated_at = Clock::now();
     EnforceCacheBudgets();
@@ -804,7 +811,7 @@ struct GitBlameService::Impl {
     auto total_lines = [&]() {
       std::size_t sum = 0;
       for (const auto& [_, cache] : file_caches) {
-        sum += cache.display_by_line.size();
+        sum += cache.blame_by_line.size();
       }
       return sum;
     };
