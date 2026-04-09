@@ -758,6 +758,16 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  if (event.button.button == SDL_BUTTON_RIGHT &&
+      Contains(layout.editor_surface, event.button.x, event.button.y) && ActiveTabIsEditor() &&
+      !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
+    OpenAnchoredMenu(MenuId::Edit,
+                     MakeRect(static_cast<float>(event.button.x),
+                              static_cast<float>(event.button.y), 1.0f, 1.0f));
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
+
   if (event.button.button != SDL_BUTTON_LEFT ||
       !Contains(layout.editor_surface, event.button.x, event.button.y)) {
     return false;

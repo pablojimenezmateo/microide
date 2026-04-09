@@ -68,7 +68,7 @@ These are done and should not be treated as open migration work:
 
 - `[~]` UTF-8 entry and IME preedit rendering exist, but the underlying text model is still byte-oriented
 - `[~]` editor large-file mode now disables syntax highlighting above size or line-count thresholds and reevaluates as edits or undo cross those thresholds, but the thresholds still need more validation on real repositories
-- `[ ]` editor copy-with-context should be available from a context menu and include the relative path plus line or line-range header before the selected text
+- `[x]` editor copy-with-context is available from the Edit menu and right-click editor popup, and it prefixes the selected text with a relative path plus line or line-range header
 - `[ ]` per-line git blame shadow text still needs an implementation that stays asynchronous, viewport-scoped, and cached well enough to avoid hurting normal editor latency
 - `[-]` soft wrap
 - `[ ]` diagnostics or problem styling only if a diagnostics phase is intentionally started
@@ -107,7 +107,7 @@ These are done and should not be treated as open migration work:
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation
 - `[x]` source-control bulk-action coverage now checks bulk stage/discard services plus the confirmed workspace discard-all flow
 - `[ ]` tab-reordering coverage for project, file, and terminal strips
-- `[ ]` context-copy coverage for editor selections and terminal last-command transcripts
+- `[~]` context-copy coverage now checks editor selection formatting and the editor right-click menu, but terminal last-command transcript coverage is still missing
 - `[ ]` blame loading and invalidation coverage if editor blame is started
 - `[ ]` broader compare and merge workflow tests
 

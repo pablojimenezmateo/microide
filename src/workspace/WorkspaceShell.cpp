@@ -283,6 +283,7 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Vsplit, "vsplit", "vsplit [path]", "Split Right", ""},
       ActionSpec{ActionId::CloseActiveTab, "", "", "Close Tab", "Ctrl+W"},
       ActionSpec{ActionId::CopySelection, "", "", "Copy", "Ctrl+C"},
+      ActionSpec{ActionId::CopySelectionWithContext, "", "", "Copy with Context", ""},
       ActionSpec{ActionId::CutSelection, "", "", "Cut", "Ctrl+X"},
       ActionSpec{ActionId::OpenCommandPrompt, "", "", "Command Prompt", "Ctrl+E"},
       ActionSpec{ActionId::PasteClipboard, "", "", "Paste", "Ctrl+V"},
@@ -391,6 +392,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Tree:
     case ActionId::TreeRefresh:
       return !project_root_.empty();
+    case ActionId::CopySelectionWithContext:
+      return ActiveTabIsEditor() && text_viewport_.has_selection();
     case ActionId::CopySelection:
     case ActionId::CutSelection:
     case ActionId::Goto:
@@ -467,6 +470,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       separator(),
       item(ActionId::CutSelection),
       item(ActionId::CopySelection),
+      item(ActionId::CopySelectionWithContext),
       item(ActionId::PasteClipboard),
       item(ActionId::SelectAll),
   });
@@ -2001,7 +2005,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         clipboard_text = path.lexically_normal().string();
       }
 
-      if (SDL_SetClipboardText(clipboard_text.c_str())) {
+      if (WriteClipboardText(clipboard_text)) {
         LogMessage(std::string(id == ActionId::CopyRelativePath ? "Relative" : "Absolute") +
                    " path copied");
       } else {
@@ -2506,14 +2510,21 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::CopySelection: {
       const std::string text = text_viewport_.SelectedText();
-      if (!text.empty() && SDL_SetClipboardText(text.c_str())) {
+      if (!text.empty() && WriteClipboardText(text)) {
         LogMessage("Selection copied");
+      }
+      return true;
+    }
+    case ActionId::CopySelectionWithContext: {
+      const std::optional<std::string> text = SelectionTextWithContext();
+      if (text.has_value() && WriteClipboardText(*text)) {
+        LogMessage("Selection copied with context");
       }
       return true;
     }
     case ActionId::CutSelection: {
       const std::string text = text_viewport_.SelectedText();
-      if (!text.empty() && SDL_SetClipboardText(text.c_str())) {
+      if (!text.empty() && WriteClipboardText(text)) {
         text_viewport_.DeleteSelectedText();
         ResetCaretBlink();
         LogMessage("Selection cut");
@@ -2534,6 +2545,16 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
   return true;
 }
 
+bool WorkspaceShell::WriteClipboardText(std::string_view text) const {
+  if (text.empty()) {
+    return false;
+  }
+  if (clipboard_text_writer_) {
+    return clipboard_text_writer_(text);
+  }
+  return SDL_SetClipboardText(std::string(text).c_str());
+}
+
 std::optional<std::string> WorkspaceShell::ReadClipboardText() const {
   if (clipboard_text_reader_) {
     return clipboard_text_reader_();
@@ -2547,6 +2568,45 @@ std::optional<std::string> WorkspaceShell::ReadClipboardText() const {
   std::string copied_text(clipboard_text);
   SDL_free(clipboard_text);
   return copied_text;
+}
+
+std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
+  const std::optional<editor::SelectionRange> range = text_viewport_.selection_range();
+  if (!range.has_value()) {
+    return std::nullopt;
+  }
+
+  const std::string text = text_viewport_.SelectedText();
+  if (text.empty()) {
+    return std::nullopt;
+  }
+
+  const std::filesystem::path path = text_viewport_.path().lexically_normal();
+  std::string path_label;
+  if (!project_root_.empty() && !path.empty()) {
+    std::error_code error;
+    const std::filesystem::path relative = std::filesystem::relative(path, project_root_, error);
+    if (!error && !relative.empty() && relative.native().rfind("..", 0) != 0) {
+      path_label = relative.generic_string();
+    }
+  }
+  if (path_label.empty()) {
+    path_label = path.empty() ? "untitled" : path.string();
+  }
+
+  const std::size_t start_line = range->start.line + 1;
+  std::size_t end_line = range->end.line + 1;
+  if (range->end.column == 0 && range->end.line > range->start.line) {
+    end_line = range->end.line;
+  }
+
+  std::string header = path_label + ":" + std::to_string(start_line);
+  if (end_line > start_line) {
+    header += "-" + std::to_string(end_line);
+  }
+  header += "\n";
+  header += text;
+  return header;
 }
 
 std::string WorkspaceShell::BreadcrumbLabel() const {

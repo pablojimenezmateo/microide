@@ -109,6 +109,10 @@ struct WorkspaceShellTestAccess {
                              bool log_feedback = false) {
     return shell.OpenProjectTab(project_root, restore_persistence, log_feedback);
   }
+  static void SetWindowSize(WorkspaceShell& shell, int width, int height) {
+    shell.last_window_width_ = width;
+    shell.last_window_height_ = height;
+  }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
                                WorkspaceShell::ActionSource::Menu);
@@ -121,6 +125,10 @@ struct WorkspaceShellTestAccess {
       WorkspaceShell& shell,
       std::function<std::optional<std::string>()> reader) {
     shell.clipboard_text_reader_ = std::move(reader);
+  }
+  static void SetClipboardTextWriter(WorkspaceShell& shell,
+                                     std::function<bool(std::string_view)> writer) {
+    shell.clipboard_text_writer_ = std::move(writer);
   }
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
@@ -156,6 +164,10 @@ struct WorkspaceShellTestAccess {
   }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
+  }
+  static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
+                               WorkspaceShell::ActionSource::Menu);
   }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
@@ -272,6 +284,10 @@ struct WorkspaceShellTestAccess {
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.command_mode_; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_input_; }
+  static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.menu_bar_open_; }
+  static bool EditMenuOpen(const WorkspaceShell& shell) {
+    return shell.menu_bar_open_ && shell.active_menu_id_ == WorkspaceShell::MenuId::Edit;
+  }
 };
 
 }  // namespace microide::workspace

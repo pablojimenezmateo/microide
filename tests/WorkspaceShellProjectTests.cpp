@@ -150,6 +150,62 @@ void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
          "reselecting the open file tab should reselect the file in the tree");
 }
 
+void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source_dir = root / "src";
+  const std::filesystem::path source = source_dir / "main.cpp";
+  std::filesystem::create_directories(source_dir);
+  WriteFile(source, "int main() {\n  int value = 1;\n  return value;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 15, true);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
+         "copy with context action should execute");
+  Expect(clipboard_text == "src/main.cpp:2-3\nint value = 1;\n  return value;",
+         "copy with context should prepend the relative path and selected line range");
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Selection copied with context",
+         "copy with context should report clipboard feedback");
+}
+
+void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::filesystem::create_directories(root);
+  WriteFile(source, "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  event.button.button = SDL_BUTTON_RIGHT;
+  event.button.x = 320;
+  event.button.y = 140;
+
+  Expect(shell.HandleEvent(event),
+         "right-clicking the editor should be handled");
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
+         "right-clicking the editor should open a popup menu");
+  Expect(WorkspaceShellTestAccess::EditMenuOpen(shell),
+         "right-clicking the editor should open the edit popup as a context menu");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -161,6 +217,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
+  AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
+          TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
+  AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",
+          TestWorkspaceShellEditorRightClickOpensEditContextMenu);
 }
 
 }  // namespace microide::tests

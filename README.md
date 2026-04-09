@@ -59,6 +59,7 @@ Current controls:
 - `Ctrl+c`: copy the current selection
 - `Ctrl+x`: cut the current selection
 - `Ctrl+v`: paste clipboard text into the editor
+- `Edit > Copy with Context` or right click in the editor and choose `Copy with Context`: copy the selection prefixed with `relative/path:line` or `relative/path:start-end`
 - `Ctrl+c` in the terminal with an active terminal selection: copy the selected terminal text
 - `Ctrl+Shift+v` or `Shift+Insert` in the terminal: paste clipboard text, using bracketed paste when the app requests it
 - `Ctrl+z`: undo the last edit

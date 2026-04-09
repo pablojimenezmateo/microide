@@ -507,6 +507,7 @@ class WorkspaceShell {
     Vsplit,
     CloseActiveTab,
     CopySelection,
+    CopySelectionWithContext,
     CutSelection,
     OpenCommandPrompt,
     PasteClipboard,
@@ -1002,7 +1003,9 @@ class WorkspaceShell {
   bool HandleTextEditing(const SDL_TextEditingEvent& event);
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
+  bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
+  std::optional<std::string> SelectionTextWithContext() const;
   TextInputSurface CurrentTextInputSurface() const;
   void SyncTextInputSurface(SDL_Window* window);
   bool CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const;
@@ -1132,6 +1135,7 @@ class WorkspaceShell {
   project::ProjectSearchService project_search_service_;
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
+  std::function<bool(std::string_view)> clipboard_text_writer_;
   SDL_Window* dialog_window_ = nullptr;
   bool project_open_dialog_active_ = false;
   std::mutex project_open_dialog_mutex_;

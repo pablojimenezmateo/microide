@@ -92,8 +92,6 @@ The biggest remaining editor-facing gaps are:
 
 - explicit threshold tuning for editor large-file mode after the new edit-time reevaluation path
 - continued UTF-8 and IME hardening while the buffer model is still byte-oriented
-- editor copy-with-context for LLM-heavy workflows, starting as a context-menu action that copies
-  `relative/path:line` or `relative/path:start-end` plus the selected text
 - per-line git blame shadow text only if it is implemented asynchronously, cached aggressively,
   scoped to visible lines, and kept off the hot path for typing, scrolling, and repaint
 
@@ -145,7 +143,7 @@ The highest-value missing automated coverage is:
 - tree mutation flows
 - source-control bulk actions and their confirmation semantics
 - tab reordering across project, file, and terminal strips
-- context-copy formatting for editor selections and terminal command transcripts
+- terminal transcript context-copy formatting
 - blame-cache invalidation and viewport-scoped loading behavior if blame is started
 - compare and merge workflow coverage beyond the current model-level tests
 - terminal behavior checks where deterministic harnesses are practical
