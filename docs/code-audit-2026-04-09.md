@@ -58,6 +58,10 @@ Remediation:
   before discard.
 - Reuse the existing close/reload-by-path helpers instead of keeping separate partial behavior.
 
+Status:
+
+- Completed in `d78642c` (`Reconcile tabs after git discard`).
+
 ### 3. Blame cache invalidation was broader than intended
 
 Severity: medium
@@ -79,6 +83,11 @@ Remediation:
 
 - Narrow invalidation to the paths affected by stage, unstage, discard, rename, delete, and save.
 - Reserve full clears for project switches, root resets, or global git state loss.
+
+Status:
+
+- Completed by narrowing git-sidebar invalidation to path-local updates and reserving full clears
+  for project-state transitions.
 
 ### 4. Terminal transcript copy still relies on a width-based wrap heuristic
 

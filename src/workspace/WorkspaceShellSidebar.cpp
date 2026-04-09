@@ -141,7 +141,6 @@ void WorkspaceShell::RefreshProjectFiles() {
 }
 
 void WorkspaceShell::RefreshGitSidebar() {
-  ClearEditorBlame();
   const std::filesystem::path previous_path =
       git_sidebar_selected_index_ < git_sidebar_entries_.size()
           ? git_sidebar_entries_[git_sidebar_selected_index_].path
@@ -420,9 +419,23 @@ bool WorkspaceShell::StageAllGitSidebarEntries() {
     LogMessage("No unstaged git changes");
     return false;
   }
+  std::vector<std::filesystem::path> affected_paths;
+  affected_paths.reserve(git_sidebar_entries_.size());
+  for (const auto& entry : git_sidebar_entries_) {
+    if (entry.section != GitSidebarEntry::Section::Modified || entry.staged) {
+      continue;
+    }
+    affected_paths.push_back(entry.path.lexically_normal());
+  }
+  std::sort(affected_paths.begin(), affected_paths.end());
+  affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
+                       affected_paths.end());
   if (!project::GitStageAll(project_root_)) {
     LogMessage("Git stage all failed");
     return false;
+  }
+  for (const auto& path : affected_paths) {
+    InvalidateEditorBlamePath(path);
   }
   RefreshProjectFiles();
   LogMessage("Staged all git changes");
@@ -468,6 +481,7 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
   }
 
   for (const auto& path : affected_paths) {
+    InvalidateEditorBlamePath(path);
     ReconcileOpenTabsAfterPathDiscard(path);
   }
   RefreshProjectFiles();
@@ -487,6 +501,7 @@ bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
     LogMessage("Git stage failed: " + entry.relative_path.string());
     return false;
   }
+  InvalidateEditorBlamePath(entry.path);
   RefreshProjectFiles();
   LogMessage("Staged: " + entry.relative_path.string());
   return true;
@@ -504,6 +519,7 @@ bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
     LogMessage("Git unstage failed: " + entry.relative_path.string());
     return false;
   }
+  InvalidateEditorBlamePath(entry.path);
   RefreshProjectFiles();
   LogMessage("Unstaged: " + entry.relative_path.string());
   return true;
@@ -527,6 +543,7 @@ bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
     LogMessage("Git discard failed: " + entry.relative_path.string());
     return false;
   }
+  InvalidateEditorBlamePath(entry.path);
   ReconcileOpenTabsAfterPathDiscard(entry.path);
   RefreshProjectFiles();
   LogMessage("Discarded: " + entry.relative_path.string());

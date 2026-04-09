@@ -407,6 +407,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   StopProjectSearch();
   CloseTreeContextMenu();
+  ClearEditorBlame();
 
   project_root_ = state.root;
   directory_tree_ = std::move(state.directory_tree);

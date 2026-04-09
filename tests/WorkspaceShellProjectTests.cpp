@@ -436,6 +436,34 @@ void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
          "long blame summaries should wrap into a taller popup instead of truncating to one line");
 }
 
+void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\nint beta() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
+
+  const auto loaded_overlay = WaitForActiveEditorBlameOverlay(shell, 3);
+  Expect(loaded_overlay.has_value() && loaded_overlay->lines.size() == 3,
+         "refresh-preservation fixture should start with loaded blame lines");
+
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+
+  const auto refreshed_overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
+  Expect(refreshed_overlay.has_value() && refreshed_overlay->lines.size() == 3,
+         "refreshing the git sidebar should not flush an unrelated active editor blame cache");
+  Expect(refreshed_overlay->lines[1].author == "Microide Tests",
+         "refreshing the git sidebar should preserve blame metadata for the active editor");
+}
+
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -549,6 +577,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha);
   AddTest(tests, "WorkspaceShell/EditorBlamePopupWrapsLongSummary",
           TestWorkspaceShellEditorBlamePopupWrapsLongSummary);
+  AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
+          TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",
