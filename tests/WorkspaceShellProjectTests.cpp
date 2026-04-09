@@ -371,6 +371,13 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
   const auto copy_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupCopyShaRect(shell);
   Expect(copy_rect.has_value(), "blame popup should expose a copy-SHA button");
 
+  const float gap_x = std::max(blame_line.rect.x + 4.0f, popup_rect->x + 4.0f);
+  const float gap_y =
+      blame_line.rect.y + blame_line.rect.h + (popup_rect->y - (blame_line.rect.y + blame_line.rect.h)) * 0.5f;
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, gap_x, gap_y, 0);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "moving from blame text toward the popup should keep the popup visible");
+
   std::string copied_text;
   WorkspaceShellTestAccess::SetClipboardTextWriter(
       shell, [&](std::string_view text) {
@@ -380,13 +387,16 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
 
   const float copy_x = copy_rect->x + copy_rect->w * 0.5f;
   const float copy_y = copy_rect->y + copy_rect->h * 0.5f;
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, copy_x, copy_y, 0);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "moving onto the blame popup button should keep the popup visible");
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, copy_x, copy_y, SDL_BUTTON_LEFT),
          "clicking the blame popup copy button should be handled");
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Blame commit SHA copied",
+         "clicking the blame popup copy button should trigger the popup copy action");
 
   Expect(copied_text == blame_line.commit_id,
          "clicking the blame popup copy button should copy the full commit SHA");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Blame commit SHA copied",
-         "clicking the blame popup copy button should report clipboard feedback");
 }
 
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {

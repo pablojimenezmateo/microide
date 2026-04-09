@@ -78,6 +78,11 @@ constexpr float kMergeToolbarHeight = 54.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
+
+SDL_FRect ExpandRect(const SDL_FRect& rect, float padding_x, float padding_y) {
+  return MakeRect(rect.x - padding_x, rect.y - padding_y, rect.w + padding_x * 2.0f,
+                  rect.h + padding_y * 2.0f);
+}
 constexpr std::array<std::string_view, 3> kSidebarToolNames = {
     "git",
     "search",
@@ -3024,7 +3029,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (const auto popup = ActiveEditorBlamePopupLayout(); popup.has_value()) {
-    if (Contains(popup->copy_sha_rect, x, y)) {
+    if (Contains(ExpandRect(popup->copy_sha_rect, 12.0f, 6.0f), x, y)) {
       return CursorKind::Pointer;
     }
     if (Contains(popup->rect, x, y)) {

@@ -20,6 +20,7 @@ constexpr float kMinimumEditorBlamePaneWidth = 520.0f;
 constexpr float kBlamePopupPadding = 12.0f;
 constexpr float kBlamePopupGap = 6.0f;
 constexpr float kBlamePopupMaxWidth = 420.0f;
+constexpr float kBlamePopupHoverMargin = 4.0f;
 
 std::string FormatBlameDate(std::int64_t author_time) {
   if (author_time <= 0) {
@@ -37,6 +38,17 @@ std::string FormatBlameDate(std::int64_t author_time) {
   std::ostringstream output;
   output << std::put_time(&utc_time, "%Y-%m-%d %H:%M UTC");
   return output.str();
+}
+
+SDL_FRect BlamePopupHoverZoneRect(const SDL_FRect& blame_rect, const SDL_FRect& popup_rect) {
+  const float left = std::min(blame_rect.x, popup_rect.x) - kBlamePopupHoverMargin;
+  const float top = std::min(blame_rect.y, popup_rect.y) - kBlamePopupHoverMargin;
+  const float right = std::max(blame_rect.x + blame_rect.w, popup_rect.x + popup_rect.w) +
+                      kBlamePopupHoverMargin;
+  const float bottom =
+      std::max(blame_rect.y + blame_rect.h, popup_rect.y + popup_rect.h) +
+      kBlamePopupHoverMargin;
+  return MakeRect(left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top));
 }
 
 }  // namespace
@@ -214,9 +226,15 @@ void WorkspaceShell::UpdateEditorBlameHover(float x, float y) {
     return;
   }
 
-  if (const auto popup = ActiveEditorBlamePopupLayout();
-      popup.has_value() && Contains(popup->rect, x, y)) {
-    return;
+  if (const auto popup = ActiveEditorBlamePopupLayout(); popup.has_value()) {
+    if (Contains(popup->rect, x, y)) {
+      return;
+    }
+    if (const editor::EditorBlameLine* popup_line = VisibleEditorBlameLine(popup->line_index);
+        popup_line != nullptr &&
+        Contains(BlamePopupHoverZoneRect(popup_line->rect, popup->rect), x, y)) {
+      return;
+    }
   }
 
   active_editor_blame_popup_line_.reset();

@@ -62,6 +62,11 @@ SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
                   full.y + std::floor((full.h - height) * 0.5f), width, height);
 }
 
+SDL_FRect ExpandRect(const SDL_FRect& rect, float padding_x, float padding_y) {
+  return MakeRect(rect.x - padding_x, rect.y - padding_y, rect.w + padding_x * 2.0f,
+                  rect.h + padding_y * 2.0f);
+}
+
 std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog) {
   const float total_width =
       kPromptSurfaceButtonWidth * 2.0f + kPromptSurfaceButtonGap;
@@ -126,6 +131,21 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return false;
   }
 
+  const auto visible_blame_popup = ActiveEditorBlamePopupLayout();
+  if (event.button.button == SDL_BUTTON_LEFT && visible_blame_popup.has_value() &&
+      Contains(visible_blame_popup->rect, event.button.x, event.button.y)) {
+    if (Contains(ExpandRect(visible_blame_popup->copy_sha_rect, 12.0f, 6.0f), event.button.x,
+                 event.button.y)) {
+      if (const editor::EditorBlameLine* blame_line =
+              VisibleEditorBlameLine(visible_blame_popup->line_index);
+          blame_line != nullptr && !blame_line->commit_id.empty() &&
+          WriteClipboardText(blame_line->commit_id)) {
+        LogMessage("Blame commit SHA copied");
+      }
+    }
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
 
   if (dirty_prompt_visible_) {
@@ -197,18 +217,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
-    if (const auto popup = ActiveEditorBlamePopupLayout();
-        popup.has_value() && Contains(popup->rect, event.button.x, event.button.y)) {
-      if (Contains(popup->copy_sha_rect, event.button.x, event.button.y)) {
-        if (const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->line_index);
-            blame_line != nullptr && !blame_line->commit_id.empty() &&
-            WriteClipboardText(blame_line->commit_id)) {
-          LogMessage("Blame commit SHA copied");
-        }
-      }
-      focus_ = FocusTarget::Editor;
-      return true;
-    }
     if (EditorBlameLineAtPosition(static_cast<float>(event.button.x),
                                   static_cast<float>(event.button.y)) != nullptr) {
       focus_ = FocusTarget::Editor;
