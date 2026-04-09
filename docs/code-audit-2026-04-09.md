@@ -33,7 +33,7 @@ Remediation:
 
 Status:
 
-- Being addressed immediately after this audit.
+- Completed in `a39fac6` (`Fix stale blame invalidation race`).
 
 ### 2. Bulk git discard did not fully reconcile open editor state
 

@@ -297,6 +297,76 @@ void TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors() {
          "blocked bulk discard should leave working-tree files untouched");
 }
 
+void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  CopyTree(FixturePath("diff/git/base"), root);
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+
+  const std::filesystem::path modified = root / "README.md";
+  const std::filesystem::path deleted = root / "src/session.cpp";
+  const std::filesystem::path staged_added = root / "src/new_panel.cpp";
+  const std::filesystem::path untracked = root / "scratch.txt";
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, modified);
+  WorkspaceShellTestAccess::OpenFile(shell, deleted);
+
+  WriteFile(modified, ReadFile(modified) + "\nthrowaway change\n");
+  std::filesystem::remove(deleted);
+  WriteFile(staged_added, "int meaning = 42;\n");
+  WriteFile(untracked, "scratch\n");
+  WorkspaceShellTestAccess::OpenFile(shell, staged_added);
+  WorkspaceShellTestAccess::OpenFile(shell, untracked);
+  RequireCommandSuccess("git -C '" + EscapedRepoPath(root) + "' add -A >/dev/null 2>/dev/null",
+                        "prepare staged changes");
+
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const auto find_tab_index = [&](const std::filesystem::path& path) -> std::optional<std::size_t> {
+    const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+    const std::filesystem::path normalized = path.lexically_normal();
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      if (tabs[i].path == normalized) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
+
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Discarded all git changes",
+         "bulk discard should still report success after tab reconciliation");
+  const auto modified_tab = find_tab_index(modified);
+  const auto deleted_tab = find_tab_index(deleted);
+
+  Expect(!find_tab_index(staged_added).has_value(),
+         "bulk discard should close open tabs for removed staged-added files");
+  Expect(!find_tab_index(untracked).has_value(),
+         "bulk discard should close open tabs for removed untracked files");
+  Expect(modified_tab.has_value(),
+         "bulk discard should keep tracked modified files open");
+  Expect(deleted_tab.has_value(),
+         "bulk discard should keep restored tracked files open");
+
+  if (modified_tab.has_value()) {
+    WorkspaceShellTestAccess::ActivateTab(shell, *modified_tab);
+    const auto& modified_lines = WorkspaceShellTestAccess::ActiveEditor(shell).lines();
+    Expect(std::find(modified_lines.begin(), modified_lines.end(), "throwaway change") ==
+               modified_lines.end(),
+           "bulk discard should reload open modified tabs from the restored file");
+  }
+
+  if (deleted_tab.has_value()) {
+    WorkspaceShellTestAccess::ActivateTab(shell, *deleted_tab);
+    Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == deleted.lexically_normal(),
+           "bulk discard should leave restored tracked files attached to their editor tabs");
+  }
+}
+
 void TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -562,6 +632,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges);
   AddTest(tests, "WorkspaceShell/DiscardAllGitPromptBlocksDirtyEditors",
           TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors);
+  AddTest(tests, "WorkspaceShell/DiscardAllGitPromptReconcilesOpenTabs",
+          TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs);
   AddTest(tests, "WorkspaceShell/DeletePromptOnlyClosesAffectedSplitEditor",
           TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor);
 #endif

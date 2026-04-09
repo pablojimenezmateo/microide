@@ -932,6 +932,7 @@ class WorkspaceShell {
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
+  void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool EditorBlameFitsPane(const editor::TextViewport& viewport, const SDL_FRect& rect) const;
   std::optional<editor::EditorBlameOverlay> BuildEditorBlameOverlay(

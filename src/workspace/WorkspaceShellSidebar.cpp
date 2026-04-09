@@ -450,26 +450,25 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
     return false;
   }
 
-  std::vector<std::filesystem::path> existing_paths;
-  existing_paths.reserve(git_sidebar_entries_.size());
+  std::vector<std::filesystem::path> affected_paths;
+  affected_paths.reserve(git_sidebar_entries_.size());
   for (const auto& entry : git_sidebar_entries_) {
     if (entry.section != GitSidebarEntry::Section::Modified) {
       continue;
     }
-    if (std::filesystem::exists(entry.path)) {
-      existing_paths.push_back(entry.path);
-    }
+    affected_paths.push_back(entry.path.lexically_normal());
   }
+  std::sort(affected_paths.begin(), affected_paths.end());
+  affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
+                       affected_paths.end());
 
   if (!project::GitDiscardAll(project_root_)) {
     LogMessage("Git discard all failed");
     return false;
   }
 
-  for (const auto& path : existing_paths) {
-    if (std::filesystem::exists(path)) {
-      ReloadCleanEditorTabsForPath(path);
-    }
+  for (const auto& path : affected_paths) {
+    ReconcileOpenTabsAfterPathDiscard(path);
   }
   RefreshProjectFiles();
   LogMessage("Discarded all git changes");
@@ -528,12 +527,20 @@ bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
     LogMessage("Git discard failed: " + entry.relative_path.string());
     return false;
   }
-  if (std::filesystem::exists(entry.path)) {
-    ReloadCleanEditorTabsForPath(entry.path);
-  }
+  ReconcileOpenTabsAfterPathDiscard(entry.path);
   RefreshProjectFiles();
   LogMessage("Discarded: " + entry.relative_path.string());
   return true;
+}
+
+void WorkspaceShell::ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  std::error_code error;
+  if (std::filesystem::exists(normalized_path, error) && !error) {
+    ReloadCleanEditorTabsForPath(normalized_path);
+    return;
+  }
+  CloseOpenTabsForPath(normalized_path);
 }
 
 }  // namespace microide::workspace
