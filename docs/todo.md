@@ -55,7 +55,7 @@ These are done and should not be treated as open migration work:
 - `[x]` create, rename, and delete flows now target only the affected editors inside split tabs while preserving compare and merge tab state
 - `[x]` compare tabs now preserve historical commit-side paths across working-tree renames and restore correctly from session state after those renames
 - `[x]` open-project now uses a native folder picker from the File menu and bare `project-open`, while `project-open [path]` still works as a direct fallback
-- `[ ]` the project tree should still allow a directory to collapse even when it contains the currently open or selected file, and selecting that file from the tree again should re-expand its ancestors
+- `[x]` the project tree now allows collapsing a directory even when it contains the currently open file, and selecting that open file tab again re-expands its ancestors in the tree
 - `[-]` recent files and recent projects
 
 ### Terminal

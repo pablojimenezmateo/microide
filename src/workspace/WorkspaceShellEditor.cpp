@@ -68,6 +68,8 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
     RevealActiveCompareSelection();
   } else if (tab.kind == TabEntry::Kind::Merge) {
     RevealActiveMergeSelection();
+  } else if (tab.kind == TabEntry::Kind::Editor && !text_viewport_.path().empty()) {
+    directory_tree_.SelectPath(text_viewport_.path().lexically_normal());
   }
   EnsureActiveTabVisible();
   focus_ = FocusTarget::Editor;

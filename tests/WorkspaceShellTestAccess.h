@@ -157,6 +157,11 @@ struct WorkspaceShellTestAccess {
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
   }
+  static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
+  static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
+    return shell.directory_tree_.SelectPath(path);
+  }
+  static void CollapseTreeSelection(WorkspaceShell& shell) { shell.directory_tree_.CollapseSelection(); }
   static void ShowSearchSidebar(WorkspaceShell& shell,
                                 std::string query,
                                 bool temporary = false) {
@@ -236,6 +241,12 @@ struct WorkspaceShellTestAccess {
   }
   static const std::string& StatusMessage(const WorkspaceShell& shell) { return shell.status_message_; }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
+  static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
+    return shell.directory_tree_.entries();
+  }
+  static std::filesystem::path SelectedTreePath(const WorkspaceShell& shell) {
+    return shell.SelectedTreePath();
+  }
   static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.projects_.size(); }
   static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {
     return shell.active_project_index_;

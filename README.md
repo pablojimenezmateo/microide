@@ -112,6 +112,7 @@ Current controls:
 - middle click on a tab: close that tab
 - mouse wheel on the tab strip: scroll tab overflow
 - left click in the sidebar: toggle directories or open files
+- reselecting an already open editor tab re-reveals that file in the tree, including reopening collapsed ancestor directories
 - mouse wheel in the sidebar: scroll the active sidebar tool
 - left click in the editor: move the caret
 - left-click drag in the editor: select text

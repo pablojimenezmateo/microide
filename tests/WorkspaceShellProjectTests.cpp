@@ -2,6 +2,7 @@
 
 #include "WorkspaceShellTestAccess.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -104,6 +105,51 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should tell the user to enter a project path");
 }
 
+void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path readme = root / "README.md";
+  const std::filesystem::path source_dir = root / "src";
+  const std::filesystem::path source = source_dir / "main.cpp";
+  std::filesystem::create_directories(source_dir);
+  WriteFile(readme, "readme\n");
+  WriteFile(source, "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, readme);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const auto tree_contains_path = [&](const std::filesystem::path& path) {
+    const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
+    return std::any_of(entries.begin(), entries.end(),
+                       [&](const auto& entry) { return entry.path == path.lexically_normal(); });
+  };
+
+  Expect(tree_contains_path(source),
+         "opening a nested file should reveal it in the tree initially");
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, source_dir),
+         "tree collapse fixture should be able to select the parent directory");
+
+  WorkspaceShellTestAccess::CollapseTreeSelection(shell);
+
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == source_dir.lexically_normal(),
+         "collapsing an open-file ancestor should leave the directory selected");
+  Expect(!tree_contains_path(source),
+         "collapsing an open-file ancestor should hide the descendant rows");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(!tree_contains_path(source),
+         "selecting another tab should not force unrelated collapsed directories open");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+
+  Expect(tree_contains_path(source),
+         "reselecting the open file tab should re-expand its ancestors in the tree");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == source.lexically_normal(),
+         "reselecting the open file tab should reselect the file in the tree");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -113,6 +159,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
+  AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
+          TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
 }
 
 }  // namespace microide::tests
