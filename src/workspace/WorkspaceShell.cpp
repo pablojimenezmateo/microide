@@ -1335,7 +1335,7 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   }
   auto compare_tab = BuildCompareTabFromBuffers(
       normalized_path, left_content->exists ? left_content->content : "",
-      right_content->exists ? right_content->content : "", left_label, right_label, 0, false);
+      right_content->exists ? right_content->content : "", left_label, right_label, 0, true);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     LogMessage("Failed to build comparison");
     return false;

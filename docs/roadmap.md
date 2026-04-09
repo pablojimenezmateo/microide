@@ -104,7 +104,7 @@ Remaining work:
 The highest-value missing automated coverage is:
 
 - project search behavior under cancellation, large repositories, and UI-driven option changes
-- session restore and multi-project workflow coverage
+- broaden session restore and multi-project workflow coverage
 - tree mutation flows
 - compare and merge workflow coverage beyond the current model-level tests
 - terminal behavior checks where deterministic harnesses are practical

@@ -353,6 +353,14 @@ bool WorkspaceShell::RestoreSessionState() {
       current_tab->compare_commit_short_hash = tokens[2].text;
       continue;
     }
+    if (command == "compare-right-ref" && tokens.size() == 2) {
+      current_tab->compare_right_ref = tokens[1].text;
+      continue;
+    }
+    if (command == "compare-right-label" && tokens.size() == 2) {
+      current_tab->compare_right_label = tokens[1].text;
+      continue;
+    }
     if (command == "compare-selected-row" && tokens.size() == 2) {
       try {
         current_tab->compare_selected_row = static_cast<std::size_t>(std::stoull(tokens[1].text));
@@ -472,8 +480,28 @@ bool WorkspaceShell::RestoreSessionState() {
           .short_hash = persisted_tab.compare_commit_short_hash,
           .subject = {},
       };
-      auto compare_tab =
-          BuildCompareTabEntry(compare_path, commit, persisted_tab.compare_selected_row);
+      std::optional<TabEntry> compare_tab;
+      if (!persisted_tab.compare_right_ref.empty()) {
+        CompareTabState compare_state;
+        compare_state.path = compare_path;
+        compare_state.commit_hash = persisted_tab.compare_commit_hash;
+        compare_state.right_ref = persisted_tab.compare_right_ref;
+        compare_state.left_label = persisted_tab.compare_commit_short_hash;
+        compare_state.right_label = persisted_tab.compare_right_label.empty()
+                                        ? (persisted_tab.compare_right_ref == "WORKTREE"
+                                               ? "Working tree"
+                                               : persisted_tab.compare_right_ref)
+                                        : persisted_tab.compare_right_label;
+        compare_state.selected_row = persisted_tab.compare_selected_row;
+        compare_state.scroll_row = static_cast<int>(std::min<std::size_t>(
+            persisted_tab.compare_scroll_row,
+            static_cast<std::size_t>(std::numeric_limits<int>::max())));
+        compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+        compare_state.persistable = persisted_tab.compare_persistable;
+        compare_tab = BuildCompareTabEntry(compare_path, compare_state);
+      } else {
+        compare_tab = BuildCompareTabEntry(compare_path, commit, persisted_tab.compare_selected_row);
+      }
       if (!compare_tab.has_value()) {
         continue;
       }
@@ -691,6 +719,8 @@ void WorkspaceShell::SaveSessionState() {
            << '\n';
       file << "compare-commit " << QuoteCommandArg(tab.compare->commit_hash) << ' '
            << QuoteCommandArg(tab.compare->left_label) << '\n';
+      file << "compare-right-ref " << QuoteCommandArg(tab.compare->right_ref) << '\n';
+      file << "compare-right-label " << QuoteCommandArg(tab.compare->right_label) << '\n';
       file << "compare-selected-row " << tab.compare->selected_row << '\n';
       file << "compare-scroll-row " << tab.compare->scroll_row << '\n';
       file << "compare-horizontal-scroll " << tab.compare->horizontal_scroll << '\n';

@@ -58,6 +58,8 @@ struct PersistedEditorTabState {
   std::filesystem::path compare_path;
   std::string compare_commit_hash;
   std::string compare_commit_short_hash;
+  std::string compare_right_ref;
+  std::string compare_right_label;
   std::size_t compare_selected_row = 0;
   std::size_t compare_scroll_row = 0;
   std::size_t compare_horizontal_scroll = 0;

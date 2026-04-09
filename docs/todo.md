@@ -87,7 +87,7 @@ These are done and should not be treated as open migration work:
 
 - `[ ]` editor-core unit tests for text editing primitives and undo/redo
 - `[~]` project-search backend coverage exists, but cancellation and larger-project behavior still need more validation
-- `[ ]` multi-project restore and workspace-session tests
+- `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[ ]` tree-mutation workflow tests
 - `[ ]` broader compare and merge workflow tests
 
