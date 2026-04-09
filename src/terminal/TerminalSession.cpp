@@ -163,6 +163,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     cursor_column_ = 0;
     saved_cursor_row_ = 0;
     saved_cursor_column_ = 0;
+    ResetScrollRegionLocked();
     AppendOutputLocked("terminal support is only available on POSIX hosts.");
   }
   PushWakeEvent();
@@ -238,6 +239,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     cursor_column_ = 0;
     saved_cursor_row_ = 0;
     saved_cursor_column_ = 0;
+    ResetScrollRegionLocked();
   }
 
   reader_thread_ = std::thread(&TerminalSession::ReaderMain, this, master_fd, child_pid);
@@ -291,6 +293,7 @@ void TerminalSession::Stop() {
     cursor_column_ = 0;
     saved_cursor_row_ = 0;
     saved_cursor_column_ = 0;
+    ResetScrollRegionLocked();
     if (lines_.empty()) {
       lines_.push_back(TerminalLine{});
     }
@@ -319,6 +322,7 @@ void TerminalSession::Stop() {
   cursor_column_ = 0;
   saved_cursor_row_ = 0;
   saved_cursor_column_ = 0;
+  ResetScrollRegionLocked();
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }
@@ -333,21 +337,33 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
     std::scoped_lock lock(mutex_);
     rows_ = clamped_rows;
     columns_ = clamped_columns;
+    if (use_alternate_screen_ && rows_ > 0) {
+      cursor_row_ = std::min(cursor_row_, rows_ - 1);
+      saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);
+    }
     if (columns_ > 0) {
       cursor_column_ = std::min(cursor_column_, columns_ - 1);
       saved_cursor_column_ = std::min(saved_cursor_column_, columns_ - 1);
     }
-    primary_screen_.cursor_column =
-        columns_ > 0 ? std::min(primary_screen_.cursor_column, columns_ - 1) : primary_screen_.cursor_column;
+    primary_screen_.cursor_column = columns_ > 0 ? std::min(primary_screen_.cursor_column, columns_ - 1)
+                                                 : primary_screen_.cursor_column;
     primary_screen_.saved_cursor_column =
         columns_ > 0 ? std::min(primary_screen_.saved_cursor_column, columns_ - 1)
                      : primary_screen_.saved_cursor_column;
+    if (rows_ > 0) {
+      alternate_screen_.cursor_row = std::min(alternate_screen_.cursor_row, rows_ - 1);
+      alternate_screen_.saved_cursor_row = std::min(alternate_screen_.saved_cursor_row, rows_ - 1);
+    }
     alternate_screen_.cursor_column =
         columns_ > 0 ? std::min(alternate_screen_.cursor_column, columns_ - 1)
                      : alternate_screen_.cursor_column;
     alternate_screen_.saved_cursor_column =
         columns_ > 0 ? std::min(alternate_screen_.saved_cursor_column, columns_ - 1)
                      : alternate_screen_.saved_cursor_column;
+    ClampScrollRegionLocked();
+    if (use_alternate_screen_) {
+      lines_.resize(std::max<std::size_t>(1, rows_));
+    }
     EnsureCursorLineExistsLocked();
     TrimScrollbackLocked();
   }
@@ -575,6 +591,18 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         AdvanceCursorRowLocked();
         if (byte == 'E') {
           cursor_column_ = 0;
+        }
+      } else if (byte == 'M') {
+        if (use_alternate_screen_) {
+          const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
+          const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
+          if (cursor_row_ == scroll_region_top) {
+            ScrollRegionDownLocked(scroll_region_top, scroll_region_bottom, 1);
+          } else if (cursor_row_ > 0) {
+            --cursor_row_;
+          }
+        } else if (cursor_row_ > 0) {
+          --cursor_row_;
         }
       }
       escape_sequence_buffer_.clear();
@@ -812,6 +840,14 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'L': {
       const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       EnsureCursorLineExistsLocked();
+      if (use_alternate_screen_) {
+        const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
+        const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
+        if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
+          ScrollRegionDownLocked(cursor_row_, scroll_region_bottom, count);
+          return;
+        }
+      }
       lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(cursor_row_), count,
                     TerminalLine{});
       TrimScrollbackLocked();
@@ -820,6 +856,14 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'M': {
       const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       EnsureCursorLineExistsLocked();
+      if (use_alternate_screen_) {
+        const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
+        const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
+        if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
+          ScrollRegionUpLocked(cursor_row_, scroll_region_bottom, count);
+          return;
+        }
+      }
       const std::size_t erase_end = std::min(lines_.size(), cursor_row_ + count);
       lines_.erase(lines_.begin() + static_cast<std::ptrdiff_t>(cursor_row_),
                    lines_.begin() + static_cast<std::ptrdiff_t>(erase_end));
@@ -860,6 +904,25 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)),
           cursor_column_);
       return;
+    case 'r': {
+      const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
+      const int terminal_rows_int = static_cast<int>(terminal_rows);
+      const int scroll_region_top_param = CsiParamOrDefault(params, 0, 1);
+      const int scroll_region_bottom_param =
+          params.size() > 1 ? CsiParamOrDefault(params, 1, terminal_rows_int) : terminal_rows_int;
+      const std::size_t scroll_region_top =
+          static_cast<std::size_t>(std::max(0, scroll_region_top_param - 1));
+      const std::size_t scroll_region_bottom =
+          static_cast<std::size_t>(std::max(0, scroll_region_bottom_param - 1));
+      if (scroll_region_top >= terminal_rows || scroll_region_bottom >= terminal_rows ||
+          scroll_region_top > scroll_region_bottom) {
+        return;
+      }
+      scroll_region_top_ = scroll_region_top;
+      scroll_region_bottom_ = scroll_region_bottom;
+      MoveCursorLocked(0, 0);
+      return;
+    }
     case 's':
       saved_cursor_row_ = cursor_row_;
       saved_cursor_column_ = cursor_column_;
@@ -1034,15 +1097,27 @@ void TerminalSession::SaveActiveScreenLocked() {
   screen.cursor_column = cursor_column_;
   screen.saved_cursor_row = saved_cursor_row_;
   screen.saved_cursor_column = saved_cursor_column_;
+  screen.scroll_region_top = scroll_region_top_;
+  screen.scroll_region_bottom = scroll_region_bottom_;
 }
 
 void TerminalSession::RestoreSavedScreenLocked() {
   const ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
   lines_ = screen.lines.empty() ? std::vector<TerminalLine>{TerminalLine{}} : screen.lines;
+  if (use_alternate_screen_) {
+    lines_.resize(std::max<std::size_t>(1, rows_));
+  }
   cursor_row_ = screen.cursor_row;
   cursor_column_ = screen.cursor_column;
   saved_cursor_row_ = screen.saved_cursor_row;
   saved_cursor_column_ = screen.saved_cursor_column;
+  scroll_region_top_ = screen.scroll_region_top;
+  scroll_region_bottom_ = screen.scroll_region_bottom;
+  if (use_alternate_screen_ && rows_ > 0) {
+    cursor_row_ = std::min(cursor_row_, rows_ - 1);
+    saved_cursor_row_ = std::min(saved_cursor_row_, rows_ - 1);
+  }
+  ClampScrollRegionLocked();
   EnsureCursorLineExistsLocked();
 }
 
@@ -1052,6 +1127,7 @@ void TerminalSession::ResetScreenLocked(bool fill_rows) {
   cursor_column_ = 0;
   saved_cursor_row_ = 0;
   saved_cursor_column_ = 0;
+  ResetScrollRegionLocked();
 }
 
 void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
@@ -1083,9 +1159,20 @@ void TerminalSession::AdvanceCursorRowLocked() {
     if (lines_.size() < terminal_rows) {
       lines_.resize(terminal_rows);
     }
+    const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
+    const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
+    if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
+      if (cursor_row_ == scroll_region_bottom) {
+        ScrollRegionUpLocked(scroll_region_top, scroll_region_bottom, 1);
+        cursor_column_ = 0;
+        return;
+      }
+      ++cursor_row_;
+      cursor_column_ = 0;
+      return;
+    }
     if (cursor_row_ + 1 >= terminal_rows) {
-      lines_.erase(lines_.begin());
-      lines_.push_back(TerminalLine{});
+      ScrollRegionUpLocked(0, terminal_rows - 1, 1);
       cursor_row_ = terminal_rows - 1;
       cursor_column_ = 0;
       return;
@@ -1178,6 +1265,88 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
       }
       break;
   }
+}
+
+void TerminalSession::ResetScrollRegionLocked() {
+  scroll_region_top_ = 0;
+  scroll_region_bottom_ = rows_ > 0 ? rows_ - 1 : 0;
+}
+
+void TerminalSession::ClampScrollRegionLocked() {
+  if (rows_ == 0) {
+    scroll_region_top_ = 0;
+    scroll_region_bottom_ = 0;
+    return;
+  }
+  scroll_region_top_ = std::min(scroll_region_top_, rows_ - 1);
+  scroll_region_bottom_ = std::min(scroll_region_bottom_, rows_ - 1);
+  if (scroll_region_bottom_ < scroll_region_top_) {
+    ResetScrollRegionLocked();
+  }
+}
+
+std::size_t TerminalSession::ActiveScrollRegionTopLocked() const {
+  if (rows_ == 0) {
+    return 0;
+  }
+  return std::min(scroll_region_top_, rows_ - 1);
+}
+
+std::size_t TerminalSession::ActiveScrollRegionBottomLocked() const {
+  if (rows_ == 0) {
+    return 0;
+  }
+  return std::clamp(scroll_region_bottom_, ActiveScrollRegionTopLocked(), rows_ - 1);
+}
+
+void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count) {
+  if (!use_alternate_screen_ || rows_ == 0) {
+    return;
+  }
+
+  const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
+  if (lines_.size() < terminal_rows) {
+    lines_.resize(terminal_rows);
+  }
+
+  const std::size_t clamped_top = std::min(top, terminal_rows - 1);
+  const std::size_t clamped_bottom = std::clamp(bottom, clamped_top, terminal_rows - 1);
+  const std::size_t region_size = clamped_bottom - clamped_top + 1;
+  const std::size_t shift = std::min(count, region_size);
+  if (shift == 0) {
+    return;
+  }
+
+  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_top);
+  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_bottom + 1);
+  std::rotate(begin, begin + static_cast<std::ptrdiff_t>(shift), end);
+  std::fill(end - static_cast<std::ptrdiff_t>(shift), end, TerminalLine{});
+}
+
+void TerminalSession::ScrollRegionDownLocked(std::size_t top,
+                                             std::size_t bottom,
+                                             std::size_t count) {
+  if (!use_alternate_screen_ || rows_ == 0) {
+    return;
+  }
+
+  const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
+  if (lines_.size() < terminal_rows) {
+    lines_.resize(terminal_rows);
+  }
+
+  const std::size_t clamped_top = std::min(top, terminal_rows - 1);
+  const std::size_t clamped_bottom = std::clamp(bottom, clamped_top, terminal_rows - 1);
+  const std::size_t region_size = clamped_bottom - clamped_top + 1;
+  const std::size_t shift = std::min(count, region_size);
+  if (shift == 0) {
+    return;
+  }
+
+  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_top);
+  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_bottom + 1);
+  std::rotate(begin, end - static_cast<std::ptrdiff_t>(shift), end);
+  std::fill(begin, begin + static_cast<std::ptrdiff_t>(shift), TerminalLine{});
 }
 
 void TerminalSession::TrimScrollbackLocked() {

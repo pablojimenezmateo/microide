@@ -10,6 +10,10 @@
 #include <thread>
 #include <vector>
 
+namespace microide::tests {
+struct TerminalSessionTestAccess;
+}
+
 namespace microide::terminal {
 
 struct TerminalStyle {
@@ -77,6 +81,8 @@ class TerminalSession {
     std::size_t cursor_column = 0;
     std::size_t saved_cursor_row = 0;
     std::size_t saved_cursor_column = 0;
+    std::size_t scroll_region_top = 0;
+    std::size_t scroll_region_bottom = 0;
   };
 
   enum class EscapeMode {
@@ -113,6 +119,12 @@ class TerminalSession {
   void ClearLineRangeLocked(TerminalLine& line, std::size_t start, std::size_t end);
   void EraseInLineLocked(int mode);
   void EraseInDisplayLocked(int mode);
+  void ResetScrollRegionLocked();
+  void ClampScrollRegionLocked();
+  std::size_t ActiveScrollRegionTopLocked() const;
+  std::size_t ActiveScrollRegionBottomLocked() const;
+  void ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count);
+  void ScrollRegionDownLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void SaveCursorLocked();
   void RestoreCursorLocked();
   void SaveActiveScreenLocked();
@@ -150,6 +162,12 @@ class TerminalSession {
   std::size_t cursor_column_ = 0;
   std::size_t saved_cursor_row_ = 0;
   std::size_t saved_cursor_column_ = 0;
+  std::size_t scroll_region_top_ = 0;
+  std::size_t scroll_region_bottom_ = 23;
+
+#ifdef MICROIDE_TESTING
+  friend struct ::microide::tests::TerminalSessionTestAccess;
+#endif
 };
 
 }  // namespace microide::terminal

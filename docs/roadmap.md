@@ -47,7 +47,7 @@ The terminal is already useful, but it is still only a partial emulator.
 Current state:
 
 - PTY tabs, scrollback, keyboard input, selection/copy, and alternate-screen handling exist
-- common ANSI cursor, erase, and edit sequences work
+- common ANSI cursor, erase, edit, and scroll-region sequences work
 - app mouse reporting exists for mouse-aware terminal programs
 
 Remaining work:

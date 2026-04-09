@@ -11,6 +11,7 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
+void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
@@ -30,6 +31,7 @@ int main() {
   microide::tests::RegisterWorkspaceShellSharedSearchTests(tests);
   microide::tests::RegisterWorkspaceShellSharedTerminalTests(tests);
   microide::tests::RegisterProjectSearchServiceTests(tests);
+  microide::tests::RegisterTerminalSessionTests(tests);
   microide::tests::RegisterTextViewportTests(tests);
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
   microide::tests::RegisterWorkspaceShellProjectTests(tests);
