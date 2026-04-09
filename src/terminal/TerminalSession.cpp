@@ -155,6 +155,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
     application_cursor_keys_mode_ = false;
+    auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
@@ -233,6 +234,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
     application_cursor_keys_mode_ = false;
+    auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
@@ -291,6 +293,7 @@ void TerminalSession::Stop() {
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
     application_cursor_keys_mode_ = false;
+    auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
@@ -322,6 +325,7 @@ void TerminalSession::Stop() {
   mouse_tracking_any_ = false;
   mouse_sgr_ext_mode_ = false;
   application_cursor_keys_mode_ = false;
+  auto_wrap_mode_ = true;
   bracketed_paste_mode_ = false;
   cursor_visible_ = true;
   primary_screen_ = ScreenState{};
@@ -936,6 +940,18 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       }
       return;
     }
+    case 'S':
+      if (use_alternate_screen_) {
+        ScrollRegionUpLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
+                             static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
+      }
+      return;
+    case 'T':
+      if (use_alternate_screen_) {
+        ScrollRegionDownLocked(ActiveScrollRegionTopLocked(), ActiveScrollRegionBottomLocked(),
+                               static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)));
+      }
+      return;
     case 'd':
       MoveCursorLocked(
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)),
@@ -976,6 +992,9 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
   switch (mode) {
     case 1:
       application_cursor_keys_mode_ = enabled;
+      return;
+    case 7:
+      auto_wrap_mode_ = enabled;
       return;
     case 1000:
       mouse_tracking_normal_ = enabled;
@@ -1284,7 +1303,11 @@ void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
 
 void TerminalSession::PutCharacterLocked(char character) {
   if (columns_ > 0 && cursor_column_ >= columns_) {
-    AdvanceCursorRowLocked();
+    if (auto_wrap_mode_) {
+      AdvanceCursorRowLocked();
+    } else {
+      cursor_column_ = columns_ - 1;
+    }
   }
 
   EnsureCursorLineExistsLocked();

@@ -133,6 +133,44 @@ void TestTerminalSessionNormalCursorKeysUseCsiSequences() {
          "normal cursor-key mode should use CSI sequences after DECCKM is disabled");
 }
 
+void TestTerminalSessionScrollUpSequenceUsesScrollRegion() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;4r\x1b[S");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "A", "scroll-up should preserve rows above the scroll region");
+  ExpectLineText(lines, 1, "C", "scroll-up should shift the region upward");
+  ExpectLineText(lines, 2, "D", "scroll-up should keep later region rows visible");
+  ExpectLineText(lines, 3, "", "scroll-up should blank-fill the freed bottom row");
+}
+
+void TestTerminalSessionScrollDownSequenceUsesScrollRegion() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;4r\x1b[T");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "A", "scroll-down should preserve rows above the scroll region");
+  ExpectLineText(lines, 1, "", "scroll-down should blank-fill the freed top row");
+  ExpectLineText(lines, 2, "B", "scroll-down should shift region rows downward");
+  ExpectLineText(lines, 3, "C", "scroll-down should keep later region rows below the shift");
+}
+
+void TestTerminalSessionDisableAutoWrapOverwritesLastColumn() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 2, 4);
+
+  TerminalSessionTestAccess::AppendOutput(session, "ABCD\x1b[?7lEF\x1b[?7hG");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 2, "autowrap fixture should preserve the wrapped second row");
+  ExpectLineText(lines, 0, "ABCF", "disabled autowrap should overwrite the last column");
+  ExpectLineText(lines, 1, "G", "re-enabled autowrap should wrap subsequent characters");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -152,6 +190,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences);
   AddTest(tests, "TerminalSession/NormalCursorKeysCsiMode",
           TestTerminalSessionNormalCursorKeysUseCsiSequences);
+  AddTest(tests, "TerminalSession/ScrollUpSequenceUsesScrollRegion",
+          TestTerminalSessionScrollUpSequenceUsesScrollRegion);
+  AddTest(tests, "TerminalSession/ScrollDownSequenceUsesScrollRegion",
+          TestTerminalSessionScrollDownSequenceUsesScrollRegion);
+  AddTest(tests, "TerminalSession/DisableAutoWrapOverwritesLastColumn",
+          TestTerminalSessionDisableAutoWrapOverwritesLastColumn);
 }
 
 }  // namespace microide::tests
