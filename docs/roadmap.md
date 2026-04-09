@@ -52,6 +52,7 @@ Current state:
 - autowrap mode control and explicit `CSI S` / `CSI T` scrolling now work for alternate-screen apps
 - terminal paste shortcuts now honor bracketed paste mode when terminal apps request it
 - basic device-attribute and cursor-position queries now receive terminal replies
+- charset-designation escapes such as `ESC(B` no longer leak selector bytes into terminal output
 - common ANSI cursor, erase, edit, and scroll-region sequences work
 - app mouse reporting exists for mouse-aware terminal programs
 

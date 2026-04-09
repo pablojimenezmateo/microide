@@ -216,6 +216,17 @@ void TestTerminalSessionDisableOriginModeRestoresAbsoluteCup() {
   ExpectLineText(lines, 1, "B", "disabling origin mode should stop rebasing row 1 to the margin");
 }
 
+void TestTerminalSessionIgnoresCharsetDesignationEscapes() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "A\x1b(BC\x1b)0D\x1b*BE");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "ACDE",
+                 "charset designation escapes should not leak trailing selector bytes");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -249,6 +260,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOriginModeMakesCupRelativeToScrollRegion);
   AddTest(tests, "TerminalSession/DisableOriginModeRestoresAbsoluteCup",
           TestTerminalSessionDisableOriginModeRestoresAbsoluteCup);
+  AddTest(tests, "TerminalSession/IgnoresCharsetDesignationEscapes",
+          TestTerminalSessionIgnoresCharsetDesignationEscapes);
 }
 
 }  // namespace microide::tests

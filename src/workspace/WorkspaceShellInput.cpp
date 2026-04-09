@@ -346,7 +346,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         CloseSidebar();
         return true;
       }
-      return false;
+      break;
     default:
       break;
   }

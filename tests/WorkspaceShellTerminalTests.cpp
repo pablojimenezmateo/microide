@@ -75,6 +75,18 @@ void TestWorkspaceShellArrowKeysHonorApplicationCursorMode() {
          "workspace terminal navigation should switch to SS3 sequences in application cursor mode");
 }
 
+void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "top-level key handling should deliver Escape to the terminal");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b",
+         "Escape should reach terminal apps instead of being dropped early");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
@@ -86,6 +98,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCtrlVStillSendsControlV);
   AddTest(tests, "WorkspaceShell/TerminalArrowKeysHonorApplicationCursorMode",
           TestWorkspaceShellArrowKeysHonorApplicationCursorMode);
+  AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
+          TestWorkspaceShellHandleEventPassesEscapeToTerminal);
 }
 
 }  // namespace microide::tests

@@ -171,6 +171,13 @@ struct WorkspaceShellTestAccess {
     event.key = key;
     return shell.HandleTerminalKeyDown(event, modifiers);
   }
+  static bool HandleKeyEvent(WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_KEY_DOWN;
+    event.key.key = key;
+    event.key.mod = modifiers;
+    return shell.HandleEvent(event);
+  }
   static bool RestoreSessionState(WorkspaceShell& shell) { return shell.RestoreSessionState(); }
   static void SaveSessionState(WorkspaceShell& shell) { shell.SaveSessionState(); }
   static bool RestoreWorkspaceSession(WorkspaceShell& shell) {

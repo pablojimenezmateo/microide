@@ -109,6 +109,7 @@ class TerminalSession {
     AfterEscape,
     Csi,
     Osc,
+    CharsetDesignate,
   };
 
   enum class MouseTrackingMode {

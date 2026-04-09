@@ -30,7 +30,7 @@ This scaffold provides:
 - three-way merge tabs with incoming/result/current panes, per-hunk picks, and whole-side apply actions
 - sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
 - docked command prompt
-- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, explicit scroll-up/scroll-down sequences, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, and common cursor/erase repaint handling
+- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, explicit scroll-up/scroll-down sequences, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, charset-designation escape handling, and common cursor/erase repaint handling
 - terminal text selection, clipboard copy, and clipboard paste shortcuts
 - SDL text input wired into command/search/finder/sidebar-edit fields, the terminal, and editor insertion
 - editor cursor movement, layout, and backspace/delete now respect UTF-8 codepoint boundaries

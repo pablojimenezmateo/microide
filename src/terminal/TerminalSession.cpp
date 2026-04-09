@@ -628,6 +628,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         osc_escape_pending_ = false;
         continue;
       }
+      if (byte == '(' || byte == ')' || byte == '*' || byte == '+' || byte == '-' ||
+          byte == '.' || byte == '/') {
+        escape_sequence_buffer_.assign(1, static_cast<char>(byte));
+        escape_mode_ = EscapeMode::CharsetDesignate;
+        continue;
+      }
       if (byte == '7') {
         SaveCursorLocked();
       } else if (byte == '8') {
@@ -652,6 +658,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
           --cursor_row_;
         }
       }
+      escape_sequence_buffer_.clear();
+      escape_mode_ = EscapeMode::None;
+      continue;
+    }
+
+    if (escape_mode_ == EscapeMode::CharsetDesignate) {
       escape_sequence_buffer_.clear();
       escape_mode_ = EscapeMode::None;
       continue;

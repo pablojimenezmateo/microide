@@ -31,7 +31,7 @@ These are done and should not be treated as open migration work:
 - `[x]` compare tabs from tree, git sidebar, and commit picker workflows
 - `[x]` three-way merge tabs for conflicts and manual merge inputs
 - `[x]` git sidebar for working-tree changes, conflicts, outgoing files, stage, unstage, discard, and refresh
-- `[x]` PTY-backed terminal tabs with scrollback, selection/copy/paste, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, common ANSI handling, and alternate-screen support
+- `[x]` PTY-backed terminal tabs with scrollback, selection/copy/paste, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, charset-designation escape handling, common ANSI handling, and alternate-screen support
 - `[x]` runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets
 - `[x]` project-local editor preferences and colorscheme persistence
 - `[x]` project-local session restore for editor, compare, and merge tabs plus core workspace chrome
@@ -55,7 +55,7 @@ These are done and should not be treated as open migration work:
 
 ### Terminal
 
-- `[~]` the terminal is useful for embedded shell work, including alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse-index scrolling, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste, and basic device/cursor query replies for common full-screen apps, but it is still not a full terminal emulator
+- `[~]` the terminal is useful for embedded shell work, including alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse-index scrolling, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste, basic device/cursor query replies, and charset-designation escape handling for common full-screen apps, but it is still not a full terminal emulator
 - `[ ]` broaden real-world terminal validation and fill the remaining ANSI or control-sequence gaps that matter in practice
 
 ### Editor
@@ -87,7 +87,7 @@ These are done and should not be treated as open migration work:
 
 - `[~]` editor-core coverage now checks large-file mode on open plus edit-time threshold crossings and undo, but broader text editing primitives and undo/redo still need dedicated tests
 - `[~]` project-search backend coverage exists, but cancellation and larger-project behavior still need more validation
-- `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, and device/cursor query replies; workspace coverage now checks terminal paste shortcuts plus DECCKM-aware navigation keys, but broader real-app validation is still needed
+- `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, device/cursor query replies, and charset-designation escape handling; workspace coverage now checks terminal paste shortcuts, DECCKM-aware navigation keys, and `Esc` delivery, but broader real-app validation is still needed
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, and compare/merge rename state, but broader workflows still need more validation
