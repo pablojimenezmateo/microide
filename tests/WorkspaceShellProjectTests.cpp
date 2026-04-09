@@ -364,7 +364,8 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
   const auto& blame_line = overlay->lines[1];
   const float hover_x = blame_line.rect.x + 4.0f;
   const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
-  WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering blame text should request a redraw for the popup");
 
   const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell);
   Expect(popup_rect.has_value(), "hovering blame text should open the blame popup");
@@ -374,7 +375,8 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
   const float gap_x = std::max(blame_line.rect.x + 4.0f, popup_rect->x + 4.0f);
   const float gap_y =
       blame_line.rect.y + blame_line.rect.h + (popup_rect->y - (blame_line.rect.y + blame_line.rect.h)) * 0.5f;
-  WorkspaceShellTestAccess::HandleMouseMotion(shell, gap_x, gap_y, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, gap_x, gap_y, 0),
+         "moving from blame text toward the popup should keep the UI dirty for hover updates");
   Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
          "moving from blame text toward the popup should keep the popup visible");
 
@@ -387,7 +389,8 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
 
   const float copy_x = copy_rect->x + copy_rect->w * 0.5f;
   const float copy_y = copy_rect->y + copy_rect->h * 0.5f;
-  WorkspaceShellTestAccess::HandleMouseMotion(shell, copy_x, copy_y, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, copy_x, copy_y, 0),
+         "moving onto the blame popup button should request a redraw for button hover");
   Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
          "moving onto the blame popup button should keep the popup visible");
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, copy_x, copy_y, SDL_BUTTON_LEFT),
@@ -397,6 +400,40 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
 
   Expect(copied_text == blame_line.commit_id,
          "clicking the blame popup copy button should copy the full commit SHA");
+}
+
+void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root,
+            "This is a deliberately long blame summary that should wrap inside the popup instead of truncating too early",
+            "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
+  Expect(overlay.has_value() && overlay->lines.size() == 3,
+         "long-summary popup fixture should have visible inline blame");
+
+  WorkspaceShellTestAccess::SetVisibleEditorBlameOverlay(shell, overlay);
+  const auto& blame_line = overlay->lines[1];
+  const float hover_x = blame_line.rect.x + 4.0f;
+  const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering long-summary blame text should open the popup");
+
+  const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell);
+  Expect(popup_rect.has_value(), "hovering long-summary blame text should open the popup");
+  Expect(popup_rect->h > 110.0f,
+         "long blame summaries should wrap into a taller popup instead of truncating to one line");
 }
 
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
@@ -510,6 +547,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlameSuppressesNarrowPanes);
   AddTest(tests, "WorkspaceShell/EditorBlameHoverPopupCopiesCommitSha",
           TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha);
+  AddTest(tests, "WorkspaceShell/EditorBlamePopupWrapsLongSummary",
+          TestWorkspaceShellEditorBlamePopupWrapsLongSummary);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

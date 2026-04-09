@@ -607,18 +607,28 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       DrawRect(renderer, popup->rect, theme_.border);
       const float text_x = popup->rect.x + 12.0f;
       const float text_width = std::max(0.0f, popup->rect.w - 24.0f);
+      const auto summary_lines =
+          WrapEditorBlamePopupText(blame_line->summary, text_width, 4);
       float text_y = popup->rect.y + 12.0f;
       draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
                    text_renderer_.TruncateToWidth(blame_line->author, text_width));
-      text_y += text_renderer_.LineHeight();
+      text_y += text_renderer_.LineHeight() + 2.0f;
       draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
                    text_renderer_.TruncateToWidth(blame_line->date, text_width));
-      text_y += text_renderer_.LineHeight();
-      draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                   text_renderer_.TruncateToWidth(blame_line->summary, text_width));
+      if (!summary_lines.empty()) {
+        text_y += text_renderer_.LineHeight() + 8.0f;
+        for (std::size_t i = 0; i < summary_lines.size(); ++i) {
+          draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
+                       summary_lines[i]);
+          text_y += text_renderer_.LineHeight();
+          if (i + 1 < summary_lines.size()) {
+            text_y += 2.0f;
+          }
+        }
+      }
 
-      const bool copy_hovered = last_mouse_position_valid_ &&
-                                Contains(popup->copy_sha_rect, last_mouse_x_, last_mouse_y_);
+      const bool copy_hovered =
+          last_mouse_position_valid_ && EditorBlamePopupCopyShaHovered(last_mouse_x_, last_mouse_y_);
       DrawFilledRect(renderer, popup->copy_sha_rect,
                      copy_hovered ? theme_.row_highlight : theme_.surface_raised);
       DrawRect(renderer, popup->copy_sha_rect, copy_hovered ? theme_.accent : theme_.border);

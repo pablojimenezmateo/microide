@@ -62,11 +62,6 @@ SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
                   full.y + std::floor((full.h - height) * 0.5f), width, height);
 }
 
-SDL_FRect ExpandRect(const SDL_FRect& rect, float padding_x, float padding_y) {
-  return MakeRect(rect.x - padding_x, rect.y - padding_y, rect.w + padding_x * 2.0f,
-                  rect.h + padding_y * 2.0f);
-}
-
 std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog) {
   const float total_width =
       kPromptSurfaceButtonWidth * 2.0f + kPromptSurfaceButtonGap;
@@ -134,7 +129,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   const auto visible_blame_popup = ActiveEditorBlamePopupLayout();
   if (event.button.button == SDL_BUTTON_LEFT && visible_blame_popup.has_value() &&
       Contains(visible_blame_popup->rect, event.button.x, event.button.y)) {
-    if (Contains(ExpandRect(visible_blame_popup->copy_sha_rect, 12.0f, 6.0f), event.button.x,
+    if (Contains(EditorBlamePopupCopyShaHitRect(*visible_blame_popup), event.button.x,
                  event.button.y)) {
       if (const editor::EditorBlameLine* blame_line =
               VisibleEditorBlameLine(visible_blame_popup->line_index);
@@ -1217,8 +1212,17 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
 }
 
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
+  bool hover_visual_changed = false;
   if (last_window_width_ > 0 && last_window_height_ > 0) {
+    const std::optional<std::size_t> previous_popup_line = active_editor_blame_popup_line_;
+    const bool previous_copy_hovered =
+        last_mouse_position_valid_ && EditorBlamePopupCopyShaHovered(last_mouse_x_, last_mouse_y_);
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+    const bool current_copy_hovered =
+        EditorBlamePopupCopyShaHovered(static_cast<float>(event.motion.x),
+                                       static_cast<float>(event.motion.y));
+    hover_visual_changed = previous_popup_line != active_editor_blame_popup_line_ ||
+                           previous_copy_hovered != current_copy_hovered;
   }
 
   if (dirty_prompt_visible_) {
@@ -1819,7 +1823,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (!mouse_selecting_ || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
-    return false;
+    return hover_visual_changed;
   }
 
   const WorkspaceLayout layout =

@@ -940,6 +940,11 @@ class WorkspaceShell {
   const editor::EditorBlameLine* VisibleEditorBlameLine(std::size_t line_index) const;
   const editor::EditorBlameLine* EditorBlameLineAtPosition(float x, float y) const;
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
+  SDL_FRect EditorBlamePopupCopyShaHitRect(const EditorBlamePopupLayout& popup) const;
+  bool EditorBlamePopupCopyShaHovered(float x, float y) const;
+  std::vector<std::string> WrapEditorBlamePopupText(std::string_view text,
+                                                    float max_width,
+                                                    std::size_t max_lines) const;
   void UpdateEditorBlameHover(float x, float y);
   void InvalidateEditorBlamePath(const std::filesystem::path& path);
   void ClearEditorBlame();
