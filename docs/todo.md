@@ -69,7 +69,7 @@ These are done and should not be treated as open migration work:
 - `[~]` UTF-8 entry and IME preedit rendering exist, but the underlying text model is still byte-oriented
 - `[~]` editor large-file mode now disables syntax highlighting above size or line-count thresholds and reevaluates as edits or undo cross those thresholds, but the thresholds still need more validation on real repositories
 - `[x]` editor copy-with-context is available from the Edit menu and right-click editor popup, and it prefixes the selected text with a relative path plus line or line-range header
-- `[ ]` per-line git blame shadow text still needs an implementation; the intended constraints now live in `docs/blame-shadow-text.md`, including async viewport-scoped loading, span caching, and initial limits to clean tracked non-large files
+- `[~]` per-line git blame shadow text now renders for clean tracked non-large files through the async viewport-scoped cache described in `docs/blame-shadow-text.md`, but broader repo validation and any policy expansion still need work
 - `[-]` soft wrap
 - `[ ]` diagnostics or problem styling only if a diagnostics phase is intentionally started
 
@@ -108,7 +108,7 @@ These are done and should not be treated as open migration work:
 - `[x]` source-control bulk-action coverage now checks bulk stage/discard services plus the confirmed workspace discard-all flow
 - `[x]` tab-reordering coverage now checks project, file, and terminal drag reordering
 - `[x]` context-copy coverage now checks editor selection formatting, the editor right-click menu, terminal last-command transcript copying, alternate-screen fallback behavior, and the terminal tab context-menu entry point
-- `[ ]` blame parser, cache invalidation, dirty-buffer suppression, and viewport-window coverage if editor blame is started
+- `[~]` blame coverage now exercises the incremental parser, cache invalidation, dirty-buffer suppression, viewport-window loading, and narrow-pane suppression, but broader repo-scale validation is still missing
 - `[ ]` broader compare and merge workflow tests
 
 ## Intentional Scope Cuts

@@ -170,6 +170,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   StopProjectSearch();
   CloseTreeContextMenu();
+  ClearEditorBlame();
 
   project_root_.clear();
   directory_tree_ = project::DirectoryTree{};

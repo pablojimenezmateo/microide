@@ -3,8 +3,10 @@
 #include "WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -12,6 +14,49 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
+
+std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
+  return ShellEscape(repo_path.string());
+}
+
+void InitializeGitRepo(const std::filesystem::path& repo_path) {
+  const std::string escaped_repo = EscapedRepoPath(repo_path);
+  RequireCommandSuccess(
+      "git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
+      "git init");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
+      "git config user.name");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo +
+          "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
+      "git config user.email");
+}
+
+void CommitAll(const std::filesystem::path& repo_path,
+               std::string_view message,
+               std::string_view context) {
+  const std::string escaped_repo = EscapedRepoPath(repo_path);
+  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null",
+                        std::string(context) + " add");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' commit -m '" + std::string(message) +
+          "' >/dev/null 2>/dev/null",
+      std::string(context) + " commit");
+}
+
+std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
+    WorkspaceShell& shell) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
+    if (overlay.has_value() && !overlay->lines.empty()) {
+      return overlay;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
+}
 
 void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
   TemporaryDirectory temp_dir;
@@ -206,6 +251,81 @@ void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
          "right-clicking the editor should open the edit popup as a context menu");
 }
 
+void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell);
+  Expect(overlay.has_value(), "clean tracked editor should eventually expose blame overlay");
+  Expect(!overlay->lines.empty(), "clean tracked editor should render visible blame lines");
+  Expect(overlay->lines.front().text.find("Microide Tests") != std::string::npos,
+         "editor blame overlay should include the author");
+  Expect(overlay->lines.front().text.find("Add editor blame fixture") != std::string::npos,
+         "editor blame overlay should include the commit summary");
+}
+
+void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndAfterSave() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WaitForActiveEditorBlameOverlay(shell).has_value(),
+         "clean tracked editor should load blame before dirty-state checks");
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// dirty\n");
+  Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
+         "dirty editor buffer should suppress blame immediately");
+
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0),
+         "saving the dirty editor should succeed");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value()) {
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(false, "saved but uncommitted editor should stop showing blame");
+}
+
+void TestWorkspaceShellEditorBlameSuppressesNarrowPanes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 420, 320);
+
+  Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
+         "narrow editor panes should suppress blame instead of stealing code width");
+}
+
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -309,6 +429,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",
           TestWorkspaceShellEditorRightClickOpensEditContextMenu);
+  AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",
+          TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
+  AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndAfterSave",
+          TestWorkspaceShellEditorBlameHidesForDirtyBufferAndAfterSave);
+  AddTest(tests, "WorkspaceShell/EditorBlameSuppressesNarrowPanes",
+          TestWorkspaceShellEditorBlameSuppressesNarrowPanes);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

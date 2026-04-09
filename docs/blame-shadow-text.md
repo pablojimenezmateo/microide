@@ -3,6 +3,13 @@
 This document defines how per-line git blame shadow text should be added without hurting normal
 editor latency.
 
+Status today:
+
+- implemented for clean tracked editor files
+- loaded asynchronously through `GitBlameService`
+- rendered only for the visible viewport window
+- suppressed for dirty, untracked, large-file, and narrow-pane cases
+
 The short version:
 
 - blame must never run synchronously on typing, scrolling, or repaint

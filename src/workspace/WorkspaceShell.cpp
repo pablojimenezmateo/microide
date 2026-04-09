@@ -586,6 +586,13 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
     project_search_event_type_ = 0;
   }
 
+  git_blame_event_type_ = SDL_RegisterEvents(1);
+  if (git_blame_event_type_ != static_cast<Uint32>(-1)) {
+    git_blame_service_.SetWakeEventType(git_blame_event_type_);
+  } else {
+    git_blame_event_type_ = 0;
+  }
+
   terminal_event_type_ = SDL_RegisterEvents(1);
   if (terminal_event_type_ == static_cast<Uint32>(-1)) {
     terminal_event_type_ = 0;
@@ -627,6 +634,7 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
 
 void WorkspaceShell::Shutdown() {
   SaveUserConfig();
+  git_blame_service_.Stop();
 
   if (!projects_.empty() && !project_root_.empty() && active_project_index_ < projects_.size()) {
     SaveConfigState();
@@ -1091,6 +1099,7 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
   }
 
   bool attempted_save = false;
+  std::vector<std::filesystem::path> saved_paths;
   for (auto& view : editor_state->views) {
     editor::TextViewport* candidate = &view.viewport;
     if (index == active_tab_index_ && view.leaf_id == editor_state->active_leaf_id) {
@@ -1112,6 +1121,7 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
       return false;
     }
     attempted_save = true;
+    saved_paths.push_back(candidate->path().lexically_normal());
 
     if (index == active_tab_index_ && candidate == &text_viewport_) {
       view.viewport = text_viewport_;
@@ -1122,6 +1132,9 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
     SyncActiveEditorTab();
   }
   if (attempted_save) {
+    for (const auto& path : saved_paths) {
+      InvalidateEditorBlamePath(path);
+    }
     directory_tree_.Refresh();
   }
   return attempted_save || !editor_state->views.empty();
@@ -1216,6 +1229,7 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(
 
 
 void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
+  InvalidateEditorBlamePath(path);
   for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
     auto& tab = open_tabs_[i];
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || TabIsDirty(i)) {
@@ -1696,6 +1710,7 @@ bool WorkspaceShell::ReopenActiveTab() {
     tab.editor_state = MakeEditorTabState(reopened_view);
   }
   SyncActiveEditorTabMetadata();
+  InvalidateEditorBlamePath(reopen_path);
   focus_ = FocusTarget::Editor;
   ResetCaretBlink();
   LogMessage("Reopened file from disk: " + reopen_path.string());

@@ -388,7 +388,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (panes.empty() && text_viewport_.is_placeholder()) {
       active_editor_pane_rect = layout.editor_surface;
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, text_viewport_,
-                                   layout.editor_surface, draw_editor_caret, "", std::nullopt);
+                                   layout.editor_surface, draw_editor_caret, "", std::nullopt,
+                                   std::nullopt);
     }
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
@@ -402,13 +403,15 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       if (pane.active) {
         active_editor_pane_rect = pane.rect;
       }
+      const auto blame_overlay = BuildEditorBlameOverlay(*viewport, pane.rect);
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active && (overlay_mode_ == OverlayMode::BufferSearch ||
                                                    overlay_mode_ == OverlayMode::BufferReplace)
                                        ? buffer_search_query_
                                        : "",
-                                   pane.active ? ActiveBufferSearchMatch() : std::nullopt);
+                                   pane.active ? ActiveBufferSearchMatch() : std::nullopt,
+                                   blame_overlay);
     }
   }
 

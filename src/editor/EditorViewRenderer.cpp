@@ -11,6 +11,8 @@ namespace microide::editor {
 
 namespace {
 
+constexpr float kBlameGap = 16.0f;
+
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
   const std::string last_line_label = std::to_string(std::max<std::size_t>(1, line_count));
   return std::max(48.0f, text_renderer.MeasureWidth(last_line_label) + 18.0f);
@@ -253,16 +255,24 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
 
 EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer& text_renderer,
                                                      const TextViewport& viewport,
-                                                     const SDL_FRect& rect) {
+                                                     const SDL_FRect& rect,
+                                                     std::size_t blame_columns) {
   EditorViewMetrics metrics;
+  const float char_width = std::max(1.0f, text_renderer.CharWidth());
   metrics.gutter_width = ComputeGutterWidth(text_renderer, viewport.line_count());
   metrics.text_x = rect.x + metrics.gutter_width + 12.0f;
   metrics.first_line_y = rect.y + 8.0f;
   metrics.line_height = text_renderer.LineHeight();
   metrics.visible_rows = static_cast<std::size_t>(
       std::max(1, static_cast<int>((rect.h - 12.0f) / metrics.line_height)));
+  if (blame_columns > 0) {
+    metrics.blame_width = static_cast<float>(blame_columns) * char_width;
+    metrics.blame_x = rect.x + rect.w - metrics.blame_width - 12.0f;
+  }
+  const float right_padding = metrics.blame_width > 0.0f ? metrics.blame_width + kBlameGap + 12.0f
+                                                          : 28.0f;
   metrics.visible_columns = static_cast<std::size_t>(
-      std::max(8.0f, (rect.w - metrics.gutter_width - 28.0f) / text_renderer.CharWidth()));
+      std::max(8.0f, (rect.w - metrics.gutter_width - right_padding) / char_width));
   return metrics;
 }
 
@@ -273,7 +283,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 const SDL_FRect& rect,
                                 bool draw_caret,
                                 std::string_view search_query,
-                                const std::optional<SelectionRange>& active_search_match) const {
+                                const std::optional<SelectionRange>& active_search_match,
+                                const std::optional<EditorBlameOverlay>& blame_overlay) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -288,7 +299,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     return;
   }
 
-  const EditorViewMetrics metrics = ComputeMetrics(text_renderer, viewport, rect);
+  const std::size_t blame_columns =
+      blame_overlay.has_value() && blame_overlay->visible ? blame_overlay->reserved_columns : 0;
+  const EditorViewMetrics metrics = ComputeMetrics(text_renderer, viewport, rect, blame_columns);
   const SDL_FRect gutter = SDL_FRect{rect.x, rect.y, metrics.gutter_width, rect.h};
   SDL_SetRenderDrawColor(renderer, theme.gutter_background.r, theme.gutter_background.g,
                          theme.gutter_background.b, theme.gutter_background.a);
@@ -305,6 +318,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::size_t cursor_line = viewport.cursor_line();
   const auto selection = viewport.selection_range();
   const std::string lowered_search_query = ToLower(search_query);
+  std::size_t blame_index = 0;
 
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t line_index = scroll_line + row;
@@ -450,6 +464,21 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
                              theme.cursor.a);
       SDL_RenderFillRect(renderer, &caret);
+    }
+
+    if (blame_overlay.has_value() && blame_overlay->visible && metrics.blame_width > 0.0f) {
+      while (blame_index < blame_overlay->lines.size() &&
+             blame_overlay->lines[blame_index].line_index < line_index) {
+        ++blame_index;
+      }
+      if (blame_index < blame_overlay->lines.size() &&
+          blame_overlay->lines[blame_index].line_index == line_index) {
+        const std::string blame_text =
+            text_renderer.TruncateToWidth(blame_overlay->lines[blame_index].text, metrics.blame_width);
+        text_renderer.DrawStringOn(renderer, metrics.blame_x, y, theme.text_muted,
+                                   selected ? theme.row_highlight : theme.editor_background,
+                                   blame_text);
+      }
     }
   }
 }

@@ -77,6 +77,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitCompareService.cpp
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
+  src/project/GitBlameService.cpp
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
@@ -92,6 +93,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellCompareRender.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellCommand.cpp
+  src/workspace/WorkspaceShellBlame.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellInput.cpp
   src/workspace/WorkspaceShellMenu.cpp
@@ -150,6 +152,7 @@ add_executable(microide_tests
   tests/CompareModelTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
+  tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
   tests/ProjectSearchServiceTests.cpp
   tests/TerminalSessionTests.cpp

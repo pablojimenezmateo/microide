@@ -938,6 +938,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
 
     RetargetOpenTabsForRename(state.path, result.resulting_path,
                               resolution != DirtyPathResolution::Discard);
+    ClearEditorBlame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
     focus_ = FocusTarget::Sidebar;
     LogMessage("Renamed: " + RelativePathLabel(project_root_, result.resulting_path));
@@ -969,6 +970,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   }
   DismissPromptSurface(false);
   CloseOpenTabsForPath(state.path);
+  ClearEditorBlame();
   RefreshProjectViewsAfterMutation(parent);
   focus_ = FocusTarget::Sidebar;
   LogMessage("Moved to trash: " + RelativePathLabel(project_root_, state.path));

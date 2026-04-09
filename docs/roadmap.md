@@ -92,16 +92,16 @@ The biggest remaining editor-facing gaps are:
 
 - explicit threshold tuning for editor large-file mode after the new edit-time reevaluation path
 - continued UTF-8 and IME hardening while the buffer model is still byte-oriented
-- per-line git blame shadow text only if it follows `docs/blame-shadow-text.md`: dedicated async
-  service boundary, viewport-scoped `git blame -L` loading, aggressive span caching, and the same
-  kind of eligibility cutoffs already used for syntax highlighting
+- validate the new blame shadow-text implementation on larger real repositories and decide whether
+  it should stay limited to clean tracked small files or grow into deeper modes such as
+  `--ignore-revs-file`, broader cache policies, or richer blame presentation
 
 Diagnostics and problem styling belong here only if a diagnostics phase is intentionally started.
 
-The blame item is performance-sensitive enough to deserve hard constraints:
+The blame item is performance-sensitive enough to keep hard constraints even after the first pass:
 
 - no synchronous `git blame` work on cursor movement, viewport scrolling, or normal editor redraws
-- no dirty-buffer blame in the first release
+- no dirty-buffer blame in the shipped first release
 - no default `-M` or `-C` move or copy detection on the normal viewport path
 - no blame for files already in editor large-file mode
 
@@ -133,8 +133,8 @@ Remaining work:
 - decide how much external-`git` dependence is acceptable for the product
 - if external `git` stays, tighten subprocess handling and error reporting
 - move any avoidable filesystem or git refresh work off latency-sensitive UI paths
-- if blame is added, keep it behind its own project service instead of letting workspace or editor
-  rendering shell out directly
+- blame now lives behind its own project service; keep future blame work there instead of letting
+  workspace or editor rendering shell out directly
 
 ## Cross-Cutting Work
 
@@ -146,8 +146,8 @@ The highest-value missing automated coverage is:
 - tree mutation flows
 - source-control bulk actions and their confirmation semantics
 - terminal transcript context-copy formatting beyond the current last-command and alternate-screen cases
-- blame parser, cache invalidation, dirty-buffer suppression, and viewport-scoped loading behavior if
-  blame is started
+- broaden blame coverage beyond the current parser, cache invalidation, dirty-buffer suppression, and
+  viewport-scoped loading tests
 - compare and merge workflow coverage beyond the current model-level tests
 - terminal behavior checks where deterministic harnesses are practical
 
@@ -158,7 +158,7 @@ The highest-value remaining performance work is:
 - glyph-atlas style text rendering work
 - dirty-rect and caret-only invalidation
 - replace the current UI zoom path, which stretches a reduced logical framebuffer and blurs text, with a proper HiDPI scaling model that keeps layout and font rendering sharp at non-100% scales
-- preserve typing and scrolling latency if blame shadow text is added by keeping blame collection
+- preserve typing and scrolling latency as blame shadow text expands by keeping blame collection
   asynchronous, debounced on uncached viewport changes, and disabled for dirty or large buffers
 - startup and idle redraw profiling driven by `docs/startup-tracing.md`
 

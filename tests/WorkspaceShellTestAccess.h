@@ -177,6 +177,7 @@ struct WorkspaceShellTestAccess {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
                                WorkspaceShell::ActionSource::Menu);
   }
+  static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.directory_tree_.SelectPath(path);
@@ -284,6 +285,31 @@ struct WorkspaceShellTestAccess {
       }
     }
     return {};
+  }
+  static std::optional<microide::editor::EditorBlameOverlay> ActiveEditorBlameOverlay(
+      WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    if (!shell.ActiveTabIsEditor()) {
+      return std::nullopt;
+    }
+    shell.SyncActiveEditorTab();
+    auto* editor_tab = shell.ActiveEditorTab();
+    if (editor_tab == nullptr) {
+      return std::nullopt;
+    }
+    shell.NormalizeEditorSplitTree(*editor_tab);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    for (const auto& pane : panes) {
+      if (pane.active) {
+        return shell.BuildEditorBlameOverlay(shell.text_viewport_, pane.rect);
+      }
+    }
+    return shell.text_viewport_.is_placeholder()
+               ? shell.BuildEditorBlameOverlay(shell.text_viewport_, layout.editor_surface)
+               : std::nullopt;
   }
   static SDL_FRect ActiveTerminalTabRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout =

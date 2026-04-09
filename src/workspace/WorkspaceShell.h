@@ -20,6 +20,7 @@
 #include "editor/TextViewport.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
+#include "project/GitBlameService.h"
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
@@ -926,6 +927,12 @@ class WorkspaceShell {
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
+  bool EditorBlameFitsPane(const editor::TextViewport& viewport, const SDL_FRect& rect) const;
+  std::optional<editor::EditorBlameOverlay> BuildEditorBlameOverlay(
+      const editor::TextViewport& viewport,
+      const SDL_FRect& rect);
+  void InvalidateEditorBlamePath(const std::filesystem::path& path);
+  void ClearEditorBlame();
   std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,
                                                      std::string_view left_ref,
                                                      std::string_view right_ref) const;
@@ -1159,8 +1166,10 @@ class WorkspaceShell {
   std::size_t git_sidebar_selected_index_ = 0;
   std::uint64_t project_search_run_id_ = 0;
   Uint32 project_search_event_type_ = 0;
+  Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
+  project::GitBlameService git_blame_service_;
   project::ProjectSearchService project_search_service_;
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;

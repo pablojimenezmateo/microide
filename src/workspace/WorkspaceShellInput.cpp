@@ -15,6 +15,9 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     ConsumeProjectSearchUpdates();
     return true;
   }
+  if (git_blame_event_type_ != 0 && event.type == git_blame_event_type_) {
+    return true;
+  }
   if (terminal_event_type_ != 0 && event.type == terminal_event_type_) {
     ReapExitedTerminalTabs();
     return true;

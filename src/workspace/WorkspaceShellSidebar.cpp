@@ -141,6 +141,7 @@ void WorkspaceShell::RefreshProjectFiles() {
 }
 
 void WorkspaceShell::RefreshGitSidebar() {
+  ClearEditorBlame();
   const std::filesystem::path previous_path =
       git_sidebar_selected_index_ < git_sidebar_entries_.size()
           ? git_sidebar_entries_[git_sidebar_selected_index_].path
