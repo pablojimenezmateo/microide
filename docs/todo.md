@@ -61,7 +61,7 @@ These are done and should not be treated as open migration work:
 ### Editor
 
 - `[~]` UTF-8 entry and IME preedit rendering exist, but the underlying text model is still byte-oriented
-- `[~]` editor large-file mode now disables syntax highlighting above size or line-count thresholds, but the thresholds still need more validation on real repositories
+- `[~]` editor large-file mode now disables syntax highlighting above size or line-count thresholds and reevaluates as edits or undo cross those thresholds, but the thresholds still need more validation on real repositories
 - `[-]` soft wrap
 - `[ ]` diagnostics or problem styling only if a diagnostics phase is intentionally started
 
@@ -85,7 +85,7 @@ These are done and should not be treated as open migration work:
 
 ### Testing
 
-- `[ ]` editor-core unit tests for text editing primitives and undo/redo
+- `[~]` editor-core coverage now checks large-file mode on open plus edit-time threshold crossings and undo, but broader text editing primitives and undo/redo still need dedicated tests
 - `[~]` project-search backend coverage exists, but cancellation and larger-project behavior still need more validation
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation

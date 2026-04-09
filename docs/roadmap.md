@@ -74,7 +74,7 @@ Current state:
 
 The biggest remaining editor-facing gaps are:
 
-- explicit validation and threshold tuning for editor large-file mode
+- explicit threshold tuning for editor large-file mode after the new edit-time reevaluation path
 - continued UTF-8 and IME hardening while the buffer model is still byte-oriented
 
 Diagnostics and problem styling belong here only if a diagnostics phase is intentionally started.

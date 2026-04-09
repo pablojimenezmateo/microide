@@ -30,6 +30,17 @@ bool ShouldUseLargeFileMode(std::string_view content, std::size_t line_count) {
   return content.size() >= kLargeFileByteThreshold || line_count >= kLargeFileLineThreshold;
 }
 
+std::size_t LineEndingSize(TextViewport::LineEnding line_ending) {
+  switch (line_ending) {
+    case TextViewport::LineEnding::CRLF:
+      return 2;
+    case TextViewport::LineEnding::CR:
+    case TextViewport::LineEnding::LF:
+    default:
+      return 1;
+  }
+}
+
 }  // namespace
 
 TextViewport::TextViewport() {
@@ -333,6 +344,7 @@ void TextViewport::InsertCharacter(char character) {
   line.insert(line.begin() + static_cast<std::ptrdiff_t>(cursor_column_), character);
   ++cursor_column_;
   RefreshEncoding();
+  RefreshLargeFileMode();
   preferred_column_ = cursor_visual_column();
   MarkDirty();
   EnsureCursorVisible();
@@ -383,6 +395,7 @@ void TextViewport::InsertText(std::string_view text, bool record_undo) {
   }
 
   RefreshEncoding();
+  RefreshLargeFileMode();
   preferred_column_ = cursor_visual_column();
   MarkDirty();
   EnsureCursorVisible();
@@ -404,6 +417,7 @@ void TextViewport::InsertNewline() {
   cursor_column_ = 0;
   preferred_column_ = 0;
   RefreshEncoding();
+  RefreshLargeFileMode();
   MarkDirty();
   EnsureCursorVisible();
 }
@@ -438,6 +452,7 @@ void TextViewport::Backspace() {
     line.erase(erase_start, cursor_column_ - erase_start);
     cursor_column_ = erase_start;
     RefreshEncoding();
+    RefreshLargeFileMode();
     preferred_column_ = cursor_visual_column();
     MarkDirty();
     EnsureCursorVisible();
@@ -455,6 +470,7 @@ void TextViewport::Backspace() {
   --cursor_line_;
   cursor_column_ = previous_length;
   RefreshEncoding();
+  RefreshLargeFileMode();
   preferred_column_ = cursor_visual_column();
   MarkDirty();
   EnsureCursorVisible();
@@ -475,6 +491,7 @@ void TextViewport::DeleteForward() {
     const std::size_t erase_end = TextLayout::NextTextColumn(line, cursor_column_);
     line.erase(cursor_column_, erase_end - cursor_column_);
     RefreshEncoding();
+    RefreshLargeFileMode();
     preferred_column_ = cursor_visual_column();
     MarkDirty();
     EnsureCursorVisible();
@@ -489,6 +506,7 @@ void TextViewport::DeleteForward() {
   line += document_->lines[cursor_line_ + 1];
   document_->lines.erase(document_->lines.begin() + static_cast<std::ptrdiff_t>(cursor_line_ + 1));
   RefreshEncoding();
+  RefreshLargeFileMode();
   preferred_column_ = cursor_visual_column();
   MarkDirty();
   EnsureCursorVisible();
@@ -852,6 +870,12 @@ void TextViewport::RefreshEncoding() {
   document_->encoding = DetectEncoding(document_->lines);
 }
 
+void TextViewport::RefreshLargeFileMode() {
+  document_->large_file_mode =
+      ShouldUseLargeFileMode(std::string_view{}, document_->lines.size()) ||
+      SerializedByteSize() >= kLargeFileByteThreshold;
+}
+
 void TextViewport::BeginSelectionIfNeeded(bool extend_selection) {
   if (extend_selection) {
     if (!selection_anchor_.has_value()) {
@@ -887,6 +911,7 @@ bool TextViewport::DeleteSelection() {
   cursor_line_ = start.line;
   cursor_column_ = start.column;
   RefreshEncoding();
+  RefreshLargeFileMode();
   preferred_column_ = cursor_visual_column();
   selection_anchor_.reset();
   MarkDirty();
@@ -924,6 +949,7 @@ void TextViewport::RestoreSnapshot(const HistoryEntry& snapshot) {
   document_->encoding = snapshot.encoding;
   document_->placeholder = snapshot.placeholder;
   document_->dirty = snapshot.dirty;
+  RefreshLargeFileMode();
   InvalidateLayoutCaches();
   EnsureCursorVisible();
 }
@@ -1201,6 +1227,17 @@ std::vector<std::string> TextViewport::SplitLines(const std::string& content) {
 
 bool TextViewport::IsBefore(const TextPosition& lhs, const TextPosition& rhs) {
   return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
+}
+
+std::size_t TextViewport::SerializedByteSize() const {
+  std::size_t total_size = 0;
+  for (const std::string& line : document_->lines) {
+    total_size += line.size();
+  }
+  if (document_->lines.size() > 1) {
+    total_size += (document_->lines.size() - 1) * LineEndingSize(document_->line_ending);
+  }
+  return total_size;
 }
 
 }  // namespace microide::editor

@@ -163,6 +163,7 @@ class TextViewport {
 
   void MarkDirty();
   void InvalidateLayoutCaches();
+  void RefreshLargeFileMode();
   void RefreshEncoding();
   void EnsureInitialHighlightState() const;
   void EnsureHighlightStatesThrough(std::size_t line_index) const;
@@ -182,6 +183,7 @@ class TextViewport {
   static bool IsValidUtf8(std::string_view content);
   static std::vector<std::string> SplitLines(const std::string& content);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
+  std::size_t SerializedByteSize() const;
 
   std::shared_ptr<DocumentState> document_;
   std::size_t cursor_line_ = 0;
