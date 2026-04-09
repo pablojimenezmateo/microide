@@ -24,7 +24,7 @@ This scaffold provides:
 - tab-aware text layout with visual-column cursor positioning
 - editor load/save now preserves detected line endings
 - editor large-file mode disables syntax highlighting above size or line-count thresholds
-- editor git blame shadow text for clean tracked files, loaded asynchronously per viewport window and cached by file or line span, while dirty, untracked, large-file, and narrow-pane cases stay suppressed
+- editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, loaded asynchronously per viewport window and cached by file or line span, while dirty, untracked, large-file, and narrow-pane cases stay suppressed
 - extracted text renderer and editor view renderer modules
 - optional `SDL3_ttf` text backend with debug-text fallback
 - cached file-finder overlay

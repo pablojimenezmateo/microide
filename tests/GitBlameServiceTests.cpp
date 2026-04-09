@@ -171,6 +171,41 @@ void TestGitBlameServiceSuppressesDirtyAndUntrackedFiles() {
   Expect(untracked_snapshot.lines.empty(), "untracked files should not publish blame text");
 }
 
+void TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "main.cpp";
+  WriteFile(file_path, "one\ntwo\nthree\n");
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Initial blame", "initial blame");
+  WriteFile(file_path, "one\nTWO\nthree\n");
+
+  GitBlameService service;
+  const GitBlameRequest request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 0,
+      .visible_line_count = 3,
+      .total_line_count = 3,
+      .dirty = false,
+      .large_file_mode = false,
+  };
+
+  const auto snapshot = WaitForSnapshot(service, request);
+  service.Stop();
+
+  Expect(snapshot.eligible, "saved tracked working-tree changes should still be blame-eligible");
+  Expect(snapshot.lines.size() == 3,
+         "saved tracked working-tree changes should publish the whole visible range");
+  Expect(snapshot.lines[0].text.find("Microide Tests") != std::string::npos,
+         "unchanged saved lines should keep normal commit attribution");
+  Expect(snapshot.lines[1].text == "Saved changes",
+         "modified saved lines should use the synthetic saved-changes label");
+  Expect(snapshot.lines[2].text.find("Microide Tests") != std::string::npos,
+         "later unchanged saved lines should still keep commit attribution");
+}
+
 void TestGitBlameServiceInvalidateDropsStaleCache() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -219,6 +254,8 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceLoadsVisibleLinesForCleanTrackedFile);
   AddTest(tests, "GitBlame/SuppressesDirtyAndUntrackedFiles",
           TestGitBlameServiceSuppressesDirtyAndUntrackedFiles);
+  AddTest(tests, "GitBlame/UsesWorkingTreeContentsForSavedTrackedChanges",
+          TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges);
   AddTest(tests, "GitBlame/InvalidateDropsStaleCache",
           TestGitBlameServiceInvalidateDropsStaleCache);
 }

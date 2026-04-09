@@ -93,7 +93,7 @@ The biggest remaining editor-facing gaps are:
 - explicit threshold tuning for editor large-file mode after the new edit-time reevaluation path
 - continued UTF-8 and IME hardening while the buffer model is still byte-oriented
 - validate the new blame shadow-text implementation on larger real repositories and decide whether
-  it should stay limited to clean tracked small files or grow into deeper modes such as
+  it should stay limited to tracked small on-disk files or grow into deeper modes such as
   `--ignore-revs-file`, broader cache policies, or richer blame presentation
 
 Diagnostics and problem styling belong here only if a diagnostics phase is intentionally started.

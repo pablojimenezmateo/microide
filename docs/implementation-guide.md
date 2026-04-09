@@ -47,7 +47,7 @@ The current SDL shell already includes:
 - a standalone project-search benchmark utility for repeatable larger-repo timing runs
 - a git sidebar for working-tree changes, conflicts, outgoing branch files, bulk stage-all, and confirmed discard-all flows
 - editor copy-with-context via the Edit menu and right-click editor popup, formatting clipboard text as `relative/path:line` or `relative/path:start-end` plus the selected text
-- editor git blame shadow text for clean tracked files, kept asynchronous and viewport-scoped behind a dedicated project service
+- editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, kept asynchronous and viewport-scoped behind a dedicated project service
 - drag reordering for project tabs, file tabs, and terminal tabs, constrained to reinsert within the existing strip instead of spawning detached windows
 - terminal copy-with-context from the terminal-tab context menu, formatting clipboard text as the last submitted command plus its rendered output and falling back to the invoked command while an alternate-screen app owns the terminal
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files

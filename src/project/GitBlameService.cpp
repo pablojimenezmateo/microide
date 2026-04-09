@@ -337,7 +337,15 @@ std::string FormatRelativeAge(std::int64_t author_time) {
   return std::to_string(days / 365) + "y ago";
 }
 
+bool IsSyntheticContentsAttribution(const GitBlameAttribution& attribution) {
+  return attribution.commit_id == "0000000000000000000000000000000000000000" ||
+         attribution.author == "External file (--contents)";
+}
+
 std::string FormatDisplayText(const GitBlameAttribution& attribution) {
+  if (IsSyntheticContentsAttribution(attribution)) {
+    return "Saved changes";
+  }
   std::string text = attribution.author.empty() ? "Unknown" : attribution.author;
   text += ", ";
   text += FormatRelativeAge(attribution.author_time);
@@ -666,8 +674,8 @@ struct GitBlameService::Impl {
 
     const auto head_id = ResolveHeadId(request.request.root);
     const auto stamp = ReadFileStamp(request.request.absolute_path);
-    if (!head_id.has_value() || !stamp.has_value() || !FileIsTracked(request.request.root, request.relative_path) ||
-        !FileIsWorkingTreeClean(request.request.root, request.relative_path)) {
+    if (!head_id.has_value() || !stamp.has_value() ||
+        !FileIsTracked(request.request.root, request.relative_path)) {
       changed = UpdateEligibility(request.file_key, request.request.root, request.request.absolute_path,
                                   request.relative_path, false, head_id, stamp, {}, {});
       if (changed) {
@@ -675,6 +683,9 @@ struct GitBlameService::Impl {
       }
       return;
     }
+
+    const bool working_tree_clean =
+        FileIsWorkingTreeClean(request.request.root, request.relative_path);
 
     std::vector<Span> missing_spans;
     {
@@ -696,10 +707,18 @@ struct GitBlameService::Impl {
 
     for (const Span& span : missing_spans) {
       const std::string command =
-          "git -C '" + EscapeShellArg(request.request.root.lexically_normal().string()) +
-          "' blame --incremental --encoding=UTF-8 -L " + std::to_string(span.start + 1) + "," +
-          std::to_string(span.end + 1) + " -- '" +
-          EscapeShellArg(request.relative_path.generic_string()) + "' 2>/dev/null";
+          working_tree_clean
+              ? "git -C '" + EscapeShellArg(request.request.root.lexically_normal().string()) +
+                    "' blame --incremental --encoding=UTF-8 -L " +
+                    std::to_string(span.start + 1) + "," + std::to_string(span.end + 1) +
+                    " -- '" + EscapeShellArg(request.relative_path.generic_string()) +
+                    "' 2>/dev/null"
+              : "git -C '" + EscapeShellArg(request.request.root.lexically_normal().string()) +
+                    "' blame --incremental --encoding=UTF-8 --contents '" +
+                    EscapeShellArg(request.request.absolute_path.lexically_normal().string()) +
+                    "' -L " + std::to_string(span.start + 1) + "," +
+                    std::to_string(span.end + 1) + " -- '" +
+                    EscapeShellArg(request.relative_path.generic_string()) + "' 2>/dev/null";
       const CommandOutput output = ReadCommandOutput(command);
       if (!output.success) {
         const bool now_changed = UpdateEligibility(

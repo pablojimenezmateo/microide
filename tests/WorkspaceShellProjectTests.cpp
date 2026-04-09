@@ -274,7 +274,7 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
          "editor blame overlay should include the commit summary");
 }
 
-void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndAfterSave() {
+void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
   const std::filesystem::path source = root / "src" / "main.cpp";
@@ -298,14 +298,10 @@ void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndAfterSave() {
   Expect(WorkspaceShellTestAccess::SaveTab(shell, 0),
          "saving the dirty editor should succeed");
 
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value()) {
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  Expect(false, "saved but uncommitted editor should stop showing blame");
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell);
+  Expect(overlay.has_value(),
+         "saved tracked editor should resume blame after the file reaches disk");
+  Expect(!overlay->lines.empty(), "saved tracked editor should publish visible blame lines");
 }
 
 void TestWorkspaceShellEditorBlameSuppressesNarrowPanes() {
@@ -431,8 +427,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRightClickOpensEditContextMenu);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
-  AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndAfterSave",
-          TestWorkspaceShellEditorBlameHidesForDirtyBufferAndAfterSave);
+  AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndResumesAfterSave",
+          TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave);
   AddTest(tests, "WorkspaceShell/EditorBlameSuppressesNarrowPanes",
           TestWorkspaceShellEditorBlameSuppressesNarrowPanes);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",

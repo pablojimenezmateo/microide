@@ -5,7 +5,7 @@ editor latency.
 
 Status today:
 
-- implemented for clean tracked editor files
+- implemented for tracked on-disk editor files, including saved but uncommitted content
 - loaded asynchronously through `GitBlameService`
 - rendered only for the visible viewport window
 - suppressed for dirty, untracked, large-file, and narrow-pane cases
@@ -44,8 +44,8 @@ Initial exclusions:
 - no blame for files already in large-file mode
 - no blame when the pane is too narrow to reserve a readable shadow-text column
 
-The simplest safe first release is to support only clean, tracked, normal editor buffers. That
-keeps the output honest and avoids sending full in-memory buffers through git during editing.
+The shipped first release supports tracked on-disk editor files, including saved but uncommitted
+content, while still avoiding full in-memory blame during active editing.
 
 ## Hard Performance Rules
 
@@ -68,7 +68,6 @@ Eligibility rules:
 
 - file is inside the current git repo and is tracked
 - buffer has no unsaved edits
-- working-tree status for the file is clean
 - `TextViewport::large_file_mode()` is false
 - file stays under the existing editor large-file thresholds: `384 KiB` or `4000` lines
 - pane width can still leave roughly `28` monospace columns for blame text after the code area
@@ -84,11 +83,19 @@ The default blame collection path should use the system git with a bounded machi
 git -C <repo> blame --incremental --encoding=UTF-8 -L <start>,<end> -- <path>
 ```
 
+For saved tracked files that differ from `HEAD`, the shipped implementation switches to:
+
+```bash
+git -C <repo> blame --incremental --encoding=UTF-8 --contents <path> -L <start>,<end> -- <path>
+```
+
 Why this shape:
 
 - `--incremental` is explicitly documented for interactive viewers and streams results as they are
   built
 - `-L` keeps work bounded to the visible range
+- `--contents` lets the saved working-tree file stay blameable without reading from the editor's
+  unsaved in-memory buffer
 - `--encoding=UTF-8` matches the editor's text expectations better than locale-dependent output
 - the incremental format omits the source line text, which MicroIDE already has in memory
 
