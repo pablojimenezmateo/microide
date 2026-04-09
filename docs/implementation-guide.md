@@ -117,5 +117,6 @@ whether the backend is external or built in.
 
 - `docs/todo.md`: verified current status and remaining implementation gaps
 - `docs/roadmap.md`: forward-looking priorities and feature planning
+- `docs/blame-shadow-text.md`: design constraints for per-line git blame shadow text
 - `docs/startup-tracing.md`: how to measure startup work
 - `docs/best-coding-practices.md`: contributor-side engineering guardrails
