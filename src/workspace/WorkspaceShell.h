@@ -397,6 +397,7 @@ class WorkspaceShell {
       CreateDirectory,
       RenamePath,
       DeletePath,
+      DiscardGitChanges,
     };
 
     Kind kind = Kind::None;
@@ -880,13 +881,23 @@ class WorkspaceShell {
   void RefreshProjectFiles();
   void RefreshGitSidebar();
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
+  float GitSidebarListTop(const SDL_FRect& sidebar_rect) const;
+  float GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
   void RevealSelectedGitSidebarLine();
   void MoveGitSidebarSelection(int delta);
   bool OpenGitSidebarEntry(std::size_t entry_index);
+  bool CanStageAllGitSidebarEntries() const;
+  bool CanDiscardAllGitSidebarEntries() const;
+  bool StageAllGitSidebarEntries();
+  void OpenDiscardAllGitSidebarPrompt();
+  bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);

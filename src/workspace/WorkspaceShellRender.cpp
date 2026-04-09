@@ -1168,19 +1168,33 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           static_cast<float>(line_map.size()), static_cast<float>(visible_rows),
           static_cast<float>(scroll_row), drag_target_ == DragTarget::SidebarScrollbar);
     } else if (sidebar_mode_ == SidebarMode::Git) {
+      const auto draw_action_button = [&](const SDL_FRect& button_rect,
+                                          std::string_view label,
+                                          bool enabled,
+                                          bool destructive = false) {
+        const bool hovered =
+            enabled && last_mouse_position_valid_ && Contains(button_rect, last_mouse_x_, last_mouse_y_);
+        const SDL_Color fill = hovered ? theme_.row_highlight : theme_.surface_raised;
+        const SDL_Color border = !enabled   ? theme_.border
+                                 : hovered ? (destructive ? theme_.diff_deleted : theme_.accent)
+                                           : theme_.border;
+        const SDL_Color text = !enabled   ? theme_.text_muted
+                               : hovered ? theme_.text_primary
+                                         : destructive ? theme_.diff_deleted : theme_.accent;
+        DrawFilledRect(renderer, button_rect, fill);
+        DrawRect(renderer, button_rect, border);
+        draw_centered_text_on(button_rect, text, fill, label);
+      };
+
+      draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
+                         CanStageAllGitSidebarEntries());
+      draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
+                         CanDiscardAllGitSidebarEntries(), true);
       const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
-      const bool refresh_hovered =
-          last_mouse_position_valid_ && Contains(refresh_rect, last_mouse_x_, last_mouse_y_);
-      DrawFilledRect(renderer, refresh_rect,
-                     refresh_hovered ? theme_.row_highlight : theme_.surface_raised);
-      DrawRect(renderer, refresh_rect, refresh_hovered ? theme_.accent : theme_.border);
-      draw_centered_text_on(refresh_rect, refresh_hovered ? theme_.text_primary : theme_.accent,
-                            refresh_hovered ? theme_.row_highlight : theme_.surface_raised,
-                            "Refresh");
+      draw_action_button(refresh_rect, "Refresh", true);
       const auto lines = BuildGitSidebarLines();
-      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const float visible_units =
-          std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+      const float list_y = GitSidebarListTop(layout.sidebar);
+      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
       const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
       const int max_scroll = std::max(
           0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));

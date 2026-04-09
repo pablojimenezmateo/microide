@@ -219,6 +219,84 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
          "delete discard flow should discard unsaved editor changes before trashing");
 }
 
+void TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  CopyTree(FixturePath("diff/git/base"), root);
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+
+  const std::filesystem::path modified = root / "README.md";
+  const std::filesystem::path deleted = root / "src/session.cpp";
+  const std::filesystem::path staged_added = root / "src/new_panel.cpp";
+  const std::filesystem::path untracked = root / "scratch.txt";
+  WriteFile(modified, ReadFile(modified) + "\nthrowaway change\n");
+  std::filesystem::remove(deleted);
+  WriteFile(staged_added, "int meaning = 42;\n");
+  WriteFile(untracked, "scratch\n");
+  RequireCommandSuccess("git -C '" + EscapedRepoPath(root) + "' add -A >/dev/null 2>/dev/null",
+                        "prepare staged changes");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
+
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "discard all should show a confirmation prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceTitle(shell) == "Discard All Changes",
+         "discard all prompt should have the expected title");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("tracked, untracked, and conflicted") !=
+             std::string::npos,
+         "discard all prompt should describe the destructive scope");
+
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "discard all should close the confirmation prompt after success");
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Discarded all git changes",
+         "discard all should report the bulk discard outcome");
+  Expect(ReadFile(modified) == ReadFile(FixturePath("diff/git/base/README.md")),
+         "discard all should restore modified tracked files");
+  Expect(std::filesystem::exists(deleted),
+         "discard all should restore deleted tracked files");
+  Expect(!std::filesystem::exists(staged_added),
+         "discard all should remove staged added files");
+  Expect(!std::filesystem::exists(untracked),
+         "discard all should remove untracked files");
+}
+
+void TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+
+  WriteFile(file_path, "on disk change\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+
+  WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "discard all should show a prompt before the destructive action");
+
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "blocked discard all should close the confirmation prompt");
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Discard all blocked by dirty tab: notes.txt",
+         "dirty editors should block bulk discard");
+  Expect(ReadFile(file_path) == "on disk change\n",
+         "blocked bulk discard should leave working-tree files untouched");
+}
+
 void TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -480,6 +558,10 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
 #if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);
+  AddTest(tests, "WorkspaceShell/DiscardAllGitPromptDiscardsWorkingTreeChanges",
+          TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges);
+  AddTest(tests, "WorkspaceShell/DiscardAllGitPromptBlocksDirtyEditors",
+          TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors);
   AddTest(tests, "WorkspaceShell/DeletePromptOnlyClosesAffectedSplitEditor",
           TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor);
 #endif

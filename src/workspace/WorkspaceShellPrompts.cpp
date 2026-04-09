@@ -270,6 +270,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Rename";
     case PromptSurfaceState::Action::DeletePath:
       return "Delete";
+    case PromptSurfaceState::Action::DiscardGitChanges:
+      return "Discard All Changes";
   }
   return "Prompt";
 }
@@ -288,6 +290,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Enter a new path for " + label + ".";
     case PromptSurfaceState::Action::DeletePath:
       return "Move " + label + " to trash?";
+    case PromptSurfaceState::Action::DiscardGitChanges:
+      return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
   }
   return {};
 }
@@ -302,6 +306,8 @@ std::array<std::string, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Rename", "Cancel"};
     case PromptSurfaceState::Action::DeletePath:
       return {"Delete", "Cancel"};
+    case PromptSurfaceState::Action::DiscardGitChanges:
+      return {"Discard All", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -935,6 +941,15 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     RefreshProjectViewsAfterMutation(result.resulting_path);
     focus_ = FocusTarget::Sidebar;
     LogMessage("Renamed: " + RelativePathLabel(project_root_, result.resulting_path));
+    return;
+  }
+
+  if (state.action == PromptSurfaceState::Action::DiscardGitChanges) {
+    const bool discarded = DiscardAllGitSidebarEntries();
+    DismissPromptSurface(discarded ? false : true);
+    if (discarded) {
+      focus_ = FocusTarget::Sidebar;
+    }
     return;
   }
 

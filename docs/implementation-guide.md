@@ -45,7 +45,7 @@ The current SDL shell already includes:
 - literal-by-default project search with regex, case-mode, hidden-file controls, and capped-result feedback
 - literal replace-in-project tied to literal search mode
 - a standalone project-search benchmark utility for repeatable larger-repo timing runs
-- a git sidebar for working-tree changes, conflicts, and outgoing branch files
+- a git sidebar for working-tree changes, conflicts, outgoing branch files, bulk stage-all, and confirmed discard-all flows
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files
 - a PTY-backed terminal panel with tabs, scrollback, selection, clipboard paste shortcuts, alternate-screen support, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, and common ANSI scroll-region handling
 - project-local editor preferences, colorscheme persistence, and session restore

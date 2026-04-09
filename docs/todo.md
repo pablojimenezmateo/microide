@@ -3,7 +3,7 @@
 This file tracks the verified current state of the SDL rewrite.
 It is not a design document.
 
-Revalidated on 2026-04-08 by reading the current `src/*` and `tests/*` implementation together
+Revalidated on 2026-04-09 by reading the current `src/*` and `tests/*` implementation together
 with the remaining docs in this directory.
 
 ## Status Rules
@@ -55,24 +55,34 @@ These are done and should not be treated as open migration work:
 - `[x]` create, rename, and delete flows now target only the affected editors inside split tabs while preserving compare and merge tab state
 - `[x]` compare tabs now preserve historical commit-side paths across working-tree renames and restore correctly from session state after those renames
 - `[x]` open-project now uses a native folder picker from the File menu and bare `project-open`, while `project-open [path]` still works as a direct fallback
+- `[ ]` the project tree should still allow a directory to collapse even when it contains the currently open or selected file, and selecting that file from the tree again should re-expand its ancestors
 - `[-]` recent files and recent projects
 
 ### Terminal
 
 - `[~]` the terminal is useful for embedded shell work, including alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse-index scrolling, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste, basic device/cursor query replies, and charset-designation escape handling for common full-screen apps, but it is still not a full terminal emulator
 - `[ ]` broaden real-world terminal validation and fill the remaining ANSI or control-sequence gaps that matter in practice
+- `[ ]` terminal copy-with-context should copy the last command plus its rendered output, and fall back to copying only the invoked command for full-screen apps that do not leave durable transcript output
 
 ### Editor
 
 - `[~]` UTF-8 entry and IME preedit rendering exist, but the underlying text model is still byte-oriented
 - `[~]` editor large-file mode now disables syntax highlighting above size or line-count thresholds and reevaluates as edits or undo cross those thresholds, but the thresholds still need more validation on real repositories
+- `[ ]` editor copy-with-context should be available from a context menu and include the relative path plus line or line-range header before the selected text
+- `[ ]` per-line git blame shadow text still needs an implementation that stays asynchronous, viewport-scoped, and cached well enough to avoid hurting normal editor latency
 - `[-]` soft wrap
 - `[ ]` diagnostics or problem styling only if a diagnostics phase is intentionally started
 
 ### Git And Project Services
 
 - `[x]` compare, merge, git status, outgoing-file views, and stage or discard flows are all present
+- `[x]` the source-control sidebar now includes `Stage all` and `Discard all` buttons
+- `[x]` bulk discard now uses an explicit confirmation flow, and `Discard all` covers tracked edits, untracked files, and conflicted entries
 - `[-]` git services still shell out to the system `git`; error handling, portability, and async behavior can improve
+
+### Workspace Chrome
+
+- `[ ]` project tabs, file tabs, and terminal tabs still need reorder support
 
 ### Menus And Prompts
 
@@ -95,6 +105,10 @@ These are done and should not be treated as open migration work:
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation
+- `[x]` source-control bulk-action coverage now checks bulk stage/discard services plus the confirmed workspace discard-all flow
+- `[ ]` tab-reordering coverage for project, file, and terminal strips
+- `[ ]` context-copy coverage for editor selections and terminal last-command transcripts
+- `[ ]` blame loading and invalidation coverage if editor blame is started
 - `[ ]` broader compare and merge workflow tests
 
 ## Intentional Scope Cuts

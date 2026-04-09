@@ -62,6 +62,9 @@ struct WorkspaceShellTestAccess {
     shell.OpenPromptSurface(WorkspaceShell::PromptSurfaceState::Action::DeletePath,
                             WorkspaceShell::PromptSurfaceState::Kind::Confirm, path);
   }
+  static void PrepareDiscardAllGitPrompt(WorkspaceShell& shell) {
+    shell.OpenDiscardAllGitSidebarPrompt();
+  }
 
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
   static bool SplitActiveEditor(WorkspaceShell& shell, bool vertical = true) {
@@ -159,6 +162,8 @@ struct WorkspaceShellTestAccess {
                                 bool temporary = false) {
     shell.ShowSearchSidebar(std::move(query), temporary);
   }
+  static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
+  static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();
   }
@@ -206,6 +211,12 @@ struct WorkspaceShellTestAccess {
     shell.dirty_prompt_state_.selected_action = selected_action;
     shell.ConfirmDirtyPrompt();
   }
+  static bool StageAllGitSidebarEntries(WorkspaceShell& shell) {
+    return shell.StageAllGitSidebarEntries();
+  }
+  static bool DiscardAllGitSidebarEntries(WorkspaceShell& shell) {
+    return shell.DiscardAllGitSidebarEntries();
+  }
 
   static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.dirty_prompt_visible_; }
   static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
@@ -213,6 +224,12 @@ struct WorkspaceShellTestAccess {
   }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
     return shell.prompt_surface_visible_;
+  }
+  static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceTitle();
+  }
+  static std::string PromptSurfaceMessage(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceMessage();
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
     return shell.open_tabs_;

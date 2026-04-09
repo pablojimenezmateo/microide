@@ -101,6 +101,8 @@ Current controls:
 - selecting a conflicted file in the git sidebar opens the three-way merge tab instead of a diff tab
 - `s` in the git sidebar or clicking `Stage`: run `git add` for the selected modified file
 - `x` in the git sidebar or clicking `Discard`: restore the selected modified file to `HEAD`
+- click `Stage All` in the git sidebar: stage every working-tree change in the current repo
+- click `Discard All` in the git sidebar: confirm and then discard tracked, untracked, and conflicted working-tree changes in the current repo
 - `r` in the git sidebar: refresh working-tree and outgoing-file status
 - reopening the same git diff or conflict file reuses the existing tab instead of opening duplicates
 - selecting an outgoing file opens a compare tab against the resolved base branch `HEAD`

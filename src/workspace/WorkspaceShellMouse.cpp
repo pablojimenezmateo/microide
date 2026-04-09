@@ -343,9 +343,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
     } else if (sidebar_mode_ == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
-      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const float visible_units =
-          std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+      const float list_y = GitSidebarListTop(layout.sidebar);
+      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
       const int max_scroll = std::max(
           0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
@@ -547,22 +546,33 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (event.button.button != SDL_BUTTON_LEFT) {
         return true;
       }
+      if (CanStageAllGitSidebarEntries() &&
+          Contains(GitSidebarStageAllButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+        return StageAllGitSidebarEntries();
+      }
+      if (CanDiscardAllGitSidebarEntries() &&
+          Contains(GitSidebarDiscardAllButtonRect(layout.sidebar), event.button.x, event.button.y)) {
+        OpenDiscardAllGitSidebarPrompt();
+        return true;
+      }
       if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), event.button.x, event.button.y)) {
         return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
       }
-      if (local_y < 0.0f) {
+      const float git_list_top = GitSidebarListTop(layout.sidebar);
+      const float local_git_y = event.button.y - git_list_top;
+      if (local_git_y < 0.0f) {
         return true;
       }
 
       const auto lines = BuildGitSidebarLines();
-      const float visible_units = std::max(1.0f, (layout.sidebar.h - 36.0f) / row_height);
+      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
       const int max_scroll = std::max(
           0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
       const float row_width =
           std::max(0.0f, layout.sidebar.w - inset * 2.0f -
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      const int clicked_row = static_cast<int>(local_y / row_height);
+      const int clicked_row = static_cast<int>(local_git_y / row_height);
       const int line_index = scroll_row + clicked_row;
       if (line_index < 0 || line_index >= static_cast<int>(lines.size())) {
         return true;
@@ -1324,9 +1334,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                        0, max_scroll);
       } else if (sidebar_mode_ == SidebarMode::Git) {
         const auto lines = BuildGitSidebarLines();
-        const float list_y = drag_layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-        const float visible_units =
-            std::max(1.0f, (drag_layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+        const float list_y = GitSidebarListTop(drag_layout.sidebar);
+        const float visible_units = GitSidebarVisibleUnits(drag_layout.sidebar);
         const int max_scroll = std::max(
             0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
         const int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
@@ -1729,7 +1738,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
     } else if (sidebar_mode_ == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
-      const float visible_units = std::max(1.0f, (layout.sidebar.h - 36.0f) / 20.0f);
+      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
       visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
       max_scroll = std::max(
           0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));

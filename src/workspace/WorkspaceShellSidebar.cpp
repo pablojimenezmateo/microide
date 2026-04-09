@@ -11,7 +11,13 @@ namespace microide::workspace {
 
 namespace {
 
+constexpr float kSidebarHeaderHeight = 26.0f;
+constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
+constexpr float kGitSidebarActionRowTop = 34.0f;
+constexpr float kGitSidebarActionButtonHeight = 18.0f;
+constexpr float kGitSidebarActionGap = 6.0f;
+constexpr float kGitSidebarListGap = 8.0f;
 
 }  // namespace
 
@@ -197,6 +203,60 @@ void WorkspaceShell::RefreshGitSidebar() {
 }
 
 SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
+  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
+  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const float button_width =
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
+  return MakeRect(row_rect.x + (button_width + kGitSidebarActionGap) * 2.0f, row_rect.y,
+                  button_width, row_rect.h);
+}
+
+SDL_FRect WorkspaceShell::GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  return MakeRect(sidebar_rect.x + kSidebarInset, sidebar_rect.y + kGitSidebarActionRowTop,
+                  std::max(0.0f, sidebar_rect.w - kSidebarInset * 2.0f),
+                  kGitSidebarActionButtonHeight);
+}
+
+SDL_FRect WorkspaceShell::GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const {
+  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
+  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const float button_width =
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
+  return MakeRect(row_rect.x, row_rect.y, button_width, row_rect.h);
+}
+
+SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const {
+  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
+  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const float button_width =
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
+  return MakeRect(row_rect.x + button_width + kGitSidebarActionGap, row_rect.y, button_width,
+                  row_rect.h);
+}
+
+float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
+  return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight + kGitSidebarListGap;
+}
+
+float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const {
+  return std::max(1.0f, (sidebar_rect.y + sidebar_rect.h - GitSidebarListTop(sidebar_rect)) /
+                            kSidebarRowHeight);
+}
+
+SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
   if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
@@ -204,10 +264,6 @@ SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_r
   const float button_width = std::max(72.0f, text_renderer_.MeasureWidth("Refresh") + 18.0f);
   return MakeRect(sidebar_rect.x + sidebar_rect.w - 10.0f - button_width, sidebar_rect.y + 4.0f,
                   button_width, 18.0f);
-}
-
-SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
-  return GitSidebarRefreshButtonRect(sidebar_rect);
 }
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
@@ -302,7 +358,7 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
   if (layout.sidebar.h <= 0.0f) {
     return;
   }
-  const float visible_units = std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+  const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
   const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
   const int max_scroll = std::max(
       0, static_cast<int>(std::ceil(static_cast<float>(BuildGitSidebarLines().size()) - visible_units)));
@@ -344,6 +400,79 @@ bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
   return OpenBranchHeadComparison(entry.path, git_base_ref_,
                                   git_base_label_.empty() ? git_base_ref_ : git_base_label_,
                                   "HEAD", "HEAD");
+}
+
+bool WorkspaceShell::CanStageAllGitSidebarEntries() const {
+  return std::any_of(git_sidebar_entries_.begin(), git_sidebar_entries_.end(), [](const auto& entry) {
+    return entry.section == GitSidebarEntry::Section::Modified && !entry.staged;
+  });
+}
+
+bool WorkspaceShell::CanDiscardAllGitSidebarEntries() const {
+  return std::any_of(git_sidebar_entries_.begin(), git_sidebar_entries_.end(), [](const auto& entry) {
+    return entry.section == GitSidebarEntry::Section::Modified;
+  });
+}
+
+bool WorkspaceShell::StageAllGitSidebarEntries() {
+  if (!CanStageAllGitSidebarEntries()) {
+    LogMessage("No unstaged git changes");
+    return false;
+  }
+  if (!project::GitStageAll(project_root_)) {
+    LogMessage("Git stage all failed");
+    return false;
+  }
+  RefreshProjectFiles();
+  LogMessage("Staged all git changes");
+  return true;
+}
+
+void WorkspaceShell::OpenDiscardAllGitSidebarPrompt() {
+  if (!CanDiscardAllGitSidebarEntries()) {
+    LogMessage("Git working tree is clean");
+    return;
+  }
+  OpenPromptSurface(PromptSurfaceState::Action::DiscardGitChanges,
+                    PromptSurfaceState::Kind::Confirm, project_root_);
+}
+
+bool WorkspaceShell::DiscardAllGitSidebarEntries() {
+  if (!CanDiscardAllGitSidebarEntries()) {
+    LogMessage("Git working tree is clean");
+    return false;
+  }
+
+  std::string blocking_label;
+  if (HasDirtyEditorTabsForPath(project_root_, &blocking_label)) {
+    LogMessage("Discard all blocked by dirty tab: " + blocking_label);
+    return false;
+  }
+
+  std::vector<std::filesystem::path> existing_paths;
+  existing_paths.reserve(git_sidebar_entries_.size());
+  for (const auto& entry : git_sidebar_entries_) {
+    if (entry.section != GitSidebarEntry::Section::Modified) {
+      continue;
+    }
+    if (std::filesystem::exists(entry.path)) {
+      existing_paths.push_back(entry.path);
+    }
+  }
+
+  if (!project::GitDiscardAll(project_root_)) {
+    LogMessage("Git discard all failed");
+    return false;
+  }
+
+  for (const auto& path : existing_paths) {
+    if (std::filesystem::exists(path)) {
+      ReloadCleanEditorTabsForPath(path);
+    }
+  }
+  RefreshProjectFiles();
+  LogMessage("Discarded all git changes");
+  return true;
 }
 
 bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {

@@ -244,6 +244,13 @@ bool FileExistsAtHead(const std::filesystem::path& root, const std::filesystem::
   return CommandSucceeds(command);
 }
 
+bool HasHeadCommit(const std::filesystem::path& root) {
+  const std::string command =
+      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
+      "' rev-parse --verify HEAD >/dev/null 2>/dev/null";
+  return CommandSucceeds(command);
+}
+
 }  // namespace
 
 std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
@@ -277,6 +284,17 @@ std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesys
     return {};
   }
   return ParseGitWorkingTreeEntries(output);
+}
+
+bool GitStageAll(const std::filesystem::path& root) {
+  if (root.empty() || !HasGitMarker(root)) {
+    return false;
+  }
+
+  const std::string command =
+      "git -C '" + EscapeShellArg(root.lexically_normal().string()) +
+      "' add -A -- . >/dev/null 2>/dev/null";
+  return CommandSucceeds(command);
 }
 
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
@@ -335,9 +353,36 @@ bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::pa
     return CommandSucceeds(command);
   }
 
-  const std::string command =
-      "git -C '" + escaped_root + "' clean -f -- '" + escaped_relative + "' >/dev/null 2>/dev/null";
-  return CommandSucceeds(command);
+  const std::string unstage_command =
+      "git -C '" + escaped_root + "' rm -f --cached --ignore-unmatch -- '" + escaped_relative +
+      "' >/dev/null 2>/dev/null";
+  const std::string clean_command =
+      "git -C '" + escaped_root + "' clean -fd -- '" + escaped_relative + "' >/dev/null 2>/dev/null";
+  return CommandSucceeds(unstage_command) && CommandSucceeds(clean_command);
+}
+
+bool GitDiscardAll(const std::filesystem::path& root) {
+  if (root.empty() || !HasGitMarker(root)) {
+    return false;
+  }
+
+  const std::string escaped_root = EscapeShellArg(root.lexically_normal().string());
+  if (HasHeadCommit(root)) {
+    const std::string reset_command =
+        "git -C '" + escaped_root + "' reset --quiet HEAD -- . >/dev/null 2>/dev/null";
+    const std::string restore_command =
+        "git -C '" + escaped_root + "' restore --source=HEAD --worktree -- . >/dev/null 2>/dev/null";
+    const std::string clean_command =
+        "git -C '" + escaped_root + "' clean -fd -- . >/dev/null 2>/dev/null";
+    return CommandSucceeds(reset_command) && CommandSucceeds(restore_command) &&
+           CommandSucceeds(clean_command);
+  }
+
+  const std::string unstage_command =
+      "git -C '" + escaped_root + "' rm -r -f --cached --ignore-unmatch -- . >/dev/null 2>/dev/null";
+  const std::string clean_command =
+      "git -C '" + escaped_root + "' clean -fd -- . >/dev/null 2>/dev/null";
+  return CommandSucceeds(unstage_command) && CommandSucceeds(clean_command);
 }
 
 }  // namespace microide::project

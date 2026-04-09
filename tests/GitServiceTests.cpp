@@ -18,8 +18,10 @@ using microide::compare::CompareRowKind;
 using microide::project::CollectGitBranchOutgoingFiles;
 using microide::project::CollectGitFileHistory;
 using microide::project::CollectGitWorkingTreeEntries;
+using microide::project::GitDiscardAll;
 using microide::project::GitDiscardPath;
 using microide::project::GitFileStatus;
+using microide::project::GitStageAll;
 using microide::project::GitStagePath;
 using microide::project::GitUnstagePath;
 using microide::project::ReadGitFileAtCommit;
@@ -248,12 +250,51 @@ void TestGitOutgoingBranchFiles() {
          "outgoing branch list should include both changed files");
 }
 
+void TestGitBulkStageAndDiscard() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto base_dir = FixturePath("diff/git/base");
+  CopyTree(base_dir, repo_path);
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base fixture", "base fixture");
+
+  const auto modified_file = repo_path / "README.md";
+  const auto deleted_file = repo_path / "src/session.cpp";
+  const auto staged_added_file = repo_path / "src/staged_new.cpp";
+  const auto untracked_file = repo_path / "notes.txt";
+  WriteFile(modified_file, ReadFile(modified_file) + "\nrestage me\n");
+  std::filesystem::remove(deleted_file);
+  WriteFile(staged_added_file, "int staged = 1;\n");
+  WriteFile(untracked_file, "temporary notes\n");
+
+  Expect(GitStageAll(repo_path), "git stage all should succeed");
+  auto entries = CollectGitWorkingTreeEntries(repo_path);
+  Expect(entries.size() == 4, "bulk stage fixture should still report four changes");
+  for (const auto& entry : entries) {
+    Expect(entry.staged, "git stage all should stage every working-tree entry");
+  }
+
+  Expect(GitDiscardAll(repo_path), "git discard all should succeed");
+  entries = CollectGitWorkingTreeEntries(repo_path);
+  Expect(entries.empty(), "git discard all should leave a clean working tree");
+  Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
+         "git discard all should restore tracked modifications");
+  Expect(std::filesystem::exists(deleted_file),
+         "git discard all should restore tracked deletions");
+  Expect(!std::filesystem::exists(staged_added_file),
+         "git discard all should remove staged added files");
+  Expect(!std::filesystem::exists(untracked_file),
+         "git discard all should remove untracked files");
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/CompareFixture", TestGitCompareFixture);
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
+  AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
 }
 
 }  // namespace microide::tests

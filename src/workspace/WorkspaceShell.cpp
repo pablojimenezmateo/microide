@@ -2814,13 +2814,20 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (sidebar_mode_ == SidebarMode::Git) {
+      if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&
+          CanStageAllGitSidebarEntries()) {
+        return CursorKind::Pointer;
+      }
+      if (Contains(GitSidebarDiscardAllButtonRect(layout.sidebar), x, y) &&
+          CanDiscardAllGitSidebarEntries()) {
+        return CursorKind::Pointer;
+      }
       if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
       const auto lines = BuildGitSidebarLines();
-      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const float visible_units =
-          std::max(1.0f, (layout.sidebar.h - 36.0f) / kSidebarRowHeight);
+      const float list_y = GitSidebarListTop(layout.sidebar);
+      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
       const int max_scroll = std::max(
           0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
       const float row_width =
