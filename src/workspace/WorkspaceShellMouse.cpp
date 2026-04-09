@@ -465,6 +465,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         } else if (event.button.button == SDL_BUTTON_LEFT) {
           active_terminal_tab_index_ = tab.index;
           focus_ = FocusTarget::Panel;
+        } else if (event.button.button == SDL_BUTTON_RIGHT) {
+          active_terminal_tab_index_ = tab.index;
+          focus_ = FocusTarget::Panel;
+          OpenAnchoredMenu(MenuId::TerminalTabContext,
+                           MakeRect(static_cast<float>(event.button.x),
+                                    static_cast<float>(event.button.y), 1.0f, 1.0f));
         }
         return true;
       }

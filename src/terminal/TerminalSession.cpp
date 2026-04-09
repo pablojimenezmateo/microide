@@ -510,6 +510,11 @@ bool TerminalSession::cursor_visible() const {
   return cursor_visible_;
 }
 
+bool TerminalSession::using_alternate_screen() const {
+  std::scoped_lock lock(mutex_);
+  return use_alternate_screen_;
+}
+
 bool TerminalSession::WantsMouseCapture() const {
   std::scoped_lock lock(mutex_);
   return CurrentMouseTrackingModeLocked() != MouseTrackingMode::Disabled;

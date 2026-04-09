@@ -1067,6 +1067,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     ClearTerminalSelection();
     if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+      AppendTerminalPendingInput(input);
       terminal_tab->session.SendBytes(input);
     }
     return true;
@@ -1144,9 +1145,11 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
+      SubmitTerminalPendingInput();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Enter);
       return true;
     case SDLK_BACKSPACE:
+      EraseLastTerminalPendingInputCodepoint();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Backspace);
       return true;
     case SDLK_TAB:
@@ -1201,6 +1204,9 @@ bool WorkspaceShell::PasteClipboardIntoTerminal() {
   }
 
   ClearTerminalSelection();
+  if (clipboard_text->find_first_of("\r\n") == std::string::npos) {
+    AppendTerminalPendingInput(*clipboard_text);
+  }
   terminal_tab->session.PasteText(*clipboard_text);
   LogMessage("Terminal clipboard pasted");
   return true;

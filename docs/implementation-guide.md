@@ -47,6 +47,7 @@ The current SDL shell already includes:
 - a standalone project-search benchmark utility for repeatable larger-repo timing runs
 - a git sidebar for working-tree changes, conflicts, outgoing branch files, bulk stage-all, and confirmed discard-all flows
 - editor copy-with-context via the Edit menu and right-click editor popup, formatting clipboard text as `relative/path:line` or `relative/path:start-end` plus the selected text
+- terminal copy-with-context from the terminal-tab context menu, formatting clipboard text as the last submitted command plus its rendered output and falling back to the invoked command while an alternate-screen app owns the terminal
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files
 - a PTY-backed terminal panel with tabs, scrollback, selection, clipboard paste shortcuts, alternate-screen support, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, and common ANSI scroll-region handling
 - project-local editor preferences, colorscheme persistence, and session restore

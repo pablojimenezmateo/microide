@@ -282,6 +282,7 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Unsplit, "unsplit", "unsplit", "Close Split", ""},
       ActionSpec{ActionId::Vsplit, "vsplit", "vsplit [path]", "Split Right", ""},
       ActionSpec{ActionId::CloseActiveTab, "", "", "Close Tab", "Ctrl+W"},
+      ActionSpec{ActionId::CopyLastTerminalCommand, "", "", "Copy Last Command + Output", ""},
       ActionSpec{ActionId::CopySelection, "", "", "Copy", "Ctrl+C"},
       ActionSpec{ActionId::CopySelectionWithContext, "", "", "Copy with Context", ""},
       ActionSpec{ActionId::CutSelection, "", "", "Cut", "Ctrl+X"},
@@ -392,6 +393,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Tree:
     case ActionId::TreeRefresh:
       return !project_root_.empty();
+    case ActionId::CopyLastTerminalCommand:
+      return ActiveTerminalTab() != nullptr && LastTerminalCommandText().has_value();
     case ActionId::CopySelectionWithContext:
       return ActiveTabIsEditor() && text_viewport_.has_selection();
     case ActionId::CopySelection:
@@ -515,6 +518,9 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       item(ActionId::Term),
   });
+  static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
+      item(ActionId::CopyLastTerminalCommand),
+  });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
       item(ActionId::Help, "Command Summary"),
   });
@@ -526,6 +532,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::Search, "Search", kSearchItems},
       MenuSpec{MenuId::Project, "Project", kProjectItems},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
+      MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
       MenuSpec{MenuId::Help, "Help", kHelpItems},
   });
   return kMenus;
@@ -2512,6 +2519,15 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       const std::string text = text_viewport_.SelectedText();
       if (!text.empty() && WriteClipboardText(text)) {
         LogMessage("Selection copied");
+      }
+      return true;
+    }
+    case ActionId::CopyLastTerminalCommand: {
+      const std::optional<std::string> text = LastTerminalCommandText();
+      if (text.has_value() && WriteClipboardText(*text)) {
+        LogMessage("Last terminal command copied");
+      } else {
+        LogMessage("No terminal command transcript available");
       }
       return true;
     }

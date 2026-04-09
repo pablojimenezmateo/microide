@@ -95,6 +95,7 @@ class WorkspaceShell {
     Search,
     Project,
     Terminal,
+    TerminalTabContext,
     Help,
   };
 
@@ -438,6 +439,11 @@ class WorkspaceShell {
     bool mouse_selecting = false;
     std::optional<TerminalSelectionPosition> selection_anchor;
     std::optional<TerminalSelectionPosition> selection_head;
+    std::string pending_input;
+    std::string last_command_invocation;
+    std::string last_command_prompt_prefix;
+    std::size_t last_command_start_row = 0;
+    bool has_last_command = false;
   };
 
   struct TextCompositionState {
@@ -506,6 +512,7 @@ class WorkspaceShell {
     Unsplit,
     Vsplit,
     CloseActiveTab,
+    CopyLastTerminalCommand,
     CopySelection,
     CopySelectionWithContext,
     CutSelection,
@@ -1006,6 +1013,10 @@ class WorkspaceShell {
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   std::optional<std::string> SelectionTextWithContext() const;
+  void AppendTerminalPendingInput(std::string_view input);
+  void EraseLastTerminalPendingInputCodepoint();
+  void SubmitTerminalPendingInput();
+  std::optional<std::string> LastTerminalCommandText() const;
   TextInputSurface CurrentTextInputSurface() const;
   void SyncTextInputSurface(SDL_Window* window);
   bool CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const;

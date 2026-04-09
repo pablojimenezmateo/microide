@@ -2,10 +2,95 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
+
+namespace {
+
+void EraseLastUtf8Codepoint(std::string& text) {
+  if (text.empty()) {
+    return;
+  }
+
+  std::size_t erase_pos = text.size() - 1;
+  while (erase_pos > 0 &&
+         (static_cast<unsigned char>(text[erase_pos]) & 0b1100'0000U) == 0b1000'0000U) {
+    --erase_pos;
+  }
+  text.erase(erase_pos);
+}
+
+std::string TrimTrailingTerminalBlanks(std::string text) {
+  while (!text.empty() && (text.back() == '\0' || text.back() == ' ')) {
+    text.pop_back();
+  }
+  return text;
+}
+
+std::string TerminalLineSliceText(const terminal::TerminalLine& line,
+                                  std::size_t start,
+                                  std::size_t end,
+                                  bool trim_trailing) {
+  const std::size_t clamped_start = std::min(start, line.cells.size());
+  const std::size_t clamped_end = std::min(std::max(clamped_start, end), line.cells.size());
+  std::string text;
+  text.reserve(clamped_end - clamped_start);
+  for (std::size_t column = clamped_start; column < clamped_end; ++column) {
+    const char character = line.cells[column].character;
+    text.push_back(character == '\0' ? ' ' : character);
+  }
+  return trim_trailing ? TrimTrailingTerminalBlanks(std::move(text)) : text;
+}
+
+std::string TerminalLineText(const terminal::TerminalLine& line) {
+  return TerminalLineSliceText(line, 0, line.cells.size(), true);
+}
+
+std::string FirstLine(std::string_view text) {
+  const std::size_t newline = text.find('\n');
+  return std::string(text.substr(0, newline));
+}
+
+struct CapturedTerminalInvocation {
+  std::size_t start_row = 0;
+  std::string text;
+};
+
+CapturedTerminalInvocation CaptureVisibleTerminalInvocation(
+    const std::vector<terminal::TerminalLine>& lines,
+    std::size_t cursor_row,
+    std::size_t cursor_column,
+    std::size_t columns) {
+  if (lines.empty()) {
+    return {};
+  }
+
+  const std::size_t clamped_row = std::min(cursor_row, lines.size() - 1);
+  std::size_t start_row = clamped_row;
+  while (start_row > 0 && columns > 0 && lines[start_row - 1].cells.size() >= columns) {
+    --start_row;
+  }
+
+  std::string text;
+  for (std::size_t row = start_row; row <= clamped_row; ++row) {
+    if (!text.empty()) {
+      text.push_back('\n');
+    }
+    const std::size_t end =
+        row == clamped_row ? std::min(cursor_column, lines[row].cells.size()) : lines[row].cells.size();
+    text += TerminalLineSliceText(lines[row], 0, end, false);
+  }
+
+  return CapturedTerminalInvocation{
+      .start_row = start_row,
+      .text = TrimTrailingTerminalBlanks(std::move(text)),
+  };
+}
+
+}  // namespace
 
 void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
   if (project_root_.empty()) {
@@ -119,6 +204,102 @@ void WorkspaceShell::ClearTerminalSelection() {
     terminal_tab->selection_anchor.reset();
     terminal_tab->selection_head.reset();
   }
+}
+
+void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
+  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+    terminal_tab->pending_input.append(input);
+  }
+}
+
+void WorkspaceShell::EraseLastTerminalPendingInputCodepoint() {
+  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+    EraseLastUtf8Codepoint(terminal_tab->pending_input);
+  }
+}
+
+void WorkspaceShell::SubmitTerminalPendingInput() {
+  auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return;
+  }
+
+  const auto lines = terminal_tab->session.SnapshotLines();
+  const CapturedTerminalInvocation captured =
+      CaptureVisibleTerminalInvocation(lines,
+                                      terminal_tab->session.cursor_row(),
+                                      terminal_tab->session.cursor_column(),
+                                      terminal_tab->session.columns());
+  terminal_tab->last_command_start_row = captured.start_row;
+  terminal_tab->last_command_invocation = captured.text;
+  terminal_tab->last_command_prompt_prefix.clear();
+  terminal_tab->has_last_command = !captured.text.empty();
+  if (!terminal_tab->pending_input.empty() &&
+      captured.text.size() >= terminal_tab->pending_input.size() &&
+      captured.text.ends_with(terminal_tab->pending_input)) {
+    terminal_tab->last_command_prompt_prefix = captured.text.substr(
+        0, captured.text.size() - terminal_tab->pending_input.size());
+  }
+  terminal_tab->pending_input.clear();
+}
+
+std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
+  const auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr || !terminal_tab->has_last_command ||
+      terminal_tab->last_command_invocation.empty()) {
+    return std::nullopt;
+  }
+
+  if (terminal_tab->session.using_alternate_screen()) {
+    return terminal_tab->last_command_invocation;
+  }
+
+  const auto lines = terminal_tab->session.SnapshotLines();
+  if (lines.empty() || terminal_tab->last_command_start_row >= lines.size()) {
+    return terminal_tab->last_command_invocation;
+  }
+
+  std::vector<std::string> rows;
+  rows.reserve(lines.size() - terminal_tab->last_command_start_row);
+  for (std::size_t row = terminal_tab->last_command_start_row; row < lines.size(); ++row) {
+    rows.push_back(TerminalLineText(lines[row]));
+  }
+
+  std::size_t end_row = rows.size();
+  while (end_row > 0 && rows[end_row - 1].empty()) {
+    --end_row;
+  }
+  if (end_row == 0) {
+    return terminal_tab->last_command_invocation;
+  }
+
+  const std::string prompt_prefix = TrimTrailingTerminalBlanks(terminal_tab->last_command_prompt_prefix);
+  const std::string invocation_first_line = FirstLine(terminal_tab->last_command_invocation);
+  const std::string& last_line = rows[end_row - 1];
+  if ((!prompt_prefix.empty() &&
+       (last_line == prompt_prefix || last_line.starts_with(prompt_prefix))) ||
+      (!last_line.empty() && invocation_first_line.size() > last_line.size() &&
+       invocation_first_line.starts_with(last_line))) {
+    --end_row;
+    while (end_row > 0 && rows[end_row - 1].empty()) {
+      --end_row;
+    }
+  }
+
+  if (end_row == 0) {
+    return terminal_tab->last_command_invocation;
+  }
+
+  std::string transcript;
+  for (std::size_t row = 0; row < end_row; ++row) {
+    if (!transcript.empty()) {
+      transcript.push_back('\n');
+    }
+    transcript += rows[row];
+  }
+
+  return transcript.empty() ? std::optional<std::string>(terminal_tab->last_command_invocation)
+                            : std::optional<std::string>(std::move(transcript));
 }
 
 bool WorkspaceShell::TerminalHasSelection() const {

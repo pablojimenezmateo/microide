@@ -32,7 +32,7 @@ This scaffold provides:
 - sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
 - tree rename and delete flows that preserve affected editor, compare, and merge state instead of dropping it
 - docked command prompt
-- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, explicit scroll-up/scroll-down sequences, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, charset-designation escape handling, and common cursor/erase repaint handling
+- docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, explicit scroll-up/scroll-down sequences, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, charset-designation escape handling, common cursor/erase repaint handling, and terminal-tab context-copy for the last command transcript
 - terminal text selection, clipboard copy, and clipboard paste shortcuts
 - SDL text input wired into command/search/finder/sidebar-edit fields, the terminal, and editor insertion
 - editor cursor movement, layout, and backspace/delete now respect UTF-8 codepoint boundaries
@@ -62,6 +62,7 @@ Current controls:
 - `Edit > Copy with Context` or right click in the editor and choose `Copy with Context`: copy the selection prefixed with `relative/path:line` or `relative/path:start-end`
 - `Ctrl+c` in the terminal with an active terminal selection: copy the selected terminal text
 - `Ctrl+Shift+v` or `Shift+Insert` in the terminal: paste clipboard text, using bracketed paste when the app requests it
+- right click a terminal tab and choose `Copy Last Command + Output`: copy the submitted command plus its rendered transcript, or only the invoked command while a full-screen terminal app owns the alternate screen
 - `Ctrl+z`: undo the last edit
 - `Ctrl+y` or `Ctrl+Shift+z`: redo the last undone edit
 - `Ctrl+s`: save the current file
@@ -119,6 +120,7 @@ Current controls:
 - left-click drag in the editor: select text
 - left-click drag in the terminal: select terminal text
 - left click a terminal tab: activate that terminal
+- right click a terminal tab: open terminal tab actions
 - left click the terminal header `+`: open a fresh terminal tab
 - left click a terminal tab `x` or middle click a terminal tab: close that terminal tab
 - mouse wheel in the editor: scroll the text viewport

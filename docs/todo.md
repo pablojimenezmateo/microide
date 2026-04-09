@@ -62,7 +62,7 @@ These are done and should not be treated as open migration work:
 
 - `[~]` the terminal is useful for embedded shell work, including alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse-index scrolling, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste, basic device/cursor query replies, and charset-designation escape handling for common full-screen apps, but it is still not a full terminal emulator
 - `[ ]` broaden real-world terminal validation and fill the remaining ANSI or control-sequence gaps that matter in practice
-- `[ ]` terminal copy-with-context should copy the last command plus its rendered output, and fall back to copying only the invoked command for full-screen apps that do not leave durable transcript output
+- `[x]` terminal-tab context menus now support copying the last command plus its rendered output, and they fall back to copying only the invoked command while full-screen apps own the alternate screen
 
 ### Editor
 
@@ -107,7 +107,7 @@ These are done and should not be treated as open migration work:
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation
 - `[x]` source-control bulk-action coverage now checks bulk stage/discard services plus the confirmed workspace discard-all flow
 - `[ ]` tab-reordering coverage for project, file, and terminal strips
-- `[~]` context-copy coverage now checks editor selection formatting and the editor right-click menu, but terminal last-command transcript coverage is still missing
+- `[x]` context-copy coverage now checks editor selection formatting, the editor right-click menu, terminal last-command transcript copying, alternate-screen fallback behavior, and the terminal tab context-menu entry point
 - `[ ]` blame loading and invalidation coverage if editor blame is started
 - `[ ]` broader compare and merge workflow tests
 

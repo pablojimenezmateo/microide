@@ -80,6 +80,7 @@ class TerminalSession {
   std::size_t cursor_row() const;
   std::size_t cursor_column() const;
   bool cursor_visible() const;
+  bool using_alternate_screen() const;
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
   void PasteText(std::string_view text);

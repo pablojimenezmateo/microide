@@ -109,14 +109,12 @@ Current state:
 - the source-control sidebar now supports single-file stage, discard, compare, and merge flows plus bulk `Stage all` and confirmed `Discard all`
 - project, file, and terminal tabs are stable but fixed-order once opened
 - tree path selection expands ancestors when targeting a path directly, and already-open editor tabs now re-reveal collapsed ancestor directories when that file tab is selected again
-- copy operations today are plain text only
+- editor copy-with-context is available from the Edit menu and editor right-click popup
+- terminal tabs now expose `Copy Last Command + Output` from the tab context menu, and it falls back to the invoked command while an alternate-screen app such as `vim` or `htop` owns the terminal
 
 Remaining work:
 
 - support reordering project tabs, file tabs, and terminal tabs
-- add terminal copy-with-context for the last command plus its rendered output
-- for full-screen or non-persistent terminal apps such as `vim` or `htop`, fall back to copying
-  just the invoked command when no durable output exists in the normal terminal transcript
 
 ### 6. Harden project services
 
@@ -143,7 +141,7 @@ The highest-value missing automated coverage is:
 - tree mutation flows
 - source-control bulk actions and their confirmation semantics
 - tab reordering across project, file, and terminal strips
-- terminal transcript context-copy formatting
+- terminal transcript context-copy formatting beyond the current last-command and alternate-screen cases
 - blame-cache invalidation and viewport-scoped loading behavior if blame is started
 - compare and merge workflow coverage beyond the current model-level tests
 - terminal behavior checks where deterministic harnesses are practical

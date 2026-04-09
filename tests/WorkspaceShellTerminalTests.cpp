@@ -87,6 +87,83 @@ void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
          "Escape should reach terminal apps instead of being dropped early");
 }
 
+void TestWorkspaceShellCopyLastTerminalCommandIncludesOutput() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  TerminalSessionTestAccess::AppendOutput(session, "user@host:~/repo$ ");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "ll"),
+         "terminal text input should be handled");
+  TerminalSessionTestAccess::AppendOutput(session, "ll");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should submit the terminal command");
+  TerminalSessionTestAccess::AppendOutput(
+      session, "\nfile-a.txt\nfile-b.txt\nuser@host:~/repo$ ");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopyLastTerminalCommand(shell),
+         "copy last terminal command should execute");
+  Expect(clipboard_text ==
+             "user@host:~/repo$ ll\nfile-a.txt\nfile-b.txt",
+         "copy last terminal command should include the submitted command and rendered output");
+  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Last terminal command copied",
+         "copy last terminal command should report clipboard feedback");
+}
+
+void TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  TerminalSessionTestAccess::AppendOutput(session, "user@host:~/repo$ ");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "vim"),
+         "terminal text input should be handled");
+  TerminalSessionTestAccess::AppendOutput(session, "vim");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should submit the terminal command");
+  TerminalSessionTestAccess::AppendOutput(session, "\n\x1b[?1049hvim screen");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopyLastTerminalCommand(shell),
+         "copy last terminal command should execute during alternate screen use");
+  Expect(clipboard_text == "user@host:~/repo$ vim",
+         "alternate-screen apps should fall back to copying only the invoked command");
+}
+
+void TestWorkspaceShellTerminalTabRightClickOpensContextMenu() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::ActiveTerminalTabRect(shell);
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  event.button.button = SDL_BUTTON_RIGHT;
+  event.button.x = static_cast<float>(tab_rect.x + tab_rect.w * 0.5f);
+  event.button.y = static_cast<float>(tab_rect.y + tab_rect.h * 0.5f);
+
+  Expect(shell.HandleEvent(event), "right-clicking a terminal tab should be handled");
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
+         "right-clicking a terminal tab should open a popup menu");
+  Expect(WorkspaceShellTestAccess::TerminalTabContextMenuOpen(shell),
+         "right-clicking a terminal tab should open the terminal tab context menu");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
@@ -100,6 +177,12 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellArrowKeysHonorApplicationCursorMode);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
+  AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",
+          TestWorkspaceShellCopyLastTerminalCommandIncludesOutput);
+  AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandFallsBackDuringAlternateScreen",
+          TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen);
+  AddTest(tests, "WorkspaceShell/TerminalTabRightClickOpensContextMenu",
+          TestWorkspaceShellTerminalTabRightClickOpensContextMenu);
 }
 
 }  // namespace microide::tests

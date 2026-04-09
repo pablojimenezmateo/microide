@@ -1,6 +1,7 @@
 #pragma once
 
 #include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceShellShared.h"
 
 #include <filesystem>
 #include <functional>
@@ -169,6 +170,10 @@ struct WorkspaceShellTestAccess {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
                                WorkspaceShell::ActionSource::Menu);
   }
+  static bool ExecuteCopyLastTerminalCommand(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.directory_tree_.SelectPath(path);
@@ -210,12 +215,32 @@ struct WorkspaceShellTestAccess {
     event.key = key;
     return shell.HandleTerminalKeyDown(event, modifiers);
   }
+  static bool HandleTextInput(WorkspaceShell& shell, std::string_view text) {
+    SDL_TextInputEvent event{};
+    const std::string storage(text);
+    event.text = storage.c_str();
+    return shell.HandleTextInput(event);
+  }
   static bool HandleKeyEvent(WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
     SDL_Event event{};
     event.type = SDL_EVENT_KEY_DOWN;
     event.key.key = key;
     event.key.mod = modifiers;
     return shell.HandleEvent(event);
+  }
+  static SDL_FRect ActiveTerminalTabRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
+    for (const WorkspaceShell::VisibleTerminalTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
+      if (tab.index == shell.active_terminal_tab_index_) {
+        return tab.rect;
+      }
+    }
+    return {};
   }
   static bool RestoreSessionState(WorkspaceShell& shell) { return shell.RestoreSessionState(); }
   static void SaveSessionState(WorkspaceShell& shell) { shell.SaveSessionState(); }
@@ -287,6 +312,10 @@ struct WorkspaceShellTestAccess {
   static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.menu_bar_open_; }
   static bool EditMenuOpen(const WorkspaceShell& shell) {
     return shell.menu_bar_open_ && shell.active_menu_id_ == WorkspaceShell::MenuId::Edit;
+  }
+  static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.menu_bar_open_ &&
+           shell.active_menu_id_ == WorkspaceShell::MenuId::TerminalTabContext;
   }
 };
 
