@@ -1357,7 +1357,7 @@ void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
   RestoreSavedScreenLocked();
 }
 
-void TerminalSession::AdvanceCursorRowLocked() {
+void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {
   if (use_alternate_screen_) {
     const std::size_t terminal_rows = std::max<std::size_t>(1, rows_);
     if (lines_.size() < terminal_rows) {
@@ -1369,16 +1369,22 @@ void TerminalSession::AdvanceCursorRowLocked() {
       if (cursor_row_ == scroll_region_bottom) {
         ScrollRegionUpLocked(scroll_region_top, scroll_region_bottom, 1);
         cursor_column_ = 0;
+        EnsureCursorLineExistsLocked();
+        lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
         return;
       }
       ++cursor_row_;
       cursor_column_ = 0;
+      EnsureCursorLineExistsLocked();
+      lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
       return;
     }
     if (cursor_row_ + 1 >= terminal_rows) {
       ScrollRegionUpLocked(0, terminal_rows - 1, 1);
       cursor_row_ = terminal_rows - 1;
       cursor_column_ = 0;
+      EnsureCursorLineExistsLocked();
+      lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
       return;
     }
   }
@@ -1386,6 +1392,7 @@ void TerminalSession::AdvanceCursorRowLocked() {
   ++cursor_row_;
   cursor_column_ = 0;
   EnsureCursorLineExistsLocked();
+  lines_[cursor_row_].wrapped_from_previous = wrapped_from_previous;
 }
 
 void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
@@ -1405,7 +1412,7 @@ void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
 void TerminalSession::PutCharacterLocked(char character) {
   if (columns_ > 0 && cursor_column_ >= columns_) {
     if (auto_wrap_mode_) {
-      AdvanceCursorRowLocked();
+      AdvanceCursorRowLocked(true);
     } else {
       cursor_column_ = columns_ - 1;
     }

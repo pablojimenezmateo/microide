@@ -62,15 +62,14 @@ struct CapturedTerminalInvocation {
 CapturedTerminalInvocation CaptureVisibleTerminalInvocation(
     const std::vector<terminal::TerminalLine>& lines,
     std::size_t cursor_row,
-    std::size_t cursor_column,
-    std::size_t columns) {
+    std::size_t cursor_column) {
   if (lines.empty()) {
     return {};
   }
 
   const std::size_t clamped_row = std::min(cursor_row, lines.size() - 1);
   std::size_t start_row = clamped_row;
-  while (start_row > 0 && columns > 0 && lines[start_row - 1].cells.size() >= columns) {
+  while (start_row > 0 && lines[start_row].wrapped_from_previous) {
     --start_row;
   }
 
@@ -246,8 +245,7 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
   const CapturedTerminalInvocation captured =
       CaptureVisibleTerminalInvocation(lines,
                                       terminal_tab->session.cursor_row(),
-                                      terminal_tab->session.cursor_column(),
-                                      terminal_tab->session.columns());
+                                      terminal_tab->session.cursor_column());
   terminal_tab->last_command_start_row = captured.start_row;
   terminal_tab->last_command_invocation = captured.text;
   terminal_tab->last_command_prompt_prefix.clear();

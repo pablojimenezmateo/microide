@@ -145,6 +145,60 @@ void TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen() {
          "alternate-screen apps should fall back to copying only the invoked command");
 }
 
+void TestWorkspaceShellCopyLastTerminalCommandIgnoresPrecedingFullWidthOutput() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 4);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  TerminalSessionTestAccess::AppendOutput(session, "ABCD\n$ ");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "ls"),
+         "terminal text input should be handled");
+  TerminalSessionTestAccess::AppendOutput(session, "ls");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should submit the terminal command");
+  TerminalSessionTestAccess::AppendOutput(session, "\nok\n$ ");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopyLastTerminalCommand(shell),
+         "copy last terminal command should execute after a full-width output row");
+  Expect(clipboard_text == "$ ls\nok",
+         "copy last terminal command should not pull a preceding full-width output row into the invocation");
+}
+
+void TestWorkspaceShellCopyLastTerminalCommandPreservesSoftWrappedInvocation() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 4);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  TerminalSessionTestAccess::AppendOutput(session, "$ ");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "long"),
+         "terminal text input should be handled");
+  TerminalSessionTestAccess::AppendOutput(session, "long");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should submit the terminal command");
+  TerminalSessionTestAccess::AppendOutput(session, "\nok\n$ ");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopyLastTerminalCommand(shell),
+         "copy last terminal command should execute after a soft-wrapped invocation");
+  Expect(clipboard_text == "$ lo\nng\nok",
+         "copy last terminal command should preserve soft-wrapped invocation rows in the copied transcript");
+}
+
 void TestWorkspaceShellTerminalTabRightClickOpensContextMenu() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -223,6 +277,10 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopyLastTerminalCommandIncludesOutput);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandFallsBackDuringAlternateScreen",
           TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen);
+  AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIgnoresPrecedingFullWidthOutput",
+          TestWorkspaceShellCopyLastTerminalCommandIgnoresPrecedingFullWidthOutput);
+  AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandPreservesSoftWrappedInvocation",
+          TestWorkspaceShellCopyLastTerminalCommandPreservesSoftWrappedInvocation);
   AddTest(tests, "WorkspaceShell/TerminalTabRightClickOpensContextMenu",
           TestWorkspaceShellTerminalTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",

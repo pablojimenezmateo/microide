@@ -108,6 +108,11 @@ Remediation:
 - Track terminal prompt/invocation boundaries more explicitly, or keep the feature scoped as a best
   effort and document the limitation.
 
+Status:
+
+- Completed by tracking soft-wrapped terminal rows explicitly and using that metadata for
+  last-command transcript capture instead of a full-width row heuristic.
+
 ### 5. Git shell helpers are duplicated across services
 
 Severity: low

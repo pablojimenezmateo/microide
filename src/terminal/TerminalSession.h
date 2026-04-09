@@ -29,6 +29,7 @@ struct TerminalCell {
 
 struct TerminalLine {
   std::vector<TerminalCell> cells;
+  bool wrapped_from_previous = false;
 };
 
 class TerminalSession {
@@ -136,7 +137,7 @@ class TerminalSession {
                               SDL_Keymod modifiers,
                               std::string& out_bytes) const;
   void EnsureCursorLineExistsLocked();
-  void AdvanceCursorRowLocked();
+  void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
   void MoveCursorLocked(std::size_t row, std::size_t column);
   void PutCharacterLocked(char character);
   void ResizeLineLocked(TerminalLine& line, std::size_t size);

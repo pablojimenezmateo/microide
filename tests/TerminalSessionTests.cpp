@@ -171,6 +171,20 @@ void TestTerminalSessionDisableAutoWrapOverwritesLastColumn() {
   ExpectLineText(lines, 1, "G", "re-enabled autowrap should wrap subsequent characters");
 }
 
+void TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 4);
+
+  TerminalSessionTestAccess::AppendOutput(session, "ABCD\nEFGHI");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 3, "soft-wrap tracking fixture should preserve the wrapped third row");
+  Expect(!lines[1].wrapped_from_previous,
+         "rows reached by a hard newline should not be marked as wrapped continuations");
+  Expect(lines[2].wrapped_from_previous,
+         "rows reached by autowrap should be marked as wrapped continuations");
+}
+
 void TestTerminalSessionReportsCursorPositionQueries() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -252,6 +266,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionScrollDownSequenceUsesScrollRegion);
   AddTest(tests, "TerminalSession/DisableAutoWrapOverwritesLastColumn",
           TestTerminalSessionDisableAutoWrapOverwritesLastColumn);
+  AddTest(tests, "TerminalSession/TracksSoftWrappedRowsSeparatelyFromHardNewlines",
+          TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines);
   AddTest(tests, "TerminalSession/ReportsCursorPositionQueries",
           TestTerminalSessionReportsCursorPositionQueries);
   AddTest(tests, "TerminalSession/ReportsDeviceAttributesQueries",
