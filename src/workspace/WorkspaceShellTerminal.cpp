@@ -137,6 +137,24 @@ const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() cons
   return terminal_tabs_[active_terminal_tab_index_].get();
 }
 
+bool WorkspaceShell::MoveActiveTerminalTabTo(std::size_t index) {
+  if (active_terminal_tab_index_ >= terminal_tabs_.size() || index >= terminal_tabs_.size()) {
+    return false;
+  }
+  if (active_terminal_tab_index_ == index) {
+    return true;
+  }
+
+  std::unique_ptr<TerminalTabState> moved_tab =
+      std::move(terminal_tabs_[active_terminal_tab_index_]);
+  terminal_tabs_.erase(terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(active_terminal_tab_index_));
+  terminal_tabs_.insert(terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(index),
+                        std::move(moved_tab));
+  active_terminal_tab_index_ = index;
+  focus_ = FocusTarget::Panel;
+  return true;
+}
+
 void WorkspaceShell::CloseTerminalTab(std::size_t index) {
   if (index >= terminal_tabs_.size()) {
     return;

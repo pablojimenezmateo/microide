@@ -82,7 +82,7 @@ These are done and should not be treated as open migration work:
 
 ### Workspace Chrome
 
-- `[ ]` project tabs, file tabs, and terminal tabs still need reorder support
+- `[x]` project tabs, file tabs, and terminal tabs can be reordered by dragging within their existing strip, without creating detached windows
 
 ### Menus And Prompts
 
@@ -106,7 +106,7 @@ These are done and should not be treated as open migration work:
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation
 - `[x]` source-control bulk-action coverage now checks bulk stage/discard services plus the confirmed workspace discard-all flow
-- `[ ]` tab-reordering coverage for project, file, and terminal strips
+- `[x]` tab-reordering coverage now checks project, file, and terminal drag reordering
 - `[x]` context-copy coverage now checks editor selection formatting, the editor right-click menu, terminal last-command transcript copying, alternate-screen fallback behavior, and the terminal tab context-menu entry point
 - `[ ]` blame loading and invalidation coverage if editor blame is started
 - `[ ]` broader compare and merge workflow tests

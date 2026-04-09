@@ -55,6 +55,11 @@ struct TerminalSessionTestAccess {
     session.AppendOutputLocked(data);
   }
 
+  static void SetLaunchLabel(microide::terminal::TerminalSession& session, std::string_view label) {
+    std::scoped_lock lock(session.mutex_);
+    session.launch_label_ = std::string(label);
+  }
+
   static std::string SentBytes(const microide::terminal::TerminalSession& session) {
 #ifdef MICROIDE_TESTING
     std::scoped_lock lock(session.mutex_);

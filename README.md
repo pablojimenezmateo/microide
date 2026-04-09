@@ -119,6 +119,7 @@ Current controls:
 - left click in the editor: move the caret
 - left-click drag in the editor: select text
 - left-click drag in the terminal: select terminal text
+- left-click drag project, file, or terminal tabs: reorder them within their existing strip without creating detached windows
 - left click a terminal tab: activate that terminal
 - right click a terminal tab: open terminal tab actions
 - left click the terminal header `+`: open a fresh terminal tab

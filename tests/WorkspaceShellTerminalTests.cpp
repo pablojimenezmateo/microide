@@ -164,6 +164,48 @@ void TestWorkspaceShellTerminalTabRightClickOpensContextMenu() {
          "right-clicking a terminal tab should open the terminal tab context menu");
 }
 
+void TestWorkspaceShellTerminalTabsDragReorderToStart() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(WorkspaceShellTestAccess::ActiveTerminalSession(shell),
+                                            "one");
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(WorkspaceShellTestAccess::ActiveTerminalSession(shell),
+                                            "two");
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(WorkspaceShellTestAccess::ActiveTerminalSession(shell),
+                                            "three");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::TerminalTabRect(shell, 2);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, source_rect.x + source_rect.w * 0.5f, source_rect.y + source_rect.h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "dragging should start from a terminal tab press");
+
+  const SDL_FRect first_rect = WorkspaceShellTestAccess::TerminalTabRect(shell, 0);
+  const float drop_x = first_rect.x - 8.0f;
+  const float drop_y = first_rect.y + first_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
+         "dragging across terminal tabs should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
+         "releasing a dragged terminal tab should be handled");
+
+  Expect(WorkspaceShellTestAccess::TerminalLaunchLabels(shell) ==
+             std::vector<std::string>{"three", "one", "two"},
+         "dragging a terminal tab to the start should reorder the terminal strip");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 0,
+         "dragged terminal tab should stay active after reordering");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
@@ -183,6 +225,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen);
   AddTest(tests, "WorkspaceShell/TerminalTabRightClickOpensContextMenu",
           TestWorkspaceShellTerminalTabRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",
+          TestWorkspaceShellTerminalTabsDragReorderToStart);
 }
 
 }  // namespace microide::tests

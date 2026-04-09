@@ -166,6 +166,9 @@ struct WorkspaceShellTestAccess {
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
   }
+  static bool OpenFileInNewTab(WorkspaceShell& shell, const std::filesystem::path& path) {
+    return shell.OpenFileInNewTab(path);
+  }
   static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
                                WorkspaceShell::ActionSource::Menu);
@@ -205,6 +208,11 @@ struct WorkspaceShellTestAccess {
     shell.active_terminal_tab_index_ = shell.terminal_tabs_.size() - 1;
     shell.focus_ = WorkspaceShell::FocusTarget::Panel;
   }
+  static void AddTerminalTab(WorkspaceShell& shell) {
+    shell.terminal_tabs_.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
+    shell.active_terminal_tab_index_ = shell.terminal_tabs_.size() - 1;
+    shell.focus_ = WorkspaceShell::FocusTarget::Panel;
+  }
   static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
     return shell.terminal_tabs_[shell.active_terminal_tab_index_]->session;
   }
@@ -228,6 +236,55 @@ struct WorkspaceShellTestAccess {
     event.key.mod = modifiers;
     return shell.HandleEvent(event);
   }
+  static bool HandleMouseButtonDown(WorkspaceShell& shell, float x, float y, Uint8 button) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = button;
+    event.button.x = x;
+    event.button.y = y;
+    return shell.HandleEvent(event);
+  }
+  static bool HandleMouseButtonUp(WorkspaceShell& shell, float x, float y, Uint8 button) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    event.button.button = button;
+    event.button.x = x;
+    event.button.y = y;
+    return shell.HandleEvent(event);
+  }
+  static bool HandleMouseMotion(WorkspaceShell& shell, float x, float y, SDL_MouseButtonFlags state) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = x;
+    event.motion.y = y;
+    event.motion.state = state;
+    return shell.HandleEvent(event);
+  }
+  static SDL_FRect ProjectTabRect(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    for (const WorkspaceShell::VisibleProjectTab& tab :
+         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.rect;
+      }
+    }
+    return {};
+  }
+  static SDL_FRect EditorTabRect(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    for (const WorkspaceShell::VisibleTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
+      if (tab.index == index) {
+        return tab.rect;
+      }
+    }
+    return {};
+  }
   static SDL_FRect ActiveTerminalTabRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),
@@ -237,6 +294,20 @@ struct WorkspaceShellTestAccess {
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
     for (const WorkspaceShell::VisibleTerminalTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
       if (tab.index == shell.active_terminal_tab_index_) {
+        return tab.rect;
+      }
+    }
+    return {};
+  }
+  static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
+    for (const WorkspaceShell::VisibleTerminalTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
+      if (tab.index == index) {
         return tab.rect;
       }
     }
@@ -275,6 +346,32 @@ struct WorkspaceShellTestAccess {
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
     return shell.open_tabs_;
+  }
+  static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.active_tab_index_; }
+  static std::size_t ActiveTerminalTabIndex(const WorkspaceShell& shell) {
+    return shell.active_terminal_tab_index_;
+  }
+  static std::vector<std::filesystem::path> ProjectRoots(const WorkspaceShell& shell) {
+    std::vector<std::filesystem::path> roots;
+    roots.reserve(shell.projects_.size());
+    for (std::size_t i = 0; i < shell.projects_.size(); ++i) {
+      if (!shell.project_root_.empty() && i == shell.active_project_index_) {
+        roots.push_back(shell.project_root_);
+      } else if (shell.projects_[i] != nullptr) {
+        roots.push_back(shell.projects_[i]->root);
+      } else {
+        roots.emplace_back();
+      }
+    }
+    return roots;
+  }
+  static std::vector<std::string> TerminalLaunchLabels(WorkspaceShell& shell) {
+    std::vector<std::string> labels;
+    labels.reserve(shell.terminal_tabs_.size());
+    for (const auto& terminal_tab : shell.terminal_tabs_) {
+      labels.push_back(terminal_tab == nullptr ? std::string{} : terminal_tab->session.LaunchLabel());
+    }
+    return labels;
   }
   static const std::string& StatusMessage(const WorkspaceShell& shell) { return shell.status_message_; }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }

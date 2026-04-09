@@ -148,6 +148,13 @@ class WorkspaceShell {
     CompareHorizontalScrollbar,
   };
 
+  enum class TabDragKind {
+    None,
+    Project,
+    Editor,
+    Terminal,
+  };
+
   enum class CursorKind {
     Default,
     Text,
@@ -355,6 +362,14 @@ class WorkspaceShell {
     TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
     std::size_t index = 0;
     std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot = nullptr;
+  };
+
+  struct TabDragState {
+    TabDragKind kind = TabDragKind::None;
+    float press_x = 0.0f;
+    float press_y = 0.0f;
+    bool dragging = false;
+    bool reordered = false;
   };
 
   struct DirtyPromptState {
@@ -719,6 +734,7 @@ class WorkspaceShell {
                       bool restore_persistence,
                       bool log_feedback);
   bool SwitchProject(std::size_t index, bool log_feedback);
+  bool MoveActiveProjectTo(std::size_t index);
   void RequestCloseProject(std::size_t index);
   void CloseProject(std::size_t index);
   void ShowDirtyPromptForProject(std::size_t index);
@@ -1022,6 +1038,7 @@ class WorkspaceShell {
   bool CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const;
   TerminalTabState* ActiveTerminalTab();
   const TerminalTabState* ActiveTerminalTab() const;
+  bool MoveActiveTerminalTabTo(std::size_t index);
   void CloseTerminalTab(std::size_t index);
   void ReapExitedTerminalTabs();
   bool BottomPanelVisible() const;
@@ -1061,6 +1078,7 @@ class WorkspaceShell {
   std::vector<VisibleTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
   std::vector<VisibleTerminalTab> ComputeVisibleTerminalTabs(
       const SDL_FRect& panel_header) const;
+  void ClearTabDrag();
   SDL_FRect BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const;
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
   std::string BreadcrumbLabel() const;
@@ -1180,6 +1198,7 @@ class WorkspaceShell {
   TextInputSurface active_text_input_surface_ = TextInputSurface::None;
   TextCompositionState text_composition_;
   Uint64 caret_blink_epoch_ms_ = 0;
+  TabDragState tab_drag_state_;
   CursorKind cursor_kind_ = CursorKind::Default;
   SDL_Cursor* text_cursor_ = nullptr;
   SDL_Cursor* pointer_cursor_ = nullptr;

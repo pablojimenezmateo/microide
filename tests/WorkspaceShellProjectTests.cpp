@@ -206,6 +206,94 @@ void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
          "right-clicking the editor should open the edit popup as a context menu");
 }
 
+void TestWorkspaceShellProjectTabsDragReorderToEnd() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path root_c = temp_dir.path() / "gamma-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+  WriteFile(root_c / "README.md", "gamma\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
+         "third project should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, source_rect.x + source_rect.w * 0.5f, source_rect.y + source_rect.h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "dragging should start from a project tab press");
+
+  const SDL_FRect last_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 2);
+  const float drop_x = last_rect.x + last_rect.w + 12.0f;
+  const float drop_y = last_rect.y + last_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
+         "dragging across the project tab strip should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
+         "releasing a dragged project tab should be handled");
+
+  Expect(WorkspaceShellTestAccess::ProjectRoots(shell) ==
+             std::vector<std::filesystem::path>{root_b.lexically_normal(),
+                                                root_c.lexically_normal(),
+                                                root_a.lexically_normal()},
+         "dragging a project tab to the end should reorder the project strip");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 2,
+         "dragged project tab should stay active after reordering");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_a.lexically_normal(),
+         "dragged project should remain the active workspace");
+}
+
+void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "int alpha() { return 1; }\n");
+  WriteFile(file_b, "int beta() { return 2; }\n");
+  WriteFile(file_c, "int gamma() { return 3; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a),
+         "first editor tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b),
+         "second editor tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c),
+         "third editor tab should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, source_rect.x + source_rect.w * 0.5f, source_rect.y + source_rect.h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "dragging should start from an editor tab press");
+
+  const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+  const float drop_x = third_rect.x + 1.0f;
+  const float drop_y = third_rect.y + third_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
+         "dragging across editor tabs should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
+         "releasing a dragged editor tab should be handled");
+
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.size() == 3, "editor tab reorder should keep the same tab count");
+  Expect(tabs[0].path == file_b.lexically_normal() && tabs[1].path == file_a.lexically_normal() &&
+             tabs[2].path == file_c.lexically_normal(),
+         "dragging an editor tab between tabs should reorder it into the requested slot");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "dragged editor tab should stay active after reordering");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == file_a.lexically_normal(),
+         "dragged editor tab should keep its buffer active");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -221,6 +309,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",
           TestWorkspaceShellEditorRightClickOpensEditContextMenu);
+  AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
+          TestWorkspaceShellProjectTabsDragReorderToEnd);
+  AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",
+          TestWorkspaceShellEditorTabsDragReorderBetweenTabs);
 }
 
 }  // namespace microide::tests

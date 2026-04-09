@@ -32,6 +32,7 @@ constexpr float kMinSplitPaneExtent = 180.0f;
 constexpr float kMergeToolbarHeight = 54.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
+constexpr float kTabDragStartDistance = 6.0f;
 
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full) {
   const float width = std::min(kDirtyPromptWidth, full.w - 32.0f);
@@ -75,6 +76,45 @@ std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog
 
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
+}
+
+template <typename VisibleTabType>
+std::size_t StripInsertionSlot(const SDL_FRect& strip,
+                               const std::vector<VisibleTabType>& tabs,
+                               float x,
+                               std::size_t item_count) {
+  if (item_count == 0) {
+    return 0;
+  }
+  if (tabs.empty()) {
+    return x <= strip.x + strip.w * 0.5f ? 0 : item_count;
+  }
+  if (x <= tabs.front().rect.x) {
+    return 0;
+  }
+  for (const VisibleTabType& tab : tabs) {
+    const float midpoint = tab.rect.x + tab.rect.w * 0.5f;
+    if (x < midpoint) {
+      return tab.index;
+    }
+  }
+  const VisibleTabType& last = tabs.back();
+  if (x >= last.rect.x + last.rect.w) {
+    return item_count;
+  }
+  return std::min(item_count, last.index + 1);
+}
+
+std::size_t MoveTargetIndexForInsertion(std::size_t insertion_slot,
+                                        std::size_t active_index,
+                                        std::size_t item_count) {
+  if (item_count == 0) {
+    return 0;
+  }
+  const std::size_t clamped_slot = std::min(insertion_slot, item_count);
+  const std::size_t target_index =
+      clamped_slot > active_index ? clamped_slot - 1 : clamped_slot;
+  return std::min(target_index, item_count - 1);
 }
 
 }  // namespace
@@ -407,6 +447,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         RequestCloseProject(tab.index);
       } else if (event.button.button == SDL_BUTTON_LEFT) {
         SwitchProject(tab.index, true);
+        tab_drag_state_ = TabDragState{
+            .kind = TabDragKind::Project,
+            .press_x = static_cast<float>(event.button.x),
+            .press_y = static_cast<float>(event.button.y),
+        };
       }
       return true;
     }
@@ -436,6 +481,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           RequestCloseTab(tab.index);
         } else if (event.button.button == SDL_BUTTON_LEFT) {
           ActivateTab(tab.index);
+          tab_drag_state_ = TabDragState{
+              .kind = TabDragKind::Editor,
+              .press_x = static_cast<float>(event.button.x),
+              .press_y = static_cast<float>(event.button.y),
+          };
         }
         return true;
       }
@@ -465,6 +515,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         } else if (event.button.button == SDL_BUTTON_LEFT) {
           active_terminal_tab_index_ = tab.index;
           focus_ = FocusTarget::Panel;
+          tab_drag_state_ = TabDragState{
+              .kind = TabDragKind::Terminal,
+              .press_x = static_cast<float>(event.button.x),
+              .press_y = static_cast<float>(event.button.y),
+          };
         } else if (event.button.button == SDL_BUTTON_RIGHT) {
           active_terminal_tab_index_ = tab.index;
           focus_ = FocusTarget::Panel;
@@ -1081,6 +1136,20 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     return true;
   }
 
+  if (event.button.button == SDL_BUTTON_LEFT && tab_drag_state_.kind != TabDragKind::None) {
+    const TabDragKind kind = tab_drag_state_.kind;
+    const bool reordered = tab_drag_state_.reordered;
+    ClearTabDrag();
+    if (reordered) {
+      if (kind == TabDragKind::Project) {
+        SaveWorkspaceSession();
+      } else {
+        SaveSessionState();
+      }
+    }
+    return true;
+  }
+
   if (ActiveTerminalTab() != nullptr) {
     auto* terminal_tab = ActiveTerminalTab();
     const auto viewport_position =
@@ -1203,6 +1272,85 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
     active_menu_item_index_ = -1;
     return true;
+  }
+
+  if (tab_drag_state_.kind != TabDragKind::None) {
+    if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
+      const TabDragKind kind = tab_drag_state_.kind;
+      const bool reordered = tab_drag_state_.reordered;
+      ClearTabDrag();
+      if (reordered) {
+        if (kind == TabDragKind::Project) {
+          SaveWorkspaceSession();
+        } else {
+          SaveSessionState();
+        }
+      }
+      return false;
+    }
+
+    const float delta_x = static_cast<float>(event.motion.x) - tab_drag_state_.press_x;
+    const float delta_y = static_cast<float>(event.motion.y) - tab_drag_state_.press_y;
+    if (!tab_drag_state_.dragging &&
+        std::hypot(delta_x, delta_y) < kTabDragStartDistance) {
+      return true;
+    }
+    tab_drag_state_.dragging = true;
+
+    const WorkspaceLayout drag_layout =
+        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+    switch (tab_drag_state_.kind) {
+      case TabDragKind::Project:
+        if (Contains(drag_layout.project_tab_strip, event.motion.x, event.motion.y) &&
+            !projects_.empty()) {
+          const auto visible_tabs = ComputeVisibleProjectTabs(drag_layout.project_tab_strip);
+          const std::size_t insertion_slot =
+              StripInsertionSlot(drag_layout.project_tab_strip, visible_tabs,
+                                 static_cast<float>(event.motion.x), projects_.size());
+          const std::size_t target_index =
+              MoveTargetIndexForInsertion(insertion_slot, active_project_index_, projects_.size());
+          if (target_index != active_project_index_ && MoveActiveProjectTo(target_index)) {
+            tab_drag_state_.reordered = true;
+          }
+        }
+        return true;
+      case TabDragKind::Editor:
+        if (Contains(drag_layout.tab_strip, event.motion.x, event.motion.y) && !open_tabs_.empty()) {
+          const auto visible_tabs = ComputeVisibleTabs(drag_layout.tab_strip);
+          const std::size_t insertion_slot =
+              StripInsertionSlot(drag_layout.tab_strip, visible_tabs,
+                                 static_cast<float>(event.motion.x), open_tabs_.size());
+          const std::size_t target_index =
+              MoveTargetIndexForInsertion(insertion_slot, active_tab_index_, open_tabs_.size());
+          if (target_index != active_tab_index_ && MoveActiveTabTo(target_index)) {
+            tab_drag_state_.reordered = true;
+          }
+        }
+        return true;
+      case TabDragKind::Terminal:
+        if (BottomPanelVisible()) {
+          const SDL_FRect panel_header =
+              MakeRect(drag_layout.bottom_panel.x, drag_layout.bottom_panel.y,
+                       drag_layout.bottom_panel.w, kBottomPanelHeaderHeight);
+          if (Contains(panel_header, event.motion.x, event.motion.y) && !terminal_tabs_.empty()) {
+            const auto visible_tabs = ComputeVisibleTerminalTabs(panel_header);
+            const std::size_t insertion_slot =
+                StripInsertionSlot(panel_header, visible_tabs, static_cast<float>(event.motion.x),
+                                   terminal_tabs_.size());
+            const std::size_t target_index = MoveTargetIndexForInsertion(
+                insertion_slot, active_terminal_tab_index_, terminal_tabs_.size());
+            if (target_index != active_terminal_tab_index_ &&
+                MoveActiveTerminalTabTo(target_index)) {
+              tab_drag_state_.reordered = true;
+            }
+          }
+        }
+        return true;
+      case TabDragKind::None:
+      default:
+        break;
+    }
   }
 
   if (drag_target_ != DragTarget::None) {

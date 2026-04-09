@@ -107,14 +107,12 @@ These are small in surface area but high in day-to-day value.
 Current state:
 
 - the source-control sidebar now supports single-file stage, discard, compare, and merge flows plus bulk `Stage all` and confirmed `Discard all`
-- project, file, and terminal tabs are stable but fixed-order once opened
+- project, file, and terminal tabs now support mouse drag reordering within their existing strip, without spawning detached windows or side-screen drops
 - tree path selection expands ancestors when targeting a path directly, and already-open editor tabs now re-reveal collapsed ancestor directories when that file tab is selected again
 - editor copy-with-context is available from the Edit menu and editor right-click popup
 - terminal tabs now expose `Copy Last Command + Output` from the tab context menu, and it falls back to the invoked command while an alternate-screen app such as `vim` or `htop` owns the terminal
 
 Remaining work:
-
-- support reordering project tabs, file tabs, and terminal tabs
 
 ### 6. Harden project services
 
@@ -140,7 +138,6 @@ The highest-value missing automated coverage is:
 - broaden session restore and multi-project workflow coverage
 - tree mutation flows
 - source-control bulk actions and their confirmation semantics
-- tab reordering across project, file, and terminal strips
 - terminal transcript context-copy formatting beyond the current last-command and alternate-screen cases
 - blame-cache invalidation and viewport-scoped loading behavior if blame is started
 - compare and merge workflow coverage beyond the current model-level tests

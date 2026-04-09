@@ -188,6 +188,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   buffer_search_field_ = BufferSearchField::Search;
   command_mode_ = false;
   focus_ = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
+  tab_drag_state_ = TabDragState{};
   sidebar_width_ = 288.0f;
   bottom_panel_height_ = 184.0f;
   sidebar_scroll_row_ = 0;
@@ -601,6 +602,23 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   if (log_feedback) {
     LogMessage("Project switched: " + ProjectLabel());
   }
+  return true;
+}
+
+bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
+  if (active_project_index_ >= projects_.size() || index >= projects_.size()) {
+    return false;
+  }
+  if (active_project_index_ == index) {
+    return true;
+  }
+
+  std::unique_ptr<ProjectWorkspaceState> moved_project =
+      std::move(projects_[active_project_index_]);
+  projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
+  projects_.insert(projects_.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
+  active_project_index_ = index;
+  EnsureActiveProjectVisible();
   return true;
 }
 

@@ -212,6 +212,10 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
   return tabs;
 }
 
+void WorkspaceShell::ClearTabDrag() {
+  tab_drag_state_ = TabDragState{};
+}
+
 SDL_FRect WorkspaceShell::BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const {
   const float button_size =
       std::min(kBottomPanelHeaderButtonSize, std::max(14.0f, panel_header.h - 8.0f));
