@@ -53,6 +53,7 @@ These are done and should not be treated as open migration work:
 ### Tree And Project Workflows
 
 - `[x]` create, rename, and delete flows now target only the affected editors inside split tabs while preserving compare and merge tab state
+- `[x]` compare tabs now preserve historical commit-side paths across working-tree renames and restore correctly from session state after those renames
 - `[x]` open-project now uses a native folder picker from the File menu and bare `project-open`, while `project-open [path]` still works as a direct fallback
 - `[-]` recent files and recent projects
 
@@ -93,7 +94,7 @@ These are done and should not be treated as open migration work:
 - `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, device/cursor query replies, and charset-designation escape handling; workspace coverage now checks terminal paste shortcuts, DECCKM-aware navigation keys, and `Esc` delivery, but broader real-app validation is still needed
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
-- `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, and compare/merge rename state, but broader workflows still need more validation
+- `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation
 - `[ ]` broader compare and merge workflow tests
 
 ## Intentional Scope Cuts

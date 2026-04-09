@@ -130,6 +130,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
                                                 working_content.value_or(""), commit.short_hash,
                                                 "Working tree", selected_row, true);
   if (compare_tab.has_value() && compare_tab->compare.has_value()) {
+    compare_tab->compare->left_path = normalized_path;
+    compare_tab->compare->right_path = normalized_path;
     compare_tab->compare->commit_hash = commit.hash;
     compare_tab->compare->right_ref = "WORKTREE";
   }
@@ -140,18 +142,22 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const std::filesystem::path& path,
     const CompareTabState& compare_tab) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path left_source_path =
+      (compare_tab.left_path.empty() ? normalized_path : compare_tab.left_path).lexically_normal();
+  const std::filesystem::path right_source_path =
+      (compare_tab.right_path.empty() ? normalized_path : compare_tab.right_path).lexically_normal();
   const auto left_content =
-      project::ReadGitFileAtCommit(project_root_, normalized_path, compare_tab.commit_hash);
+      project::ReadGitFileAtCommit(project_root_, left_source_path, compare_tab.commit_hash);
   if (!left_content.has_value()) {
     return std::nullopt;
   }
 
   std::string right_content;
   if (compare_tab.right_ref == "WORKTREE") {
-    right_content = ReadFileText(normalized_path).value_or("");
+    right_content = ReadFileText(right_source_path).value_or("");
   } else {
     const auto right_commit_content =
-        project::ReadGitFileAtCommit(project_root_, normalized_path, compare_tab.right_ref);
+        project::ReadGitFileAtCommit(project_root_, right_source_path, compare_tab.right_ref);
     if (!right_commit_content.has_value()) {
       return std::nullopt;
     }
@@ -170,6 +176,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
 
   rebuilt->compare->commit_hash = compare_tab.commit_hash;
   rebuilt->compare->right_ref = compare_tab.right_ref;
+  rebuilt->compare->left_path = left_source_path;
+  rebuilt->compare->right_path = right_source_path;
   rebuilt->compare->scroll_row = compare_tab.scroll_row;
   rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
   rebuilt->compare->persistable = compare_tab.persistable;
@@ -188,6 +196,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
 
   CompareTabState compare_tab;
   compare_tab.path = normalized_path;
+  compare_tab.left_path = normalized_path;
+  compare_tab.right_path = normalized_path;
   compare_tab.title = "compare: " + normalized_path.filename().string();
   compare_tab.commit_hash = left_label;
   compare_tab.left_label = std::move(left_label);

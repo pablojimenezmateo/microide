@@ -56,6 +56,8 @@ struct PersistedEditorTabState {
   std::vector<PersistedEditorViewState> views;
   std::vector<PersistedSplitNodeState> split_nodes;
   std::filesystem::path compare_path;
+  std::filesystem::path compare_left_path;
+  std::filesystem::path compare_right_path;
   std::string compare_commit_hash;
   std::string compare_commit_short_hash;
   std::string compare_right_ref;

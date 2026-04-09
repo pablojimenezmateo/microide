@@ -68,9 +68,10 @@ Remaining work:
 
 The goal is a dependable embedded terminal, not a separate terminal-emulator project.
 
-### 3. Improve tree-mutation UX
+### 3. Tree and project workflows are now in good enough shape
 
-Tree create, rename, delete, and trash flows are present, but they still have sharp edges.
+The main tree-mutation sharp edges have been closed, and this area no longer blocks higher-value
+work.
 
 Current state:
 
@@ -78,6 +79,8 @@ Current state:
 - rename retargets affected tabs and delete closes affected tabs
 - dirty rename and delete now prompt to save or discard affected editors instead of silently discarding work
 - split editor tabs now keep unaffected panes open during rename or delete flows instead of treating the whole tab as disposable
+- compare tabs now preserve their historical commit-side paths across working-tree renames instead of silently degrading into empty historical sides
+- renamed working-tree compare tabs now restore with the correct live path and historical ref paths from session state
 - project open now prefers a native folder picker from the File menu and bare `project-open`, while `project-open [path]` remains available as a direct fallback
 
 ### 4. Fill the editor gaps that still matter for a micro-IDE

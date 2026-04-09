@@ -348,6 +348,14 @@ bool WorkspaceShell::RestoreSessionState() {
       current_tab->compare_path = std::filesystem::path(tokens[1].text);
       continue;
     }
+    if (command == "compare-left-path" && tokens.size() == 2) {
+      current_tab->compare_left_path = std::filesystem::path(tokens[1].text);
+      continue;
+    }
+    if (command == "compare-right-path" && tokens.size() == 2) {
+      current_tab->compare_right_path = std::filesystem::path(tokens[1].text);
+      continue;
+    }
     if (command == "compare-commit" && tokens.size() == 3) {
       current_tab->compare_commit_hash = tokens[1].text;
       current_tab->compare_commit_short_hash = tokens[2].text;
@@ -482,8 +490,19 @@ bool WorkspaceShell::RestoreSessionState() {
       };
       std::optional<TabEntry> compare_tab;
       if (!persisted_tab.compare_right_ref.empty()) {
+        auto resolve_path = [&](std::filesystem::path path, const std::filesystem::path& fallback) {
+          if (path.empty()) {
+            return fallback;
+          }
+          if (path.is_relative()) {
+            path = project_root_ / path;
+          }
+          return path.lexically_normal();
+        };
         CompareTabState compare_state;
         compare_state.path = compare_path;
+        compare_state.left_path = resolve_path(persisted_tab.compare_left_path, compare_path);
+        compare_state.right_path = resolve_path(persisted_tab.compare_right_path, compare_path);
         compare_state.commit_hash = persisted_tab.compare_commit_hash;
         compare_state.right_ref = persisted_tab.compare_right_ref;
         compare_state.left_label = persisted_tab.compare_commit_short_hash;
@@ -717,6 +736,10 @@ void WorkspaceShell::SaveSessionState() {
       file << "kind compare\n";
       file << "compare-path " << QuoteCommandArg(tab.compare->path.lexically_normal().string())
            << '\n';
+      file << "compare-left-path "
+           << QuoteCommandArg(tab.compare->left_path.lexically_normal().string()) << '\n';
+      file << "compare-right-path "
+           << QuoteCommandArg(tab.compare->right_path.lexically_normal().string()) << '\n';
       file << "compare-commit " << QuoteCommandArg(tab.compare->commit_hash) << ' '
            << QuoteCommandArg(tab.compare->left_label) << '\n';
       file << "compare-right-ref " << QuoteCommandArg(tab.compare->right_ref) << '\n';

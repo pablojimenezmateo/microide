@@ -30,6 +30,7 @@ This scaffold provides:
 - commit picker overlay and compare tabs
 - three-way merge tabs with incoming/result/current panes, per-hunk picks, and whole-side apply actions
 - sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
+- tree rename and delete flows that preserve affected editor, compare, and merge state instead of dropping it
 - docked command prompt
 - docked terminal tabs with fresh PTY sessions, header `+` creation, auto-removal when a terminal exits, alternate-screen scroll-region handling, explicit scroll-up/scroll-down sequences, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, charset-designation escape handling, and common cursor/erase repaint handling
 - terminal text selection, clipboard copy, and clipboard paste shortcuts
@@ -103,6 +104,7 @@ Current controls:
 - `r` in the git sidebar: refresh working-tree and outgoing-file status
 - reopening the same git diff or conflict file reuses the existing tab instead of opening duplicates
 - selecting an outgoing file opens a compare tab against the resolved base branch `HEAD`
+- renaming a file or directory keeps open compare tabs attached to the correct historical commit-side paths while retargeting the live working-tree side
 - left click on a tab: activate that file tab
 - left click on a tab `x`: close that tab
 - middle click on a tab: close that tab

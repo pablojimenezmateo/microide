@@ -198,11 +198,85 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
          "restored first project should preserve compare horizontal scroll");
 }
 
+void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "compare.txt";
+  WriteFile(source, "zero\none\ntwo\nthree\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "zero\none changed\ntwo changed\nthree changed\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open before rename");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::size_t expected_row =
+      compare.model.rows.empty() ? 0 : std::min<std::size_t>(2, compare.model.rows.size() - 1);
+  compare.selected_row = expected_row;
+  compare.scroll_row = 2;
+  compare.horizontal_scroll = 5;
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, root / "src", "renamed-src");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const std::filesystem::path renamed = root / "renamed-src" / "compare.txt";
+  Expect(std::filesystem::is_regular_file(renamed),
+         "renamed working-tree compare fixture should create the destination file");
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "session restore should rebuild the renamed working-tree compare");
+  Expect(WorkspaceShellTestAccess::OpenTabs(restored).size() == 1,
+         "renamed working-tree compare should restore as a single tab");
+
+  const auto& rebuilt = WorkspaceShellTestAccess::ActiveCompare(restored);
+  Expect(rebuilt.path == renamed.lexically_normal(),
+         "restored compare should preserve the renamed live path");
+  Expect(rebuilt.left_path == source.lexically_normal(),
+         "restored compare should preserve the original commit-side path");
+  Expect(rebuilt.right_path == renamed.lexically_normal(),
+         "restored compare should preserve the renamed working-tree path");
+  Expect(rebuilt.commit_hash == "HEAD",
+         "restored compare should preserve the left-side ref");
+  Expect(rebuilt.right_ref == "WORKTREE",
+         "restored compare should preserve the working-tree right-side ref");
+  Expect(rebuilt.selected_row == expected_row,
+         "restored compare should preserve the selected row");
+  Expect(rebuilt.scroll_row == 2,
+         "restored compare should preserve vertical scroll");
+  Expect(rebuilt.horizontal_scroll == 5,
+         "restored compare should preserve horizontal scroll");
+  const bool kept_compare_content = std::any_of(
+      rebuilt.model.rows.begin(), rebuilt.model.rows.end(), [](const auto& row) {
+        return row.left_text == "one" && row.right_text == "one changed";
+      });
+  Expect(kept_compare_content,
+         "restored compare should preserve the pre-rename commit-vs-working-tree content");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",
+          TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
 }

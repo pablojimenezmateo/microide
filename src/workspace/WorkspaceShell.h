@@ -157,6 +157,8 @@ class WorkspaceShell {
 
   struct CompareTabState {
     std::filesystem::path path;
+    std::filesystem::path left_path;
+    std::filesystem::path right_path;
     std::string title;
     std::string commit_hash;
     std::string right_ref;

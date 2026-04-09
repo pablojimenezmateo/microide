@@ -40,6 +40,7 @@ The current SDL shell already includes:
 - normal editor tabs, compare tabs, and merge tabs
 - nested shared-buffer splits inside editor tabs
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
+- tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
 - literal-by-default project search with regex, case-mode, hidden-file controls, and capped-result feedback
 - literal replace-in-project tied to literal search mode

@@ -308,16 +308,20 @@ void TestWorkspaceShellRenamePreservesWorkingTreeCompareState() {
   compare.scroll_row = 2;
   compare.horizontal_scroll = 5;
 
-  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "compare-renamed.txt");
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, root / "src", "renamed-src");
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
 
-  const std::filesystem::path renamed = root / "src" / "compare-renamed.txt";
+  const std::filesystem::path renamed = root / "renamed-src" / "compare.txt";
   Expect(std::filesystem::is_regular_file(renamed),
          "rename should create the working-tree compare destination path");
 
   const auto& rebuilt = WorkspaceShellTestAccess::ActiveCompare(shell);
   Expect(rebuilt.path == renamed.lexically_normal(),
          "working-tree compare should retarget to the renamed path");
+  Expect(rebuilt.left_path == source.lexically_normal(),
+         "working-tree compare should keep reading historical content from the original path");
+  Expect(rebuilt.right_path == renamed.lexically_normal(),
+         "working-tree compare should retarget only the working-tree side to the renamed path");
   Expect(rebuilt.commit_hash == "HEAD",
          "working-tree compare should preserve the left-side ref");
   Expect(rebuilt.right_ref == "WORKTREE",
@@ -332,6 +336,12 @@ void TestWorkspaceShellRenamePreservesWorkingTreeCompareState() {
          "working-tree compare should preserve vertical scroll on rename");
   Expect(rebuilt.horizontal_scroll == 5,
          "working-tree compare should preserve horizontal scroll on rename");
+  const bool kept_compare_content = std::any_of(
+      rebuilt.model.rows.begin(), rebuilt.model.rows.end(), [](const auto& row) {
+        return row.left_text == "one" && row.right_text == "one changed";
+      });
+  Expect(kept_compare_content,
+         "working-tree compare should preserve the pre-rename commit-vs-working-tree content");
 }
 
 void TestWorkspaceShellRenamePreservesBranchCompareSemantics() {
@@ -368,6 +378,10 @@ void TestWorkspaceShellRenamePreservesBranchCompareSemantics() {
   const auto& rebuilt = WorkspaceShellTestAccess::ActiveCompare(shell);
   Expect(rebuilt.path == renamed.lexically_normal(),
          "branch compare should retarget to the renamed path");
+  Expect(rebuilt.left_path == source.lexically_normal(),
+         "branch compare should keep the original left-side commit path after rename");
+  Expect(rebuilt.right_path == source.lexically_normal(),
+         "branch compare should keep the original right-side commit path after rename");
   Expect(rebuilt.commit_hash == history[1].hash,
          "branch compare should preserve the left-side ref");
   Expect(rebuilt.right_ref == history[0].hash,
@@ -382,6 +396,12 @@ void TestWorkspaceShellRenamePreservesBranchCompareSemantics() {
          "branch compare should preserve vertical scroll on rename");
   Expect(rebuilt.horizontal_scroll == 7,
          "branch compare should preserve horizontal scroll on rename");
+  const bool kept_compare_content = std::any_of(
+      rebuilt.model.rows.begin(), rebuilt.model.rows.end(), [](const auto& row) {
+        return row.left_text == "base line" && row.right_text == "head line";
+      });
+  Expect(kept_compare_content,
+         "branch compare should preserve the original commit content after rename");
 }
 
 void TestWorkspaceShellRenamePreservesMergeTabState() {

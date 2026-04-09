@@ -667,7 +667,14 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path = ReplacePathPrefix(tab.compare->path, old_path, new_path);
-      auto rebuilt = BuildCompareTabEntry(updated_path, *tab.compare);
+      CompareTabState updated_compare = *tab.compare;
+      updated_compare.path = updated_path.lexically_normal();
+      if (updated_compare.right_ref == "WORKTREE" &&
+          PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
+        updated_compare.right_path =
+            ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
+      }
+      auto rebuilt = BuildCompareTabEntry(updated_path, updated_compare);
       if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
         special_tabs_to_close.push_back(i);
         continue;

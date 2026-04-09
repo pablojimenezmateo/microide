@@ -1307,6 +1307,8 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   }
   compare_tab->compare->commit_hash = left_ref;
   compare_tab->compare->right_ref = "WORKTREE";
+  compare_tab->compare->left_path = normalized_path;
+  compare_tab->compare->right_path = normalized_path;
   SyncActiveEditorTab();
   open_tabs_.push_back(std::move(*compare_tab));
   active_tab_index_ = open_tabs_.size() - 1;
@@ -1347,6 +1349,8 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   }
   compare_tab->compare->commit_hash = left_ref;
   compare_tab->compare->right_ref = right_ref;
+  compare_tab->compare->left_path = normalized_path;
+  compare_tab->compare->right_path = normalized_path;
   SyncActiveEditorTab();
   open_tabs_.push_back(std::move(*compare_tab));
   active_tab_index_ = open_tabs_.size() - 1;
