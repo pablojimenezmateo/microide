@@ -154,6 +154,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_drag_ = false;
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
+    application_cursor_keys_mode_ = false;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
@@ -231,6 +232,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     mouse_tracking_drag_ = false;
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
+    application_cursor_keys_mode_ = false;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
@@ -288,6 +290,7 @@ void TerminalSession::Stop() {
     mouse_tracking_drag_ = false;
     mouse_tracking_any_ = false;
     mouse_sgr_ext_mode_ = false;
+    application_cursor_keys_mode_ = false;
     bracketed_paste_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
@@ -318,6 +321,7 @@ void TerminalSession::Stop() {
   mouse_tracking_drag_ = false;
   mouse_tracking_any_ = false;
   mouse_sgr_ext_mode_ = false;
+  application_cursor_keys_mode_ = false;
   bracketed_paste_mode_ = false;
   cursor_visible_ = true;
   primary_screen_ = ScreenState{};
@@ -429,6 +433,15 @@ void TerminalSession::SendBytes(std::string_view bytes) {
 #else
   (void)bytes;
 #endif
+}
+
+void TerminalSession::SendKey(Key key) {
+  std::string bytes;
+  {
+    std::scoped_lock lock(mutex_);
+    bytes = FormatKeyBytesLocked(key);
+  }
+  SendBytes(bytes);
 }
 
 void TerminalSession::PasteText(std::string_view text) {
@@ -961,6 +974,9 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
 
 void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
   switch (mode) {
+    case 1:
+      application_cursor_keys_mode_ = enabled;
+      return;
     case 1000:
       mouse_tracking_normal_ = enabled;
       return;
@@ -1015,6 +1031,41 @@ TerminalSession::MouseTrackingMode TerminalSession::CurrentMouseTrackingModeLock
     return MouseTrackingMode::Normal;
   }
   return MouseTrackingMode::Disabled;
+}
+
+std::string TerminalSession::FormatKeyBytesLocked(Key key) const {
+  switch (key) {
+    case Key::Escape:
+      return "\x1b";
+    case Key::Enter:
+      return "\r";
+    case Key::Backspace:
+      return "\x7f";
+    case Key::Tab:
+      return "\t";
+    case Key::Up:
+      return application_cursor_keys_mode_ ? "\x1bOA" : "\x1b[A";
+    case Key::Down:
+      return application_cursor_keys_mode_ ? "\x1bOB" : "\x1b[B";
+    case Key::Right:
+      return application_cursor_keys_mode_ ? "\x1bOC" : "\x1b[C";
+    case Key::Left:
+      return application_cursor_keys_mode_ ? "\x1bOD" : "\x1b[D";
+    case Key::Home:
+      return application_cursor_keys_mode_ ? "\x1bOH" : "\x1b[H";
+    case Key::End:
+      return application_cursor_keys_mode_ ? "\x1bOF" : "\x1b[F";
+    case Key::PageUp:
+      return "\x1b[5~";
+    case Key::PageDown:
+      return "\x1b[6~";
+    case Key::Insert:
+      return "\x1b[2~";
+    case Key::Delete:
+      return "\x1b[3~";
+    default:
+      return {};
+  }
 }
 
 std::string TerminalSession::FormatPasteBytesLocked(std::string_view text) const {

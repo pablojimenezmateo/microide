@@ -58,6 +58,23 @@ void TestWorkspaceShellCtrlVStillSendsControlV() {
          "Ctrl+V should still send the literal control-V byte");
 }
 
+void TestWorkspaceShellArrowKeysHonorApplicationCursorMode() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1h");
+
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
+         "Up should be handled by the terminal");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
+         "Home should be handled by the terminal");
+  Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
+         "End should be handled by the terminal");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1bOA\x1bOH\x1bOF",
+         "workspace terminal navigation should switch to SS3 sequences in application cursor mode");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
@@ -67,6 +84,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellShiftInsertPastesRawClipboard);
   AddTest(tests, "WorkspaceShell/TerminalCtrlVStillSendsControlV",
           TestWorkspaceShellCtrlVStillSendsControlV);
+  AddTest(tests, "WorkspaceShell/TerminalArrowKeysHonorApplicationCursorMode",
+          TestWorkspaceShellArrowKeysHonorApplicationCursorMode);
 }
 
 }  // namespace microide::tests

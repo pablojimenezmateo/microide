@@ -33,6 +33,7 @@ struct TerminalSessionTestAccess {
     session.mouse_tracking_drag_ = false;
     session.mouse_tracking_any_ = false;
     session.mouse_sgr_ext_mode_ = false;
+    session.application_cursor_keys_mode_ = false;
     session.bracketed_paste_mode_ = false;
     session.cursor_visible_ = true;
     session.rows_ = std::max<std::size_t>(1, rows);

@@ -33,6 +33,23 @@ struct TerminalLine {
 
 class TerminalSession {
  public:
+  enum class Key {
+    Escape,
+    Enter,
+    Backspace,
+    Tab,
+    Up,
+    Down,
+    Right,
+    Left,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+  };
+
   enum class MouseButton {
     Left,
     Middle,
@@ -53,6 +70,7 @@ class TerminalSession {
   void Stop();
   void Resize(std::size_t rows, std::size_t columns);
   void SendBytes(std::string_view bytes);
+  void SendKey(Key key);
   bool running() const;
   std::size_t LineCount() const;
   std::vector<TerminalLine> SnapshotLines() const;
@@ -105,6 +123,7 @@ class TerminalSession {
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandlePrivateModeLocked(int mode, bool enabled);
   MouseTrackingMode CurrentMouseTrackingModeLocked() const;
+  std::string FormatKeyBytesLocked(Key key) const;
   std::string FormatPasteBytesLocked(std::string_view text) const;
   bool EncodeMouseEventLocked(MouseButton button,
                               bool pressed,
@@ -157,6 +176,7 @@ class TerminalSession {
   bool mouse_tracking_drag_ = false;
   bool mouse_tracking_any_ = false;
   bool mouse_sgr_ext_mode_ = false;
+  bool application_cursor_keys_mode_ = false;
   bool bracketed_paste_mode_ = false;
   bool cursor_visible_ = true;
   std::size_t rows_ = 24;

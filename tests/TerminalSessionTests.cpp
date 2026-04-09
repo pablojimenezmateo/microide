@@ -107,6 +107,32 @@ void TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled() {
          "terminal paste should send raw bytes when bracketed paste mode is disabled");
 }
 
+void TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1h");
+
+  session.SendKey(microide::terminal::TerminalSession::Key::Up);
+  session.SendKey(microide::terminal::TerminalSession::Key::Home);
+  session.SendKey(microide::terminal::TerminalSession::Key::End);
+
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1bOA\x1bOH\x1bOF",
+         "application cursor-key mode should use SS3 sequences for arrows, Home, and End");
+}
+
+void TestTerminalSessionNormalCursorKeysUseCsiSequences() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1h\x1b[?1l");
+
+  session.SendKey(microide::terminal::TerminalSession::Key::Up);
+  session.SendKey(microide::terminal::TerminalSession::Key::Home);
+  session.SendKey(microide::terminal::TerminalSession::Key::End);
+
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[A\x1b[H\x1b[F",
+         "normal cursor-key mode should use CSI sequences after DECCKM is disabled");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -122,6 +148,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionPasteUsesBracketedPasteWhenEnabled);
   AddTest(tests, "TerminalSession/PasteRawMode",
           TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled);
+  AddTest(tests, "TerminalSession/ApplicationCursorKeysSs3Mode",
+          TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences);
+  AddTest(tests, "TerminalSession/NormalCursorKeysCsiMode",
+          TestTerminalSessionNormalCursorKeysUseCsiSequences);
 }
 
 }  // namespace microide::tests
