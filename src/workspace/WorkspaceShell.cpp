@@ -436,7 +436,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Vsplit:
       return ActiveTabIsEditor();
     case ActionId::Save:
-      return ActiveTabIsEditor() || ActiveTabIsMerge();
+      return ActiveTabIsEditor() || ActiveTabIsMerge() ||
+             (ActiveTabIsCompare() && ActiveCompareTab() != nullptr && ActiveCompareTab()->right_editable);
     case ActionId::Focus:
       return true;
     case ActionId::IndentWidth:
@@ -951,6 +952,9 @@ void WorkspaceShell::RevealActiveCompareSelection() {
         static_cast<int>(compare_tab->selected_row) - surface_layout.visible_rows + 1;
   }
   ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
+  if (compare_tab->right_editable) {
+    SyncCompareViewportScroll(*compare_tab);
+  }
 }
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
@@ -974,6 +978,12 @@ const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
 }
 
 editor::TextViewport* WorkspaceShell::ActiveEditableViewport() {
+  if (ActiveTabIsCompare()) {
+    auto* compare_tab = ActiveCompareTab();
+    return compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active
+               ? nullptr
+               : &compare_tab->right_viewport;
+  }
   if (ActiveTabIsMerge()) {
     auto* merge_tab = ActiveMergeTab();
     return merge_tab == nullptr ? nullptr : &merge_tab->result_viewport;
@@ -985,6 +995,12 @@ editor::TextViewport* WorkspaceShell::ActiveEditableViewport() {
 }
 
 const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
+  if (ActiveTabIsCompare()) {
+    const auto* compare_tab = ActiveCompareTab();
+    return compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active
+               ? nullptr
+               : &compare_tab->right_viewport;
+  }
   if (ActiveTabIsMerge()) {
     const auto* merge_tab = ActiveMergeTab();
     return merge_tab == nullptr ? nullptr : &merge_tab->result_viewport;
@@ -1140,6 +1156,18 @@ bool WorkspaceShell::SaveTab(std::size_t index) {
     return false;
   }
 
+  if (open_tabs_[index].kind == TabEntry::Kind::Compare && open_tabs_[index].compare.has_value()) {
+    auto& compare_tab = open_tabs_[index].compare.value();
+    if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
+      return true;
+    }
+    if (!compare_tab.right_viewport.Save()) {
+      return false;
+    }
+    directory_tree_.Refresh();
+    return true;
+  }
+
   if (open_tabs_[index].kind == TabEntry::Kind::Merge && open_tabs_[index].merge.has_value()) {
     auto& merge_tab = open_tabs_[index].merge.value();
     if (!merge_tab.result_viewport.dirty()) {
@@ -1214,6 +1242,10 @@ bool WorkspaceShell::TabIsDirty(std::size_t index) const {
     return false;
   }
 
+  if (open_tabs_[index].kind == TabEntry::Kind::Compare && open_tabs_[index].compare.has_value()) {
+    return open_tabs_[index].compare->right_editable && open_tabs_[index].compare->right_viewport.dirty();
+  }
+
   if (open_tabs_[index].kind == TabEntry::Kind::Merge && open_tabs_[index].merge.has_value()) {
     return open_tabs_[index].merge->result_viewport.dirty();
   }
@@ -1267,6 +1299,11 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
   dirty_tabs.reserve(state.open_tabs.size());
   for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
     const auto& tab = state.open_tabs[i];
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        tab.compare->right_editable && tab.compare->right_viewport.dirty()) {
+      dirty_tabs.push_back(i);
+      continue;
+    }
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() && tab.merge->result_viewport.dirty()) {
       dirty_tabs.push_back(i);
       continue;
@@ -1386,7 +1423,8 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, "WORKTREE");
       existing_index.has_value()) {
     SyncActiveEditorTab();
-    if (open_tabs_[*existing_index].compare.has_value()) {
+    if (open_tabs_[*existing_index].compare.has_value() &&
+        !open_tabs_[*existing_index].compare->right_viewport.dirty()) {
       auto rebuilt = BuildCompareTabEntry(normalized_path, open_tabs_[*existing_index].compare.value());
       if (rebuilt.has_value() && rebuilt->compare.has_value()) {
         open_tabs_[*existing_index] = std::move(*rebuilt);
@@ -1415,6 +1453,8 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   compare_tab->compare->right_ref = "WORKTREE";
   compare_tab->compare->left_path = normalized_path;
   compare_tab->compare->right_path = normalized_path;
+  compare_tab->compare->right_editable = true;
+  compare_tab->compare->right_view_active = true;
   SyncActiveEditorTab();
   open_tabs_.push_back(std::move(*compare_tab));
   active_tab_index_ = open_tabs_.size() - 1;
@@ -1434,7 +1474,8 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
       existing_index.has_value()) {
     SyncActiveEditorTab();
-    if (open_tabs_[*existing_index].compare.has_value()) {
+    if (open_tabs_[*existing_index].compare.has_value() &&
+        !open_tabs_[*existing_index].compare->right_viewport.dirty()) {
       auto rebuilt = BuildCompareTabEntry(normalized_path, open_tabs_[*existing_index].compare.value());
       if (rebuilt.has_value() && rebuilt->compare.has_value()) {
         open_tabs_[*existing_index] = std::move(*rebuilt);
@@ -2489,6 +2530,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         const std::filesystem::path saved_path =
             ActiveTabIsMerge() && ActiveMergeTab() != nullptr
                 ? ActiveMergeTab()->output_path.lexically_normal()
+            : ActiveTabIsCompare() && ActiveCompareTab() != nullptr
+                ? ActiveCompareTab()->right_path.lexically_normal()
                 : text_viewport_.path().lexically_normal();
         LogMessage("Saved file: " + saved_path.string());
       } else {
@@ -2647,6 +2690,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
         const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
         if (viewport->Undo()) {
+          if (auto* compare_tab = ActiveCompareTab();
+              compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+            RefreshCompareTabDerivedState(*compare_tab);
+            SyncCompareSelectionFromViewport(*compare_tab, true);
+          }
           if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
@@ -2661,6 +2709,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
         const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
         if (viewport->Redo()) {
+          if (auto* compare_tab = ActiveCompareTab();
+              compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+            RefreshCompareTabDerivedState(*compare_tab);
+            SyncCompareSelectionFromViewport(*compare_tab, true);
+          }
           if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
@@ -2701,6 +2754,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
           viewport->DeleteSelectedText();
+          if (auto* compare_tab = ActiveCompareTab();
+              compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+            RefreshCompareTabDerivedState(*compare_tab);
+            SyncCompareSelectionFromViewport(*compare_tab, true);
+          }
           if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
@@ -2718,6 +2776,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
           viewport->InsertText(*clipboard_text);
+          if (auto* compare_tab = ActiveCompareTab();
+              compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+            RefreshCompareTabDerivedState(*compare_tab);
+            SyncCompareSelectionFromViewport(*compare_tab, true);
+          }
           if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }

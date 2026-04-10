@@ -60,6 +60,34 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOver
   return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
 }
 
+std::optional<microide::editor::EditorBlameOverlay> WaitForActiveCompareBlameOverlay(
+    WorkspaceShell& shell,
+    std::size_t minimum_line_count = 1) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto overlay = WorkspaceShellTestAccess::ActiveCompareBlameOverlay(shell);
+    if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
+      return overlay;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WorkspaceShellTestAccess::ActiveCompareBlameOverlay(shell);
+}
+
+std::optional<microide::editor::EditorBlameOverlay> WaitForActiveMergeBlameOverlay(
+    WorkspaceShell& shell,
+    std::size_t minimum_line_count = 1) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto overlay = WorkspaceShellTestAccess::ActiveMergeBlameOverlay(shell);
+    if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
+      return overlay;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WorkspaceShellTestAccess::ActiveMergeBlameOverlay(shell);
+}
+
 void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "picked-project";
@@ -464,6 +492,102 @@ void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
          "refreshing the git sidebar should preserve blame metadata for the active editor");
 }
 
+void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare edit fixture", "compare edit fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable,
+         "working-tree comparison should expose an editable current-state pane");
+  Expect(compare.right_view_active,
+         "working-tree comparison should focus the editable current-state pane");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// note "),
+         "text input should edit the compare current-state pane");
+  Expect(compare.right_viewport.dirty(),
+         "editing the compare current-state pane should mark the tab dirty");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0),
+         "saving the compare tab should write the current-state buffer");
+  Expect(!compare.right_viewport.dirty(),
+         "saving the compare tab should clear the dirty state");
+  Expect(ReadFile(source).rfind("// note ", 0) == 0,
+         "saving the compare tab should persist the edited current-state text");
+}
+
+void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare blame fixture", "compare blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.right_viewport.MoveCursorTo(1, 0);
+
+  const auto overlay = WaitForActiveCompareBlameOverlay(shell, 3);
+  Expect(overlay.has_value(),
+         "clean working-tree comparison should eventually expose compare blame");
+  Expect(overlay->lines.size() == 3,
+         "compare blame should stay focused on the caret line and adjacent rows");
+  Expect(overlay->lines[1].author == "Microide Tests",
+         "compare blame should keep the blame author metadata");
+  Expect(overlay->lines[1].summary == "Add compare blame fixture",
+         "compare blame should keep the blame summary metadata");
+}
+
+void TestWorkspaceShellMergeBlameLoadsForResultPane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(source, "line 1\ncurrent line\nline 3\nline 4\n");
+  WriteFile(base, "line 1\nbase line\nline 3\nline 4\n");
+  WriteFile(incoming, "line 1\nincoming line\nline 3\nline 4\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add merge blame fixture", "merge blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, source, source),
+         "merge editor should open");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.result_viewport.MoveCursorTo(1, 0);
+
+  const auto overlay = WaitForActiveMergeBlameOverlay(shell, 3);
+  Expect(overlay.has_value(),
+         "clean merge result pane should eventually expose blame");
+  Expect(overlay->lines.size() == 3,
+         "merge blame should stay focused on the caret line and adjacent rows");
+  Expect(overlay->lines[1].author == "Microide Tests",
+         "merge blame should keep the blame author metadata");
+  Expect(overlay->lines[1].summary == "Add merge blame fixture",
+         "merge blame should keep the blame summary metadata");
+}
+
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -579,6 +703,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlamePopupWrapsLongSummary);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
+  AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
+          TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",
+          TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
+  AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",
+          TestWorkspaceShellMergeBlameLoadsForResultPane);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

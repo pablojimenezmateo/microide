@@ -845,8 +845,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_RIGHT &&
-      Contains(layout.editor_surface, event.button.x, event.button.y) && ActiveTabIsEditor() &&
-      !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
+      Contains(layout.editor_surface, event.button.x, event.button.y) &&
+      ActiveEditableViewport() != nullptr) {
     OpenAnchoredMenu(MenuId::Edit,
                      MakeRect(static_cast<float>(event.button.x),
                               static_cast<float>(event.button.y), 1.0f, 1.0f));
@@ -869,6 +869,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
     ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
     ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
+    SyncCompareViewportScroll(*compare_tab);
 
     const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
         layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
@@ -886,6 +887,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
               *vertical_scrollbar, static_cast<float>(event.button.y), drag_scrollbar_offset_))),
           0, CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows));
       compare_tab->scroll_row = target_scroll;
+      SyncCompareViewportScroll(*compare_tab);
       focus_ = FocusTarget::Editor;
       return true;
     }
@@ -906,6 +908,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
             0L, std::lround(ScrollUnitsForPointer(*horizontal_scrollbar,
                                                   static_cast<float>(event.button.x),
                                                   drag_scrollbar_offset_))));
+        SyncCompareViewportScroll(*compare_tab);
         focus_ = FocusTarget::Editor;
         return true;
       }
@@ -917,9 +920,31 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     if (clicked_row >= 0 && model_row >= 0 &&
         model_row < static_cast<int>(compare_tab->model.rows.size())) {
       compare_tab->selected_row = static_cast<std::size_t>(model_row);
+      if (compare_tab->right_editable && event.button.button == SDL_BUTTON_LEFT &&
+          event.button.x >= surface_layout.right_x) {
+        compare_tab->right_view_active = true;
+        compare_tab->right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
+                                                    surface_layout.visible_columns);
+        compare_tab->right_viewport.SetHorizontalScroll(compare_tab->horizontal_scroll);
+        const std::size_t line = CompareRightLineForRow(*compare_tab, compare_tab->selected_row);
+        const float text_offset_x =
+            std::max(0.0f, event.button.x - (surface_layout.right_x + surface_layout.gutter_width));
+        const std::size_t visual_column =
+            compare_tab->horizontal_scroll +
+            static_cast<std::size_t>(
+                std::max(0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
+        compare_tab->right_viewport.MoveCursorToVisualColumn(
+            line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+        SyncCompareSelectionFromViewport(*compare_tab, false);
+        ResetCaretBlink();
+        mouse_selecting_ = true;
+      } else {
+        compare_tab->right_view_active = false;
+      }
       focus_ = FocusTarget::Editor;
       return true;
     }
+    compare_tab->right_view_active = false;
     return false;
   }
 
@@ -1824,6 +1849,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                   *scrollbar, static_cast<float>(event.motion.y), drag_scrollbar_offset_))),
               0, CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows));
           compare_tab->scroll_row = target_scroll;
+          SyncCompareViewportScroll(*compare_tab);
           focus_ = FocusTarget::Editor;
           return true;
         }
@@ -1839,6 +1865,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
             0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.x),
                                                   drag_scrollbar_offset_))));
+        SyncCompareViewportScroll(*compare_tab);
         focus_ = FocusTarget::Editor;
         return true;
       }
@@ -2234,6 +2261,42 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
+  if (ActiveTabIsCompare()) {
+    CompareTabState* compare_tab = ActiveCompareTab();
+    if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
+      return false;
+    }
+
+    const CompareSurfaceLayout surface_layout =
+        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+    if (event.motion.x < surface_layout.right_x) {
+      return false;
+    }
+    compare_tab->right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
+                                                surface_layout.visible_columns);
+    const int hovered_row = static_cast<int>((event.motion.y - surface_layout.rows_y) /
+                                             std::max(1.0f, surface_layout.line_height));
+    if (hovered_row < 0) {
+      return false;
+    }
+    const int clamped_model_row = std::clamp(compare_tab->scroll_row + hovered_row, 0,
+                                             std::max(0, static_cast<int>(compare_tab->model.rows.size()) - 1));
+    const std::size_t line =
+        CompareRightLineForRow(*compare_tab, static_cast<std::size_t>(clamped_model_row));
+    const float text_offset_x =
+        std::max(0.0f, event.motion.x - (surface_layout.right_x + surface_layout.gutter_width));
+    const std::size_t visual_column =
+        compare_tab->horizontal_scroll +
+        static_cast<std::size_t>(
+            std::max(0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
+
+    compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, true);
+    SyncCompareSelectionFromViewport(*compare_tab, false);
+    ResetCaretBlink();
+    focus_ = FocusTarget::Editor;
+    return true;
+  }
+
   if (ActiveTabIsMerge()) {
     MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr) {
@@ -2434,6 +2497,9 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
         ScrollCompareColumns(-horizontal_ticks * 3);
       } else {
         ScrollCompareRows(-vertical_ticks * 3);
+      }
+      if (auto* compare_tab = ActiveCompareTab(); compare_tab != nullptr) {
+        SyncCompareViewportScroll(*compare_tab);
       }
       focus_ = FocusTarget::Editor;
       return true;

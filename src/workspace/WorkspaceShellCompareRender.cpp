@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "editor/SyntaxHighlighter.h"
+#include "editor/TextLayout.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -216,10 +217,24 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   const std::size_t visible_end_row =
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
   PopulateCompareSyntaxTokensForWindow(*compare_tab, visible_start_row, visible_end_row);
+  compare_tab->right_viewport.SetViewportSize(static_cast<std::size_t>(surface.visible_rows),
+                                              surface.visible_columns);
+  compare_tab->right_viewport.SetHorizontalScroll(compare_tab->horizontal_scroll);
+  const bool draw_compare_caret =
+      focus_ == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
+      !(CurrentTextInputSurface() == TextInputSurface::Editor && !text_composition_.text.empty());
+  const std::optional<editor::SelectionRange> right_selection =
+      compare_tab->right_editable ? compare_tab->right_viewport.selection_range() : std::nullopt;
+  const std::optional<editor::EditorBlameOverlay> blame_overlay =
+      compare_tab->right_editable && compare_tab->right_view_active
+          ? BuildCompareBlameOverlay(*compare_tab, surface, rect)
+          : std::nullopt;
+  visible_editor_blame_overlay_ = blame_overlay;
   const float bottom_reserved = surface.show_horizontal ? kScrollbarReserve : 0.0f;
   const float right_reserved = surface.show_vertical ? kScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
+  std::size_t blame_index = 0;
 
   DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f), theme_.border);
   DrawFilledRect(renderer, MakeRect(surface.center_x - 6.0f, rect.y, 1.0f, content_height), theme_.border);
@@ -261,7 +276,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
                                       const std::string& text,
                                       const std::vector<editor::SyntaxTokenKind>& full_tokens,
                                       const std::vector<compare::CompareTextSpan>& changed_spans,
-                                      SDL_Color changed_background) {
+                                      SDL_Color changed_background,
+                                      bool suppress_background = false) {
       if (text.empty()) {
         return;
       }
@@ -311,10 +327,16 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
 
         const std::string_view segment_text(window.text.data() + segment_start,
                                             segment_end - segment_start);
-        text_renderer_.DrawStringOn(
-            renderer, segment_x, y,
-            CompareTokenColor(theme_, kind, plain_color, selected),
-            changed ? changed_background : row_background, segment_text);
+        if (suppress_background) {
+          text_renderer_.DrawString(renderer, segment_x, y,
+                                    CompareTokenColor(theme_, kind, plain_color, selected),
+                                    segment_text);
+        } else {
+          text_renderer_.DrawStringOn(
+              renderer, segment_x, y,
+              CompareTokenColor(theme_, kind, plain_color, selected),
+              changed ? changed_background : row_background, segment_text);
+        }
         segment_x += text_renderer_.MeasureWidth(segment_text);
         segment_start = segment_end;
       }
@@ -377,13 +399,74 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
                        *cached_tokens, compare_row.left_changed_spans, left_changed_background);
     }
     if (compare_row.right_line > 0) {
+      const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
+      const bool selection_active =
+          right_selection.has_value() &&
+          right_line_index >= right_selection->start.line &&
+          right_line_index <= right_selection->end.line;
+      if (selection_active) {
+        const std::size_t line_start =
+            right_line_index == right_selection->start.line ? right_selection->start.column : 0;
+        const std::size_t line_end =
+            right_line_index == right_selection->end.line ? right_selection->end.column
+                                                          : compare_row.right_text.size();
+        const std::size_t start_visual =
+            editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text, line_start,
+                                                          compare_tab->right_viewport.tab_size());
+        const std::size_t end_visual =
+            editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text, line_end,
+                                                          compare_tab->right_viewport.tab_size());
+        const std::size_t visible_start =
+            std::max(start_visual, compare_tab->horizontal_scroll);
+        const std::size_t visible_end =
+            std::min(end_visual, compare_tab->horizontal_scroll + surface.visible_columns);
+        if (visible_end > visible_start) {
+          DrawFilledRect(
+              renderer,
+              MakeRect(surface.right_x + surface.gutter_width +
+                           static_cast<float>(visible_start - compare_tab->horizontal_scroll) *
+                               text_renderer_.CharWidth(),
+                       y - 1.0f,
+                       static_cast<float>(visible_end - visible_start) * text_renderer_.CharWidth(),
+                       surface.line_height),
+              theme_.selection_fill);
+        }
+      }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->right_tokens_by_row.size()
               ? &compare_tab->right_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
       draw_syntax_text(surface.right_x + surface.gutter_width, right_color,
                        compare_row.right_text, *cached_tokens, compare_row.right_changed_spans,
-                       right_changed_background);
+                       right_changed_background, selection_active);
+      if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
+        const std::size_t caret_visual =
+            editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text,
+                                                          compare_tab->right_viewport.cursor_column(),
+                                                          compare_tab->right_viewport.tab_size());
+        if (caret_visual >= compare_tab->horizontal_scroll &&
+            caret_visual <= compare_tab->horizontal_scroll + surface.visible_columns) {
+          DrawFilledRect(
+              renderer,
+              MakeRect(surface.right_x + surface.gutter_width +
+                           static_cast<float>(caret_visual - compare_tab->horizontal_scroll) *
+                               text_renderer_.CharWidth(),
+                       y - 1.0f, 1.5f, surface.line_height),
+              theme_.cursor);
+        }
+      }
+      if (blame_overlay.has_value() && blame_overlay->visible) {
+        while (blame_index < blame_overlay->lines.size() &&
+               blame_overlay->lines[blame_index].line_index < right_line_index) {
+          ++blame_index;
+        }
+        if (blame_index < blame_overlay->lines.size() &&
+            blame_overlay->lines[blame_index].line_index == right_line_index) {
+          text_renderer_.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
+                                     blame_overlay->lines[blame_index].rect.y, theme_.text_disabled,
+                                     row_background, blame_overlay->lines[blame_index].text);
+        }
+      }
     }
     draw_text(surface.center_x + 4.0f, surface.divider_width - 6.0f, marker_color,
               std::string(1, marker));
@@ -656,8 +739,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   const SDL_FRect result_rect =
       MakeRect(surface.center_x, surface.rows_y - 8.0f, surface.gutter_width + surface.center_width,
                std::max(0.0f, rect.y + content_height - (surface.rows_y - 8.0f)));
+  const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
+      BuildEditorBlameOverlay(merge_tab->result_viewport, result_rect, 280.0f);
+  visible_editor_blame_overlay_ = merge_blame_overlay;
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport, result_rect,
-                               focus_ == FocusTarget::Editor && CaretVisibleNow());
+                               focus_ == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
+                               merge_blame_overlay);
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 

@@ -83,8 +83,9 @@ std::string NormalizePopupText(std::string_view text) {
 }  // namespace
 
 bool WorkspaceShell::EditorBlameFitsPane(const editor::TextViewport& viewport,
-                                         const SDL_FRect& rect) const {
-  if (rect.w <= 0.0f || rect.h <= 0.0f || rect.w < kMinimumEditorBlamePaneWidth) {
+                                         const SDL_FRect& rect,
+                                         float minimum_pane_width) const {
+  if (rect.w <= 0.0f || rect.h <= 0.0f || rect.w < minimum_pane_width) {
     return false;
   }
 
@@ -95,9 +96,11 @@ bool WorkspaceShell::EditorBlameFitsPane(const editor::TextViewport& viewport,
 
 std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverlay(
     editor::TextViewport& viewport,
-    const SDL_FRect& rect) {
+    const SDL_FRect& rect,
+    float minimum_pane_width) {
   if (project_root_.empty() || viewport.is_placeholder() || viewport.path().empty() ||
-      viewport.dirty() || viewport.large_file_mode() || !EditorBlameFitsPane(viewport, rect)) {
+      viewport.dirty() || viewport.large_file_mode() ||
+      !EditorBlameFitsPane(viewport, rect, minimum_pane_width)) {
     return std::nullopt;
   }
 
@@ -164,6 +167,113 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
     overlay.lines.push_back(editor::EditorBlameLine{
         .line_index = line.line,
         .rect = MakeRect(x, y, text_renderer_.MeasureWidth(display_text), metrics.line_height),
+        .text = display_text,
+        .commit_id = line.commit_id,
+        .author = line.author,
+        .summary = line.summary,
+        .date = FormatBlameDate(line.author_time),
+        .interactive = !line.commit_id.empty() && !line.synthetic,
+    });
+  }
+  return overlay;
+}
+
+std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverlay(
+    CompareTabState& compare_tab,
+    const CompareSurfaceLayout& surface,
+    const SDL_FRect& rect) {
+  if (!compare_tab.right_editable || !compare_tab.right_view_active) {
+    return std::nullopt;
+  }
+
+  const float bottom_reserved = surface.show_horizontal ? 12.0f : 0.0f;
+  const SDL_FRect pane_rect =
+      MakeRect(surface.right_x, rect.y, surface.gutter_width + surface.right_width,
+               std::max(0.0f, rect.h - bottom_reserved));
+  if (project_root_.empty() || compare_tab.right_viewport.is_placeholder() ||
+      compare_tab.right_viewport.path().empty() || compare_tab.right_viewport.dirty() ||
+      compare_tab.right_viewport.large_file_mode() ||
+      !EditorBlameFitsPane(compare_tab.right_viewport, pane_rect, 320.0f)) {
+    return std::nullopt;
+  }
+
+  std::error_code error;
+  const auto relative_path = std::filesystem::relative(
+      compare_tab.right_viewport.path().lexically_normal(), project_root_.lexically_normal(), error);
+  if (error || relative_path.empty() || relative_path.native().rfind("..", 0) == 0) {
+    return std::nullopt;
+  }
+
+  compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface.visible_rows),
+                                             surface.visible_columns);
+  const project::GitBlameRequest request{
+      .root = project_root_,
+      .absolute_path = compare_tab.right_viewport.path(),
+      .visible_start_line = compare_tab.right_viewport.scroll_line(),
+      .visible_line_count = static_cast<std::size_t>(surface.visible_rows),
+      .total_line_count = compare_tab.right_viewport.line_count(),
+      .dirty = compare_tab.right_viewport.dirty(),
+      .large_file_mode = compare_tab.right_viewport.large_file_mode(),
+  };
+
+  git_blame_service_.Request(request);
+  const project::GitBlameSnapshot snapshot = git_blame_service_.Snapshot(request);
+  if (!snapshot.eligible && !snapshot.loading) {
+    return std::nullopt;
+  }
+
+  const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+  const float inline_gap = static_cast<float>(kInlineBlameGapColumns) * char_width;
+  const float right_limit = surface.right_x + surface.gutter_width + surface.right_width - 12.0f;
+  const std::size_t caret_start =
+      compare_tab.right_viewport.cursor_line() > kCaretBlameRadius
+          ? compare_tab.right_viewport.cursor_line() - kCaretBlameRadius
+          : 0;
+  const std::size_t caret_end = compare_tab.right_viewport.line_count() == 0
+                                    ? 0
+                                    : std::min(compare_tab.right_viewport.line_count() - 1,
+                                               compare_tab.right_viewport.cursor_line() + kCaretBlameRadius);
+
+  editor::EditorBlameOverlay overlay;
+  overlay.visible = true;
+  overlay.lines.reserve(snapshot.lines.size());
+  for (const auto& line : snapshot.lines) {
+    if (line.line < caret_start || line.line > caret_end) {
+      continue;
+    }
+
+    const std::size_t model_row = CompareRowIndexForRightLine(compare_tab, line.line);
+    if (model_row >= compare_tab.model.rows.size()) {
+      continue;
+    }
+    const auto& compare_row = compare_tab.model.rows[model_row];
+    if (compare_row.right_line != static_cast<int>(line.line + 1)) {
+      continue;
+    }
+    if (model_row < static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)) ||
+        model_row >= static_cast<std::size_t>(std::max(0, compare_tab.scroll_row) + surface.visible_rows)) {
+      continue;
+    }
+
+    const editor::LayoutLine layout_line = compare_tab.right_viewport.VisibleLineLayout(line.line);
+    const float y = surface.rows_y +
+                    static_cast<float>(model_row - static_cast<std::size_t>(std::max(0, compare_tab.scroll_row))) *
+                        surface.line_height;
+    const float x = surface.right_x + surface.gutter_width +
+                    static_cast<float>(layout_line.visual_columns) * char_width + inline_gap;
+    const float max_width = std::max(0.0f, right_limit - x);
+    if (max_width < char_width * 4.0f) {
+      continue;
+    }
+
+    const std::string display_text = text_renderer_.TruncateToWidth(line.text, max_width);
+    if (display_text.empty()) {
+      continue;
+    }
+
+    overlay.lines.push_back(editor::EditorBlameLine{
+        .line_index = line.line,
+        .rect = MakeRect(x, y, text_renderer_.MeasureWidth(display_text), surface.line_height),
         .text = display_text,
         .commit_id = line.commit_id,
         .author = line.author,

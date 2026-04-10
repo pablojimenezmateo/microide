@@ -77,6 +77,13 @@ struct WorkspaceShellTestAccess {
                       shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
     return shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
   }
+  static WorkspaceShell::CompareSurfaceLayout ActiveCompareSurfaceLayout(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    return shell.ComputeCompareSurfaceLayout(layout.editor_surface, ActiveCompare(shell));
+  }
   static SDL_FRect ActiveMergeResultRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),
@@ -460,6 +467,27 @@ struct WorkspaceShellTestAccess {
     return shell.text_viewport_.is_placeholder()
                ? shell.BuildEditorBlameOverlay(shell.text_viewport_, layout.editor_surface)
                : std::nullopt;
+  }
+  static std::optional<microide::editor::EditorBlameOverlay> ActiveCompareBlameOverlay(
+      WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    if (!shell.ActiveTabIsCompare()) {
+      return std::nullopt;
+    }
+    auto& compare = ActiveCompare(shell);
+    return shell.BuildCompareBlameOverlay(compare, shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare),
+                                          layout.editor_surface);
+  }
+  static std::optional<microide::editor::EditorBlameOverlay> ActiveMergeBlameOverlay(
+      WorkspaceShell& shell) {
+    if (!shell.ActiveTabIsMerge()) {
+      return std::nullopt;
+    }
+    auto& merge = ActiveMerge(shell);
+    return shell.BuildEditorBlameOverlay(merge.result_viewport, ActiveMergeResultRect(shell), 280.0f);
   }
   static void SetVisibleEditorBlameOverlay(
       WorkspaceShell& shell,

@@ -176,11 +176,13 @@ class WorkspaceShell {
     std::string right_ref;
     std::string left_label;
     std::string right_label;
+    std::string left_content;
     editor::SyntaxState left_initial_syntax_state;
     editor::SyntaxState right_initial_syntax_state;
     editor::SyntaxState left_current_syntax_state;
     editor::SyntaxState right_current_syntax_state;
     compare::CompareModel model;
+    editor::TextViewport right_viewport;
     std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
     std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
     std::size_t syntax_rows_tokenized = 0;
@@ -189,6 +191,8 @@ class WorkspaceShell {
     int scroll_row = 0;
     std::size_t horizontal_scroll = 0;
     std::size_t max_visual_columns = 0;
+    bool right_editable = false;
+    bool right_view_active = false;
     bool persistable = true;
   };
 
@@ -444,6 +448,7 @@ class WorkspaceShell {
   struct DirtyPathTarget {
     enum class Kind {
       EditorView,
+      CompareTab,
       MergeTab,
     };
 
@@ -915,6 +920,14 @@ class WorkspaceShell {
                                                std::size_t selected_row = 0) const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
                                                const CompareTabState& compare_tab) const;
+  void RefreshCompareTabDerivedState(CompareTabState& compare_tab) const;
+  std::size_t CompareRowIndexForRightLine(const CompareTabState& compare_tab,
+                                          std::size_t line_index) const;
+  std::size_t CompareRightLineForRow(const CompareTabState& compare_tab,
+                                     std::size_t row_index) const;
+  void SyncCompareViewportScroll(CompareTabState& compare_tab) const;
+  void SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
+                                        bool reveal_selection) const;
   std::optional<TabEntry> BuildMergeTabEntry(const std::filesystem::path& base_path,
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,
@@ -995,9 +1008,16 @@ class WorkspaceShell {
   bool DiscardGitSidebarEntry(std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
-  bool EditorBlameFitsPane(const editor::TextViewport& viewport, const SDL_FRect& rect) const;
+  bool EditorBlameFitsPane(const editor::TextViewport& viewport,
+                           const SDL_FRect& rect,
+                           float minimum_pane_width = 520.0f) const;
   std::optional<editor::EditorBlameOverlay> BuildEditorBlameOverlay(
       editor::TextViewport& viewport,
+      const SDL_FRect& rect,
+      float minimum_pane_width = 520.0f);
+  std::optional<editor::EditorBlameOverlay> BuildCompareBlameOverlay(
+      CompareTabState& compare_tab,
+      const CompareSurfaceLayout& surface,
       const SDL_FRect& rect);
   const editor::EditorBlameLine* VisibleEditorBlameLine(std::size_t line_index) const;
   const editor::EditorBlameLine* EditorBlameLineAtPosition(float x, float y) const;

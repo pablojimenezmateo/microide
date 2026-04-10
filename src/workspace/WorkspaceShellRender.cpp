@@ -484,6 +484,36 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
     switch (surface) {
       case TextInputSurface::Editor: {
+        if (ActiveTabIsCompare()) {
+          CompareTabState* compare_tab = ActiveCompareTab();
+          if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
+            return std::nullopt;
+          }
+          const CompareSurfaceLayout surface_layout =
+              ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+          const std::size_t model_row =
+              CompareRowIndexForRightLine(*compare_tab, compare_tab->right_viewport.cursor_line());
+          const float cursor_x =
+              surface_layout.right_x + surface_layout.gutter_width +
+              static_cast<float>(compare_tab->right_viewport.cursor_visual_column() -
+                                 compare_tab->horizontal_scroll) *
+                  char_width;
+          const float cursor_y =
+              surface_layout.rows_y +
+              static_cast<float>(model_row > static_cast<std::size_t>(std::max(0, compare_tab->scroll_row))
+                                     ? model_row - static_cast<std::size_t>(std::max(0, compare_tab->scroll_row))
+                                     : 0) *
+                  surface_layout.line_height;
+          return TextInputVisual{
+              .surface = surface,
+              .area = MakeRect(cursor_x, cursor_y - 1.0f, char_width, surface_layout.line_height),
+              .text_x = cursor_x,
+              .text_y = cursor_y,
+              .cursor_x = cursor_x,
+              .foreground = theme_.text_primary,
+              .background = theme_.editor_background,
+          };
+        }
         if (ActiveTabIsMerge()) {
           MergeTabState* merge_tab = ActiveMergeTab();
           if (merge_tab == nullptr) {

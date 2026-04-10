@@ -408,6 +408,16 @@ std::vector<WorkspaceShell::DirtyPathTarget> WorkspaceShell::DirtyPathTargetsFor
       continue;
     }
 
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        tab.compare->right_editable && tab.compare->right_viewport.dirty() &&
+        PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), normalized_path)) {
+      targets.push_back(DirtyPathTarget{
+          .kind = DirtyPathTarget::Kind::CompareTab,
+          .tab_index = i,
+      });
+      continue;
+    }
+
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
         tab.merge->result_viewport.dirty() &&
         (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
@@ -520,6 +530,18 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
       }
 
       auto& tab = open_tabs_[target.tab_index];
+      if (target.kind == DirtyPathTarget::Kind::CompareTab) {
+        if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+            !tab.compare->right_viewport.dirty()) {
+          continue;
+        }
+        if (!SaveTab(target.tab_index)) {
+          LogMessage("Save failed");
+          return false;
+        }
+        saved_any = true;
+        continue;
+      }
       if (target.kind == DirtyPathTarget::Kind::MergeTab) {
         if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
           continue;
@@ -674,6 +696,21 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path = ReplacePathPrefix(tab.compare->path, old_path, new_path);
+      if (preserve_unsaved_state && tab.compare->right_editable && tab.compare->right_viewport.dirty()) {
+        tab.compare->path = updated_path.lexically_normal();
+        if (tab.compare->right_ref == "WORKTREE" &&
+            PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), old_path)) {
+          tab.compare->right_path =
+              ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
+          tab.compare->right_viewport.SetPath(tab.compare->right_path);
+        }
+        tab.compare->title = "compare: " + tab.compare->path.filename().string();
+        RefreshCompareTabDerivedState(*tab.compare);
+        SyncCompareSelectionFromViewport(*tab.compare, false);
+        tab.path = tab.compare->path;
+        tab.title = tab.compare->title;
+        continue;
+      }
       CompareTabState updated_compare = *tab.compare;
       updated_compare.path = updated_path.lexically_normal();
       if (updated_compare.right_ref == "WORKTREE" &&

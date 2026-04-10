@@ -570,6 +570,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     compare_tab->compare->right_path = normalized_path;
     compare_tab->compare->commit_hash = commit.hash;
     compare_tab->compare->right_ref = "WORKTREE";
+    compare_tab->compare->right_editable = true;
+    compare_tab->compare->right_view_active = true;
   }
   return compare_tab;
 }
@@ -590,7 +592,10 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
 
   std::string right_content;
   if (compare_tab.right_ref == "WORKTREE") {
-    right_content = ReadFileText(right_source_path).value_or("");
+    right_content = compare_tab.right_viewport.dirty()
+                        ? SerializeLines(compare_tab.right_viewport.lines(),
+                                         compare_tab.right_viewport.line_ending())
+                        : ReadFileText(right_source_path).value_or("");
   } else {
     const auto right_commit_content =
         project::ReadGitFileAtCommit(project_root_, right_source_path, compare_tab.right_ref);
@@ -616,7 +621,21 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   rebuilt->compare->right_path = right_source_path;
   rebuilt->compare->scroll_row = compare_tab.scroll_row;
   rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
+  rebuilt->compare->right_editable = compare_tab.right_ref == "WORKTREE";
+  rebuilt->compare->right_view_active =
+      rebuilt->compare->right_editable && (compare_tab.right_editable ? compare_tab.right_view_active : true);
   rebuilt->compare->persistable = compare_tab.persistable;
+  if (compare_tab.right_editable) {
+    rebuilt->compare->right_viewport.MoveCursorTo(compare_tab.right_viewport.cursor_line(),
+                                                  compare_tab.right_viewport.cursor_column());
+    rebuilt->compare->right_viewport.SetScrollLine(compare_tab.right_viewport.scroll_line());
+    rebuilt->compare->right_viewport.SetHorizontalScroll(compare_tab.right_viewport.horizontal_scroll());
+    rebuilt->compare->right_viewport.SetDirty(compare_tab.right_viewport.dirty());
+    rebuilt->compare->selected_row =
+        rebuilt->compare->model.rows.empty()
+            ? 0
+            : std::min(compare_tab.selected_row, rebuilt->compare->model.rows.size() - 1);
+  }
   return rebuilt;
 }
 
@@ -638,26 +657,13 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
   compare_tab.commit_hash = left_label;
   compare_tab.left_label = std::move(left_label);
   compare_tab.right_label = std::move(right_label);
+  compare_tab.left_content = std::move(left_content);
   compare_tab.persistable = persistable;
-  compare_tab.model = compare::BuildCompareModel(left_content, right_content);
-  const auto left_lines = SplitSyntaxLines(left_content);
-  const auto right_lines = SplitSyntaxLines(right_content);
-  compare_tab.left_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_path, left_lines);
-  compare_tab.right_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_path, right_lines);
-  compare_tab.left_current_syntax_state = compare_tab.left_initial_syntax_state;
-  compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
-  compare_tab.left_tokens_by_row.resize(compare_tab.model.rows.size());
-  compare_tab.right_tokens_by_row.resize(compare_tab.model.rows.size());
-  compare_tab.syntax_rows_tokenized = 0;
-  compare_tab.syntax_highlighting_enabled = true;
-
-  compare_tab.selected_row = compare_tab.model.rows.empty()
-                                 ? 0
-                                 : std::min(selected_row, compare_tab.model.rows.size() - 1);
-  compare_tab.scroll_row = 0;
-  compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
+  compare_tab.right_viewport.LoadContent(right_content, normalized_path);
+  ApplyEditorPreferences(compare_tab.right_viewport);
+  RefreshCompareTabDerivedState(compare_tab);
+  compare_tab.selected_row =
+      compare_tab.model.rows.empty() ? 0 : std::min(selected_row, compare_tab.model.rows.size() - 1);
 
   return TabEntry{
       .kind = TabEntry::Kind::Compare,
@@ -667,6 +673,117 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
       .compare = std::move(compare_tab),
       .merge = std::nullopt,
   };
+}
+
+void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
+  const std::string right_content =
+      SerializeLines(compare_tab.right_viewport.lines(), compare_tab.right_viewport.line_ending());
+  compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content);
+  const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
+  const auto right_lines = SplitSyntaxLines(right_content);
+  compare_tab.left_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(compare_tab.path, left_lines);
+  compare_tab.right_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(compare_tab.path, right_lines);
+  compare_tab.left_current_syntax_state = compare_tab.left_initial_syntax_state;
+  compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
+  compare_tab.left_tokens_by_row.assign(compare_tab.model.rows.size(), {});
+  compare_tab.right_tokens_by_row.assign(compare_tab.model.rows.size(), {});
+  compare_tab.syntax_rows_tokenized = 0;
+  compare_tab.syntax_highlighting_enabled = true;
+  compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
+  if (compare_tab.model.rows.empty()) {
+    compare_tab.selected_row = 0;
+    compare_tab.scroll_row = 0;
+    return;
+  }
+  compare_tab.selected_row = std::min(compare_tab.selected_row, compare_tab.model.rows.size() - 1);
+}
+
+std::size_t WorkspaceShell::CompareRowIndexForRightLine(const CompareTabState& compare_tab,
+                                                        std::size_t line_index) const {
+  if (compare_tab.model.rows.empty()) {
+    return 0;
+  }
+
+  const int target_line = static_cast<int>(line_index + 1);
+  for (std::size_t i = 0; i < compare_tab.model.rows.size(); ++i) {
+    const auto& row = compare_tab.model.rows[i];
+    if (row.right_line == target_line) {
+      return i;
+    }
+    if (row.right_line > target_line) {
+      return i;
+    }
+  }
+  return compare_tab.model.rows.size() - 1;
+}
+
+std::size_t WorkspaceShell::CompareRightLineForRow(const CompareTabState& compare_tab,
+                                                   std::size_t row_index) const {
+  if (compare_tab.right_viewport.line_count() == 0) {
+    return 0;
+  }
+  if (row_index >= compare_tab.model.rows.size()) {
+    return compare_tab.right_viewport.line_count() - 1;
+  }
+
+  const auto& row = compare_tab.model.rows[row_index];
+  if (row.right_line > 0) {
+    return static_cast<std::size_t>(row.right_line - 1);
+  }
+  for (std::size_t i = row_index + 1; i < compare_tab.model.rows.size(); ++i) {
+    if (compare_tab.model.rows[i].right_line > 0) {
+      return static_cast<std::size_t>(compare_tab.model.rows[i].right_line - 1);
+    }
+  }
+  return compare_tab.right_viewport.line_count() - 1;
+}
+
+void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) const {
+  if (!compare_tab.right_editable) {
+    return;
+  }
+
+  compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
+  const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
+  compare_tab.right_viewport.SetScrollLine(CompareRightLineForRow(compare_tab, scroll_row));
+  compare_tab.horizontal_scroll = compare_tab.right_viewport.horizontal_scroll();
+}
+
+void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
+                                                      bool reveal_selection) const {
+  if (!compare_tab.right_editable || compare_tab.model.rows.empty()) {
+    return;
+  }
+
+  compare_tab.selected_row = CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.cursor_line());
+  compare_tab.horizontal_scroll = compare_tab.right_viewport.horizontal_scroll();
+  if (reveal_selection) {
+    if (last_window_width_ > 0 && last_window_height_ > 0) {
+      const WorkspaceLayout layout =
+          ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                        sidebar_visible_, BottomPanelVisible(), sidebar_width_,
+                        bottom_panel_height_);
+      const CompareSurfaceLayout surface_layout =
+          ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
+      ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
+      ClampCompareHorizontalScroll(compare_tab, surface_layout.visible_columns);
+      if (compare_tab.selected_row < static_cast<std::size_t>(compare_tab.scroll_row)) {
+        compare_tab.scroll_row = static_cast<int>(compare_tab.selected_row);
+      } else if (compare_tab.selected_row >=
+                 static_cast<std::size_t>(compare_tab.scroll_row + surface_layout.visible_rows)) {
+        compare_tab.scroll_row =
+            static_cast<int>(compare_tab.selected_row) - surface_layout.visible_rows + 1;
+      }
+      ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
+    }
+    SyncCompareViewportScroll(compare_tab);
+  } else {
+    compare_tab.scroll_row = static_cast<int>(
+        CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.scroll_line()));
+    SyncCompareViewportScroll(compare_tab);
+  }
 }
 
 void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const {
@@ -1141,6 +1258,7 @@ void WorkspaceShell::ScrollCompareRows(int delta) {
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const int max_scroll = CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows);
   compare_tab->scroll_row = std::clamp(compare_tab->scroll_row + delta, 0, max_scroll);
+  SyncCompareViewportScroll(*compare_tab);
 }
 
 void WorkspaceShell::ScrollCompareColumns(int delta) {
@@ -1160,6 +1278,7 @@ void WorkspaceShell::ScrollCompareColumns(int delta) {
       static_cast<long long>(compare_tab->horizontal_scroll) + static_cast<long long>(delta);
   compare_tab->horizontal_scroll = static_cast<std::size_t>(
       std::clamp(target_scroll, 0LL, static_cast<long long>(max_scroll)));
+  SyncCompareViewportScroll(*compare_tab);
 }
 
 void WorkspaceShell::MoveMergeSelection(int delta) {
