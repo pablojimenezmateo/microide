@@ -3,8 +3,8 @@
 #include <SDL3/SDL.h>
 
 #include <filesystem>
-#include <optional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -84,6 +84,7 @@ class TerminalSession {
   bool using_alternate_screen() const;
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
+  std::optional<std::string> ConsumePendingClipboardText();
   void PasteText(std::string_view text);
   bool SendMouseButton(MouseButton button,
                        bool pressed,
@@ -187,6 +188,7 @@ class TerminalSession {
   bool auto_wrap_mode_ = true;
   bool bracketed_paste_mode_ = false;
   bool cursor_visible_ = true;
+  std::optional<std::string> pending_clipboard_text_;
   std::size_t rows_ = 24;
   std::size_t columns_ = 80;
   std::size_t cursor_row_ = 0;

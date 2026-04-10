@@ -185,6 +185,20 @@ void WorkspaceShell::ReapExitedTerminalTabs() {
   }
 }
 
+void WorkspaceShell::ConsumeTerminalSessionUpdates() {
+  for (const auto& terminal_tab : terminal_tabs_) {
+    if (terminal_tab == nullptr) {
+      continue;
+    }
+    const std::optional<std::string> clipboard_text =
+        terminal_tab->session.ConsumePendingClipboardText();
+    if (clipboard_text.has_value()) {
+      WriteClipboardText(*clipboard_text);
+    }
+  }
+  ReapExitedTerminalTabs();
+}
+
 bool WorkspaceShell::BottomPanelVisible() const {
   return command_mode_ || !terminal_tabs_.empty();
 }

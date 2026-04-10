@@ -62,6 +62,7 @@ These are done and should not be treated as open migration work:
 
 - `[~]` the terminal is useful for embedded shell work, including alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse-index scrolling, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste, basic device/cursor query replies, and charset-designation escape handling for common full-screen apps, but it is still not a full terminal emulator
 - `[x]` terminal tabs now honor common OSC `0`, `1`, and `2` title updates emitted by shells and full-screen terminal apps
+- `[x]` terminal tabs now honor common OSC `52` clipboard-copy requests and route decoded text into the workspace clipboard handler
 - `[ ]` broaden real-world terminal validation and fill the remaining ANSI or control-sequence gaps that matter in practice
 - `[x]` terminal-tab context menus now support copying the last command plus its rendered output, and they fall back to copying only the invoked command while full-screen apps own the alternate screen
 
@@ -103,7 +104,7 @@ These are done and should not be treated as open migration work:
 
 - `[~]` editor-core coverage now checks large-file mode on open plus edit-time threshold crossings and undo, but broader text editing primitives and undo/redo still need dedicated tests
 - `[x]` project-search coverage now checks capped-result handling, stable ordering, latest-run restart behavior, and workspace option reruns
-- `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, device/cursor query replies, and charset-designation escape handling; workspace coverage now checks terminal paste shortcuts, DECCKM-aware navigation keys, and `Esc` delivery, but broader real-app validation is still needed
+- `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, device/cursor query replies, charset-designation escape handling, and OSC `52` clipboard decoding; workspace coverage now checks terminal paste shortcuts, DECCKM-aware navigation keys, `Esc` delivery, and routing terminal clipboard updates into the shared clipboard handler, but broader real-app validation is still needed
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation

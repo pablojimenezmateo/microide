@@ -19,7 +19,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     return true;
   }
   if (terminal_event_type_ != 0 && event.type == terminal_event_type_) {
-    ReapExitedTerminalTabs();
+    ConsumeTerminalSessionUpdates();
     return true;
   }
 

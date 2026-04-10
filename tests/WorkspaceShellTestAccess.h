@@ -214,6 +214,9 @@ struct WorkspaceShellTestAccess {
     shell.active_terminal_tab_index_ = shell.terminal_tabs_.size() - 1;
     shell.focus_ = WorkspaceShell::FocusTarget::Panel;
   }
+  static void ConsumeTerminalSessionUpdates(WorkspaceShell& shell) {
+    shell.ConsumeTerminalSessionUpdates();
+  }
   static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
     return shell.terminal_tabs_[shell.active_terminal_tab_index_]->session;
   }

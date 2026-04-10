@@ -69,6 +69,81 @@ SDL_Color Ansi256Color(int index) {
   return MakeColor(gray, gray, gray);
 }
 
+std::optional<int> Base64Value(unsigned char character) {
+  if (character >= 'A' && character <= 'Z') {
+    return static_cast<int>(character - 'A');
+  }
+  if (character >= 'a' && character <= 'z') {
+    return static_cast<int>(character - 'a' + 26);
+  }
+  if (character >= '0' && character <= '9') {
+    return static_cast<int>(character - '0' + 52);
+  }
+  if (character == '+') {
+    return 62;
+  }
+  if (character == '/') {
+    return 63;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> DecodeBase64(std::string_view text) {
+  std::string compact;
+  compact.reserve(text.size());
+  for (unsigned char character : text) {
+    if (character == '\r' || character == '\n' || character == '\t' || character == ' ') {
+      continue;
+    }
+    compact.push_back(static_cast<char>(character));
+  }
+
+  if (compact.empty()) {
+    return std::string{};
+  }
+  if ((compact.size() % 4) != 0) {
+    return std::nullopt;
+  }
+
+  std::string decoded;
+  decoded.reserve((compact.size() / 4) * 3);
+  for (std::size_t index = 0; index < compact.size(); index += 4) {
+    const char a = compact[index];
+    const char b = compact[index + 1];
+    const char c = compact[index + 2];
+    const char d = compact[index + 3];
+
+    const auto a_value = Base64Value(static_cast<unsigned char>(a));
+    const auto b_value = Base64Value(static_cast<unsigned char>(b));
+    if (!a_value.has_value() || !b_value.has_value()) {
+      return std::nullopt;
+    }
+    if ((c == '=' && d != '=') || (index + 4 != compact.size() && (c == '=' || d == '='))) {
+      return std::nullopt;
+    }
+
+    const int sextet0 = *a_value;
+    const int sextet1 = *b_value;
+    const int sextet2 =
+        c == '=' ? 0 : Base64Value(static_cast<unsigned char>(c)).value_or(-1);
+    const int sextet3 =
+        d == '=' ? 0 : Base64Value(static_cast<unsigned char>(d)).value_or(-1);
+    if (sextet2 < 0 || sextet3 < 0) {
+      return std::nullopt;
+    }
+
+    decoded.push_back(static_cast<char>((sextet0 << 2) | (sextet1 >> 4)));
+    if (c != '=') {
+      decoded.push_back(static_cast<char>(((sextet1 & 0x0f) << 4) | (sextet2 >> 2)));
+    }
+    if (d != '=') {
+      decoded.push_back(static_cast<char>(((sextet2 & 0x03) << 6) | sextet3));
+    }
+  }
+
+  return decoded;
+}
+
 std::string DefaultShellPath() {
   if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
     return shell;
@@ -144,6 +219,15 @@ std::string SanitizeOscTitle(std::string_view text) {
   return sanitized.substr(first, last - first + 1);
 }
 
+bool ClipboardPayloadIsText(std::string_view text) {
+  for (unsigned char character : text) {
+    if (character == '\0') {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 TerminalSession::~TerminalSession() {
@@ -171,6 +255,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     escape_sequence_buffer_.clear();
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
+    pending_clipboard_text_.reset();
     use_alternate_screen_ = false;
     mouse_tracking_normal_ = false;
     mouse_tracking_drag_ = false;
@@ -252,6 +337,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     stop_requested_ = false;
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
+    pending_clipboard_text_.reset();
     use_alternate_screen_ = false;
     mouse_tracking_normal_ = false;
     mouse_tracking_drag_ = false;
@@ -314,6 +400,7 @@ void TerminalSession::Stop() {
     launch_label_.clear();
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
+    pending_clipboard_text_.reset();
     use_alternate_screen_ = false;
     mouse_tracking_normal_ = false;
     mouse_tracking_drag_ = false;
@@ -349,6 +436,7 @@ void TerminalSession::Stop() {
   launch_label_.clear();
   escape_mode_ = EscapeMode::None;
   osc_escape_pending_ = false;
+  pending_clipboard_text_.reset();
   use_alternate_screen_ = false;
   mouse_tracking_normal_ = false;
   mouse_tracking_drag_ = false;
@@ -559,6 +647,13 @@ bool TerminalSession::WantsMouseMotionCapture(bool buttons_down) const {
     default:
       return false;
   }
+}
+
+std::optional<std::string> TerminalSession::ConsumePendingClipboardText() {
+  std::scoped_lock lock(mutex_);
+  std::optional<std::string> pending = std::move(pending_clipboard_text_);
+  pending_clipboard_text_.reset();
+  return pending;
 }
 
 bool TerminalSession::SendMouseButton(MouseButton button,
@@ -1082,6 +1177,27 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
   }
 
   const std::string_view command = body.substr(0, separator);
+  if (command == "52") {
+    const std::string_view remainder = body.substr(separator + 1);
+    const std::size_t second_separator = remainder.find(';');
+    if (second_separator == std::string_view::npos) {
+      return;
+    }
+
+    const std::string_view selection = remainder.substr(0, second_separator);
+    const std::string_view encoded = remainder.substr(second_separator + 1);
+    if ((!selection.empty() && selection != "c") || encoded == "?") {
+      return;
+    }
+
+    const auto decoded = DecodeBase64(encoded);
+    if (!decoded.has_value() || !ClipboardPayloadIsText(*decoded)) {
+      return;
+    }
+    pending_clipboard_text_ = *decoded;
+    return;
+  }
+
   if (command != "0" && command != "1" && command != "2") {
     return;
   }

@@ -55,6 +55,7 @@ Current state:
 
 - PTY tabs, scrollback, keyboard input, selection/copy, and alternate-screen handling exist
 - terminal tabs now honor common OSC `0`, `1`, and `2` title updates emitted by shells and terminal apps
+- terminal tabs now honor common OSC `52` clipboard-copy requests and route decoded clipboard text through the workspace clipboard path
 - cursor-key input now switches between normal CSI and application SS3 sequences when terminal apps request DECCKM
 - origin mode now rebases cursor addressing to the active scroll region when terminal apps request DECOM
 - autowrap mode control and explicit `CSI S` / `CSI T` scrolling now work for alternate-screen apps

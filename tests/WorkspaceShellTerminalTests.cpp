@@ -89,6 +89,26 @@ void TestWorkspaceShellTerminalTabsReflectOscTitles() {
          "workspace terminal tabs should reflect OSC title updates from the terminal");
 }
 
+void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+
+  Expect(clipboard_text == "copied from term",
+         "workspace terminal updates should route OSC 52 clipboard text into the clipboard writer");
+}
+
 void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -287,6 +307,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellArrowKeysHonorApplicationCursorMode);
   AddTest(tests, "WorkspaceShell/TerminalTabsReflectOscTitles",
           TestWorkspaceShellTerminalTabsReflectOscTitles);
+  AddTest(tests, "WorkspaceShell/TerminalOsc52CopiesToClipboard",
+          TestWorkspaceShellTerminalOsc52CopiesToClipboard);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",

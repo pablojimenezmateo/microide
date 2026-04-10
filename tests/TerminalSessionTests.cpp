@@ -274,6 +274,40 @@ void TestTerminalSessionEmptyOscTitleRestoresLaunchLabel() {
          "empty OSC titles should restore the default launch label");
 }
 
+void TestTerminalSessionOsc52ClipboardBellQueuesClipboardText() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIHRleHQ=\x07");
+
+  const std::optional<std::string> clipboard = session.ConsumePendingClipboardText();
+  Expect(clipboard.has_value() && *clipboard == "copied text",
+         "OSC 52 sequences should decode and queue clipboard text");
+  Expect(!session.ConsumePendingClipboardText().has_value(),
+         "queued clipboard text should be consumed only once");
+}
+
+void TestTerminalSessionOsc52ClipboardStQueuesClipboardText() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Zm9vCmJhcg==\x1b\\");
+
+  const std::optional<std::string> clipboard = session.ConsumePendingClipboardText();
+  Expect(clipboard.has_value() && *clipboard == "foo\nbar",
+         "OSC 52 sequences terminated by ST should queue decoded clipboard text");
+}
+
+void TestTerminalSessionOsc52RejectsInvalidClipboardPayloads() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;@@@\x07\x1b]52;p;YQ==\x07");
+
+  Expect(!session.ConsumePendingClipboardText().has_value(),
+         "invalid or unsupported OSC 52 payloads should not queue clipboard text");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -317,6 +351,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOscTitleStUpdatesLaunchLabel);
   AddTest(tests, "TerminalSession/EmptyOscTitleRestoresLaunchLabel",
           TestTerminalSessionEmptyOscTitleRestoresLaunchLabel);
+  AddTest(tests, "TerminalSession/Osc52ClipboardBellQueuesClipboardText",
+          TestTerminalSessionOsc52ClipboardBellQueuesClipboardText);
+  AddTest(tests, "TerminalSession/Osc52ClipboardStQueuesClipboardText",
+          TestTerminalSessionOsc52ClipboardStQueuesClipboardText);
+  AddTest(tests, "TerminalSession/Osc52RejectsInvalidClipboardPayloads",
+          TestTerminalSessionOsc52RejectsInvalidClipboardPayloads);
 }
 
 }  // namespace microide::tests

@@ -1064,6 +1064,7 @@ class WorkspaceShell {
   const TerminalTabState* ActiveTerminalTab() const;
   bool MoveActiveTerminalTabTo(std::size_t index);
   void CloseTerminalTab(std::size_t index);
+  void ConsumeTerminalSessionUpdates();
   void ReapExitedTerminalTabs();
   bool BottomPanelVisible() const;
   int BottomPanelVisibleRows(float panel_height) const;
