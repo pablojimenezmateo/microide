@@ -296,6 +296,80 @@ void TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender() {
          "deferred compare syntax should avoid eager tokenization during tab open");
 }
 
+void TestWorkspaceShellReopenFileReloadsCleanEditorTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha long editor line\nbeta long editor line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SetViewportSize(1, 8);
+  editor.MoveCursorTo(1, 2);
+  editor.SetScrollLine(1);
+  editor.SetHorizontalScroll(1);
+
+  WriteFile(source, "alpha refreshed editor line\nbeta refreshed editor line\n");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "reopening a clean editor should reuse the existing tab");
+  Expect(reopened.lines()[0] == "alpha refreshed editor line",
+         "reopening a clean editor should reload the latest disk content");
+  Expect(reopened.lines()[1] == "beta refreshed editor line",
+         "reopening a clean editor should refresh every line from disk");
+  Expect(reopened.cursor_line() == 1 && reopened.cursor_column() == 2,
+         "reopening a clean editor should preserve cursor state");
+  Expect(!reopened.dirty(),
+         "reopening a clean editor should keep the tab clean");
+}
+
+void TestWorkspaceShellReopenWorkingTreeComparisonRefreshesExistingTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "compare.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "alpha working\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.selected_row = compare.model.rows.empty()
+                             ? 0
+                             : std::min<std::size_t>(1, compare.model.rows.size() - 1);
+  compare.scroll_row = 1;
+  compare.horizontal_scroll = 3;
+  const std::size_t expected_selected_row = compare.selected_row;
+
+  WriteFile(source, "alpha refreshed\nbeta\n");
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "reopening the same working-tree comparison should succeed");
+
+  const auto& reopened = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const bool saw_refreshed_right_side =
+      std::any_of(reopened.model.rows.begin(), reopened.model.rows.end(), [](const auto& row) {
+        return row.right_text == "alpha refreshed";
+      });
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "reopening a comparison should refresh the existing tab in place");
+  Expect(saw_refreshed_right_side,
+         "reopening a comparison should rebuild the working-tree side from disk");
+  Expect(reopened.selected_row == expected_selected_row,
+         "reopening a comparison should preserve the selected row");
+  Expect(reopened.scroll_row == 1 && reopened.horizontal_scroll == 3,
+         "reopening a comparison should preserve scroll state");
+}
+
 void TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -322,6 +396,61 @@ void TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender() {
          "deferred merge syntax should avoid eager incoming tokenization during tab open");
   Expect(merge.current_syntax_rows_tokenized == 0,
          "deferred merge syntax should avoid eager current tokenization during tab open");
+}
+
+void TestWorkspaceShellReopenMergeEditorRefreshesCleanTabFromOutput() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  WriteFile(base, "header\nshared\nfooter\n");
+  WriteFile(incoming, "header\nincoming line 1\nincoming line 2\nfooter\n");
+  WriteFile(current, "header\ncurrent line 1\ncurrent line 2\nfooter\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, current),
+         "merge editor should open when the output path is the current file");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!merge.result_viewport.dirty(),
+         "merge output seeded from disk should start clean");
+  Expect(merge.result_viewport.lines()[1] == "current line 1",
+         "merge result should load the existing output buffer from disk");
+  Expect(!merge.conflicts.empty() && merge.conflicts.front().last_choice == MergeChoice::Current,
+         "merge result loaded from disk should infer the matching conflict choice");
+  merge.result_viewport.SetViewportSize(1, 8);
+  merge.selected_hunk = 0;
+  merge.scroll_row = 1;
+  merge.horizontal_scroll = 2;
+  merge.left_divider_fraction = 0.29f;
+  merge.right_divider_fraction = 0.73f;
+  merge.result_viewport.SetScrollLine(1);
+  merge.result_viewport.SetHorizontalScroll(2);
+
+  WriteFile(current, "header\ncurrent line 1 updated\ncurrent line 2 updated\ncurrent line 3 updated\nfooter\n");
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, current),
+         "reopening the same merge editor should succeed");
+
+  const auto& reopened = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "reopening a clean merge tab should refresh the existing tab in place");
+  Expect(!reopened.result_viewport.dirty(),
+         "reopening a clean merge tab should keep the result clean");
+  Expect(reopened.result_viewport.lines()[1] == "current line 1 updated",
+         "reopening a clean merge tab should reload the latest output content");
+  Expect(reopened.result_viewport.lines()[3] == "current line 3 updated",
+         "reopening a clean merge tab should handle multiline current-side output");
+  Expect(!reopened.conflicts.empty() && reopened.conflicts.front().last_choice == MergeChoice::Current,
+         "reopened merge output should continue to infer the current-side conflict choice");
+  Expect(reopened.selected_hunk == 0,
+         "reopening a clean merge tab should preserve the selected conflict");
+  Expect(reopened.scroll_row == 1 && reopened.horizontal_scroll == 2,
+         "reopening a clean merge tab should preserve scroll state");
+  Expect(std::fabs(reopened.left_divider_fraction - 0.29f) < 0.0001f &&
+             std::fabs(reopened.right_divider_fraction - 0.73f) < 0.0001f,
+         "reopening a clean merge tab should preserve divider positions");
 }
 
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
@@ -519,10 +648,16 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
+  AddTest(tests, "WorkspaceShell/ReopenFileReloadsCleanEditorTab",
+          TestWorkspaceShellReopenFileReloadsCleanEditorTab);
+  AddTest(tests, "WorkspaceShell/ReopenWorkingTreeComparisonRefreshesExistingTab",
+          TestWorkspaceShellReopenWorkingTreeComparisonRefreshesExistingTab);
   AddTest(tests, "WorkspaceShell/CompareSyntaxTokensAreDeferredUntilRender",
           TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender);
   AddTest(tests, "WorkspaceShell/MergeSyntaxTokensAreDeferredUntilRender",
           TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender);
+  AddTest(tests, "WorkspaceShell/ReopenMergeEditorRefreshesCleanTabFromOutput",
+          TestWorkspaceShellReopenMergeEditorRefreshesCleanTabFromOutput);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",

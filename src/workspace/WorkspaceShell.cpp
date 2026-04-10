@@ -1323,15 +1323,21 @@ void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
       if (current_path != path.lexically_normal()) {
         continue;
       }
-      view.viewport = reopened_view;
+      const editor::TextViewport* current_view = active_view ? &text_viewport_ : &view.viewport;
+      editor::TextViewport restored_view = reopened_view;
+      restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
+      restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
+      restored_view.SetScrollLine(current_view->scroll_line());
+      restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
+      view.viewport = restored_view;
       view.restored_path = path.lexically_normal();
-      view.restored_cursor_line = reopened_view.cursor_line();
-      view.restored_cursor_column = reopened_view.cursor_column();
-      view.restored_scroll_line = reopened_view.scroll_line();
-      view.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+      view.restored_cursor_line = restored_view.cursor_line();
+      view.restored_cursor_column = restored_view.cursor_column();
+      view.restored_scroll_line = restored_view.scroll_line();
+      view.restored_horizontal_scroll = restored_view.horizontal_scroll();
       view.needs_restore = false;
       if (active_view) {
-        text_viewport_ = reopened_view;
+        text_viewport_ = restored_view;
       }
       reloaded_any = true;
     }
@@ -1382,6 +1388,12 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, "WORKTREE");
       existing_index.has_value()) {
     SyncActiveEditorTab();
+    if (open_tabs_[*existing_index].compare.has_value()) {
+      auto rebuilt = BuildCompareTabEntry(normalized_path, open_tabs_[*existing_index].compare.value());
+      if (rebuilt.has_value() && rebuilt->compare.has_value()) {
+        open_tabs_[*existing_index] = std::move(*rebuilt);
+      }
+    }
     active_tab_index_ = *existing_index;
     RevealActiveCompareSelection();
     EnsureActiveTabVisible();
@@ -1424,6 +1436,12 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
       existing_index.has_value()) {
     SyncActiveEditorTab();
+    if (open_tabs_[*existing_index].compare.has_value()) {
+      auto rebuilt = BuildCompareTabEntry(normalized_path, open_tabs_[*existing_index].compare.value());
+      if (rebuilt.has_value() && rebuilt->compare.has_value()) {
+        open_tabs_[*existing_index] = std::move(*rebuilt);
+      }
+    }
     active_tab_index_ = *existing_index;
     RevealActiveCompareSelection();
     EnsureActiveTabVisible();
@@ -1459,7 +1477,9 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
 
 bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {
+  if (const auto existing_index = FindOpenMergeTabIndex(normalized_path);
+      existing_index.has_value() && open_tabs_[*existing_index].merge.has_value() &&
+      open_tabs_[*existing_index].merge->result_viewport.dirty()) {
     SyncActiveEditorTab();
     active_tab_index_ = *existing_index;
     RevealActiveMergeSelection();
@@ -1488,6 +1508,35 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   merge_tab->merge->incoming_path = normalized_path;
   merge_tab->merge->current_path = normalized_path;
   SyncActiveEditorTab();
+  if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {
+    if (open_tabs_[*existing_index].merge.has_value()) {
+      const auto& previous_merge = open_tabs_[*existing_index].merge.value();
+      auto& rebuilt_merge = merge_tab->merge.value();
+      rebuilt_merge.selected_hunk =
+          rebuilt_merge.conflicts.empty()
+              ? 0
+              : std::min(previous_merge.selected_hunk, rebuilt_merge.conflicts.size() - 1);
+      rebuilt_merge.scroll_row = previous_merge.scroll_row;
+      rebuilt_merge.horizontal_scroll = previous_merge.horizontal_scroll;
+      rebuilt_merge.left_divider_fraction = previous_merge.left_divider_fraction;
+      rebuilt_merge.right_divider_fraction = previous_merge.right_divider_fraction;
+      rebuilt_merge.persistable = previous_merge.persistable;
+      rebuilt_merge.result_viewport.SetViewportSize(previous_merge.result_viewport.visible_lines(),
+                                                    previous_merge.result_viewport.visible_columns());
+      rebuilt_merge.result_viewport.SetScrollLine(
+          static_cast<std::size_t>(std::max(0, rebuilt_merge.scroll_row)));
+      rebuilt_merge.result_viewport.SetHorizontalScroll(rebuilt_merge.horizontal_scroll);
+      rebuilt_merge.scroll_row = static_cast<int>(rebuilt_merge.result_viewport.scroll_line());
+      rebuilt_merge.horizontal_scroll = rebuilt_merge.result_viewport.horizontal_scroll();
+    }
+    open_tabs_[*existing_index] = std::move(*merge_tab);
+    active_tab_index_ = *existing_index;
+    RevealActiveMergeSelection();
+    EnsureActiveTabVisible();
+    focus_ = FocusTarget::Editor;
+    LogMessage("Merge editor opened");
+    return true;
+  }
   open_tabs_.push_back(std::move(*merge_tab));
   active_tab_index_ = open_tabs_.size() - 1;
   RevealActiveMergeSelection();
@@ -1539,21 +1588,27 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
   if (project_root_.empty()) {
     return false;
   }
+  const std::filesystem::path normalized_path = path.lexically_normal();
   SyncActiveEditorTab();
 
   auto existing = std::find_if(open_tabs_.begin(), open_tabs_.end(), [&](const TabEntry& tab) {
-    return tab.kind == TabEntry::Kind::Editor && tab.path == path;
+    return tab.kind == TabEntry::Kind::Editor && tab.path == normalized_path;
   });
 
-  directory_tree_.SelectPath(path);
+  directory_tree_.SelectPath(normalized_path);
 
   if (existing != open_tabs_.end()) {
-    ActivateTab(static_cast<std::size_t>(std::distance(open_tabs_.begin(), existing)));
+    const std::size_t existing_index =
+        static_cast<std::size_t>(std::distance(open_tabs_.begin(), existing));
+    if (!TabIsDirty(existing_index)) {
+      ReloadCleanEditorTabsForPath(normalized_path);
+    }
+    ActivateTab(existing_index);
     return true;
   }
 
   editor::TextViewport opened_view;
-  if (!opened_view.OpenFile(path)) {
+  if (!opened_view.OpenFile(normalized_path)) {
     return false;
   }
   ApplyEditorPreferences(opened_view);
@@ -1561,8 +1616,8 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
 
   open_tabs_.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
-      .path = path,
-      .title = path.filename().string(),
+      .path = normalized_path,
+      .title = normalized_path.filename().string(),
       .editor_state = MakeEditorTabState(opened_view),
       .compare = std::nullopt,
       .merge = std::nullopt,

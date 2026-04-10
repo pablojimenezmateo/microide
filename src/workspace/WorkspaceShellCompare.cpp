@@ -78,6 +78,33 @@ std::optional<ChangedLineSpan> ComputeChangedLineSpan(const std::vector<std::str
   };
 }
 
+bool MatchesLineSegment(const std::vector<std::string>& lines,
+                        std::size_t start_line,
+                        const std::vector<std::string>& candidate_lines) {
+  if (start_line > lines.size() || start_line + candidate_lines.size() > lines.size()) {
+    return false;
+  }
+  return std::equal(candidate_lines.begin(), candidate_lines.end(),
+                    lines.begin() + static_cast<std::ptrdiff_t>(start_line));
+}
+
+std::vector<compare::MergeChoice> PreferredMergeChoices(const compare::MergeHunk& hunk) {
+  std::vector<compare::MergeChoice> choices;
+  choices.reserve(6);
+  const auto push_unique = [&](compare::MergeChoice choice) {
+    if (std::find(choices.begin(), choices.end(), choice) == choices.end()) {
+      choices.push_back(choice);
+    }
+  };
+  push_unique(hunk.choice);
+  push_unique(compare::BootstrapMergeChoice(hunk));
+  push_unique(compare::MergeChoice::Incoming);
+  push_unique(compare::MergeChoice::Current);
+  push_unique(compare::MergeChoice::Both);
+  push_unique(compare::MergeChoice::Base);
+  return choices;
+}
+
 }  // namespace
 
 std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrackedConflicts(
@@ -112,6 +139,58 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
     incoming_line += hunk.incoming_lines.size();
     current_line += hunk.current_lines.size();
     result_line += result_lines.size();
+    base_cursor = hunk.base_end;
+  }
+  return conflicts;
+}
+
+std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrackedConflictsForResult(
+    compare::MergeModel& model,
+    const std::vector<std::string>& result_lines) const {
+  std::vector<MergeTrackedConflict> conflicts;
+  std::size_t incoming_line = 0;
+  std::size_t current_line = 0;
+  std::size_t result_line = 0;
+  int base_cursor = 0;
+  for (auto& hunk : model.hunks) {
+    const std::size_t unchanged_lines =
+        static_cast<std::size_t>(std::max(0, hunk.base_start - base_cursor));
+    incoming_line += unchanged_lines;
+    current_line += unchanged_lines;
+    result_line += unchanged_lines;
+
+    if (hunk.conflict) {
+      std::vector<std::string> committed_lines = compare::MergeChoiceLines(hunk, hunk.choice);
+      bool valid = false;
+      for (const compare::MergeChoice choice : PreferredMergeChoices(hunk)) {
+        const std::vector<std::string> candidate_lines = compare::MergeChoiceLines(hunk, choice);
+        if (!MatchesLineSegment(result_lines, result_line, candidate_lines)) {
+          continue;
+        }
+        hunk.choice = choice;
+        committed_lines = candidate_lines;
+        valid = true;
+        break;
+      }
+
+      conflicts.push_back(MergeTrackedConflict{
+          .hunk_index = static_cast<std::size_t>(hunk.index),
+          .incoming_start_line = incoming_line,
+          .incoming_end_line = incoming_line + hunk.incoming_lines.size(),
+          .current_start_line = current_line,
+          .current_end_line = current_line + hunk.current_lines.size(),
+          .start_line = result_line,
+          .end_line = result_line + committed_lines.size(),
+          .last_choice = hunk.choice,
+          .valid = valid,
+      });
+      result_line += committed_lines.size();
+    } else {
+      result_line += compare::MergeChoiceLines(hunk, hunk.choice).size();
+    }
+
+    incoming_line += hunk.incoming_lines.size();
+    current_line += hunk.current_lines.size();
     base_cursor = hunk.base_end;
   }
   return conflicts;
@@ -521,7 +600,31 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
   merge_tab.selected_hunk = selected_hunk;
   merge_tab.scroll_row = 0;
   merge_tab.result_viewport.SetPath(merge_tab.output_path);
-  RefreshMergeTabDerivedState(merge_tab);
+  if (persistable && output_text.has_value()) {
+    merge_tab.result_viewport.LoadContent(*output_text, merge_tab.output_path,
+                                          merge_tab.result_line_ending);
+    merge_tab.result_viewport.SetPath(merge_tab.output_path);
+    merge_tab.result_viewport.SetDirty(false);
+    merge_tab.conflicts =
+        BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines());
+    merge_tab.hover_state.reset();
+    merge_tab.max_visual_columns =
+        std::max({MaxVisualColumnsForLines(merge_tab.model.incoming_lines),
+                  MaxVisualColumnsForLines(merge_tab.model.current_lines),
+                  merge_tab.result_viewport.max_visual_columns()});
+    merge_tab.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
+    merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
+    merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
+    merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
+    if (merge_tab.conflicts.empty()) {
+      merge_tab.selected_hunk = 0;
+      merge_tab.scroll_row = 0;
+    } else {
+      merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1);
+    }
+  } else {
+    RefreshMergeTabDerivedState(merge_tab);
+  }
   return TabEntry{
       .kind = TabEntry::Kind::Merge,
       .path = merge_tab.output_path,
@@ -580,6 +683,13 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
           FindOpenCompareTabIndex(compare_picker_path_, commit.hash, "WORKTREE");
       existing_index.has_value()) {
     SyncActiveEditorTab();
+    if (open_tabs_[*existing_index].compare.has_value()) {
+      auto rebuilt =
+          BuildCompareTabEntry(compare_picker_path_, open_tabs_[*existing_index].compare.value());
+      if (rebuilt.has_value() && rebuilt->compare.has_value()) {
+        open_tabs_[*existing_index] = std::move(*rebuilt);
+      }
+    }
     active_tab_index_ = *existing_index;
     RevealActiveCompareSelection();
     EnsureActiveTabVisible();
@@ -607,15 +717,47 @@ bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
                                      const std::filesystem::path& incoming_path,
                                      const std::filesystem::path& current_path,
                                      const std::filesystem::path& output_path) {
-  if (const auto existing_index = FindOpenMergeTabIndex(output_path); existing_index.has_value()) {
+  const std::filesystem::path normalized_base = base_path.lexically_normal();
+  const std::filesystem::path normalized_incoming = incoming_path.lexically_normal();
+  const std::filesystem::path normalized_current = current_path.lexically_normal();
+  const std::filesystem::path normalized_output = output_path.lexically_normal();
+
+  if (const auto existing_index = FindOpenMergeTabIndex(normalized_output); existing_index.has_value()) {
     SyncActiveEditorTab();
+    if (open_tabs_[*existing_index].merge.has_value() &&
+        !open_tabs_[*existing_index].merge->result_viewport.dirty()) {
+      auto rebuilt =
+          BuildMergeTabEntry(normalized_base, normalized_incoming, normalized_current, normalized_output);
+      if (rebuilt.has_value() && rebuilt->merge.has_value()) {
+        const auto& previous_merge = open_tabs_[*existing_index].merge.value();
+        auto& rebuilt_merge = rebuilt->merge.value();
+        rebuilt_merge.selected_hunk =
+            rebuilt_merge.conflicts.empty()
+                ? 0
+                : std::min(previous_merge.selected_hunk, rebuilt_merge.conflicts.size() - 1);
+        rebuilt_merge.scroll_row = previous_merge.scroll_row;
+        rebuilt_merge.horizontal_scroll = previous_merge.horizontal_scroll;
+        rebuilt_merge.left_divider_fraction = previous_merge.left_divider_fraction;
+        rebuilt_merge.right_divider_fraction = previous_merge.right_divider_fraction;
+        rebuilt_merge.persistable = previous_merge.persistable;
+        rebuilt_merge.result_viewport.SetViewportSize(previous_merge.result_viewport.visible_lines(),
+                                                      previous_merge.result_viewport.visible_columns());
+        rebuilt_merge.result_viewport.SetScrollLine(
+            static_cast<std::size_t>(std::max(0, rebuilt_merge.scroll_row)));
+        rebuilt_merge.result_viewport.SetHorizontalScroll(rebuilt_merge.horizontal_scroll);
+        rebuilt_merge.scroll_row = static_cast<int>(rebuilt_merge.result_viewport.scroll_line());
+        rebuilt_merge.horizontal_scroll = rebuilt_merge.result_viewport.horizontal_scroll();
+        open_tabs_[*existing_index] = std::move(*rebuilt);
+      }
+    }
     active_tab_index_ = *existing_index;
     RevealActiveMergeSelection();
     EnsureActiveTabVisible();
     focus_ = FocusTarget::Editor;
     return true;
   }
-  auto merge_tab = BuildMergeTabEntry(base_path, incoming_path, current_path, output_path);
+  auto merge_tab =
+      BuildMergeTabEntry(normalized_base, normalized_incoming, normalized_current, normalized_output);
   if (!merge_tab.has_value()) {
     LogMessage("Failed to open merge inputs");
     return false;
