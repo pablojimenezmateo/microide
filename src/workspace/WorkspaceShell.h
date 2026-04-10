@@ -941,7 +941,9 @@ class WorkspaceShell {
       const compare::MergeModel& model) const;
   std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
       compare::MergeModel& model,
-      const std::vector<std::string>& result_lines) const;
+      const std::vector<std::string>& result_lines,
+      std::span<const std::vector<std::string>> conflict_line_hints = {},
+      std::span<const compare::MergeChoice> choice_hints = {}) const;
   void UpdateMergeMaxVisualColumns(MergeTabState& merge_tab,
                                    std::span<const std::string> result_lines) const;
   void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,

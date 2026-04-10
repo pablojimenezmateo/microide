@@ -105,6 +105,133 @@ std::vector<compare::MergeChoice> PreferredMergeChoices(const compare::MergeHunk
   return choices;
 }
 
+bool LineStartsWith(std::string_view text, std::string_view prefix) {
+  return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
+}
+
+bool ContainsGitConflictMarkers(std::string_view text) {
+  return text.find("<<<<<<<") != std::string_view::npos &&
+         text.find("=======") != std::string_view::npos &&
+         text.find(">>>>>>>") != std::string_view::npos;
+}
+
+struct ParsedGitConflictBlock {
+  std::vector<std::string> current_lines;
+  std::vector<std::string> base_lines;
+  std::vector<std::string> incoming_lines;
+  bool has_base = false;
+};
+
+struct SelectedGitConflictBlock {
+  std::vector<std::string> lines;
+  compare::MergeChoice choice = compare::MergeChoice::Base;
+};
+
+SelectedGitConflictBlock SelectGitConflictBlock(const compare::MergeHunk& hunk,
+                                                const ParsedGitConflictBlock& block) {
+  const bool current_matches = block.current_lines == hunk.current_lines;
+  const bool incoming_matches = block.incoming_lines == hunk.incoming_lines;
+  const bool base_matches = !block.has_base || block.base_lines == hunk.base_lines;
+
+  if (!current_matches && !incoming_matches) {
+    std::vector<std::string> lines = block.current_lines;
+    lines.insert(lines.end(), block.incoming_lines.begin(), block.incoming_lines.end());
+    return SelectedGitConflictBlock{.lines = std::move(lines), .choice = compare::MergeChoice::Both};
+  }
+  if (!current_matches) {
+    return SelectedGitConflictBlock{.lines = block.current_lines,
+                                    .choice = compare::MergeChoice::Current};
+  }
+  if (!incoming_matches) {
+    return SelectedGitConflictBlock{.lines = block.incoming_lines,
+                                    .choice = compare::MergeChoice::Incoming};
+  }
+  if (!base_matches) {
+    return SelectedGitConflictBlock{.lines = block.base_lines,
+                                    .choice = compare::MergeChoice::Base};
+  }
+  return SelectedGitConflictBlock{.lines = hunk.base_lines, .choice = compare::MergeChoice::Base};
+}
+
+struct ParsedGitConflictOutput {
+  std::vector<std::string> result_lines;
+  std::vector<std::vector<std::string>> conflict_lines;
+  std::vector<compare::MergeChoice> conflict_choices;
+};
+
+std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::MergeModel& model,
+                                                              std::string_view text) {
+  std::vector<const compare::MergeHunk*> conflict_hunks;
+  conflict_hunks.reserve(model.hunks.size());
+  for (const auto& hunk : model.hunks) {
+    if (hunk.conflict) {
+      conflict_hunks.push_back(&hunk);
+    }
+  }
+  if (conflict_hunks.empty()) {
+    return std::nullopt;
+  }
+
+  ParsedGitConflictOutput parsed;
+  const std::vector<std::string> lines = SplitSyntaxLines(text);
+  std::size_t line_index = 0;
+  std::size_t conflict_index = 0;
+  while (line_index < lines.size()) {
+    if (!LineStartsWith(lines[line_index], "<<<<<<<")) {
+      parsed.result_lines.push_back(lines[line_index]);
+      ++line_index;
+      continue;
+    }
+
+    if (conflict_index >= conflict_hunks.size()) {
+      return std::nullopt;
+    }
+
+    ParsedGitConflictBlock block;
+    ++line_index;
+    while (line_index < lines.size() && !LineStartsWith(lines[line_index], "|||||||") &&
+           lines[line_index] != "=======") {
+      block.current_lines.push_back(lines[line_index]);
+      ++line_index;
+    }
+    if (line_index < lines.size() && LineStartsWith(lines[line_index], "|||||||")) {
+      block.has_base = true;
+      ++line_index;
+      while (line_index < lines.size() && lines[line_index] != "=======") {
+        block.base_lines.push_back(lines[line_index]);
+        ++line_index;
+      }
+    }
+    if (line_index >= lines.size() || lines[line_index] != "=======") {
+      return std::nullopt;
+    }
+    ++line_index;
+    while (line_index < lines.size() && !LineStartsWith(lines[line_index], ">>>>>>>")) {
+      block.incoming_lines.push_back(lines[line_index]);
+      ++line_index;
+    }
+    if (line_index >= lines.size() || !LineStartsWith(lines[line_index], ">>>>>>>")) {
+      return std::nullopt;
+    }
+    ++line_index;
+
+    const SelectedGitConflictBlock selected =
+        SelectGitConflictBlock(*conflict_hunks[conflict_index], block);
+    parsed.result_lines.insert(parsed.result_lines.end(), selected.lines.begin(), selected.lines.end());
+    parsed.conflict_lines.push_back(selected.lines);
+    parsed.conflict_choices.push_back(selected.choice);
+    ++conflict_index;
+  }
+
+  if (conflict_index != conflict_hunks.size()) {
+    return std::nullopt;
+  }
+  if (parsed.result_lines.empty()) {
+    parsed.result_lines.push_back("");
+  }
+  return parsed;
+}
+
 }  // namespace
 
 std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrackedConflicts(
@@ -146,12 +273,15 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
 
 std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrackedConflictsForResult(
     compare::MergeModel& model,
-    const std::vector<std::string>& result_lines) const {
+    const std::vector<std::string>& result_lines,
+    std::span<const std::vector<std::string>> conflict_line_hints,
+    std::span<const compare::MergeChoice> choice_hints) const {
   std::vector<MergeTrackedConflict> conflicts;
   std::size_t incoming_line = 0;
   std::size_t current_line = 0;
   std::size_t result_line = 0;
   int base_cursor = 0;
+  std::size_t conflict_index = 0;
   for (auto& hunk : model.hunks) {
     const std::size_t unchanged_lines =
         static_cast<std::size_t>(std::max(0, hunk.base_start - base_cursor));
@@ -160,17 +290,24 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
     result_line += unchanged_lines;
 
     if (hunk.conflict) {
-      std::vector<std::string> committed_lines = compare::MergeChoiceLines(hunk, hunk.choice);
+      std::vector<std::string> committed_lines;
       bool valid = false;
-      for (const compare::MergeChoice choice : PreferredMergeChoices(hunk)) {
-        const std::vector<std::string> candidate_lines = compare::MergeChoiceLines(hunk, choice);
-        if (!MatchesLineSegment(result_lines, result_line, candidate_lines)) {
-          continue;
-        }
-        hunk.choice = choice;
-        committed_lines = candidate_lines;
+      if (conflict_index < conflict_line_hints.size() && conflict_index < choice_hints.size()) {
+        hunk.choice = choice_hints[conflict_index];
+        committed_lines = conflict_line_hints[conflict_index];
         valid = true;
-        break;
+      } else {
+        committed_lines = compare::MergeChoiceLines(hunk, hunk.choice);
+        for (const compare::MergeChoice choice : PreferredMergeChoices(hunk)) {
+          const std::vector<std::string> candidate_lines = compare::MergeChoiceLines(hunk, choice);
+          if (!MatchesLineSegment(result_lines, result_line, candidate_lines)) {
+            continue;
+          }
+          hunk.choice = choice;
+          committed_lines = candidate_lines;
+          valid = true;
+          break;
+        }
       }
 
       conflicts.push_back(MergeTrackedConflict{
@@ -185,6 +322,7 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           .valid = valid,
       });
       result_line += committed_lines.size();
+      ++conflict_index;
     } else {
       result_line += compare::MergeChoiceLines(hunk, hunk.choice).size();
     }
@@ -600,13 +738,27 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
   merge_tab.selected_hunk = selected_hunk;
   merge_tab.scroll_row = 0;
   merge_tab.result_viewport.SetPath(merge_tab.output_path);
-  if (persistable && output_text.has_value()) {
-    merge_tab.result_viewport.LoadContent(*output_text, merge_tab.output_path,
+  if (output_text.has_value()) {
+    std::optional<ParsedGitConflictOutput> parsed_output;
+    if (ContainsGitConflictMarkers(*output_text)) {
+      parsed_output = ParseGitConflictOutput(merge_tab.model, *output_text);
+    }
+    const std::string rendered_text =
+        parsed_output.has_value()
+            ? SerializeLines(parsed_output->result_lines, merge_tab.result_line_ending)
+            : *output_text;
+    merge_tab.result_viewport.LoadContent(rendered_text, merge_tab.output_path,
                                           merge_tab.result_line_ending);
     merge_tab.result_viewport.SetPath(merge_tab.output_path);
     merge_tab.result_viewport.SetDirty(false);
-    merge_tab.conflicts =
-        BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines());
+    if (parsed_output.has_value()) {
+      merge_tab.conflicts = BuildMergeTrackedConflictsForResult(
+          merge_tab.model, merge_tab.result_viewport.lines(), parsed_output->conflict_lines,
+          parsed_output->conflict_choices);
+    } else {
+      merge_tab.conflicts =
+          BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines());
+    }
     merge_tab.hover_state.reset();
     merge_tab.max_visual_columns =
         std::max({MaxVisualColumnsForLines(merge_tab.model.incoming_lines),

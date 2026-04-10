@@ -453,6 +453,51 @@ void TestWorkspaceShellReopenMergeEditorRefreshesCleanTabFromOutput() {
          "reopening a clean merge tab should preserve divider positions");
 }
 
+void TestWorkspaceShellMergeEditorUsesWorkingTreeConflictMarkers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "section 1\nvalue: base 1\ncontext: unchanged1\n");
+  WriteFile(incoming, "section 1\nvalue: feature 1\ncontext: unchanged1\n");
+  WriteFile(current, "section 1\nvalue: main 1\ncontext: unchanged1\n");
+  WriteFile(output,
+            "section 1\n"
+            "<<<<<<< HEAD\n"
+            "value: main 1\n"
+            "let's see what happens with many conflicts\n"
+            "this is multiline by design\n"
+            "=======\n"
+            "value: feature 1\n"
+            ">>>>>>> feature-branch\n"
+            "context: unchanged1\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for conflict-marker fixture");
+
+  const auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!merge.result_viewport.dirty(),
+         "opening from working-tree conflict markers should not dirty the merge tab");
+  Expect(merge.result_viewport.lines().size() == 5,
+         "working-tree conflict markers should collapse into a markerless result buffer");
+  Expect(merge.result_viewport.lines()[1] == "value: main 1",
+         "working-tree conflict markers should preserve the current block");
+  Expect(merge.result_viewport.lines()[2] == "let's see what happens with many conflicts",
+         "working-tree conflict markers should preserve multiline edits in the current block");
+  Expect(merge.result_viewport.lines()[3] == "this is multiline by design",
+         "working-tree conflict markers should preserve every extra current-side line");
+  Expect(!merge.conflicts.empty() && merge.conflicts.front().valid,
+         "working-tree conflict markers should keep the conflict span actionable");
+  Expect(merge.conflicts.front().last_choice == MergeChoice::Current,
+         "working-tree conflict markers with current-side edits should infer the current choice");
+  Expect(merge.conflicts.front().start_line == 1 && merge.conflicts.front().end_line == 4,
+         "working-tree conflict markers should size the tracked conflict span to the edited block");
+}
+
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -658,6 +703,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender);
   AddTest(tests, "WorkspaceShell/ReopenMergeEditorRefreshesCleanTabFromOutput",
           TestWorkspaceShellReopenMergeEditorRefreshesCleanTabFromOutput);
+  AddTest(tests, "WorkspaceShell/MergeEditorUsesWorkingTreeConflictMarkers",
+          TestWorkspaceShellMergeEditorUsesWorkingTreeConflictMarkers);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",
