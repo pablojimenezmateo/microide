@@ -424,6 +424,19 @@ struct WorkspaceShellTestAccess {
     }
     return {};
   }
+  static std::string TabDisplayTitle(WorkspaceShell& shell, std::size_t index) {
+    return shell.TabDisplayTitle(index);
+  }
+  static std::string TabTooltipLabel(WorkspaceShell& shell, std::size_t index) {
+    return shell.TabTooltipLabel(index);
+  }
+  static std::string HoveredTabTooltipLabel(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    return shell.HoveredTabTooltipLabel(layout.tab_strip);
+  }
   static SDL_FRect ActiveEditorPaneRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),

@@ -808,6 +808,7 @@ class WorkspaceShell {
   bool SaveTab(std::size_t index);
   bool TabIsDirty(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
+  std::string TabTooltipLabel(std::size_t index) const;
   std::vector<std::size_t> DirtyEditorTabIndices() const;
   static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
@@ -1192,6 +1193,7 @@ class WorkspaceShell {
   float TabWidthForIndex(std::size_t index) const;
   void EnsureActiveTabVisible();
   std::vector<VisibleTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
+  std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
   std::vector<VisibleTerminalTab> ComputeVisibleTerminalTabs(
       const SDL_FRect& panel_header) const;
   void ClearTabDrag();

@@ -588,6 +588,75 @@ void TestWorkspaceShellMergeBlameLoadsForResultPane() {
          "merge blame should keep the blame summary metadata");
 }
 
+void TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "nested" / "compare.txt";
+  WriteFile(source, "zero\none\ntwo\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare tab fixture", "compare tab fixture");
+  WriteFile(source, "zero\none changed\ntwo changed\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open for compact-tab fixture");
+
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 0) == "compare.txt",
+         "compare tabs should display only the filename");
+  Expect(WorkspaceShellTestAccess::TabTooltipLabel(shell, 0) == "src/nested/compare.txt",
+         "compare tab tooltip should expose the full relative path");
+  const std::string breadcrumb = WorkspaceShellTestAccess::BreadcrumbLabel(shell);
+  Expect(breadcrumb.find("src/nested/compare.txt") != std::string::npos,
+         "active compare breadcrumbs should keep the relative path");
+  Expect(breadcrumb.find("HEAD -> Working tree") != std::string::npos,
+         "active compare breadcrumbs should keep the compare refs");
+}
+
+void TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "src" / "result.txt";
+  WriteFile(base, "top\nbase\nbottom\n");
+  WriteFile(incoming, "top\nincoming\nbottom\n");
+  WriteFile(current, "top\ncurrent\nbottom\n");
+  WriteFile(output, "top\ncurrent\nbottom\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for compact-tab fixture");
+
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 0) == "result.txt",
+         "merge tabs should display only the output filename");
+  Expect(WorkspaceShellTestAccess::TabTooltipLabel(shell, 0) == "src/result.txt",
+         "merge tab tooltip should expose the full relative path");
+  Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell).find("src/result.txt") != std::string::npos,
+         "active merge breadcrumbs should keep the relative path");
+}
+
+void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
+                                              tab_rect.y + tab_rect.h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+         "hovering a tab should expose the full relative path tooltip");
+}
+
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -709,6 +778,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",
           TestWorkspaceShellMergeBlameLoadsForResultPane);
+  AddTest(tests, "WorkspaceShell/CompareTabUsesFilenameOnlyLabelAndTooltip",
+          TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip);
+  AddTest(tests, "WorkspaceShell/MergeTabUsesFilenameOnlyLabelAndTooltip",
+          TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip);
+  AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
+          TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

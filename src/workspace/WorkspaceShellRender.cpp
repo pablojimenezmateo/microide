@@ -1158,6 +1158,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   const std::string project_label = ProjectLabel();
+  const std::string hovered_tab_tooltip = HoveredTabTooltipLabel(layout.tab_strip);
   const float project_label_width = text_renderer_.MeasureWidth(project_label);
   if (!project_root_.empty()) {
     draw_vcentered_text_on(
@@ -1195,6 +1196,23 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     draw_vcentered_text_on(
         MakeRect(status_message_x, layout.breadcrumb.y, status_message_width, layout.breadcrumb.h),
         0.0f, theme_.text_muted, theme_.chrome_background, status_message_label);
+  }
+  if (!hovered_tab_tooltip.empty()) {
+    const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
+    const std::string tooltip_text =
+        text_renderer_.TruncateToWidth(hovered_tab_tooltip, max_tooltip_width - 16.0f);
+    const float tooltip_width =
+        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
+    const float tooltip_x =
+        std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
+    const SDL_FRect tooltip_rect = MakeRect(tooltip_x, layout.tab_strip.y + layout.tab_strip.h + 6.0f,
+                                            tooltip_width, tooltip_height);
+    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
+    DrawRect(renderer, tooltip_rect, theme_.border);
+    draw_vcentered_text_on(tooltip_rect, 8.0f, theme_.text_primary, theme_.surface_raised,
+                           tooltip_text);
   }
 
   if (sidebar_visible_) {

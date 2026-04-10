@@ -1307,8 +1307,37 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
     return {};
   }
 
-  const std::string& title = open_tabs_[index].title;
+  const TabEntry& tab = open_tabs_[index];
+  std::string title;
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    title = tab.compare->path.filename().string();
+  } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    title = tab.merge->output_path.filename().string();
+  } else {
+    title = tab.path.filename().string();
+  }
+  if (title.empty()) {
+    title = tab.title.empty() ? "untitled" : tab.title;
+  }
   return TabIsDirty(index) ? "*" + title : title;
+}
+
+std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
+  if (index >= open_tabs_.size()) {
+    return {};
+  }
+
+  const TabEntry& tab = open_tabs_[index];
+  std::filesystem::path path = tab.path;
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    path = tab.compare->path;
+  } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    path = tab.merge->output_path;
+  }
+  if (path.empty()) {
+    return tab.title.empty() ? "untitled" : tab.title;
+  }
+  return RelativePathLabel(project_root_, path);
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
@@ -2942,6 +2971,22 @@ std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
                                                                  : std::filesystem::path{};
   const std::string label = ProjectLabelForRoot(root);
   return DirtyEditorTabIndicesForProject(index).empty() ? label : "*" + label;
+}
+
+std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const {
+  if (!last_mouse_position_valid_ || project_root_.empty()) {
+    return {};
+  }
+  if (!Contains(tab_strip, last_mouse_x_, last_mouse_y_)) {
+    return {};
+  }
+
+  for (const VisibleTab& tab : ComputeVisibleTabs(tab_strip)) {
+    if (Contains(tab.rect, last_mouse_x_, last_mouse_y_)) {
+      return TabTooltipLabel(tab.index);
+    }
+  }
+  return {};
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {
