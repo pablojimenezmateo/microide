@@ -1,8 +1,0 @@
-header
-unchanged intro
-shared start
-current alpha
-current beta
-current gamma
-shared end
-footer
