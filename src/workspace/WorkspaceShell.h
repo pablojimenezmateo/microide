@@ -293,6 +293,13 @@ class WorkspaceShell {
     bool show_horizontal = false;
   };
 
+  struct MergeToolbarLayout {
+    SDL_FRect prev_rect{};
+    SDL_FRect next_rect{};
+    SDL_FRect open_rect{};
+    SDL_FRect save_rect{};
+  };
+
   struct TabEntry {
     enum class Kind {
       Editor,
@@ -905,6 +912,8 @@ class WorkspaceShell {
   const MergeTabState* ActiveMergeTab() const;
   MergeSurfaceLayout ComputeMergeSurfaceLayout(const SDL_FRect& rect,
                                                const MergeTabState& merge_tab) const;
+  MergeToolbarLayout ComputeMergeToolbarLayout(const SDL_FRect& rect,
+                                              const MergeSurfaceLayout& surface) const;
   int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;
   void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const;
   std::size_t MergeMaxScrollColumn(const MergeTabState& merge_tab,

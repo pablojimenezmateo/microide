@@ -658,12 +658,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
     }
   }();
 
-  const SDL_FRect save_rect =
-      make_button_rect(rect.x + rect.w - 92.0f, surface.button_y, "Save");
-  const SDL_FRect open_rect =
-      make_button_rect(save_rect.x - 104.0f, surface.button_y, "Open Result");
-  draw_button(save_rect, "Save", false, true);
-  draw_button(open_rect, "Open Result", false, true);
+  const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(rect, surface);
+  draw_button(toolbar.prev_rect, "Prev", false, !merge_tab->conflicts.empty());
+  draw_button(toolbar.next_rect, "Next", false, !merge_tab->conflicts.empty());
+  draw_button(toolbar.save_rect, "Save", false, true);
+  draw_button(toolbar.open_rect, "Open Result", false, true);
 
   DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f),
                  theme_.border);

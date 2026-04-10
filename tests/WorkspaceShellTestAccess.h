@@ -171,6 +171,15 @@ struct WorkspaceShellTestAccess {
     const SDL_FRect both_rect = make_button_rect(x, y, "Both");
     return {base_rect, incoming_rect, current_rect, both_rect};
   }
+  static std::array<SDL_FRect, 2> MergeToolbarNavigationRects(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    const auto surface = ActiveMergeSurfaceLayout(shell);
+    const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
+    return {toolbar.prev_rect, toolbar.next_rect};
+  }
 
   static void PrepareRenamePrompt(WorkspaceShell& shell,
                                   const std::filesystem::path& path,

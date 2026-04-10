@@ -679,6 +679,44 @@ void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
          "hover preview should not dirty the merge result");
 }
 
+void TestWorkspaceShellMergeToolbarButtonsNavigateConflicts() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  WriteFile(base, "top\nbase a\nmid\nbase b\nbottom\n");
+  WriteFile(incoming, "top\nincoming a\nmid\nincoming b\nbottom\n");
+  WriteFile(current, "top\ncurrent a\nmid\ncurrent b\nbottom\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, current),
+         "merge editor should open for toolbar navigation fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.conflicts.size() == 2,
+         "toolbar navigation fixture should expose two merge conflicts");
+  Expect(merge.selected_hunk == 0,
+         "toolbar navigation fixture should start on the first conflict");
+
+  const auto nav_rects = WorkspaceShellTestAccess::MergeToolbarNavigationRects(shell);
+  const float next_x = nav_rects[1].x + nav_rects[1].w * 0.5f;
+  const float next_y = nav_rects[1].y + nav_rects[1].h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, next_x, next_y, SDL_BUTTON_LEFT),
+         "clicking the merge next button should be handled");
+  Expect(merge.selected_hunk == 1,
+         "clicking the merge next button should select the next conflict");
+
+  const float prev_x = nav_rects[0].x + nav_rects[0].w * 0.5f;
+  const float prev_y = nav_rects[0].y + nav_rects[0].h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, prev_x, prev_y, SDL_BUTTON_LEFT),
+         "clicking the merge prev button should be handled");
+  Expect(merge.selected_hunk == 0,
+         "clicking the merge prev button should select the previous conflict");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesMergeNavigationState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -776,6 +814,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion);
   AddTest(tests, "WorkspaceShell/MergeHoverPreviewDoesNotCommitState",
           TestWorkspaceShellMergeHoverPreviewDoesNotCommitState);
+  AddTest(tests, "WorkspaceShell/MergeToolbarButtonsNavigateConflicts",
+          TestWorkspaceShellMergeToolbarButtonsNavigateConflicts);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",

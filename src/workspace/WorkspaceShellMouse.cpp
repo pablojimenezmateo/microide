@@ -992,15 +992,20 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       return true;
     }
 
-    const float button_y = surface_layout.button_y;
-    const SDL_FRect save_rect =
-        make_button_rect(layout.editor_surface.x + layout.editor_surface.w - 92.0f, button_y, "Save");
-    const SDL_FRect open_rect = make_button_rect(save_rect.x - 104.0f, button_y, "Open Result");
-    if (Contains(save_rect, event.button.x, event.button.y)) {
+    const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(layout.editor_surface, surface_layout);
+    if (Contains(toolbar.prev_rect, event.button.x, event.button.y)) {
+      MoveMergeSelection(-1);
+      return true;
+    }
+    if (Contains(toolbar.next_rect, event.button.x, event.button.y)) {
+      MoveMergeSelection(1);
+      return true;
+    }
+    if (Contains(toolbar.save_rect, event.button.x, event.button.y)) {
       ExecuteAction(ActionId::Save, {}, ActionSource::Menu);
       return true;
     }
-    if (Contains(open_rect, event.button.x, event.button.y)) {
+    if (Contains(toolbar.open_rect, event.button.x, event.button.y)) {
       OpenMergeResultFile();
       return true;
     }

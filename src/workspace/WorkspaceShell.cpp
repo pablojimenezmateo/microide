@@ -977,6 +977,35 @@ const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
   return &open_tabs_[active_tab_index_].merge.value();
 }
 
+WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
+    const SDL_FRect& rect,
+    const MergeSurfaceLayout& surface) const {
+  constexpr float kMergeToolbarButtonHeight = 22.0f;
+  constexpr float kMergeToolbarButtonGap = 8.0f;
+  const auto make_button_rect = [&](float x, std::string_view label) {
+    const float width =
+        std::clamp(text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
+    return MakeRect(x, surface.button_y, width, kMergeToolbarButtonHeight);
+  };
+
+  const SDL_FRect save_rect = make_button_rect(0.0f, "Save");
+  const float save_x = rect.x + rect.w - 8.0f - save_rect.w;
+  const SDL_FRect aligned_save_rect = make_button_rect(save_x, "Save");
+  const SDL_FRect open_rect = make_button_rect(
+      aligned_save_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Open Result").w,
+      "Open Result");
+  const SDL_FRect next_rect = make_button_rect(
+      open_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Next").w, "Next");
+  const SDL_FRect prev_rect = make_button_rect(
+      next_rect.x - kMergeToolbarButtonGap - make_button_rect(0.0f, "Prev").w, "Prev");
+  return {
+      .prev_rect = prev_rect,
+      .next_rect = next_rect,
+      .open_rect = open_rect,
+      .save_rect = aligned_save_rect,
+  };
+}
+
 editor::TextViewport* WorkspaceShell::ActiveEditableViewport() {
   if (ActiveTabIsCompare()) {
     auto* compare_tab = ActiveCompareTab();
