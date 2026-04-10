@@ -160,7 +160,6 @@ Current commands:
 - `indent-width [n]`
 - `soft-tabs [on|off]`
 - `vsplit [path]`
-- `hsplit [path]`
 - `unsplit`
 - `split-next`
 - `split-prev`

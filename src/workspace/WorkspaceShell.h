@@ -542,7 +542,6 @@ class WorkspaceShell {
     Goto,
     GitRefresh,
     Help,
-    Hsplit,
     IndentWidth,
     Jump,
     Open,

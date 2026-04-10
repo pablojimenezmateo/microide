@@ -123,7 +123,7 @@ void WorkspaceShell::CompleteCommandInput() {
   } else if (command == "project-open") {
     candidates = CompletePath(completion_root, active_prefix, true);
   } else if (command == "open" || command == "tab" || command == "compare" ||
-             command == "term" || command == "vsplit" || command == "hsplit") {
+             command == "term" || command == "vsplit") {
     candidates = CompletePath(completion_root, active_prefix, false);
   } else if (command == "tabswitch") {
     const std::string lowered_prefix = ToLower(active_prefix);

@@ -259,7 +259,6 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
       ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Refresh Git", ""},
       ActionSpec{ActionId::Help, "help", "help", "Help", ""},
-      ActionSpec{ActionId::Hsplit, "hsplit", "hsplit [path]", "Split Down", ""},
       ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width",
                  ""},
       ActionSpec{ActionId::Jump, "jump", "jump <line[:col]>", "Jump Relative", ""},
@@ -425,7 +424,6 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Undo:
       return ActiveEditableViewport() != nullptr;
     case ActionId::Goto:
-    case ActionId::Hsplit:
     case ActionId::Jump:
     case ActionId::ReplaceInBuffer:
     case ActionId::Reopen:
@@ -2497,16 +2495,13 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         LogMessage("Save failed");
       }
       return true;
-    case ActionId::Vsplit:
-    case ActionId::Hsplit: {
+    case ActionId::Vsplit: {
       if (require_project()) {
         return true;
       }
-      const EditorSplitOrientation orientation =
-          id == ActionId::Vsplit ? EditorSplitOrientation::Vertical
-                                 : EditorSplitOrientation::Horizontal;
-      const std::string command = id == ActionId::Vsplit ? "vsplit" : "hsplit";
-      const std::string split_label = id == ActionId::Vsplit ? "Vertical" : "Horizontal";
+      const EditorSplitOrientation orientation = EditorSplitOrientation::Vertical;
+      const std::string command = "vsplit";
+      const std::string split_label = "Vertical";
 
       if (args.empty()) {
         if (!SplitActiveEditor(orientation)) {
