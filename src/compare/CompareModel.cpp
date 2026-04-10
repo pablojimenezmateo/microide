@@ -11,6 +11,12 @@ namespace microide::compare {
 
 namespace {
 
+constexpr std::size_t kMaxLineLcsMatrixCells = 250'000;
+constexpr std::size_t kMaxHunkAlignmentMatrixCells = 65'536;
+constexpr std::size_t kMaxIntralineLcsMatrixCells = 65'536;
+constexpr std::size_t kMaxDetailedChangedSpanRows = 2000;
+constexpr std::size_t kMaxDetailedChangedSpanBytes = 512 * 1024;
+
 enum class DiffOpKind {
   Equal,
   Delete,
@@ -46,6 +52,13 @@ enum class HunkAlignmentKind {
   Delete,
   Insert,
 };
+
+bool ProductExceeds(std::size_t left, std::size_t right, std::size_t limit) {
+  if (left == 0 || right == 0) {
+    return false;
+  }
+  return left > limit / right;
+}
 
 std::vector<std::string> SplitCompareLines(std::string_view text) {
   std::vector<std::string> lines;
@@ -260,6 +273,14 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string>& de
   }
   if (right_count == 0) {
     alignment.assign(left_count, HunkAlignmentKind::Delete);
+    return alignment;
+  }
+  if (ProductExceeds(left_count + 1, right_count + 1, kMaxHunkAlignmentMatrixCells)) {
+    const std::size_t paired = std::min(left_count, right_count);
+    alignment.reserve(left_count + right_count - paired);
+    alignment.insert(alignment.end(), paired, HunkAlignmentKind::Pair);
+    alignment.insert(alignment.end(), left_count - paired, HunkAlignmentKind::Delete);
+    alignment.insert(alignment.end(), right_count - paired, HunkAlignmentKind::Insert);
     return alignment;
   }
 
@@ -478,7 +499,9 @@ void PopulateChangedSpans(CompareRow& row) {
 
   const std::size_t left_middle_count = left_suffix - prefix;
   const std::size_t right_middle_count = right_suffix - prefix;
-  if (left_middle_count > 0 && right_middle_count > 0) {
+  if (left_middle_count > 0 && right_middle_count > 0 &&
+      !ProductExceeds(left_middle_count + 1, right_middle_count + 1,
+                      kMaxIntralineLcsMatrixCells)) {
     std::vector<int> dp((left_middle_count + 1) * (right_middle_count + 1), 0);
     auto at = [&](std::size_t i, std::size_t j) -> int& {
       return dp[i * (right_middle_count + 1) + j];
@@ -516,57 +539,162 @@ void PopulateChangedSpans(CompareRow& row) {
   row.right_changed_spans = BuildSpansFromChangedCodepoints(right_offsets, right_changed);
 }
 
+void PopulateCoarseChangedSpans(CompareRow& row) {
+  row.left_changed_spans.clear();
+  row.right_changed_spans.clear();
+  if (!row.left_text.empty()) {
+    row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
+  }
+  if (!row.right_text.empty()) {
+    row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
+  }
+}
+
+std::vector<DiffOp> BuildFallbackOps(const std::vector<std::string>& left_lines,
+                                     const std::vector<std::string>& right_lines) {
+  std::size_t prefix = 0;
+  while (prefix < left_lines.size() && prefix < right_lines.size() &&
+         left_lines[prefix] == right_lines[prefix]) {
+    ++prefix;
+  }
+
+  std::size_t left_suffix = left_lines.size();
+  std::size_t right_suffix = right_lines.size();
+  while (left_suffix > prefix && right_suffix > prefix &&
+         left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
+    --left_suffix;
+    --right_suffix;
+  }
+
+  std::vector<DiffOp> ops;
+  ops.reserve(prefix + (left_suffix - prefix) + (right_suffix - prefix) +
+              (left_lines.size() - left_suffix));
+  for (std::size_t i = 0; i < prefix; ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+  }
+  for (std::size_t i = prefix; i < left_suffix; ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Delete, left_lines[i]});
+  }
+  for (std::size_t i = prefix; i < right_suffix; ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Insert, right_lines[i]});
+  }
+  for (std::size_t i = left_suffix; i < left_lines.size(); ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+  }
+  return ops;
+}
+
 }  // namespace
 
 CompareModel BuildCompareModel(const std::string& left, const std::string& right) {
   const auto left_lines = SplitCompareLines(left);
   const auto right_lines = SplitCompareLines(right);
+  CompareModel model;
 
-  const std::size_t left_count = left_lines.size();
-  const std::size_t right_count = right_lines.size();
-  std::vector<int> dp((left_count + 1) * (right_count + 1), 0);
-  auto at = [&](std::size_t i, std::size_t j) -> int& {
-    return dp[i * (right_count + 1) + j];
-  };
+  if (left_lines == right_lines) {
+    model.rows.reserve(left_lines.size());
+    int line_number = 1;
+    for (const auto& line : left_lines) {
+      model.rows.push_back(CompareRow{
+          .left_text = line,
+          .right_text = line,
+          .left_line = line_number,
+          .right_line = line_number,
+          .kind = CompareRowKind::Unchanged,
+          .hunk = -1,
+          .left_changed_spans = {},
+          .right_changed_spans = {},
+      });
+      ++line_number;
+    }
+    return model;
+  }
 
-  for (std::size_t i = left_count; i-- > 0;) {
-    for (std::size_t j = right_count; j-- > 0;) {
-      if (left_lines[i] == right_lines[j]) {
-        at(i, j) = at(i + 1, j + 1) + 1;
-      } else {
-        at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
+  std::size_t prefix = 0;
+  while (prefix < left_lines.size() && prefix < right_lines.size() &&
+         left_lines[prefix] == right_lines[prefix]) {
+    ++prefix;
+  }
+
+  std::size_t left_suffix = left_lines.size();
+  std::size_t right_suffix = right_lines.size();
+  while (left_suffix > prefix && right_suffix > prefix &&
+         left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
+    --left_suffix;
+    --right_suffix;
+  }
+
+  const std::vector<std::string> left_middle(left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+                                             left_lines.begin() +
+                                                 static_cast<std::ptrdiff_t>(left_suffix));
+  const std::vector<std::string> right_middle(
+      right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+      right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
+
+  const std::size_t left_count = left_middle.size();
+  const std::size_t right_count = right_middle.size();
+  std::vector<DiffOp> ops;
+  if (ProductExceeds(left_count + 1, right_count + 1, kMaxLineLcsMatrixCells)) {
+    ops = BuildFallbackOps(left_middle, right_middle);
+  } else {
+    std::vector<int> dp((left_count + 1) * (right_count + 1), 0);
+    auto at = [&](std::size_t i, std::size_t j) -> int& {
+      return dp[i * (right_count + 1) + j];
+    };
+
+    for (std::size_t i = left_count; i-- > 0;) {
+      for (std::size_t j = right_count; j-- > 0;) {
+        if (left_middle[i] == right_middle[j]) {
+          at(i, j) = at(i + 1, j + 1) + 1;
+        } else {
+          at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
+        }
       }
     }
-  }
 
-  std::vector<DiffOp> ops;
-  std::size_t i = 0;
-  std::size_t j = 0;
-  while (i < left_count && j < right_count) {
-    if (left_lines[i] == right_lines[j]) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-      ++i;
-      ++j;
-    } else if (at(i + 1, j) >= at(i, j + 1)) {
-      ops.push_back(DiffOp{DiffOpKind::Delete, left_lines[i]});
-      ++i;
-    } else {
-      ops.push_back(DiffOp{DiffOpKind::Insert, right_lines[j]});
-      ++j;
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < left_count && j < right_count) {
+      if (left_middle[i] == right_middle[j]) {
+        ops.push_back(DiffOp{DiffOpKind::Equal, left_middle[i]});
+        ++i;
+        ++j;
+      } else if (at(i + 1, j) >= at(i, j + 1)) {
+        ops.push_back(DiffOp{DiffOpKind::Delete, left_middle[i]});
+        ++i;
+      } else {
+        ops.push_back(DiffOp{DiffOpKind::Insert, right_middle[j]});
+        ++j;
+      }
+    }
+    while (i < left_count) {
+      ops.push_back(DiffOp{DiffOpKind::Delete, left_middle[i++]});
+    }
+    while (j < right_count) {
+      ops.push_back(DiffOp{DiffOpKind::Insert, right_middle[j++]});
     }
   }
-  while (i < left_count) {
-    ops.push_back(DiffOp{DiffOpKind::Delete, left_lines[i++]});
-  }
-  while (j < right_count) {
-    ops.push_back(DiffOp{DiffOpKind::Insert, right_lines[j++]});
-  }
 
-  CompareModel model;
-  model.rows.reserve(ops.size());
+  model.rows.reserve(left_lines.size() + right_lines.size());
+  const bool coarse_changed_spans = (left.size() + right.size()) > kMaxDetailedChangedSpanBytes ||
+                                    (left_lines.size() + right_lines.size()) >
+                                        kMaxDetailedChangedSpanRows;
 
   int left_line = 1;
   int right_line = 1;
+  for (std::size_t index = 0; index < prefix; ++index) {
+    model.rows.push_back(CompareRow{
+        .left_text = left_lines[index],
+        .right_text = right_lines[index],
+        .left_line = left_line++,
+        .right_line = right_line++,
+        .kind = CompareRowKind::Unchanged,
+        .hunk = -1,
+        .left_changed_spans = {},
+        .right_changed_spans = {},
+    });
+  }
+
   for (std::size_t op_index = 0; op_index < ops.size(); ++op_index) {
     const auto& op = ops[op_index];
     if (op.kind == DiffOpKind::Equal) {
@@ -620,7 +748,11 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
       } else {
         compare_row.kind = CompareRowKind::Added;
       }
-      PopulateChangedSpans(compare_row);
+      if (coarse_changed_spans && compare_row.kind == CompareRowKind::Modified) {
+        PopulateCoarseChangedSpans(compare_row);
+      } else {
+        PopulateChangedSpans(compare_row);
+      }
       model.rows.push_back(std::move(compare_row));
     }
 
@@ -628,6 +760,19 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
         .index = hunk_index,
         .start_row = hunk_start,
         .end_row = static_cast<int>(model.rows.size()) - 1,
+    });
+  }
+
+  for (std::size_t index = left_suffix; index < left_lines.size(); ++index) {
+    model.rows.push_back(CompareRow{
+        .left_text = left_lines[index],
+        .right_text = right_lines[index - left_suffix + right_suffix],
+        .left_line = left_line++,
+        .right_line = right_line++,
+        .kind = CompareRowKind::Unchanged,
+        .hunk = -1,
+        .left_changed_spans = {},
+        .right_changed_spans = {},
     });
   }
 

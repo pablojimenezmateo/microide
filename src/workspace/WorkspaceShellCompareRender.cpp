@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/SyntaxHighlighter.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -136,6 +137,67 @@ SDL_Color CompareTokenColor(const render::Theme& theme,
 
 }  // namespace
 
+void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab,
+                                                          std::size_t visible_start_row,
+                                                          std::size_t visible_end_row) {
+  if (!compare_tab.syntax_highlighting_enabled || compare_tab.model.rows.empty()) {
+    return;
+  }
+
+  const std::size_t row_count = compare_tab.model.rows.size();
+  const std::size_t clamped_end = std::min(visible_end_row, row_count);
+  if (visible_start_row >= clamped_end) {
+    return;
+  }
+
+  constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
+  std::size_t target_row = std::min(clamped_end, compare_tab.syntax_rows_tokenized + kCompareSyntaxRowsPerFrame);
+  while (compare_tab.syntax_rows_tokenized < target_row) {
+    const std::size_t index = compare_tab.syntax_rows_tokenized;
+    const auto& compare_row = compare_tab.model.rows[index];
+    auto& left_tokens = compare_tab.left_tokens_by_row[index];
+    auto& right_tokens = compare_tab.right_tokens_by_row[index];
+
+    const bool reuse_tokens =
+        compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
+        compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
+        compare_tab.left_current_syntax_state.definition_id ==
+            compare_tab.right_current_syntax_state.definition_id &&
+        compare_tab.left_current_syntax_state.region_id ==
+            compare_tab.right_current_syntax_state.region_id;
+    if (reuse_tokens) {
+      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state);
+      compare_tab.left_current_syntax_state = highlighted.end_state;
+      compare_tab.right_current_syntax_state = highlighted.end_state;
+      left_tokens = highlighted.tokens;
+      right_tokens = std::move(highlighted.tokens);
+      ++compare_tab.syntax_rows_tokenized;
+      continue;
+    }
+
+    if (compare_row.left_line > 0) {
+      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state);
+      compare_tab.left_current_syntax_state = highlighted.end_state;
+      left_tokens = std::move(highlighted.tokens);
+    } else {
+      left_tokens.clear();
+    }
+
+    if (compare_row.right_line > 0) {
+      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+          compare_row.right_text, compare_tab.path, compare_tab.right_current_syntax_state);
+      compare_tab.right_current_syntax_state = highlighted.end_state;
+      right_tokens = std::move(highlighted.tokens);
+    } else {
+      right_tokens.clear();
+    }
+
+    ++compare_tab.syntax_rows_tokenized;
+  }
+}
+
 void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRect& rect) {
   CompareTabState* compare_tab = ActiveCompareTab();
   if (renderer == nullptr || compare_tab == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
@@ -149,6 +211,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(rect, *compare_tab);
   ClampCompareScrollRow(*compare_tab, surface.visible_rows);
   ClampCompareHorizontalScroll(*compare_tab, surface.visible_columns);
+  const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, compare_tab->scroll_row));
+  const std::size_t visible_end_row =
+      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
+  PopulateCompareSyntaxTokensForWindow(*compare_tab, visible_start_row, visible_end_row);
   const float bottom_reserved = surface.show_horizontal ? kScrollbarReserve : 0.0f;
   const float right_reserved = surface.show_vertical ? kScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);

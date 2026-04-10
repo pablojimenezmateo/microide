@@ -2,6 +2,7 @@
 
 #include "compare/CompareModel.h"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 
@@ -257,6 +258,74 @@ void TestCompareContextAwareAlignment() {
   Expect(saw_added_logger_warn, "context-aware diff should keep logger.warn as added");
 }
 
+void TestCompareLargeInputsUseBoundedFallback() {
+  std::string left = "header\n";
+  std::string right = "header\n";
+  for (int i = 0; i < 1500; ++i) {
+    left += "left-" + std::to_string(i) + '\n';
+    right += "right-" + std::to_string(i) + '\n';
+  }
+  left += "footer\n";
+  right += "footer\n";
+
+  const auto model = BuildCompareModel(left, right);
+  const auto summary = Summarize(model);
+
+  Expect(model.rows.size() == 1502, "large fallback compare should preserve row cardinality");
+  Expect(model.hunks.size() == 1, "large fallback compare should produce one changed hunk");
+  Expect(summary.unchanged == 2, "large fallback compare should preserve shared prefix and suffix");
+  Expect(summary.modified == 1500, "large fallback compare should pair middle rows as modified");
+  Expect(model.rows.front().kind == CompareRowKind::Unchanged &&
+             model.rows.front().left_text == "header",
+         "large fallback compare should keep the shared prefix unchanged");
+  Expect(model.rows.back().kind == CompareRowKind::Unchanged &&
+             model.rows.back().right_text == "footer",
+         "large fallback compare should keep the shared suffix unchanged");
+}
+
+void TestCompareLargeInputsUseCoarseChangedSpans() {
+  std::string left;
+  std::string right;
+  left.reserve(3000 * 64);
+  right.reserve(3000 * 64);
+  for (int i = 0; i < 2200; ++i) {
+    left += "msgid \"left line " + std::to_string(i) + " alpha beta gamma\"\n";
+    right += "msgid \"right line " + std::to_string(i) + " alpha beta gamma\"\n";
+  }
+
+  const auto model = BuildCompareModel(left, right);
+
+  Expect(!model.rows.empty(), "coarse-span fixture should produce compare rows");
+  const auto it = std::find_if(model.rows.begin(), model.rows.end(), [](const auto& row) {
+    return row.kind == CompareRowKind::Modified;
+  });
+  Expect(it != model.rows.end(), "coarse-span fixture should include modified rows");
+  Expect(it->left_changed_spans.size() == 1 && it->right_changed_spans.size() == 1,
+         "large compare rows should use one coarse changed span per side");
+  Expect(it->left_changed_spans.front().start == 0 &&
+             it->left_changed_spans.front().end == it->left_text.size(),
+         "large compare coarse left span should cover the full line");
+  Expect(it->right_changed_spans.front().start == 0 &&
+             it->right_changed_spans.front().end == it->right_text.size(),
+         "large compare coarse right span should cover the full line");
+}
+
+void TestCompareLargeIdenticalInputsStayUnchanged() {
+  std::string text;
+  text.reserve(3000 * 24);
+  for (int i = 0; i < 3000; ++i) {
+    text += "msgid \"key_" + std::to_string(i) + "\"\n";
+  }
+
+  const auto model = BuildCompareModel(text, text);
+  const auto summary = Summarize(model);
+  Expect(model.hunks.empty(), "large identical compare should not create hunks");
+  Expect(model.rows.size() == 3000, "large identical compare should keep all rows");
+  Expect(summary.unchanged == 3000 && summary.added == 0 && summary.deleted == 0 &&
+             summary.modified == 0,
+         "large identical compare should be fully unchanged");
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
@@ -265,6 +334,12 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Compare/AsciiChangedSpans", TestCompareAsciiChangedSpans);
   AddTest(tests, "Compare/Utf8ChangedSpans", TestCompareUtf8ChangedSpans);
   AddTest(tests, "Compare/ContextAwareAlignment", TestCompareContextAwareAlignment);
+  AddTest(tests, "Compare/LargeInputsUseBoundedFallback",
+          TestCompareLargeInputsUseBoundedFallback);
+  AddTest(tests, "Compare/LargeInputsUseCoarseChangedSpans",
+          TestCompareLargeInputsUseCoarseChangedSpans);
+  AddTest(tests, "Compare/LargeIdenticalInputsStayUnchanged",
+          TestCompareLargeIdenticalInputsStayUnchanged);
 }
 
 }  // namespace microide::tests

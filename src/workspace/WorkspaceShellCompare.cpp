@@ -10,16 +10,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::size_t kLargeCompareByteThreshold = 512 * 1024;
-constexpr std::size_t kLargeCompareRowThreshold = 6000;
-
-bool ShouldSyntaxHighlightCompareTab(std::string_view left_content,
-                                     std::string_view right_content,
-                                     const compare::CompareModel& model) {
-  return left_content.size() + right_content.size() <= kLargeCompareByteThreshold &&
-         model.rows.size() <= kLargeCompareRowThreshold;
-}
-
 std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   std::size_t max_columns = 0;
   for (const auto& row : model.rows) {
@@ -204,52 +194,19 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
   compare_tab.right_label = std::move(right_label);
   compare_tab.persistable = persistable;
   compare_tab.model = compare::BuildCompareModel(left_content, right_content);
-  if (ShouldSyntaxHighlightCompareTab(left_content, right_content, compare_tab.model)) {
-    const auto left_lines = SplitSyntaxLines(left_content);
-    const auto right_lines = SplitSyntaxLines(right_content);
-    compare_tab.left_initial_syntax_state =
-        editor::SyntaxHighlighter::InitialState(normalized_path, left_lines);
-    compare_tab.right_initial_syntax_state =
-        editor::SyntaxHighlighter::InitialState(normalized_path, right_lines);
-    compare_tab.left_tokens_by_row.reserve(compare_tab.model.rows.size());
-    compare_tab.right_tokens_by_row.reserve(compare_tab.model.rows.size());
-    editor::SyntaxState left_state = compare_tab.left_initial_syntax_state;
-    editor::SyntaxState right_state = compare_tab.right_initial_syntax_state;
-    for (const auto& compare_row : compare_tab.model.rows) {
-      const bool reuse_tokens =
-          compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
-          compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
-          left_state.definition_id == right_state.definition_id &&
-          left_state.region_id == right_state.region_id;
-      if (reuse_tokens) {
-        editor::HighlightedLine highlighted =
-            editor::SyntaxHighlighter::HighlightLine(compare_row.left_text, normalized_path, left_state);
-        left_state = highlighted.end_state;
-        right_state = highlighted.end_state;
-        compare_tab.left_tokens_by_row.push_back(highlighted.tokens);
-        compare_tab.right_tokens_by_row.push_back(std::move(highlighted.tokens));
-        continue;
-      }
+  const auto left_lines = SplitSyntaxLines(left_content);
+  const auto right_lines = SplitSyntaxLines(right_content);
+  compare_tab.left_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(normalized_path, left_lines);
+  compare_tab.right_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(normalized_path, right_lines);
+  compare_tab.left_current_syntax_state = compare_tab.left_initial_syntax_state;
+  compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
+  compare_tab.left_tokens_by_row.resize(compare_tab.model.rows.size());
+  compare_tab.right_tokens_by_row.resize(compare_tab.model.rows.size());
+  compare_tab.syntax_rows_tokenized = 0;
+  compare_tab.syntax_highlighting_enabled = true;
 
-      if (compare_row.left_line > 0) {
-        editor::HighlightedLine highlighted =
-            editor::SyntaxHighlighter::HighlightLine(compare_row.left_text, normalized_path, left_state);
-        left_state = highlighted.end_state;
-        compare_tab.left_tokens_by_row.push_back(std::move(highlighted.tokens));
-      } else {
-        compare_tab.left_tokens_by_row.push_back({});
-      }
-
-      if (compare_row.right_line > 0) {
-        editor::HighlightedLine highlighted =
-            editor::SyntaxHighlighter::HighlightLine(compare_row.right_text, normalized_path, right_state);
-        right_state = highlighted.end_state;
-        compare_tab.right_tokens_by_row.push_back(std::move(highlighted.tokens));
-      } else {
-        compare_tab.right_tokens_by_row.push_back({});
-      }
-    }
-  }
   compare_tab.selected_row = compare_tab.model.rows.empty()
                                  ? 0
                                  : std::min(selected_row, compare_tab.model.rows.size() - 1);

@@ -270,6 +270,30 @@ void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
          "restored compare should preserve the pre-rename commit-vs-working-tree content");
 }
 
+void TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "compare.txt";
+  WriteFile(source, "alpha\nbeta\ngamma\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "alpha changed\nbeta changed\ngamma changed\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open for deferred syntax-token fixture");
+
+  const auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.left_tokens_by_row.size() == compare.model.rows.size(),
+         "deferred compare syntax should size left token cache to compare rows");
+  Expect(compare.right_tokens_by_row.size() == compare.model.rows.size(),
+         "deferred compare syntax should size right token cache to compare rows");
+  Expect(compare.syntax_rows_tokenized == 0,
+         "deferred compare syntax should avoid eager tokenization during tab open");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
@@ -277,6 +301,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
+  AddTest(tests, "WorkspaceShell/CompareSyntaxTokensAreDeferredUntilRender",
+          TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
 }

@@ -176,9 +176,13 @@ class WorkspaceShell {
     std::string right_label;
     editor::SyntaxState left_initial_syntax_state;
     editor::SyntaxState right_initial_syntax_state;
+    editor::SyntaxState left_current_syntax_state;
+    editor::SyntaxState right_current_syntax_state;
     compare::CompareModel model;
     std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
     std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
+    std::size_t syntax_rows_tokenized = 0;
+    bool syntax_highlighting_enabled = true;
     std::size_t selected_row = 0;
     int scroll_row = 0;
     std::size_t horizontal_scroll = 0;
@@ -894,6 +898,9 @@ class WorkspaceShell {
   std::vector<std::vector<editor::SyntaxTokenKind>> HighlightBufferTokens(
       const std::filesystem::path& path,
       const std::vector<std::string>& lines) const;
+  void PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab,
+                                            std::size_t visible_start_row,
+                                            std::size_t visible_end_row);
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
