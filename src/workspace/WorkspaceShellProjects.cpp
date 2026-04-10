@@ -227,7 +227,6 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   command_history_index_.reset();
   command_history_pending_input_.clear();
   command_completion_feedback_.clear();
-  status_message_.clear();
   active_colorscheme_name_ = "default";
   project_base_color_ = std::nullopt;
   editor_preferences_ = EditorPreferences{};
@@ -397,7 +396,6 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.command_history_index = command_history_index_;
   state.command_history_pending_input = std::move(command_history_pending_input_);
   state.command_completion_feedback = std::move(command_completion_feedback_);
-  state.status_message = std::move(status_message_);
   state.active_colorscheme_name = active_colorscheme_name_;
   state.project_base_color = project_base_color_;
   state.editor_preferences = editor_preferences_;
@@ -463,7 +461,6 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   command_history_index_ = state.command_history_index;
   command_history_pending_input_ = std::move(state.command_history_pending_input);
   command_completion_feedback_ = std::move(state.command_completion_feedback);
-  status_message_ = std::move(state.status_message);
   active_colorscheme_name_ = state.active_colorscheme_name;
   project_base_color_ = state.project_base_color;
   editor_preferences_ = state.editor_preferences;

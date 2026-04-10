@@ -28,8 +28,6 @@ void TestWorkspaceShellCtrlShiftVPastesBracketedClipboard() {
   Expect(TerminalSessionTestAccess::SentBytes(session) ==
              "\x1b[200~printf 'hi'\n\x1b[201~",
          "Ctrl+Shift+V should paste clipboard text using bracketed paste mode");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Terminal clipboard pasted",
-         "terminal paste should report clipboard feedback");
 }
 
 void TestWorkspaceShellShiftInsertPastesRawClipboard() {
@@ -189,8 +187,6 @@ void TestWorkspaceShellCopyLastTerminalCommandIncludesOutput() {
   Expect(clipboard_text ==
              "user@host:~/repo$ ll\nfile-a.txt\nfile-b.txt",
          "copy last terminal command should include the submitted command and rendered output");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Last terminal command copied",
-         "copy last terminal command should report clipboard feedback");
 }
 
 void TestWorkspaceShellCopyLastTerminalCommandFallsBackDuringAlternateScreen() {

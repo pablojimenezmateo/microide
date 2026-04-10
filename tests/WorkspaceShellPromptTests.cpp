@@ -205,9 +205,6 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
          "delete discard flow should remove the project path");
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
          "delete discard flow should close affected tabs");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell).find("Moved to trash: trash-me.txt") !=
-             std::string::npos,
-         "delete discard flow should report the trash move");
 
 #if defined(__linux__)
   const std::filesystem::path trash_files = xdg_data_home / "Trash" / "files";
@@ -255,8 +252,6 @@ void TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges() {
 
   Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "discard all should close the confirmation prompt after success");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Discarded all git changes",
-         "discard all should report the bulk discard outcome");
   Expect(ReadFile(modified) == ReadFile(FixturePath("diff/git/base/README.md")),
          "discard all should restore modified tracked files");
   Expect(std::filesystem::exists(deleted),
@@ -292,8 +287,6 @@ void TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors() {
 
   Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "blocked discard all should close the confirmation prompt");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Discard all blocked by dirty tab: notes.txt",
-         "dirty editors should block bulk discard");
   Expect(ReadFile(file_path) == "on disk change\n",
          "blocked bulk discard should leave working-tree files untouched");
 }
@@ -339,8 +332,6 @@ void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
     return std::nullopt;
   };
 
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Discarded all git changes",
-         "bulk discard should still report success after tab reconciliation");
   const auto modified_tab = find_tab_index(modified);
   const auto deleted_tab = find_tab_index(deleted);
 

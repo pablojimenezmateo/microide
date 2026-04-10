@@ -612,7 +612,19 @@ struct WorkspaceShellTestAccess {
     }
     return labels;
   }
-  static const std::string& StatusMessage(const WorkspaceShell& shell) { return shell.status_message_; }
+  static std::vector<std::string> VisibleMenuBarLabels(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    std::vector<std::string> labels;
+    for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (const auto* menu = shell.FindMenuSpec(item.id); menu != nullptr) {
+        labels.emplace_back(menu->label);
+      }
+    }
+    return labels;
+  }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.directory_tree_.entries();

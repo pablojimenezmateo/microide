@@ -98,7 +98,6 @@ class WorkspaceShell {
     Project,
     Terminal,
     TerminalTabContext,
-    Help,
   };
 
   enum class TreeContextTargetKind {
@@ -553,7 +552,6 @@ class WorkspaceShell {
     Focus,
     Goto,
     GitRefresh,
-    Help,
     IndentWidth,
     Jump,
     Open,
@@ -619,7 +617,7 @@ class WorkspaceShell {
   };
 
   struct MenuItemSpec {
-    ActionId action = ActionId::Help;
+    ActionId action = ActionId::Colorscheme;
     std::string_view label;
     std::string_view accelerator;
     std::array<std::string_view, 2> args{};
@@ -708,7 +706,6 @@ class WorkspaceShell {
     std::optional<std::size_t> command_history_index;
     std::string command_history_pending_input;
     std::string command_completion_feedback;
-    std::string status_message;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
@@ -725,7 +722,6 @@ class WorkspaceShell {
   static const ActionSpec* FindActionSpec(ActionId id);
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
   static const std::vector<std::string>& CommandNames();
-  static const std::string& CommandHelpSummary();
   bool IsActionEnabled(ActionId id) const;
   bool ExecuteAction(ActionId id,
                      const std::vector<std::string>& args,
@@ -1309,7 +1305,6 @@ class WorkspaceShell {
   std::optional<std::size_t> command_history_index_;
   std::string command_history_pending_input_;
   std::string command_completion_feedback_;
-  std::string status_message_;
   std::vector<std::string> available_colorscheme_names_;
   std::string active_colorscheme_name_ = "default";
   std::optional<SDL_Color> project_base_color_;

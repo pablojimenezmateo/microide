@@ -258,7 +258,6 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
       ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
       ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Refresh Git", ""},
-      ActionSpec{ActionId::Help, "help", "help", "Help", ""},
       ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width",
                  ""},
       ActionSpec{ActionId::Jump, "jump", "jump <line[:col]>", "Jump Relative", ""},
@@ -343,28 +342,10 @@ const std::vector<std::string>& WorkspaceShell::CommandNames() {
   return kNames;
 }
 
-const std::string& WorkspaceShell::CommandHelpSummary() {
-  static const std::string kSummary = [] {
-    std::string summary;
-    for (const ActionSpec& spec : ActionSpecs()) {
-      if (spec.command_usage.empty()) {
-        continue;
-      }
-      if (!summary.empty()) {
-        summary += ", ";
-      }
-      summary += spec.command_usage;
-    }
-    return summary;
-  }();
-  return kSummary;
-}
-
 bool WorkspaceShell::IsActionEnabled(ActionId id) const {
   switch (id) {
     case ActionId::Colorscheme:
     case ActionId::Files:
-    case ActionId::Help:
     case ActionId::OpenCommandPrompt:
     case ActionId::ProjectOpen:
     case ActionId::Quit:
@@ -472,7 +453,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
     return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable, submenu};
   };
   const auto separator = [] {
-    return MenuItemSpec{ActionId::Help, {}, {}, {}, 0, true, false, MenuId::None};
+    return MenuItemSpec{ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None};
   };
 
   static const auto kFileItems = std::to_array<MenuItemSpec>({
@@ -541,9 +522,6 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       item(ActionId::CopyLastTerminalCommand),
   });
-  static const auto kHelpItems = std::to_array<MenuItemSpec>({
-      item(ActionId::Help, "Command Summary"),
-  });
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
@@ -553,7 +531,6 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::Project, "Project", kProjectItems},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
-      MenuSpec{MenuId::Help, "Help", kHelpItems},
   });
   return kMenus;
 }
@@ -1956,9 +1933,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
   };
 
   switch (id) {
-    case ActionId::Help:
-      LogMessage("Commands: " + CommandHelpSummary());
-      return true;
     case ActionId::Colorscheme:
       if (args.empty()) {
         LogMessage("Colorscheme: " + active_colorscheme_name_);

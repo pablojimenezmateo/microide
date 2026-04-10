@@ -972,10 +972,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (button.id == WindowControlButtonId::Close && button.hovered) {
       background = theme_.diff_deleted;
       glyph = theme_.text_primary;
-    } else if (button.id == WindowControlButtonId::Maximize && window_maximized_ &&
-               !button.hovered) {
-      background = theme_.chrome_active;
-      glyph = theme_.text_primary;
     }
 
     DrawFilledRect(renderer, button.rect, background);
@@ -1168,35 +1164,17 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   const float breadcrumb_label_x = layout.breadcrumb.x + 12.0f;
-  const std::string status_message_label =
-      status_message_.empty()
-          ? std::string{}
-          : TruncateLabel(status_message_, std::max(120.0f, layout.breadcrumb.w * 0.45f));
-  const float status_message_width =
-      status_message_label.empty() ? 0.0f : text_renderer_.MeasureWidth(status_message_label);
-  const float status_message_x =
-      status_message_.empty()
-          ? layout.breadcrumb.x + layout.breadcrumb.w - 12.0f
-          : std::max(layout.breadcrumb.x + 12.0f,
-                     layout.breadcrumb.x + layout.breadcrumb.w - status_message_width - 12.0f);
-  const float breadcrumb_right_limit =
-      status_message_.empty() ? layout.breadcrumb.x + layout.breadcrumb.w - 12.0f
-                              : status_message_x - 16.0f;
   draw_vcentered_text_on(MakeRect(breadcrumb_label_x, layout.breadcrumb.y, project_label_width,
                                   layout.breadcrumb.h),
                          0.0f, theme_.text_muted, theme_.chrome_background, project_label);
   const float breadcrumb_text_x =
       breadcrumb_label_x + project_label_width + (project_label.empty() ? 0.0f : 14.0f);
-  const float breadcrumb_text_width = std::max(0.0f, breadcrumb_right_limit - breadcrumb_text_x);
+  const float breadcrumb_text_width =
+      std::max(0.0f, layout.breadcrumb.x + layout.breadcrumb.w - 12.0f - breadcrumb_text_x);
   draw_vcentered_text_on(
       MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
       0.0f, theme_.text_primary, theme_.chrome_background,
       TruncateLabel(BreadcrumbLabel(), breadcrumb_text_width));
-  if (!status_message_label.empty()) {
-    draw_vcentered_text_on(
-        MakeRect(status_message_x, layout.breadcrumb.y, status_message_width, layout.breadcrumb.h),
-        0.0f, theme_.text_muted, theme_.chrome_background, status_message_label);
-  }
   if (!hovered_tab_tooltip.empty()) {
     const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
     const std::string tooltip_text =

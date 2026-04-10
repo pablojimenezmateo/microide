@@ -158,8 +158,6 @@ void TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot() {
 
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root.lexically_normal(),
          "cancelled project picker should leave the active project unchanged");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell).find("cancelled") != std::string::npos,
-         "cancelled project picker should report the cancellation");
 }
 
 void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails() {
@@ -175,9 +173,6 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu open-project should fall back to the typed command prompt");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "project-open ",
          "menu fallback should prefill the typed open-project command");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell).find("Enter a project path") !=
-             std::string::npos,
-         "menu fallback should tell the user to enter a project path");
 }
 
 void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
@@ -251,8 +246,6 @@ void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
          "copy with context action should execute");
   Expect(clipboard_text == "src/main.cpp:2-3\nint value = 1;\n  return value;",
          "copy with context should prepend the relative path and selected line range");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Selection copied with context",
-         "copy with context should report clipboard feedback");
 }
 
 void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
@@ -423,8 +416,6 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
          "moving onto the blame popup button should keep the popup visible");
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, copy_x, copy_y, SDL_BUTTON_LEFT),
          "clicking the blame popup copy button should be handled");
-  Expect(WorkspaceShellTestAccess::StatusMessage(shell) == "Blame commit SHA copied",
-         "clicking the blame popup copy button should trigger the popup copy action");
 
   Expect(copied_text == blame_line.commit_id,
          "clicking the blame popup copy button should copy the full commit SHA");
@@ -657,6 +648,17 @@ void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
          "hovering a tab should expose the full relative path tooltip");
 }
 
+void TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const std::vector<std::string> labels = WorkspaceShellTestAccess::VisibleMenuBarLabels(shell);
+  Expect(std::count(labels.begin(), labels.end(), "Terminal") == 1,
+         "menu bar should show only one Terminal menu");
+  Expect(std::find(labels.begin(), labels.end(), "Help") == labels.end(),
+         "menu bar should omit the removed Help menu");
+}
+
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -784,6 +786,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
+  AddTest(tests, "WorkspaceShell/MenuBarOmitsDuplicateTerminalAndHelpMenus",
+          TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

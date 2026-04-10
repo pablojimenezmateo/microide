@@ -243,10 +243,7 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
 }
 
 void WorkspaceShell::LogMessage(std::string message) {
-  if (message.empty()) {
-    return;
-  }
-  status_message_ = std::move(message);
+  (void) message;
 }
 
 }  // namespace microide::workspace

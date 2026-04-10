@@ -20,7 +20,9 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuIte
   const auto item = [](ActionId action, std::string_view label = {}) {
     return MenuItemSpec{action, label, {}, {}, 0, false, false};
   };
-  const auto separator = [] { return MenuItemSpec{ActionId::Help, {}, {}, {}, 0, true, false}; };
+  const auto separator = [] {
+    return MenuItemSpec{ActionId::Colorscheme, {}, {}, {}, 0, true, false};
+  };
 
   static const auto kFileItems = std::to_array<MenuItemSpec>({
       item(ActionId::OpenSelectedTreeItem),
@@ -89,7 +91,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
                           ? menu_bar.x + menu_bar.w - 8.0f
                           : window_buttons.front().rect.x - 8.0f;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (spec.id == MenuId::SidebarMode) {
+    if (spec.id == MenuId::SidebarMode || spec.id == MenuId::TerminalTabContext) {
       continue;
     }
     const float width =
