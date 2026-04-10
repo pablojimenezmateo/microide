@@ -131,6 +131,26 @@ SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind
   }
 }
 
+SDL_Color MergeMarkerColor(const render::Theme& theme,
+                           compare::MergeChoice choice,
+                           bool valid) {
+  if (!valid) {
+    return theme.text_disabled;
+  }
+
+  switch (choice) {
+    case compare::MergeChoice::Incoming:
+      return theme.diff_added;
+    case compare::MergeChoice::Current:
+      return theme.diff_modified;
+    case compare::MergeChoice::Both:
+      return theme.accent;
+    case compare::MergeChoice::Base:
+    default:
+      return theme.diff_deleted;
+  }
+}
+
 void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
                                  const render::Theme& theme,
                                  const SDL_FRect& track,
@@ -142,6 +162,23 @@ void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
   const auto markers = BuildCompareScrollbarMarkers(track, model);
   for (const CompareScrollbarMarker& marker : markers) {
     const SDL_Color color = CompareMarkerColor(theme, marker.kind);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderFillRect(renderer, &marker.rect);
+  }
+}
+
+void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
+                               const render::Theme& theme,
+                               const SDL_FRect& track,
+                               std::size_t total_rows,
+                               const std::vector<MergeScrollbarMarkerInput>& inputs) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  const auto markers = BuildMergeScrollbarMarkers(track, total_rows, inputs);
+  for (const MergeScrollbarMarker& marker : markers) {
+    const SDL_Color color = MergeMarkerColor(theme, marker.choice, marker.valid);
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &marker.rect);
   }
@@ -962,11 +999,43 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const std::size_t line_count =
           std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
                     merge_tab->model.current_lines.size(), std::size_t{1}});
-      draw_vertical_scrollbar(layout.editor_surface, static_cast<float>(line_count),
-                              static_cast<float>(surface_layout.visible_rows),
-                              static_cast<float>(merge_tab->scroll_row),
-                              drag_target_ == DragTarget::CompareVerticalScrollbar,
-                              surface_layout.show_horizontal);
+      if (const auto geometry =
+              MakeVerticalScrollbarGeometry(layout.editor_surface, static_cast<float>(line_count),
+                                            static_cast<float>(surface_layout.visible_rows),
+                                            static_cast<float>(merge_tab->scroll_row),
+                                            surface_layout.show_horizontal);
+          geometry.has_value()) {
+        const SDL_FRect marker_lane = MakeRect(
+            std::max(layout.editor_surface.x,
+                     geometry->track.x - kCompareMarkerLaneGap - kCompareMarkerLaneWidth),
+            geometry->track.y, kCompareMarkerLaneWidth, geometry->track.h);
+        const SDL_FRect marker_inner_lane =
+            MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
+                     std::max(0.0f, marker_lane.w - 2.0f),
+                     std::max(0.0f, marker_lane.h - 2.0f));
+        std::vector<MergeScrollbarMarkerInput> inputs;
+        inputs.reserve(merge_tab->conflicts.size());
+        for (const auto& conflict : merge_tab->conflicts) {
+          const int start_row = static_cast<int>(std::min(
+              {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
+          const int end_row = static_cast<int>(std::max(
+              {std::max(conflict.incoming_end_line, conflict.incoming_start_line + 1),
+               std::max(conflict.end_line, conflict.start_line + 1),
+               std::max(conflict.current_end_line, conflict.current_start_line + 1)}));
+          inputs.push_back(MergeScrollbarMarkerInput{
+              .start_row = start_row,
+              .end_row = end_row,
+              .choice = conflict.last_choice,
+              .valid = conflict.valid,
+          });
+        }
+        DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
+        DrawRect(renderer, marker_lane, theme_.border);
+        DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs);
+        DrawScrollbarTrack(renderer, theme_, geometry->track);
+        DrawScrollbarThumb(renderer, theme_, geometry->thumb,
+                           drag_target_ == DragTarget::CompareVerticalScrollbar);
+      }
       if (surface_layout.show_horizontal) {
         draw_horizontal_scrollbar(
             layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),

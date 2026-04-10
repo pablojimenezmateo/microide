@@ -1,0 +1,8 @@
+header
+unchanged intro
+shared start
+incoming alpha
+incoming beta
+incoming gamma
+shared end
+footer

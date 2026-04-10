@@ -1,0 +1,8 @@
+header
+unchanged intro
+shared start
+base alpha
+base beta
+base gamma
+shared end
+footer

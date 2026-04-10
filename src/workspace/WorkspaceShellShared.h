@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "compare/MergeModel.h"
 #include "editor/TextViewport.h"
 #include "project/ProjectSearchService.h"
 #include "render/Theme.h"
@@ -105,6 +106,21 @@ struct CompareScrollbarMarker {
   compare::CompareRowKind kind = compare::CompareRowKind::Unchanged;
   int start_row = 0;
   int end_row = 0;
+  SDL_FRect rect{};
+};
+
+struct MergeScrollbarMarkerInput {
+  int start_row = 0;
+  int end_row = 0;
+  compare::MergeChoice choice = compare::MergeChoice::Base;
+  bool valid = true;
+};
+
+struct MergeScrollbarMarker {
+  int start_row = 0;
+  int end_row = 0;
+  compare::MergeChoice choice = compare::MergeChoice::Base;
+  bool valid = true;
   SDL_FRect rect{};
 };
 
@@ -269,6 +285,10 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
 std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
     const SDL_FRect& track,
     const compare::CompareModel& model);
+std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
+    const SDL_FRect& track,
+    std::size_t total_rows,
+    const std::vector<MergeScrollbarMarkerInput>& inputs);
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,

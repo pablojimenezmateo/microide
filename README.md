@@ -30,6 +30,7 @@ This scaffold provides:
 - cached file-finder overlay
 - commit picker overlay and compare tabs
 - three-way merge tabs with incoming/result/current panes, per-hunk picks, and whole-side apply actions
+- merge tabs now show a compact change-overview lane next to the vertical scrollbar, mirroring compare tabs
 - sidebar git view for working-tree changes, merge conflicts, and outgoing branch files
 - tree rename and delete flows that preserve affected editor, compare, and merge state instead of dropping it
 - docked command prompt
@@ -174,6 +175,11 @@ Current commands:
 - `sidebar-close`
 - `sidebar-width <n>`
 - `focus <editor|sidebar|panel>`
+
+Merge example:
+
+- `merge docs/examples/merge-multiline/base.txt docs/examples/merge-multiline/incoming.txt docs/examples/merge-multiline/current.txt docs/examples/merge-multiline/result.txt`
+- the files live under [`docs/examples/merge-multiline/`](/home/pablo/Documents/projects/microide/docs/examples/merge-multiline/README.md) and produce a single multi-line conflict for preview and accept testing
 
 Project state:
 

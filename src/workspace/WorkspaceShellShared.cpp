@@ -1047,6 +1047,45 @@ std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
   return markers;
 }
 
+std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
+    const SDL_FRect& track,
+    std::size_t total_rows,
+    const std::vector<MergeScrollbarMarkerInput>& inputs) {
+  std::vector<MergeScrollbarMarker> markers;
+  if (track.w <= 0.0f || track.h <= 0.0f || total_rows == 0 || inputs.empty()) {
+    return markers;
+  }
+
+  const float total_units = static_cast<float>(total_rows);
+  const float track_end = track.y + track.h;
+  for (const MergeScrollbarMarkerInput& input : inputs) {
+    if (input.end_row <= input.start_row || input.start_row < 0) {
+      continue;
+    }
+
+    const float top = track.y + (static_cast<float>(input.start_row) / total_units) * track.h;
+    const float bottom = track.y + (static_cast<float>(input.end_row) / total_units) * track.h;
+    float y = std::clamp(std::floor(top), track.y, std::max(track.y, track_end - 1.0f));
+    float height = std::max(2.0f, std::ceil(bottom) - y);
+    if (y + height > track_end) {
+      y = std::max(track.y, track_end - height);
+      height = std::min(height, track_end - y);
+    }
+    if (height <= 0.0f) {
+      continue;
+    }
+
+    markers.push_back(MergeScrollbarMarker{
+        .start_row = input.start_row,
+        .end_row = input.end_row,
+        .choice = input.choice,
+        .valid = input.valid,
+        .rect = MakeRect(track.x, y, track.w, height),
+    });
+  }
+  return markers;
+}
+
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,

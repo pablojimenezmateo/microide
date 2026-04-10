@@ -13,6 +13,7 @@ using microide::workspace::BottomPanelCommandAreaRect;
 using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
 using microide::workspace::BuildCompareScrollbarMarkers;
+using microide::workspace::BuildMergeScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
 using microide::workspace::ClampSidebarWidth;
 using microide::workspace::ComputeLayout;
@@ -114,6 +115,39 @@ void TestWorkspaceSharedCompareScrollbarMarkers() {
          "compare scrollbar markers should stay visible even for single-row changes");
 }
 
+void TestWorkspaceSharedMergeScrollbarMarkers() {
+  const std::vector<microide::workspace::MergeScrollbarMarkerInput> inputs = {
+      {.start_row = 2, .end_row = 5, .choice = microide::compare::MergeChoice::Base, .valid = true},
+      {.start_row = 10,
+       .end_row = 14,
+       .choice = microide::compare::MergeChoice::Incoming,
+       .valid = true},
+      {.start_row = 18,
+       .end_row = 19,
+       .choice = microide::compare::MergeChoice::Both,
+       .valid = false},
+  };
+
+  const auto markers =
+      BuildMergeScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 90.0f), 24, inputs);
+  Expect(markers.size() == 3,
+         "merge scrollbar markers should preserve one marker per tracked merge span");
+  Expect(markers[0].start_row == 2 && markers[0].end_row == 5 &&
+             markers[0].choice == microide::compare::MergeChoice::Base && markers[0].valid,
+         "merge scrollbar markers should preserve the first tracked span");
+  Expect(markers[1].start_row == 10 && markers[1].end_row == 14 &&
+             markers[1].choice == microide::compare::MergeChoice::Incoming && markers[1].valid,
+         "merge scrollbar markers should preserve the second tracked span");
+  Expect(markers[2].start_row == 18 && markers[2].end_row == 19 &&
+             markers[2].choice == microide::compare::MergeChoice::Both && !markers[2].valid,
+         "merge scrollbar markers should preserve invalid spans too");
+  Expect(markers.front().rect.y >= 20.0f &&
+             markers.back().rect.y + markers.back().rect.h <= 110.0f,
+         "merge scrollbar markers should stay inside the track bounds");
+  Expect(markers.back().rect.h >= 2.0f,
+         "merge scrollbar markers should stay visible even for near-single-line spans");
+}
+
 void TestWorkspaceSharedPanelGeometryHelpers() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 200.0f);
   const auto content = BottomPanelContentRect(layout, true);
@@ -180,6 +214,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedScrollbarReserveGeometry);
   AddTest(tests, "WorkspaceShared/CompareScrollbarMarkers",
           TestWorkspaceSharedCompareScrollbarMarkers);
+  AddTest(tests, "WorkspaceShared/MergeScrollbarMarkers",
+          TestWorkspaceSharedMergeScrollbarMarkers);
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);
