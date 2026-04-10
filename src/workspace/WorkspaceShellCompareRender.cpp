@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <string_view>
@@ -400,16 +401,24 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
   const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(rect, *merge_tab);
+  merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
+  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
+  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
+  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   ClampMergeScrollRow(*merge_tab, surface.visible_rows);
   ClampMergeHorizontalScroll(*merge_tab, surface.visible_columns);
+  merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
+  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
   const float bottom_reserved = surface.show_horizontal ? kScrollbarReserve : 0.0f;
   const float right_reserved = surface.show_vertical ? kScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
+  const std::size_t visible_start_row = static_cast<std::size_t>(std::max(0, merge_tab->scroll_row));
+  const std::size_t visible_end_row =
+      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
+  PopulateMergeSyntaxTokensForWindow(*merge_tab, visible_start_row, visible_end_row);
   const std::size_t selected_hunk =
-      merge_tab->model.hunks.empty()
-          ? 0
-          : std::min(merge_tab->selected_hunk, merge_tab->model.hunks.size() - 1);
+      merge_tab->conflicts.empty() ? 0 : std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
 
   const auto draw_button = [&](const SDL_FRect& button_rect,
                                std::string_view label,
@@ -419,81 +428,21 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
         selected ? theme_.chrome_active : primary ? theme_.surface_raised : theme_.surface_background;
     DrawFilledRect(renderer, button_rect, background);
     DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
-    text_renderer_.DrawStringOn(
-        renderer, button_rect.x + 10.0f, button_rect.y + 4.0f,
-        selected ? theme_.text_primary : theme_.text_secondary, background,
-        TruncateLabel(label, button_rect.w - 18.0f));
+    const std::string display = TruncateLabel(label, button_rect.w - 18.0f);
+    const float text_x =
+        button_rect.x + std::max(0.0f, (button_rect.w - text_renderer_.MeasureWidth(display)) * 0.5f);
+    const float text_y =
+        button_rect.y + std::max(0.0f, (button_rect.h - text_renderer_.LineHeight()) * 0.5f);
+    text_renderer_.DrawStringOn(renderer, text_x, text_y,
+                                selected ? theme_.text_primary : theme_.text_secondary,
+                                background, display);
   };
   const auto make_button_rect = [&](float x, float y, std::string_view label) {
     const float width =
         std::clamp(text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
     return MakeRect(x, y, width, kMergeToolbarButtonHeight);
   };
-
-  float button_x = rect.x + 8.0f;
-  const SDL_FRect incoming_all_rect = make_button_rect(button_x, surface.button_y, "All Incoming");
-  button_x += incoming_all_rect.w + kMergeToolbarButtonGap;
-  const SDL_FRect auto_rect = make_button_rect(button_x, surface.button_y, "All Auto");
-  button_x += auto_rect.w + kMergeToolbarButtonGap;
-  const SDL_FRect current_all_rect = make_button_rect(button_x, surface.button_y, "All Current");
-  button_x += current_all_rect.w + kMergeToolbarButtonGap;
-  const SDL_FRect base_all_rect = make_button_rect(button_x, surface.button_y, "All Base");
-  const SDL_FRect save_rect = make_button_rect(rect.x + rect.w - 92.0f, surface.button_y, "Save");
-  draw_button(incoming_all_rect, "All Incoming", false, true);
-  draw_button(auto_rect, "All Auto", false, true);
-  draw_button(current_all_rect, "All Current", false, true);
-  draw_button(base_all_rect, "All Base", false, true);
-  draw_button(save_rect, "Save", false, true);
-
-  if (!merge_tab->model.hunks.empty()) {
-    button_x = rect.x + 8.0f;
-    const compare::MergeChoice active_choice = merge_tab->model.hunks[selected_hunk].choice;
-    const SDL_FRect incoming_rect =
-        make_button_rect(button_x, surface.secondary_button_y, "Incoming");
-    button_x += incoming_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect base_rect = make_button_rect(button_x, surface.secondary_button_y, "Base");
-    button_x += base_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect current_rect =
-        make_button_rect(button_x, surface.secondary_button_y, "Current");
-    button_x += current_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect both_rect = make_button_rect(button_x, surface.secondary_button_y, "Both");
-    button_x += both_rect.w + kMergeToolbarButtonGap;
-    const SDL_FRect open_rect =
-        make_button_rect(button_x, surface.secondary_button_y, "Open Result");
-
-    draw_button(incoming_rect, "Incoming", active_choice == compare::MergeChoice::Incoming);
-    draw_button(base_rect, "Base", active_choice == compare::MergeChoice::Base);
-    draw_button(current_rect, "Current", active_choice == compare::MergeChoice::Current);
-    draw_button(both_rect, "Both", active_choice == compare::MergeChoice::Both);
-    draw_button(open_rect, "Open Result", false);
-  }
-
-  DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f),
-                 theme_.border);
-  DrawFilledRect(renderer, MakeRect(surface.center_x - 6.0f, rect.y, 1.0f, content_height),
-                 theme_.border);
-  DrawFilledRect(renderer, MakeRect(surface.right_x - 6.0f, rect.y, 1.0f, content_height),
-                 theme_.border);
-
-  text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
-                            theme_.text_secondary,
-                            TruncateLabel(merge_tab->incoming_label, surface.left_width - 8.0f));
-  text_renderer_.DrawString(renderer, surface.center_x + surface.gutter_width, surface.header_y,
-                            theme_.text_secondary,
-                            TruncateLabel(merge_tab->result_label, surface.center_width - 8.0f));
-  text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
-                            theme_.text_secondary,
-                            TruncateLabel(merge_tab->current_label, surface.right_width - 8.0f));
-
-  const auto draw_text = [&](float x, float y, float width, SDL_Color color, SDL_Color background,
-                             const std::string& text) {
-    const std::string display_text = TruncateLabel(text, width);
-    if (display_text.empty()) {
-      return;
-    }
-    text_renderer_.DrawStringOn(renderer, x, y, color, background, display_text);
-  };
-  const auto draw_syntax_text = [&](float x,
+  const auto draw_source_text = [&](float x,
                                     float y,
                                     SDL_Color plain_color,
                                     SDL_Color background,
@@ -543,107 +492,271 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       segment_start = segment_end;
     }
   };
-
-  for (int row = 0; row < surface.visible_rows; ++row) {
-    const int model_index = merge_tab->scroll_row + row;
-    if (model_index >= static_cast<int>(merge_tab->display_model.rows.size())) {
-      break;
-    }
-
-    const auto& merge_row = merge_tab->display_model.rows[static_cast<std::size_t>(model_index)];
-    const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
-    const bool selected = merge_row.hunk >= 0 &&
-                          static_cast<std::size_t>(merge_row.hunk) == merge_tab->selected_hunk;
-    const SDL_Color row_background = selected ? theme_.row_highlight : theme_.editor_background;
-    if (selected) {
-      DrawFilledRect(renderer,
-                     MakeRect(rect.x + 1.0f, y - 1.0f, std::max(0.0f, content_width - 2.0f),
-                              surface.line_height),
-                     row_background);
-    }
-
-    const SDL_Color incoming_background =
-        merge_row.incoming_changed
-            ? BlendColor(row_background, merge_row.conflict ? theme_.diff_deleted : theme_.diff_added,
-                         selected ? 0.42f : 0.24f)
-            : row_background;
-    const SDL_Color result_background =
-        merge_row.result_changed
-            ? BlendColor(row_background,
-                         merge_row.conflict ? theme_.diff_modified : theme_.diff_added,
-                         selected ? 0.42f : 0.24f)
-            : row_background;
-    const SDL_Color current_background =
-        merge_row.current_changed
-            ? BlendColor(row_background, theme_.diff_modified, selected ? 0.42f : 0.24f)
-            : row_background;
-    const SDL_Color incoming_color =
-        merge_row.incoming_changed ? theme_.diff_added : theme_.text_secondary;
-    const SDL_Color current_color =
-        merge_row.current_changed ? theme_.diff_modified : theme_.text_secondary;
-    SDL_Color result_color = theme_.text_secondary;
-    if (merge_row.hunk >= 0 &&
-        static_cast<std::size_t>(merge_row.hunk) < merge_tab->model.hunks.size()) {
-      switch (merge_tab->model.hunks[static_cast<std::size_t>(merge_row.hunk)].choice) {
-        case compare::MergeChoice::Incoming:
-          result_color = theme_.diff_added;
-          break;
-        case compare::MergeChoice::Current:
-          result_color = theme_.diff_modified;
-          break;
-        case compare::MergeChoice::Both:
-          result_color = theme_.accent;
-          break;
-        case compare::MergeChoice::Base:
-        case compare::MergeChoice::Auto:
-        default:
-          result_color = merge_row.result_changed ? theme_.diff_added : theme_.text_secondary;
-          break;
+  const auto conflict_at_source_line =
+      [&](std::size_t line, bool incoming) -> const MergeTrackedConflict* {
+    for (const auto& conflict : merge_tab->conflicts) {
+      const std::size_t start = incoming ? conflict.incoming_start_line : conflict.current_start_line;
+      const std::size_t end = incoming ? conflict.incoming_end_line : conflict.current_end_line;
+      if (line >= start && line < end) {
+        return &conflict;
       }
     }
+    return nullptr;
+  };
+  const auto conflict_rect_for_result = [&](const MergeTrackedConflict& conflict)
+      -> std::optional<SDL_FRect> {
+    const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+        text_renderer_, merge_tab->result_viewport,
+        MakeRect(surface.center_x, surface.rows_y - 8.0f, surface.gutter_width + surface.center_width,
+                 std::max(0.0f, rect.y + content_height - (surface.rows_y - 8.0f))));
+    merge_tab->result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+    const std::size_t scroll_line = merge_tab->result_viewport.scroll_line();
+    const std::size_t visible_end_line = scroll_line + metrics.visible_rows;
+    const std::size_t rect_start = std::max(conflict.start_line, scroll_line);
+    const std::size_t rect_end =
+        std::max(conflict.end_line, conflict.start_line + 1);
+    if (rect_end <= scroll_line || rect_start >= visible_end_line) {
+      return std::nullopt;
+    }
+    const float y =
+        metrics.first_line_y + static_cast<float>(rect_start - scroll_line) * metrics.line_height;
+    const float h =
+        static_cast<float>(std::min(rect_end, visible_end_line) - rect_start) * metrics.line_height;
+    return MakeRect(surface.center_x, y - 1.0f, surface.gutter_width + surface.center_width, h);
+  };
+  const auto source_button_rect = [&](const MergeTrackedConflict& conflict, bool incoming) {
+    const std::size_t end_line =
+        incoming ? conflict.incoming_end_line : conflict.current_end_line;
+    const float x = incoming ? surface.left_x + surface.gutter_width : surface.right_x + surface.gutter_width;
+    float y = surface.rows_y +
+              static_cast<float>(static_cast<long long>(end_line) - merge_tab->scroll_row) *
+                  surface.line_height +
+              2.0f;
+    y = std::min(y, rect.y + content_height - kMergeToolbarButtonHeight - 4.0f);
+    return make_button_rect(x, y, incoming ? "Accept Incoming" : "Accept Current");
+  };
+  const auto result_action_rects =
+      [&](const MergeTrackedConflict& conflict) -> std::array<SDL_FRect, 4> {
+    const std::optional<SDL_FRect> conflict_rect = conflict_rect_for_result(conflict);
+    float y = conflict_rect.has_value()
+                  ? conflict_rect->y + conflict_rect->h + 2.0f
+                  : surface.rows_y + 2.0f;
+    if (y + kMergeToolbarButtonHeight > rect.y + content_height - 4.0f && conflict_rect.has_value()) {
+      y = std::max(surface.rows_y + 2.0f, conflict_rect->y - kMergeToolbarButtonHeight - 2.0f);
+    }
+    float x = surface.center_x + surface.gutter_width;
+    const SDL_FRect base_rect = make_button_rect(x, y, "Base");
+    x += base_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect incoming_rect = make_button_rect(x, y, "Incoming");
+    x += incoming_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect current_rect = make_button_rect(x, y, "Current");
+    x += current_rect.w + kMergeToolbarButtonGap;
+    const SDL_FRect both_rect = make_button_rect(x, y, "Both");
+    return {base_rect, incoming_rect, current_rect, both_rect};
+  };
+  const auto preview_choice = [&]() -> std::optional<std::pair<std::size_t, compare::MergeChoice>> {
+    if (!merge_tab->hover_state.has_value()) {
+      return std::nullopt;
+    }
+    switch (merge_tab->hover_state->kind) {
+      case MergeHoverState::Kind::IncomingConflict:
+        case MergeHoverState::Kind::IncomingAccept:
+        case MergeHoverState::Kind::CurrentConflict:
+        case MergeHoverState::Kind::CurrentAccept:
+        case MergeHoverState::Kind::ResultAction:
+        return std::pair<std::size_t, compare::MergeChoice>{
+            merge_tab->hover_state->conflict_index,
+            merge_tab->hover_state->preview_choice,
+        };
+      case MergeHoverState::Kind::None:
+      case MergeHoverState::Kind::ResultConflict:
+      default:
+        return std::nullopt;
+    }
+  }();
 
-    if (merge_row.incoming_line > 0) {
-      draw_text(surface.left_x, y, surface.gutter_width - 4.0f,
-                selected ? theme_.current_line_number : theme_.line_number, row_background,
-                std::to_string(merge_row.incoming_line));
-    }
-    if (merge_row.result_line > 0) {
-      draw_text(surface.center_x, y, surface.gutter_width - 4.0f,
-                selected ? theme_.current_line_number : theme_.line_number, row_background,
-                std::to_string(merge_row.result_line));
-    }
-    if (merge_row.current_line > 0) {
-      draw_text(surface.right_x, y, surface.gutter_width - 4.0f,
-                selected ? theme_.current_line_number : theme_.line_number, row_background,
-                std::to_string(merge_row.current_line));
+  const SDL_FRect save_rect =
+      make_button_rect(rect.x + rect.w - 92.0f, surface.button_y, "Save");
+  const SDL_FRect open_rect =
+      make_button_rect(save_rect.x - 104.0f, surface.button_y, "Open Result");
+  draw_button(save_rect, "Save", false, true);
+  draw_button(open_rect, "Open Result", false, true);
+
+  DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f),
+                 theme_.border);
+  DrawFilledRect(renderer,
+                 MakeRect(surface.center_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
+                 drag_target_ == DragTarget::MergeLeftDivider ? theme_.accent : theme_.border);
+  DrawFilledRect(renderer,
+                 MakeRect(surface.right_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
+                 drag_target_ == DragTarget::MergeRightDivider ? theme_.accent : theme_.border);
+
+  text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
+                            theme_.text_secondary,
+                            TruncateLabel(merge_tab->incoming_label, surface.left_width - 8.0f));
+  text_renderer_.DrawString(renderer, surface.center_x + surface.gutter_width, surface.header_y,
+                            theme_.text_secondary,
+                            TruncateLabel(merge_tab->result_label, surface.center_width - 8.0f));
+  text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
+                            theme_.text_secondary,
+                            TruncateLabel(merge_tab->current_label, surface.right_width - 8.0f));
+
+  for (int row = 0; row < surface.visible_rows; ++row) {
+    const std::size_t line_index =
+        static_cast<std::size_t>(std::max(0, merge_tab->scroll_row + row));
+    const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
+    const MergeTrackedConflict* incoming_conflict = conflict_at_source_line(line_index, true);
+    const MergeTrackedConflict* current_conflict = conflict_at_source_line(line_index, false);
+    const bool selected_incoming =
+        incoming_conflict != nullptr &&
+        static_cast<std::size_t>(incoming_conflict - merge_tab->conflicts.data()) == selected_hunk;
+    const bool selected_current =
+        current_conflict != nullptr &&
+        static_cast<std::size_t>(current_conflict - merge_tab->conflicts.data()) == selected_hunk;
+
+    if (line_index < merge_tab->model.incoming_lines.size()) {
+      const SDL_Color background =
+          incoming_conflict != nullptr
+              ? BlendColor(selected_incoming ? theme_.row_highlight : theme_.editor_background,
+                           incoming_conflict->valid ? theme_.diff_added : theme_.diff_deleted,
+                           selected_incoming ? 0.42f : 0.24f)
+              : (selected_incoming ? theme_.row_highlight : theme_.editor_background);
+      const SDL_Color number_color =
+          selected_incoming ? theme_.current_line_number : theme_.line_number;
+      text_renderer_.DrawStringOn(renderer, surface.left_x, y, number_color, background,
+                                  std::to_string(line_index + 1));
+      const std::vector<editor::SyntaxTokenKind>& tokens =
+          line_index < merge_tab->incoming_tokens.size() ? merge_tab->incoming_tokens[line_index]
+                                                         : kEmptyTokens;
+      draw_source_text(surface.left_x + surface.gutter_width, y,
+                       incoming_conflict != nullptr ? theme_.diff_added : theme_.text_secondary,
+                       background, merge_tab->model.incoming_lines[line_index], tokens);
     }
 
-    if (merge_row.incoming_line > 0) {
-      const std::vector<editor::SyntaxTokenKind>* tokens =
-          static_cast<std::size_t>(merge_row.incoming_line - 1) < merge_tab->incoming_tokens.size()
-              ? &merge_tab->incoming_tokens[static_cast<std::size_t>(merge_row.incoming_line - 1)]
-              : &kEmptyTokens;
-      draw_syntax_text(surface.left_x + surface.gutter_width, y,
-                       incoming_color,
-                       incoming_background, merge_row.incoming_text, *tokens);
+    if (line_index < merge_tab->model.current_lines.size()) {
+      const SDL_Color background =
+          current_conflict != nullptr
+              ? BlendColor(selected_current ? theme_.row_highlight : theme_.editor_background,
+                           current_conflict->valid ? theme_.diff_modified : theme_.diff_deleted,
+                           selected_current ? 0.42f : 0.24f)
+              : (selected_current ? theme_.row_highlight : theme_.editor_background);
+      const SDL_Color number_color =
+          selected_current ? theme_.current_line_number : theme_.line_number;
+      text_renderer_.DrawStringOn(renderer, surface.right_x, y, number_color, background,
+                                  std::to_string(line_index + 1));
+      const std::vector<editor::SyntaxTokenKind>& tokens =
+          line_index < merge_tab->current_tokens.size() ? merge_tab->current_tokens[line_index]
+                                                        : kEmptyTokens;
+      draw_source_text(surface.right_x + surface.gutter_width, y,
+                       current_conflict != nullptr ? theme_.diff_modified : theme_.text_secondary,
+                       background, merge_tab->model.current_lines[line_index], tokens);
     }
-    if (merge_row.result_line > 0) {
-      const std::vector<editor::SyntaxTokenKind>* tokens =
-          static_cast<std::size_t>(merge_row.result_line - 1) < merge_tab->result_tokens.size()
-              ? &merge_tab->result_tokens[static_cast<std::size_t>(merge_row.result_line - 1)]
-              : &kEmptyTokens;
-      draw_syntax_text(surface.center_x + surface.gutter_width, y,
-                       result_color,
-                       result_background, merge_row.result_text, *tokens);
+  }
+
+  const SDL_FRect result_rect =
+      MakeRect(surface.center_x, surface.rows_y - 8.0f, surface.gutter_width + surface.center_width,
+               std::max(0.0f, rect.y + content_height - (surface.rows_y - 8.0f)));
+  editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport, result_rect,
+                               focus_ == FocusTarget::Editor && CaretVisibleNow());
+  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
+  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+
+  for (std::size_t i = 0; i < merge_tab->conflicts.size(); ++i) {
+    const auto& conflict = merge_tab->conflicts[i];
+    const std::optional<SDL_FRect> conflict_rect = conflict_rect_for_result(conflict);
+    if (!conflict_rect.has_value()) {
+      continue;
     }
-    if (merge_row.current_line > 0) {
-      const std::vector<editor::SyntaxTokenKind>* tokens =
-          static_cast<std::size_t>(merge_row.current_line - 1) < merge_tab->current_tokens.size()
-              ? &merge_tab->current_tokens[static_cast<std::size_t>(merge_row.current_line - 1)]
-              : &kEmptyTokens;
-      draw_syntax_text(surface.right_x + surface.gutter_width, y,
-                       current_color,
-                       current_background, merge_row.current_text, *tokens);
+    const SDL_Color border =
+        !conflict.valid ? theme_.diff_deleted
+        : i == selected_hunk ? theme_.accent
+                             : theme_.border;
+    DrawRect(renderer, *conflict_rect, border);
+  }
+
+  if (preview_choice.has_value() && preview_choice->first < merge_tab->conflicts.size()) {
+    const auto& conflict = merge_tab->conflicts[preview_choice->first];
+    if (conflict.valid && conflict.hunk_index < merge_tab->model.hunks.size()) {
+      const std::vector<std::string> preview_lines =
+          compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index], preview_choice->second);
+      const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+          text_renderer_, merge_tab->result_viewport, result_rect);
+      merge_tab->result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const std::size_t scroll_line = merge_tab->result_viewport.scroll_line();
+      const std::size_t preview_start = std::max(conflict.start_line, scroll_line);
+      const std::size_t preview_height_lines =
+          std::max(preview_lines.size(), conflict.end_line > conflict.start_line
+                                          ? conflict.end_line - conflict.start_line
+                                          : std::size_t{1});
+      const float preview_y =
+          metrics.first_line_y + static_cast<float>(preview_start - scroll_line) * metrics.line_height;
+      const SDL_FRect preview_rect =
+          MakeRect(result_rect.x, preview_y - 1.0f, result_rect.w,
+                   static_cast<float>(preview_height_lines) * metrics.line_height);
+      DrawFilledRect(renderer, preview_rect,
+                     BlendColor(theme_.editor_background, theme_.diff_modified, 0.18f));
+      for (std::size_t line = 0; line < preview_lines.size(); ++line) {
+        const float y = preview_y + static_cast<float>(line) * metrics.line_height;
+        text_renderer_.DrawStringOn(renderer, result_rect.x, y, theme_.line_number,
+                                    theme_.editor_background,
+                                    std::to_string(conflict.start_line + line + 1));
+        const VisibleTextWindow window =
+            SliceVisibleColumns(preview_lines[line], merge_tab->horizontal_scroll, metrics.visible_columns);
+        if (window.text.empty()) {
+          continue;
+        }
+        text_renderer_.DrawStringOn(renderer, metrics.text_x, y, theme_.text_primary,
+                                    theme_.editor_background, window.text);
+      }
+      DrawRect(renderer, preview_rect, theme_.accent);
+    }
+  }
+
+  if (merge_tab->hover_state.has_value() &&
+      (merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingConflict ||
+       merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept) &&
+      merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
+    const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
+    if (conflict.valid) {
+      draw_button(source_button_rect(conflict, true), "Accept Incoming",
+                  merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept, true);
+    }
+  }
+
+  if (merge_tab->hover_state.has_value() &&
+      (merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentConflict ||
+       merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept) &&
+      merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
+    const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
+    if (conflict.valid) {
+      draw_button(source_button_rect(conflict, false), "Accept Current",
+                  merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept, true);
+    }
+  }
+
+  if (merge_tab->hover_state.has_value() &&
+      (merge_tab->hover_state->kind == MergeHoverState::Kind::ResultConflict ||
+       merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction) &&
+      merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
+    const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
+    if (conflict.valid) {
+      const auto action_rects = result_action_rects(conflict);
+      draw_button(action_rects[0], "Base",
+                  merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
+                      merge_tab->hover_state->preview_choice == compare::MergeChoice::Base,
+                  true);
+      draw_button(action_rects[1], "Incoming",
+                  merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
+                      merge_tab->hover_state->preview_choice == compare::MergeChoice::Incoming,
+                  true);
+      draw_button(action_rects[2], "Current",
+                  merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
+                      merge_tab->hover_state->preview_choice == compare::MergeChoice::Current,
+                  true);
+      draw_button(action_rects[3], "Both",
+                  merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
+                      merge_tab->hover_state->preview_choice == compare::MergeChoice::Both,
+                  true);
     }
   }
 }

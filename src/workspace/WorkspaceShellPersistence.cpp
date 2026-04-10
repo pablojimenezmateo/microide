@@ -429,6 +429,20 @@ bool WorkspaceShell::RestoreSessionState() {
       }
       continue;
     }
+    if (command == "merge-left-divider" && tokens.size() == 2) {
+      try {
+        current_tab->merge_left_divider_fraction = std::stof(tokens[1].text);
+      } catch (...) {
+      }
+      continue;
+    }
+    if (command == "merge-right-divider" && tokens.size() == 2) {
+      try {
+        current_tab->merge_right_divider_fraction = std::stof(tokens[1].text);
+      } catch (...) {
+      }
+      continue;
+    }
     if (command == "merge-choice" && tokens.size() == 3) {
       try {
         const std::size_t hunk_index = static_cast<std::size_t>(std::stoull(tokens[1].text));
@@ -565,7 +579,7 @@ bool WorkspaceShell::RestoreSessionState() {
         if (text == "both") {
           return compare::MergeChoice::Both;
         }
-        return compare::MergeChoice::Auto;
+        return compare::MergeChoice::Base;
       };
 
       auto& merge_state = merge_tab->merge.value();
@@ -576,14 +590,20 @@ bool WorkspaceShell::RestoreSessionState() {
         }
         merge_state.model.hunks[i].choice = parse_choice(persisted_tab.merge_hunk_choices[i]);
       }
-      merge_state.selected_hunk = merge_state.model.hunks.empty()
-                                      ? 0
-                                      : std::min(persisted_tab.merge_selected_hunk,
-                                                 merge_state.model.hunks.size() - 1);
+      merge_state.left_divider_fraction = persisted_tab.merge_left_divider_fraction;
+      merge_state.right_divider_fraction = persisted_tab.merge_right_divider_fraction;
       RefreshMergeTabDerivedState(merge_state);
+      merge_state.selected_hunk =
+          merge_state.conflicts.empty()
+              ? 0
+              : std::min(persisted_tab.merge_selected_hunk, merge_state.conflicts.size() - 1);
       merge_state.scroll_row = static_cast<int>(std::min<std::size_t>(
           persisted_tab.merge_scroll_row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
       merge_state.horizontal_scroll = persisted_tab.merge_horizontal_scroll;
+      merge_state.result_viewport.SetScrollLine(
+          static_cast<std::size_t>(std::max(0, merge_state.scroll_row)));
+      merge_state.result_viewport.SetHorizontalScroll(merge_state.horizontal_scroll);
+      merge_state.scroll_row = static_cast<int>(merge_state.result_viewport.scroll_line());
       open_tabs_.push_back(std::move(*merge_tab));
       continue;
     }
@@ -769,6 +789,8 @@ void WorkspaceShell::SaveSessionState() {
       file << "merge-selected-hunk " << tab.merge->selected_hunk << '\n';
       file << "merge-scroll-row " << tab.merge->scroll_row << '\n';
       file << "merge-horizontal-scroll " << tab.merge->horizontal_scroll << '\n';
+      file << "merge-left-divider " << tab.merge->left_divider_fraction << '\n';
+      file << "merge-right-divider " << tab.merge->right_divider_fraction << '\n';
       for (std::size_t i = 0; i < tab.merge->model.hunks.size(); ++i) {
         file << "merge-choice " << i << ' '
              << QuoteCommandArg(compare::MergeChoiceLabel(tab.merge->model.hunks[i].choice))

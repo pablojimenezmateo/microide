@@ -8,6 +8,7 @@ namespace microide::tests {
 namespace {
 
 using microide::compare::BuildMergeModel;
+using microide::compare::BootstrapMergeResultText;
 using microide::compare::MergeChoice;
 using microide::compare::MergeChoiceLines;
 using microide::compare::MergeResultLines;
@@ -17,8 +18,8 @@ void TestMergeSingleSidedChange() {
                                "alpha\nbeta\ngamma\n");
   Expect(model.hunks.size() == 1, "single-sided merge should produce one hunk");
   Expect(!model.hunks.front().conflict, "single-sided merge should not conflict");
-  Expect(model.hunks.front().choice == MergeChoice::Auto,
-         "single-sided merge should auto-select the changed side");
+  Expect(model.hunks.front().choice == MergeChoice::Incoming,
+         "single-sided merge should bootstrap to the changed side");
 
   const auto result = MergeResultLines(model);
   Expect(result.size() == 4, "single-sided merge should preserve trailing empty line");
@@ -80,8 +81,6 @@ void TestMergeBothChoiceConcatenatesConflictInsertions() {
 }
 
 void TestMergeChoiceLabels() {
-  Expect(std::string_view(microide::compare::MergeChoiceLabel(MergeChoice::Auto)) == "auto",
-         "auto merge choice label should match");
   Expect(std::string_view(microide::compare::MergeChoiceLabel(MergeChoice::Incoming)) ==
              "incoming",
          "incoming merge choice label should match");
@@ -94,6 +93,13 @@ void TestMergeChoiceLabels() {
          "both merge choice label should match");
 }
 
+void TestBootstrapMergeResultTextUsesOneTimeChoices() {
+  const auto model = BuildMergeModel("zero\nsame\nlast\n", "zero\nincoming\nlast\n",
+                                     "zero\nsame\ncurrent\n");
+  Expect(BootstrapMergeResultText(model) == "zero\nincoming\ncurrent\n",
+         "bootstrap merge result should apply only the initial per-hunk choices");
+}
+
 }  // namespace
 
 void RegisterMergeModelTests(std::vector<TestCase>& tests) {
@@ -104,6 +110,8 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Merge/BothChoiceConcatenatesConflictInsertions",
           TestMergeBothChoiceConcatenatesConflictInsertions);
   AddTest(tests, "Merge/ChoiceLabels", TestMergeChoiceLabels);
+  AddTest(tests, "Merge/BootstrapMergeResultTextUsesOneTimeChoices",
+          TestBootstrapMergeResultTextUsesOneTimeChoices);
 }
 
 }  // namespace microide::tests

@@ -74,6 +74,10 @@ class TextViewport {
   bool ReplaceRange(const SelectionRange& range,
                     std::string_view replacement,
                     bool record_undo = true);
+  bool ReplaceLines(std::size_t start_line,
+                    std::size_t end_line,
+                    const std::vector<std::string>& replacement,
+                    bool record_undo = true);
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
 
   const std::filesystem::path& path() const { return document_->path; }

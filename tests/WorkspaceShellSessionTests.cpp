@@ -4,6 +4,7 @@
 #include "project/GitCompareService.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -14,6 +15,7 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
+using microide::compare::MergeChoice;
 
 std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
   return ShellEscape(repo_path.string());
@@ -294,6 +296,222 @@ void TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender() {
          "deferred compare syntax should avoid eager tokenization during tab open");
 }
 
+void TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.cpp";
+  const std::filesystem::path incoming = root / "incoming.cpp";
+  const std::filesystem::path current = root / "current.cpp";
+  const std::filesystem::path output = root / "result.cpp";
+  WriteFile(base, "int main() {\n  return 0;\n}\n");
+  WriteFile(incoming, "int main() {\n  return 1;\n}\n");
+  WriteFile(current, "int main() {\n  return 2;\n}\n");
+  WriteFile(output, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for deferred syntax-token fixture");
+
+  const auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.incoming_tokens.size() == merge.model.incoming_lines.size(),
+         "deferred merge syntax should size incoming token cache to incoming lines");
+  Expect(merge.current_tokens.size() == merge.model.current_lines.size(),
+         "deferred merge syntax should size current token cache to current lines");
+  Expect(merge.incoming_syntax_rows_tokenized == 0,
+         "deferred merge syntax should avoid eager incoming tokenization during tab open");
+  Expect(merge.current_syntax_rows_tokenized == 0,
+         "deferred merge syntax should avoid eager current tokenization during tab open");
+}
+
+void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\nthree\nfour\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\nthree incoming\nfour\n");
+  WriteFile(current, "zero\none current\ntwo\nthree current\nfour\n");
+  WriteFile(output, "zero\none\ntwo\nthree\nfour\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for manual-edit preservation fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.result_viewport.MoveCursorTo(2, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "edited "),
+         "merge result should accept direct text input");
+
+  merge.selected_hunk = 1;
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Incoming);
+
+  const auto& lines = merge.result_viewport.lines();
+  Expect(lines[1] == "one",
+         "accepting a later conflict should not rebuild earlier untouched conflicts");
+  Expect(lines[2] == "edited two",
+         "accepting a later conflict should preserve surrounding manual result edits");
+  Expect(lines[3] == "three incoming",
+         "accepting a conflict should patch only the selected conflict span");
+}
+
+void TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\nthree\nfour\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\nthree incoming\nfour\n");
+  WriteFile(current, "zero\none current\ntwo\nthree current\nfour\n");
+  WriteFile(output, "zero\none\ntwo\nthree\nfour\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for conflict-tracking fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.result_viewport.MoveCursorTo(2, 0);
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "merge result should support inserting lines");
+
+  merge.selected_hunk = 1;
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Current);
+
+  const auto& lines = merge.result_viewport.lines();
+  Expect(lines[2].empty(),
+         "manual result insertions should remain in place after tracked-span updates");
+  Expect(lines[4] == "three current",
+         "later conflict accepts should follow the shifted tracked span");
+}
+
+void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base,
+            "alpha long content 0123456789 abcdefghijklmnopqrstuvwxyz alpha long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nfive\nsix\n");
+  WriteFile(incoming,
+            "incoming long content 0123456789 abcdefghijklmnopqrstuvwxyz incoming long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nfive\nsix\n");
+  WriteFile(current,
+            "current long content 0123456789 abcdefghijklmnopqrstuvwxyz current long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nfive\nsix\n");
+  WriteFile(output,
+            "alpha long content 0123456789 abcdefghijklmnopqrstuvwxyz alpha long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nfive\nsix\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1200, 900);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for hover-preview fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const auto before_lines = merge.result_viewport.lines();
+  const bool before_dirty = merge.result_viewport.dirty();
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  const auto& conflict = merge.conflicts.front();
+  const float x = surface.left_x + surface.gutter_width + 12.0f;
+  const float y =
+      surface.rows_y +
+      (static_cast<float>(conflict.incoming_start_line) - static_cast<float>(merge.scroll_row) + 0.5f) *
+          surface.line_height;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, x, y, 0),
+         "merge hover fixture should register pointer motion");
+
+  const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
+  Expect(hover.has_value(), "merge hover fixture should produce a hover state");
+  Expect(WorkspaceShellTestAccess::ActiveMergeHoverIsIncomingConflict(shell),
+         "hovering incoming content should preview the incoming choice");
+  Expect(WorkspaceShellTestAccess::ActiveMergeHoverPreviewChoice(shell) == MergeChoice::Incoming,
+         "incoming hover preview should advertise the incoming merge choice");
+  Expect(merge.result_viewport.lines() == before_lines,
+         "hover preview should not mutate the committed result buffer");
+  Expect(merge.result_viewport.dirty() == before_dirty,
+         "hover preview should not dirty the merge result");
+}
+
+void TestWorkspaceShellRestoreSessionPreservesMergeNavigationState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "alpha\nshared\n");
+  WriteFile(incoming, "incoming\nshared\n");
+  WriteFile(current, "current\nshared\n");
+  WriteFile(output, "alpha\nshared\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for session-restore fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!merge.model.hunks.empty() && merge.model.hunks.front().conflict,
+         "merge session fixture should start with a conflict hunk");
+  merge.model.hunks.front().choice = MergeChoice::Current;
+  WorkspaceShellTestAccess::RefreshMergeTabDerivedState(shell);
+  merge.selected_hunk = 0;
+  merge.scroll_row = 2;
+  merge.horizontal_scroll = 5;
+  merge.left_divider_fraction = 0.24f;
+  merge.right_divider_fraction = 0.74f;
+  merge.result_viewport.SetScrollLine(2);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "merge session restore should succeed");
+  Expect(WorkspaceShellTestAccess::OpenTabs(restored).size() == 1,
+         "merge session restore should reopen the merge tab");
+
+  const auto& rebuilt = WorkspaceShellTestAccess::ActiveMerge(restored);
+  Expect(rebuilt.base_path == base.lexically_normal(),
+         "merge session restore should preserve the base path");
+  Expect(rebuilt.incoming_path == incoming.lexically_normal(),
+         "merge session restore should preserve the incoming path");
+  Expect(rebuilt.current_path == current.lexically_normal(),
+         "merge session restore should preserve the current path");
+  Expect(rebuilt.output_path == output.lexically_normal(),
+         "merge session restore should preserve the output path");
+  Expect(rebuilt.selected_hunk == 0,
+         "merge session restore should preserve the selected conflict");
+  Expect(rebuilt.scroll_row == 2,
+         "merge session restore should preserve vertical scroll");
+  Expect(rebuilt.horizontal_scroll == 5,
+         "merge session restore should preserve horizontal scroll");
+  Expect(std::fabs(rebuilt.left_divider_fraction - 0.24f) < 0.0001f,
+         "merge session restore should preserve the left divider fraction");
+  Expect(std::fabs(rebuilt.right_divider_fraction - 0.74f) < 0.0001f,
+         "merge session restore should preserve the right divider fraction");
+  Expect(!rebuilt.model.hunks.empty() && rebuilt.model.hunks.front().choice == MergeChoice::Current,
+         "merge session restore should preserve the committed conflict choice metadata");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
@@ -303,6 +521,16 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/CompareSyntaxTokensAreDeferredUntilRender",
           TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender);
+  AddTest(tests, "WorkspaceShell/MergeSyntaxTokensAreDeferredUntilRender",
+          TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender);
+  AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
+          TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
+  AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",
+          TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion);
+  AddTest(tests, "WorkspaceShell/MergeHoverPreviewDoesNotCommitState",
+          TestWorkspaceShellMergeHoverPreviewDoesNotCommitState);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
+          TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
 }

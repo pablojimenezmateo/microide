@@ -582,6 +582,48 @@ bool TextViewport::ReplaceRange(const SelectionRange& range,
   return true;
 }
 
+bool TextViewport::ReplaceLines(std::size_t start_line,
+                                std::size_t end_line,
+                                const std::vector<std::string>& replacement,
+                                bool record_undo) {
+  EnsureDocument();
+  const std::size_t line_count = document_->lines.size();
+  if (line_count == 0) {
+    document_->lines.push_back("");
+  }
+
+  const std::size_t clamped_start = std::min(start_line, document_->lines.size());
+  const std::size_t clamped_end = std::clamp(end_line, clamped_start, document_->lines.size());
+  if (record_undo) {
+    SaveUndoSnapshot();
+  }
+
+  std::vector<std::string> updated_lines;
+  updated_lines.reserve(clamped_start + replacement.size() +
+                        (document_->lines.size() - clamped_end));
+  updated_lines.insert(updated_lines.end(), document_->lines.begin(),
+                       document_->lines.begin() + static_cast<std::ptrdiff_t>(clamped_start));
+  updated_lines.insert(updated_lines.end(), replacement.begin(), replacement.end());
+  updated_lines.insert(updated_lines.end(),
+                       document_->lines.begin() + static_cast<std::ptrdiff_t>(clamped_end),
+                       document_->lines.end());
+  if (updated_lines.empty()) {
+    updated_lines.push_back("");
+  }
+
+  document_->lines = std::move(updated_lines);
+  const std::size_t cursor_line = std::min(clamped_start, document_->lines.size() - 1);
+  cursor_line_ = cursor_line;
+  cursor_column_ = 0;
+  preferred_column_ = cursor_visual_column();
+  selection_anchor_.reset();
+  RefreshEncoding();
+  RefreshLargeFileMode();
+  MarkDirty();
+  EnsureCursorVisible();
+  return true;
+}
+
 std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view replacement) {
   if (needle.empty() || document_->lines.empty()) {
     return 0;

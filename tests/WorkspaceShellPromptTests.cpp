@@ -4,6 +4,7 @@
 #include "WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -559,10 +560,18 @@ void TestWorkspaceShellRenamePreservesMergeTabState() {
   const std::filesystem::path incoming = root / "incoming.txt";
   const std::filesystem::path current = root / "current.txt";
   const std::filesystem::path output = root / "result.txt";
-  WriteFile(base, "alpha\nshared\n");
-  WriteFile(incoming, "incoming\nshared\n");
-  WriteFile(current, "current\nshared\n");
-  WriteFile(output, "current\nshared\n");
+  WriteFile(base,
+            "alpha long content 0123456789 abcdefghijklmnopqrstuvwxyz alpha long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nshared\nsix\n");
+  WriteFile(incoming,
+            "incoming long content 0123456789 abcdefghijklmnopqrstuvwxyz incoming long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nshared\nsix\n");
+  WriteFile(current,
+            "current long content 0123456789 abcdefghijklmnopqrstuvwxyz current long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nshared\nsix\n");
+  WriteFile(output,
+            "alpha long content 0123456789 abcdefghijklmnopqrstuvwxyz alpha long content "
+            "0123456789 abcdefghijklmnopqrstuvwxyz\none\ntwo\nthree\nfour\nshared\nsix\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -572,8 +581,15 @@ void TestWorkspaceShellRenamePreservesMergeTabState() {
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
   const std::size_t expected_hunk = 0;
   merge.selected_hunk = expected_hunk;
+  merge.left_divider_fraction = 0.28f;
+  merge.right_divider_fraction = 0.76f;
+  merge.result_viewport.MoveCursorTo(5, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "manual "),
+         "rename merge fixture should allow manual result edits before rename");
   merge.scroll_row = 4;
   merge.horizontal_scroll = 6;
+  merge.result_viewport.SetScrollLine(4);
+  merge.result_viewport.SetHorizontalScroll(6);
 
   WorkspaceShellTestAccess::PrepareRenamePrompt(shell, output, "resolved.txt");
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
@@ -594,8 +610,14 @@ void TestWorkspaceShellRenamePreservesMergeTabState() {
          "merge tab should preserve vertical scroll on rename");
   Expect(rebuilt.horizontal_scroll == 6,
          "merge tab should preserve horizontal scroll on rename");
+  Expect(std::fabs(rebuilt.left_divider_fraction - 0.28f) < 0.0001f,
+         "merge tab should preserve the left divider fraction on rename");
+  Expect(std::fabs(rebuilt.right_divider_fraction - 0.76f) < 0.0001f,
+         "merge tab should preserve the right divider fraction on rename");
   Expect(rebuilt.persistable,
          "merge tab should preserve its persistable flag on rename");
+  Expect(rebuilt.result_viewport.lines()[5] == "manual shared",
+         "merge tab should preserve the live result buffer across rename");
 }
 
 void TestWorkspaceShellLargeFileBreadcrumbLabel() {

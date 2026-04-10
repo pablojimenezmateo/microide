@@ -20,17 +20,114 @@ std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   return max_columns;
 }
 
-std::size_t MergeMaxVisualColumns(const compare::MergeDisplayModel& model) {
+std::size_t MaxVisualColumnsForLines(const std::vector<std::string>& lines) {
   std::size_t max_columns = 0;
-  for (const auto& row : model.rows) {
-    max_columns =
-        std::max({max_columns, Utf8CodepointCount(row.incoming_text),
-                  Utf8CodepointCount(row.result_text), Utf8CodepointCount(row.current_text)});
+  for (const std::string& line : lines) {
+    max_columns = std::max(max_columns, Utf8CodepointCount(line));
   }
   return max_columns;
 }
 
+std::string SerializeLines(const std::vector<std::string>& lines,
+                           editor::TextViewport::LineEnding line_ending) {
+  std::string separator = "\n";
+  if (line_ending == editor::TextViewport::LineEnding::CRLF) {
+    separator = "\r\n";
+  } else if (line_ending == editor::TextViewport::LineEnding::CR) {
+    separator = "\r";
+  }
+
+  std::string text;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i > 0) {
+      text += separator;
+    }
+    text += lines[i];
+  }
+  return text;
+}
+
+struct ChangedLineSpan {
+  std::size_t old_start = 0;
+  std::size_t old_end = 0;
+  std::size_t new_end = 0;
+};
+
+std::optional<ChangedLineSpan> ComputeChangedLineSpan(const std::vector<std::string>& before_lines,
+                                                      const std::vector<std::string>& after_lines) {
+  std::size_t prefix = 0;
+  while (prefix < before_lines.size() && prefix < after_lines.size() &&
+         before_lines[prefix] == after_lines[prefix]) {
+    ++prefix;
+  }
+  if (prefix == before_lines.size() && prefix == after_lines.size()) {
+    return std::nullopt;
+  }
+
+  std::size_t suffix = 0;
+  while (suffix < before_lines.size() - prefix && suffix < after_lines.size() - prefix &&
+         before_lines[before_lines.size() - 1 - suffix] ==
+             after_lines[after_lines.size() - 1 - suffix]) {
+    ++suffix;
+  }
+
+  return ChangedLineSpan{
+      .old_start = prefix,
+      .old_end = before_lines.size() - suffix,
+      .new_end = after_lines.size() - suffix,
+  };
+}
+
 }  // namespace
+
+std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrackedConflicts(
+    const compare::MergeModel& model) const {
+  std::vector<MergeTrackedConflict> conflicts;
+  std::size_t incoming_line = 0;
+  std::size_t current_line = 0;
+  std::size_t result_line = 0;
+  int base_cursor = 0;
+  for (const auto& hunk : model.hunks) {
+    const std::size_t unchanged_lines =
+        static_cast<std::size_t>(std::max(0, hunk.base_start - base_cursor));
+    incoming_line += unchanged_lines;
+    current_line += unchanged_lines;
+    result_line += unchanged_lines;
+
+    const std::vector<std::string> result_lines = compare::MergeChoiceLines(hunk, hunk.choice);
+    if (hunk.conflict) {
+      conflicts.push_back(MergeTrackedConflict{
+          .hunk_index = static_cast<std::size_t>(hunk.index),
+          .incoming_start_line = incoming_line,
+          .incoming_end_line = incoming_line + hunk.incoming_lines.size(),
+          .current_start_line = current_line,
+          .current_end_line = current_line + hunk.current_lines.size(),
+          .start_line = result_line,
+          .end_line = result_line + result_lines.size(),
+          .last_choice = hunk.choice,
+          .valid = true,
+      });
+    }
+
+    incoming_line += hunk.incoming_lines.size();
+    current_line += hunk.current_lines.size();
+    result_line += result_lines.size();
+    base_cursor = hunk.base_end;
+  }
+  return conflicts;
+}
+
+void WorkspaceShell::UpdateMergeMaxVisualColumns(
+    MergeTabState& merge_tab,
+    std::span<const std::string> result_lines) const {
+  std::vector<std::string> owned_lines;
+  owned_lines.reserve(result_lines.size());
+  for (std::string_view line : result_lines) {
+    owned_lines.emplace_back(line);
+  }
+  merge_tab.max_visual_columns =
+      std::max(merge_tab.max_visual_columns, MaxVisualColumnsForLines(owned_lines));
+}
 
 void WorkspaceShell::OpenComparePicker() {
   if (!sidebar_visible_ || sidebar_mode_ != SidebarMode::Tree) {
@@ -223,35 +320,132 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
   };
 }
 
-std::vector<std::vector<editor::SyntaxTokenKind>> WorkspaceShell::HighlightBufferTokens(
-    const std::filesystem::path& path,
-    const std::vector<std::string>& lines) const {
-  std::vector<std::vector<editor::SyntaxTokenKind>> tokens_by_line;
-  tokens_by_line.reserve(lines.size());
-  editor::SyntaxState state = editor::SyntaxHighlighter::InitialState(path, lines);
-  for (const std::string& line : lines) {
-    editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(line, path, state);
-    state = highlighted.end_state;
-    tokens_by_line.push_back(std::move(highlighted.tokens));
-  }
-  return tokens_by_line;
-}
-
 void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const {
-  merge_tab.display_model = compare::BuildMergeDisplayModel(merge_tab.model);
   const std::string result_text = compare::MergeResultText(merge_tab.model);
   merge_tab.result_viewport.LoadContent(result_text, merge_tab.output_path, merge_tab.result_line_ending);
-  const std::optional<std::string> persisted_output = ReadFileText(merge_tab.output_path);
-  merge_tab.result_viewport.SetDirty(!persisted_output.has_value() || *persisted_output != result_text);
-  merge_tab.result_tokens = HighlightBufferTokens(merge_tab.output_path, merge_tab.result_viewport.lines());
-  merge_tab.max_visual_columns = MergeMaxVisualColumns(merge_tab.display_model);
-  if (merge_tab.display_model.hunks.empty()) {
+  merge_tab.result_viewport.SetPath(merge_tab.output_path);
+  merge_tab.result_viewport.SetDirty(
+      !merge_tab.persisted_output_baseline.has_value() ||
+      *merge_tab.persisted_output_baseline !=
+          SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending));
+  merge_tab.conflicts = BuildMergeTrackedConflicts(merge_tab.model);
+  merge_tab.hover_state.reset();
+  merge_tab.max_visual_columns =
+      std::max({MaxVisualColumnsForLines(merge_tab.model.incoming_lines),
+                MaxVisualColumnsForLines(merge_tab.model.current_lines),
+                merge_tab.result_viewport.max_visual_columns()});
+  merge_tab.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
+  merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
+  merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
+  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
+  if (merge_tab.conflicts.empty()) {
     merge_tab.selected_hunk = 0;
     merge_tab.scroll_row = 0;
     return;
   }
-  merge_tab.selected_hunk =
-      std::min(merge_tab.selected_hunk, merge_tab.display_model.hunks.size() - 1);
+  merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1);
+}
+
+void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
+                                                        std::size_t visible_start_row,
+                                                        std::size_t visible_end_row) {
+  const std::size_t clamped_incoming_end =
+      std::min(visible_end_row, merge_tab.model.incoming_lines.size());
+  if (visible_start_row < clamped_incoming_end) {
+    constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
+    const std::size_t target_row =
+        std::min(clamped_incoming_end, merge_tab.incoming_syntax_rows_tokenized + kMergeSyntaxRowsPerFrame);
+    while (merge_tab.incoming_syntax_rows_tokenized < target_row) {
+      const std::size_t index = merge_tab.incoming_syntax_rows_tokenized;
+      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+          merge_tab.model.incoming_lines[index], merge_tab.output_path,
+          merge_tab.incoming_current_syntax_state);
+      merge_tab.incoming_current_syntax_state = highlighted.end_state;
+      merge_tab.incoming_tokens[index] = std::move(highlighted.tokens);
+      ++merge_tab.incoming_syntax_rows_tokenized;
+    }
+  }
+
+  const std::size_t clamped_current_end =
+      std::min(visible_end_row, merge_tab.model.current_lines.size());
+  if (visible_start_row < clamped_current_end) {
+    constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
+    const std::size_t target_row =
+        std::min(clamped_current_end, merge_tab.current_syntax_rows_tokenized + kMergeSyntaxRowsPerFrame);
+    while (merge_tab.current_syntax_rows_tokenized < target_row) {
+      const std::size_t index = merge_tab.current_syntax_rows_tokenized;
+      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+          merge_tab.model.current_lines[index], merge_tab.output_path,
+          merge_tab.current_current_syntax_state);
+      merge_tab.current_current_syntax_state = highlighted.end_state;
+      merge_tab.current_tokens[index] = std::move(highlighted.tokens);
+      ++merge_tab.current_syntax_rows_tokenized;
+    }
+  }
+}
+
+void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
+    MergeTabState& merge_tab,
+    const std::vector<std::string>& before_lines,
+    std::optional<editor::SelectionRange> selection_before,
+    editor::TextPosition cursor_before) {
+  const auto changed_span = ComputeChangedLineSpan(before_lines, merge_tab.result_viewport.lines());
+  if (!changed_span.has_value()) {
+    merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
+    merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
+    return;
+  }
+
+  const auto& change = *changed_span;
+  const long long line_delta =
+      static_cast<long long>(change.new_end) - static_cast<long long>(change.old_end);
+  const bool pure_insertion = !selection_before.has_value() && change.old_start == change.old_end &&
+                              merge_tab.result_viewport.lines().size() >= before_lines.size();
+  const std::size_t insertion_anchor_line =
+      selection_before.has_value() ? selection_before->start.line : cursor_before.line;
+
+  for (auto& conflict : merge_tab.conflicts) {
+    if (pure_insertion) {
+      if (conflict.end_line <= insertion_anchor_line) {
+        continue;
+      }
+      if (conflict.start_line > insertion_anchor_line) {
+        conflict.start_line = static_cast<std::size_t>(
+            static_cast<long long>(conflict.start_line) + line_delta);
+        conflict.end_line = static_cast<std::size_t>(
+            static_cast<long long>(conflict.end_line) + line_delta);
+        continue;
+      }
+      conflict.valid = false;
+      continue;
+    }
+
+    if (conflict.end_line <= change.old_start) {
+      continue;
+    }
+    if (conflict.start_line >= change.old_end) {
+      conflict.start_line = static_cast<std::size_t>(
+          static_cast<long long>(conflict.start_line) + line_delta);
+      conflict.end_line = static_cast<std::size_t>(
+          static_cast<long long>(conflict.end_line) + line_delta);
+      continue;
+    }
+    conflict.valid = false;
+  }
+
+  const std::size_t changed_start = std::min(change.old_start, merge_tab.result_viewport.lines().size());
+  const std::size_t changed_end = std::min(change.new_end, merge_tab.result_viewport.lines().size());
+  if (changed_start < changed_end) {
+    UpdateMergeMaxVisualColumns(
+        merge_tab, std::vector<std::string>(merge_tab.result_viewport.lines().begin() +
+                                                static_cast<std::ptrdiff_t>(changed_start),
+                                            merge_tab.result_viewport.lines().begin() +
+                                                static_cast<std::ptrdiff_t>(changed_end)));
+  }
+
+  merge_tab.hover_state.reset();
+  merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
+  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
 }
 
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabEntry(
@@ -313,8 +507,17 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
       output_text.has_value() ? *output_text : (!current_content.empty() ? current_content : base_content);
   merge_tab.result_line_ending = DetectLineEnding(line_ending_source);
   merge_tab.model = compare::BuildMergeModel(base_content, incoming_content, current_content);
-  merge_tab.incoming_tokens = HighlightBufferTokens(normalized_output, merge_tab.model.incoming_lines);
-  merge_tab.current_tokens = HighlightBufferTokens(normalized_output, merge_tab.model.current_lines);
+  merge_tab.incoming_tokens.resize(merge_tab.model.incoming_lines.size());
+  merge_tab.current_tokens.resize(merge_tab.model.current_lines.size());
+  merge_tab.incoming_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(normalized_output, merge_tab.model.incoming_lines);
+  merge_tab.current_initial_syntax_state =
+      editor::SyntaxHighlighter::InitialState(normalized_output, merge_tab.model.current_lines);
+  merge_tab.incoming_current_syntax_state = merge_tab.incoming_initial_syntax_state;
+  merge_tab.current_current_syntax_state = merge_tab.current_initial_syntax_state;
+  merge_tab.incoming_syntax_rows_tokenized = 0;
+  merge_tab.current_syntax_rows_tokenized = 0;
+  merge_tab.persisted_output_baseline = output_text;
   merge_tab.selected_hunk = selected_hunk;
   merge_tab.scroll_row = 0;
   merge_tab.result_viewport.SetPath(merge_tab.output_path);
@@ -535,12 +738,12 @@ void WorkspaceShell::ScrollCompareColumns(int delta) {
 
 void WorkspaceShell::MoveMergeSelection(int delta) {
   MergeTabState* merge_tab = ActiveMergeTab();
-  if (merge_tab == nullptr || merge_tab->display_model.hunks.empty() || delta == 0) {
+  if (merge_tab == nullptr || merge_tab->conflicts.empty() || delta == 0) {
     return;
   }
 
   const int current = static_cast<int>(merge_tab->selected_hunk);
-  const int max_index = static_cast<int>(merge_tab->display_model.hunks.size()) - 1;
+  const int max_index = static_cast<int>(merge_tab->conflicts.size()) - 1;
   merge_tab->selected_hunk = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealActiveMergeSelection();
 }
@@ -562,31 +765,46 @@ void WorkspaceShell::ScrollMergeColumns(int delta) {
       static_cast<long long>(merge_tab->horizontal_scroll) + static_cast<long long>(delta);
   merge_tab->horizontal_scroll = static_cast<std::size_t>(
       std::clamp(target_scroll, 0LL, static_cast<long long>(max_scroll)));
+  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
+  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 }
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
   MergeTabState* merge_tab = ActiveMergeTab();
-  if (merge_tab == nullptr || merge_tab->model.hunks.empty()) {
+  if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
     return;
   }
 
-  const std::size_t selected_hunk =
-      std::min(merge_tab->selected_hunk, merge_tab->model.hunks.size() - 1);
-  merge_tab->model.hunks[selected_hunk].choice = choice;
-  RefreshMergeTabDerivedState(*merge_tab);
-  RevealActiveMergeSelection();
-}
-
-void WorkspaceShell::ApplyMergeChoiceToAll(compare::MergeChoice choice) {
-  MergeTabState* merge_tab = ActiveMergeTab();
-  if (merge_tab == nullptr || merge_tab->model.hunks.empty()) {
+  const std::size_t selected_hunk = std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
+  auto& conflict = merge_tab->conflicts[selected_hunk];
+  if (!conflict.valid || conflict.hunk_index >= merge_tab->model.hunks.size()) {
+    LogMessage("Conflict span was edited manually");
     return;
   }
 
-  for (auto& hunk : merge_tab->model.hunks) {
-    hunk.choice = choice;
+  const std::vector<std::string> replacement_lines =
+      compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index], choice);
+  const std::size_t previous_end = conflict.end_line;
+  if (!merge_tab->result_viewport.ReplaceLines(conflict.start_line, previous_end, replacement_lines)) {
+    return;
   }
-  RefreshMergeTabDerivedState(*merge_tab);
+
+  merge_tab->model.hunks[conflict.hunk_index].choice = choice;
+  conflict.end_line = conflict.start_line + replacement_lines.size();
+  conflict.last_choice = choice;
+  conflict.valid = true;
+  const long long line_delta =
+      static_cast<long long>(conflict.end_line) - static_cast<long long>(previous_end);
+  for (std::size_t i = selected_hunk + 1; i < merge_tab->conflicts.size(); ++i) {
+    merge_tab->conflicts[i].start_line = static_cast<std::size_t>(
+        static_cast<long long>(merge_tab->conflicts[i].start_line) + line_delta);
+    merge_tab->conflicts[i].end_line = static_cast<std::size_t>(
+        static_cast<long long>(merge_tab->conflicts[i].end_line) + line_delta);
+  }
+  UpdateMergeMaxVisualColumns(*merge_tab, replacement_lines);
+  merge_tab->hover_state.reset();
+  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
+  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   RevealActiveMergeSelection();
 }
 

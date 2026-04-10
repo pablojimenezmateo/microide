@@ -211,23 +211,23 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   const bool active_compare_tab = ActiveTabIsCompare();
   const bool active_merge_tab = ActiveTabIsMerge();
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
-      focus_ == FocusTarget::Editor && !active_compare_tab && !active_merge_tab &&
+      focus_ == FocusTarget::Editor && !active_compare_tab && ActiveEditableViewport() != nullptr &&
       event.key.key == SDLK_A) {
     ExecuteAction(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
-      focus_ == FocusTarget::Editor && !active_compare_tab && !active_merge_tab) {
-    if ((modifiers & SDL_KMOD_SHIFT) && event.key.key == SDLK_F) {
+      focus_ == FocusTarget::Editor && !active_compare_tab) {
+    if (!active_merge_tab && (modifiers & SDL_KMOD_SHIFT) && event.key.key == SDLK_F) {
       ExecuteAction(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
       return true;
     }
-    if (event.key.key == SDLK_H) {
+    if (!active_merge_tab && event.key.key == SDLK_H) {
       ExecuteAction(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
       return true;
     }
-    if (event.key.key == SDLK_F) {
+    if (!active_merge_tab && event.key.key == SDLK_F) {
       ExecuteAction(ActionId::Search, {}, ActionSource::Shortcut);
       return true;
     }
@@ -798,93 +798,109 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   }
 
   if (focus_ == FocusTarget::Editor && active_merge_tab) {
+    MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab == nullptr) {
+      return false;
+    }
+
+    auto& viewport = merge_tab->result_viewport;
+    const auto apply_merge_edit = [&](auto&& edit) {
+      const std::vector<std::string> before_lines = viewport.lines();
+      const std::optional<editor::SelectionRange> selection_before = viewport.selection_range();
+      const editor::TextPosition cursor_before{viewport.cursor_line(), viewport.cursor_column()};
+      edit();
+      UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
+      ResetCaretBlink();
+      return true;
+    };
+    const auto sync_merge_navigation = [&]() {
+      merge_tab->scroll_row = static_cast<int>(viewport.scroll_line());
+      merge_tab->horizontal_scroll = viewport.horizontal_scroll();
+      ResetCaretBlink();
+      return true;
+    };
+
+    if ((modifiers & SDL_KMOD_ALT) != 0) {
+      const char input_character = KeycodeToAscii(event.key.key, modifiers & ~SDL_KMOD_ALT);
+      if (event.key.key == SDLK_LEFTBRACKET) {
+        MoveMergeSelection(-1);
+        return true;
+      }
+      if (event.key.key == SDLK_RIGHTBRACKET) {
+        MoveMergeSelection(1);
+        return true;
+      }
+      if (input_character == 'i') {
+        ApplyMergeChoice(compare::MergeChoice::Incoming);
+        return true;
+      }
+      if (input_character == 'c') {
+        ApplyMergeChoice(compare::MergeChoice::Current);
+        return true;
+      }
+      if (input_character == 'b') {
+        ApplyMergeChoice(compare::MergeChoice::Base);
+        return true;
+      }
+      if (input_character == 'm') {
+        ApplyMergeChoice(compare::MergeChoice::Both);
+        return true;
+      }
+      if (input_character == 'o') {
+        OpenMergeResultFile();
+        return true;
+      }
+    }
+
     switch (event.key.key) {
       case SDLK_ESCAPE:
         RequestCloseTab(active_tab_index_);
         return true;
+      case SDLK_TAB:
+        return apply_merge_edit([&]() { viewport.InsertTab(); });
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        return apply_merge_edit([&]() { viewport.InsertNewline(); });
+      case SDLK_BACKSPACE:
+        return apply_merge_edit([&]() { viewport.Backspace(); });
+      case SDLK_DELETE:
+        return apply_merge_edit([&]() { viewport.DeleteForward(); });
       case SDLK_UP:
-        MoveMergeSelection(-1);
-        return true;
+        viewport.MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+        return sync_merge_navigation();
       case SDLK_DOWN:
-        MoveMergeSelection(1);
-        return true;
+        viewport.MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+        return sync_merge_navigation();
+      case SDLK_LEFT:
+        viewport.MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+        return sync_merge_navigation();
+      case SDLK_RIGHT:
+        viewport.MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+        return sync_merge_navigation();
       case SDLK_PAGEUP:
-        MoveMergeSelection(-5);
-        return true;
+        viewport.Page(-1);
+        return sync_merge_navigation();
       case SDLK_PAGEDOWN:
-        MoveMergeSelection(5);
-        return true;
+        viewport.Page(1);
+        return sync_merge_navigation();
       case SDLK_HOME:
-        if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr) {
-          merge_tab->selected_hunk = 0;
-          RevealActiveMergeSelection();
+        if (modifiers & SDL_KMOD_CTRL) {
+          viewport.MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
+        } else {
+          viewport.MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
         }
-        return true;
+        return sync_merge_navigation();
       case SDLK_END:
-        if (auto* merge_tab = ActiveMergeTab();
-            merge_tab != nullptr && !merge_tab->display_model.hunks.empty()) {
-          merge_tab->selected_hunk = merge_tab->display_model.hunks.size() - 1;
-          RevealActiveMergeSelection();
+        if (modifiers & SDL_KMOD_CTRL) {
+          const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
+          viewport.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
+                                (modifiers & SDL_KMOD_SHIFT) != 0);
+        } else {
+          viewport.MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
         }
-        return true;
-      case SDLK_LEFTBRACKET:
-        MoveMergeSelection(-1);
-        return true;
-      case SDLK_RIGHTBRACKET:
-        MoveMergeSelection(1);
-        return true;
-      default: {
-        const char input_character = KeycodeToAscii(event.key.key, modifiers);
-        if (input_character == 'j') {
-          MoveMergeSelection(1);
-          return true;
-        }
-        if (input_character == 'k') {
-          MoveMergeSelection(-1);
-          return true;
-        }
-        if (input_character == 'i') {
-          ApplyMergeChoice(compare::MergeChoice::Incoming);
-          return true;
-        }
-        if (input_character == 'c') {
-          ApplyMergeChoice(compare::MergeChoice::Current);
-          return true;
-        }
-        if (input_character == 'b') {
-          ApplyMergeChoice(compare::MergeChoice::Base);
-          return true;
-        }
-        if (input_character == 'm') {
-          ApplyMergeChoice(compare::MergeChoice::Both);
-          return true;
-        }
-        if (input_character == 'a') {
-          ApplyMergeChoiceToAll(compare::MergeChoice::Auto);
-          return true;
-        }
-        if (input_character == 'I') {
-          ApplyMergeChoiceToAll(compare::MergeChoice::Incoming);
-          return true;
-        }
-        if (input_character == 'C') {
-          ApplyMergeChoiceToAll(compare::MergeChoice::Current);
-          return true;
-        }
-        if (input_character == 'B') {
-          ApplyMergeChoiceToAll(compare::MergeChoice::Base);
-          return true;
-        }
-        if (input_character == 'M') {
-          ApplyMergeChoiceToAll(compare::MergeChoice::Both);
-          return true;
-        }
-        if (input_character == 'o') {
-          OpenMergeResultFile();
-          return true;
-        }
+        return sync_merge_navigation();
+      default:
         return false;
-      }
     }
   }
 
@@ -1084,8 +1100,18 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
 
-  if (focus_ == FocusTarget::Editor && !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
-    text_viewport_.InsertText(input);
+  if (focus_ == FocusTarget::Editor && ActiveEditableViewport() != nullptr && !ActiveTabIsCompare()) {
+    editor::TextViewport* viewport = ActiveEditableViewport();
+    if (viewport == nullptr) {
+      return false;
+    }
+    const std::vector<std::string> before_lines = viewport->lines();
+    const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
+    const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
+    viewport->InsertText(input);
+    if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+      UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
+    }
     ResetCaretBlink();
     return true;
   }

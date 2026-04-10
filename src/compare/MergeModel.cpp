@@ -288,7 +288,7 @@ MergeModel BuildMergeModel(const std::string& base,
     hunk.conflict = hunk.incoming_lines != hunk.current_lines &&
                     hunk.incoming_lines != hunk.base_lines &&
                     hunk.current_lines != hunk.base_lines;
-    hunk.choice = hunk.conflict ? MergeChoice::Base : MergeChoice::Auto;
+    hunk.choice = BootstrapMergeChoice(hunk);
     model.hunks.push_back(std::move(hunk));
   }
 
@@ -303,6 +303,19 @@ MergeModel BuildMergeModel(const std::string& base,
   }
 
   return model;
+}
+
+MergeChoice BootstrapMergeChoice(const MergeHunk& hunk) {
+  if (hunk.incoming_lines == hunk.current_lines) {
+    return MergeChoice::Incoming;
+  }
+  if (hunk.incoming_lines == hunk.base_lines) {
+    return MergeChoice::Current;
+  }
+  if (hunk.current_lines == hunk.base_lines) {
+    return MergeChoice::Incoming;
+  }
+  return MergeChoice::Base;
 }
 
 std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice) {
@@ -328,19 +341,33 @@ std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice cho
         lines.insert(lines.end(), hunk.current_lines.begin(), hunk.current_lines.end());
         return lines;
       }
-    case MergeChoice::Auto:
     default:
-      if (hunk.incoming_lines == hunk.current_lines) {
-        return hunk.incoming_lines;
-      }
-      if (hunk.incoming_lines == hunk.base_lines) {
-        return hunk.current_lines;
-      }
-      if (hunk.current_lines == hunk.base_lines) {
-        return hunk.incoming_lines;
-      }
-      return hunk.base_lines;
+      return MergeChoiceLines(hunk, BootstrapMergeChoice(hunk));
   }
+}
+
+std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model) {
+  std::vector<std::string> lines;
+  int base_cursor = 0;
+  for (const MergeHunk& hunk : model.hunks) {
+    for (int line = base_cursor; line < hunk.base_start; ++line) {
+      lines.push_back(model.base_lines[static_cast<std::size_t>(line)]);
+    }
+    const std::vector<std::string> hunk_lines = MergeChoiceLines(hunk, BootstrapMergeChoice(hunk));
+    lines.insert(lines.end(), hunk_lines.begin(), hunk_lines.end());
+    base_cursor = hunk.base_end;
+  }
+  for (int line = base_cursor; line < static_cast<int>(model.base_lines.size()); ++line) {
+    lines.push_back(model.base_lines[static_cast<std::size_t>(line)]);
+  }
+  if (lines.empty()) {
+    lines.push_back("");
+  }
+  return lines;
+}
+
+std::string BootstrapMergeResultText(const MergeModel& model) {
+  return JoinMergeLines(BootstrapMergeResultLines(model));
 }
 
 std::vector<std::string> MergeResultLines(const MergeModel& model) {
@@ -461,8 +488,6 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
 
 const char* MergeChoiceLabel(MergeChoice choice) {
   switch (choice) {
-    case MergeChoice::Auto:
-      return "auto";
     case MergeChoice::Base:
       return "base";
     case MergeChoice::Incoming:
@@ -472,7 +497,7 @@ const char* MergeChoiceLabel(MergeChoice choice) {
     case MergeChoice::Both:
       return "both";
   }
-  return "auto";
+  return "base";
 }
 
 }  // namespace microide::compare

@@ -3,6 +3,7 @@
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -49,6 +50,119 @@ struct WorkspaceShellTestAccess {
   }
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
     return shell.open_tabs_[shell.active_tab_index_].merge.value();
+  }
+  static void ApplyMergeChoice(WorkspaceShell& shell, microide::compare::MergeChoice choice) {
+    shell.ApplyMergeChoice(choice);
+  }
+  static void RefreshMergeTabDerivedState(WorkspaceShell& shell) {
+    shell.RefreshMergeTabDerivedState(ActiveMerge(shell));
+  }
+  static const std::optional<WorkspaceShell::MergeHoverState>& ActiveMergeHoverState(
+      const WorkspaceShell& shell) {
+    return shell.open_tabs_[shell.active_tab_index_].merge->hover_state;
+  }
+  static bool ActiveMergeHoverIsIncomingConflict(const WorkspaceShell& shell) {
+    return shell.open_tabs_[shell.active_tab_index_].merge->hover_state.has_value() &&
+           shell.open_tabs_[shell.active_tab_index_].merge->hover_state->kind ==
+               WorkspaceShell::MergeHoverState::Kind::IncomingConflict;
+  }
+  static microide::compare::MergeChoice ActiveMergeHoverPreviewChoice(const WorkspaceShell& shell) {
+    const auto& hover = shell.open_tabs_[shell.active_tab_index_].merge->hover_state;
+    return hover.has_value() ? hover->preview_choice : microide::compare::MergeChoice::Base;
+  }
+  static WorkspaceShell::MergeSurfaceLayout ActiveMergeSurfaceLayout(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    return shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
+  }
+  static SDL_FRect ActiveMergeResultRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    const auto surface = ActiveMergeSurfaceLayout(shell);
+    const float bottom_reserved =
+        surface.show_horizontal ? 10.0f + 2.0f : 0.0f;
+    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
+    return MakeRect(surface.center_x, surface.rows_y - 8.0f,
+                    surface.gutter_width + surface.center_width,
+                    std::max(0.0f, layout.editor_surface.y + content_height - (surface.rows_y - 8.0f)));
+  }
+  static SDL_FRect MergeSourceAcceptRect(WorkspaceShell& shell,
+                                         std::size_t conflict_index,
+                                         bool incoming) {
+    auto& merge = ActiveMerge(shell);
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    const auto surface = ActiveMergeSurfaceLayout(shell);
+    const float bottom_reserved = surface.show_horizontal ? 10.0f + 2.0f : 0.0f;
+    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
+    const auto make_button_rect = [&](float x, float y, std::string_view label) {
+      const float width =
+          std::clamp(shell.text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
+      return MakeRect(x, y, width, 22.0f);
+    };
+    const auto& conflict = merge.conflicts[conflict_index];
+    const std::size_t end_line =
+        incoming ? conflict.incoming_end_line : conflict.current_end_line;
+    const float x = incoming ? surface.left_x + surface.gutter_width
+                             : surface.right_x + surface.gutter_width;
+    float y = surface.rows_y +
+              static_cast<float>(static_cast<long long>(end_line) - merge.scroll_row) *
+                  surface.line_height +
+              2.0f;
+    y = std::min(y, layout.editor_surface.y + content_height - 22.0f - 4.0f);
+    return make_button_rect(x, y, incoming ? "Accept Incoming" : "Accept Current");
+  }
+  static std::array<SDL_FRect, 4> MergeResultActionRects(WorkspaceShell& shell,
+                                                         std::size_t conflict_index) {
+    auto& merge = ActiveMerge(shell);
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.sidebar_visible_,
+                      shell.BottomPanelVisible(), shell.sidebar_width_, shell.bottom_panel_height_);
+    const auto surface = ActiveMergeSurfaceLayout(shell);
+    const SDL_FRect result_rect = ActiveMergeResultRect(shell);
+    const float bottom_reserved = surface.show_horizontal ? 10.0f + 2.0f : 0.0f;
+    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
+    const editor::EditorViewMetrics metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,
+                                                             merge.result_viewport, result_rect);
+    merge.result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+    const auto make_button_rect = [&](float x, float y, std::string_view label) {
+      const float width =
+          std::clamp(shell.text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
+      return MakeRect(x, y, width, 22.0f);
+    };
+    const auto& conflict = merge.conflicts[conflict_index];
+    const std::size_t scroll_line = merge.result_viewport.scroll_line();
+    const std::size_t visible_end_line = scroll_line + metrics.visible_rows;
+    const std::size_t rect_start = std::max(conflict.start_line, scroll_line);
+    const std::size_t rect_end = std::max(conflict.end_line, conflict.start_line + 1);
+    float y = surface.rows_y + 2.0f;
+    if (rect_end > scroll_line && rect_start < visible_end_line) {
+      const float conflict_y =
+          metrics.first_line_y + static_cast<float>(rect_start - scroll_line) * metrics.line_height;
+      const float conflict_h =
+          static_cast<float>(std::min(rect_end, visible_end_line) - rect_start) * metrics.line_height;
+      y = conflict_y + conflict_h + 2.0f;
+      if (y + 22.0f > layout.editor_surface.y + content_height - 4.0f) {
+        y = std::max(surface.rows_y + 2.0f, conflict_y - 24.0f);
+      }
+    }
+    float x = surface.center_x + surface.gutter_width;
+    const SDL_FRect base_rect = make_button_rect(x, y, "Base");
+    x += base_rect.w + 8.0f;
+    const SDL_FRect incoming_rect = make_button_rect(x, y, "Incoming");
+    x += incoming_rect.w + 8.0f;
+    const SDL_FRect current_rect = make_button_rect(x, y, "Current");
+    x += current_rect.w + 8.0f;
+    const SDL_FRect both_rect = make_button_rect(x, y, "Both");
+    return {base_rect, incoming_rect, current_rect, both_rect};
   }
 
   static void PrepareRenamePrompt(WorkspaceShell& shell,

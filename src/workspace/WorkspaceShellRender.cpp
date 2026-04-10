@@ -447,6 +447,43 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
     switch (surface) {
       case TextInputSurface::Editor: {
+        if (ActiveTabIsMerge()) {
+          MergeTabState* merge_tab = ActiveMergeTab();
+          if (merge_tab == nullptr) {
+            return std::nullopt;
+          }
+          const MergeSurfaceLayout surface_layout =
+              ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+          const float bottom_reserved = surface_layout.show_horizontal ? kScrollbarThickness + kScrollbarInset
+                                                                      : 0.0f;
+          const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
+          const SDL_FRect result_rect = MakeRect(
+              surface_layout.center_x, surface_layout.rows_y - 8.0f,
+              surface_layout.gutter_width + surface_layout.center_width,
+              std::max(0.0f, layout.editor_surface.y + content_height -
+                                   (surface_layout.rows_y - 8.0f)));
+          const editor::EditorViewMetrics metrics =
+              editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport,
+                                                         result_rect);
+          const float cursor_x =
+              metrics.text_x + static_cast<float>(merge_tab->result_viewport.cursor_visual_column() -
+                                                  merge_tab->result_viewport.horizontal_scroll()) *
+                                   char_width;
+          const float cursor_y =
+              metrics.first_line_y +
+              static_cast<float>(merge_tab->result_viewport.cursor_line() -
+                                 merge_tab->result_viewport.scroll_line()) *
+                  metrics.line_height;
+          return TextInputVisual{
+              .surface = surface,
+              .area = MakeRect(cursor_x, cursor_y - 1.0f, char_width, metrics.line_height),
+              .text_x = cursor_x,
+              .text_y = cursor_y,
+              .cursor_x = cursor_x,
+              .foreground = theme_.text_primary,
+              .background = theme_.editor_background,
+          };
+        }
         if (!active_editor_pane_rect.has_value()) {
           return std::nullopt;
         }
@@ -922,8 +959,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
       ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
       ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
-      draw_vertical_scrollbar(layout.editor_surface,
-                              static_cast<float>(merge_tab->display_model.rows.size()),
+      const std::size_t line_count =
+          std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
+                    merge_tab->model.current_lines.size(), std::size_t{1}});
+      draw_vertical_scrollbar(layout.editor_surface, static_cast<float>(line_count),
                               static_cast<float>(surface_layout.visible_rows),
                               static_cast<float>(merge_tab->scroll_row),
                               drag_target_ == DragTarget::CompareVerticalScrollbar,

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "editor/SyntaxHighlighter.h"
 #include "project/FileOperationService.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -526,7 +527,7 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
         if (!tab.merge->result_viewport.dirty()) {
           continue;
         }
-        if (!tab.merge->result_viewport.Save()) {
+        if (!SaveTab(target.tab_index)) {
           LogMessage("Save failed");
           return false;
         }
@@ -705,32 +706,65 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
       continue;
     }
 
-    auto rebuilt = BuildMergeTabEntry(update_merge_path(tab.merge->base_path),
-                                      update_merge_path(tab.merge->incoming_path),
-                                      update_merge_path(tab.merge->current_path),
-                                      update_merge_path(tab.merge->output_path));
-    if (!rebuilt.has_value() || !rebuilt->merge.has_value()) {
-      special_tabs_to_close.push_back(i);
+    const std::filesystem::path updated_base = update_merge_path(tab.merge->base_path);
+    const std::filesystem::path updated_incoming = update_merge_path(tab.merge->incoming_path);
+    const std::filesystem::path updated_current = update_merge_path(tab.merge->current_path);
+    const std::filesystem::path updated_output = update_merge_path(tab.merge->output_path);
+
+    if (!preserve_unsaved_state) {
+      auto rebuilt =
+          BuildMergeTabEntry(updated_base, updated_incoming, updated_current, updated_output);
+      if (!rebuilt.has_value() || !rebuilt->merge.has_value()) {
+        special_tabs_to_close.push_back(i);
+        continue;
+      }
+      auto& rebuilt_merge = rebuilt->merge.value();
+      rebuilt_merge.selected_hunk =
+          rebuilt_merge.conflicts.empty()
+              ? 0
+              : std::min(tab.merge->selected_hunk, rebuilt_merge.conflicts.size() - 1);
+      rebuilt_merge.scroll_row = tab.merge->scroll_row;
+      rebuilt_merge.horizontal_scroll = tab.merge->horizontal_scroll;
+      rebuilt_merge.left_divider_fraction = tab.merge->left_divider_fraction;
+      rebuilt_merge.right_divider_fraction = tab.merge->right_divider_fraction;
+      rebuilt_merge.persistable = tab.merge->persistable;
+      rebuilt_merge.result_viewport.SetScrollLine(
+          static_cast<std::size_t>(std::max(0, rebuilt_merge.scroll_row)));
+      rebuilt_merge.result_viewport.SetHorizontalScroll(rebuilt_merge.horizontal_scroll);
+      rebuilt_merge.scroll_row = static_cast<int>(rebuilt_merge.result_viewport.scroll_line());
+      rebuilt_merge.horizontal_scroll = rebuilt_merge.result_viewport.horizontal_scroll();
+      tab = std::move(*rebuilt);
       continue;
     }
-    auto& rebuilt_merge = rebuilt->merge.value();
-    rebuilt_merge.selected_hunk = rebuilt_merge.model.hunks.empty()
-                                      ? 0
-                                      : std::min(tab.merge->selected_hunk,
-                                                 rebuilt_merge.model.hunks.size() - 1);
-    if (preserve_unsaved_state || !tab.merge->result_viewport.dirty()) {
-      for (std::size_t hunk_index = 0;
-           hunk_index < rebuilt_merge.model.hunks.size() &&
-           hunk_index < tab.merge->model.hunks.size();
-           ++hunk_index) {
-        rebuilt_merge.model.hunks[hunk_index].choice = tab.merge->model.hunks[hunk_index].choice;
-      }
-      RefreshMergeTabDerivedState(rebuilt_merge);
-    }
-    rebuilt_merge.scroll_row = tab.merge->scroll_row;
-    rebuilt_merge.horizontal_scroll = tab.merge->horizontal_scroll;
-    rebuilt_merge.persistable = tab.merge->persistable;
-    tab = std::move(*rebuilt);
+
+    tab.merge->base_path = updated_base;
+    tab.merge->incoming_path = updated_incoming;
+    tab.merge->current_path = updated_current;
+    tab.merge->output_path = updated_output;
+    tab.merge->title = "merge: " + updated_output.filename().string();
+    tab.merge->incoming_label = RelativePathLabel(project_root_, updated_incoming);
+    tab.merge->result_label = RelativePathLabel(project_root_, updated_output);
+    tab.merge->current_label = RelativePathLabel(project_root_, updated_current);
+    tab.merge->result_viewport.SetPath(updated_output);
+    tab.merge->incoming_initial_syntax_state =
+        editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.incoming_lines);
+    tab.merge->current_initial_syntax_state =
+        editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.current_lines);
+    tab.merge->incoming_current_syntax_state = tab.merge->incoming_initial_syntax_state;
+    tab.merge->current_current_syntax_state = tab.merge->current_initial_syntax_state;
+    tab.merge->incoming_syntax_rows_tokenized = 0;
+    tab.merge->current_syntax_rows_tokenized = 0;
+    std::fill(tab.merge->incoming_tokens.begin(), tab.merge->incoming_tokens.end(),
+              std::vector<editor::SyntaxTokenKind>{});
+    std::fill(tab.merge->current_tokens.begin(), tab.merge->current_tokens.end(),
+              std::vector<editor::SyntaxTokenKind>{});
+    tab.merge->result_viewport.SetScrollLine(
+        static_cast<std::size_t>(std::max(0, tab.merge->scroll_row)));
+    tab.merge->result_viewport.SetHorizontalScroll(tab.merge->horizontal_scroll);
+    tab.merge->scroll_row = static_cast<int>(tab.merge->result_viewport.scroll_line());
+    tab.merge->horizontal_scroll = tab.merge->result_viewport.horizontal_scroll();
+    tab.path = updated_output;
+    tab.title = tab.merge->title;
   }
 
   std::sort(special_tabs_to_close.rbegin(), special_tabs_to_close.rend());

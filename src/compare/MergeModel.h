@@ -8,7 +8,6 @@
 namespace microide::compare {
 
 enum class MergeChoice {
-  Auto,
   Base,
   Incoming,
   Current,
@@ -23,7 +22,7 @@ struct MergeHunk {
   std::vector<std::string> incoming_lines;
   std::vector<std::string> current_lines;
   bool conflict = false;
-  MergeChoice choice = MergeChoice::Auto;
+  MergeChoice choice = MergeChoice::Base;
 };
 
 struct MergeModel {
@@ -55,7 +54,10 @@ struct MergeDisplayModel {
 MergeModel BuildMergeModel(const std::string& base,
                            const std::string& incoming,
                            const std::string& current);
+MergeChoice BootstrapMergeChoice(const MergeHunk& hunk);
 std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice);
+std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model);
+std::string BootstrapMergeResultText(const MergeModel& model);
 std::vector<std::string> MergeResultLines(const MergeModel& model);
 std::string MergeResultText(const MergeModel& model);
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model);

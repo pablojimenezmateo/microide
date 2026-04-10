@@ -140,6 +140,8 @@ class WorkspaceShell {
     None,
     SidebarDivider,
     BottomPanelDivider,
+    MergeLeftDivider,
+    MergeRightDivider,
     SidebarScrollbar,
     BottomPanelScrollbar,
     OverlayScrollbar,
@@ -190,6 +192,34 @@ class WorkspaceShell {
     bool persistable = true;
   };
 
+  struct MergeTrackedConflict {
+    std::size_t hunk_index = 0;
+    std::size_t incoming_start_line = 0;
+    std::size_t incoming_end_line = 0;
+    std::size_t current_start_line = 0;
+    std::size_t current_end_line = 0;
+    std::size_t start_line = 0;
+    std::size_t end_line = 0;
+    compare::MergeChoice last_choice = compare::MergeChoice::Base;
+    bool valid = true;
+  };
+
+  struct MergeHoverState {
+    enum class Kind {
+      None,
+      IncomingConflict,
+      IncomingAccept,
+      CurrentConflict,
+      CurrentAccept,
+      ResultConflict,
+      ResultAction,
+    };
+
+    Kind kind = Kind::None;
+    std::size_t conflict_index = 0;
+    compare::MergeChoice preview_choice = compare::MergeChoice::Base;
+  };
+
   struct MergeTabState {
     std::filesystem::path base_path;
     std::filesystem::path incoming_path;
@@ -201,15 +231,24 @@ class WorkspaceShell {
     std::string current_label;
     editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
     compare::MergeModel model;
-    compare::MergeDisplayModel display_model;
     std::vector<std::vector<editor::SyntaxTokenKind>> incoming_tokens;
-    std::vector<std::vector<editor::SyntaxTokenKind>> result_tokens;
     std::vector<std::vector<editor::SyntaxTokenKind>> current_tokens;
+    editor::SyntaxState incoming_initial_syntax_state;
+    editor::SyntaxState incoming_current_syntax_state;
+    editor::SyntaxState current_initial_syntax_state;
+    editor::SyntaxState current_current_syntax_state;
+    std::size_t incoming_syntax_rows_tokenized = 0;
+    std::size_t current_syntax_rows_tokenized = 0;
     editor::TextViewport result_viewport;
+    std::optional<std::string> persisted_output_baseline;
+    std::vector<MergeTrackedConflict> conflicts;
+    std::optional<MergeHoverState> hover_state;
     std::size_t selected_hunk = 0;
     int scroll_row = 0;
     std::size_t horizontal_scroll = 0;
     std::size_t max_visual_columns = 0;
+    float left_divider_fraction = 1.0f / 3.0f;
+    float right_divider_fraction = 2.0f / 3.0f;
     bool persistable = true;
   };
 
@@ -895,16 +934,25 @@ class WorkspaceShell {
                        const std::filesystem::path& current_path,
                        const std::filesystem::path& output_path);
   void RefreshMergeTabDerivedState(MergeTabState& merge_tab) const;
-  std::vector<std::vector<editor::SyntaxTokenKind>> HighlightBufferTokens(
-      const std::filesystem::path& path,
-      const std::vector<std::string>& lines) const;
   void PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab,
                                             std::size_t visible_start_row,
                                             std::size_t visible_end_row);
+  std::vector<MergeTrackedConflict> BuildMergeTrackedConflicts(
+      const compare::MergeModel& model) const;
+  void UpdateMergeMaxVisualColumns(MergeTabState& merge_tab,
+                                   std::span<const std::string> result_lines) const;
+  void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
+                                          std::size_t visible_start_row,
+                                          std::size_t visible_end_row);
+  void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab,
+                                            const std::vector<std::string>& before_lines,
+                                            std::optional<editor::SelectionRange> selection_before,
+                                            editor::TextPosition cursor_before);
+  editor::TextViewport* ActiveEditableViewport();
+  const editor::TextViewport* ActiveEditableViewport() const;
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
-  void ApplyMergeChoiceToAll(compare::MergeChoice choice);
   void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
   void RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
