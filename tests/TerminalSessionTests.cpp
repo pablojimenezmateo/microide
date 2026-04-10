@@ -133,6 +133,29 @@ void TestTerminalSessionNormalCursorKeysUseCsiSequences() {
          "normal cursor-key mode should use CSI sequences after DECCKM is disabled");
 }
 
+void TestTerminalSessionFocusEventsUseCsiInAndOut() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1004h");
+
+  session.SendFocusEvent(true);
+  session.SendFocusEvent(false);
+
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O",
+         "focus-event mode should emit CSI I and CSI O notifications");
+}
+
+void TestTerminalSessionDisablingFocusEventsStopsNotifications() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1004h\x1b[?1004l");
+
+  session.SendFocusEvent(true);
+
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "disabled focus-event mode should suppress focus notifications");
+}
+
 void TestTerminalSessionScrollUpSequenceUsesScrollRegion() {
   microide::terminal::TerminalSession session;
   ResetAlternateScreenFixture(session);
@@ -327,6 +350,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences);
   AddTest(tests, "TerminalSession/NormalCursorKeysCsiMode",
           TestTerminalSessionNormalCursorKeysUseCsiSequences);
+  AddTest(tests, "TerminalSession/FocusEventsUseCsiInAndOut",
+          TestTerminalSessionFocusEventsUseCsiInAndOut);
+  AddTest(tests, "TerminalSession/DisablingFocusEventsStopsNotifications",
+          TestTerminalSessionDisablingFocusEventsStopsNotifications);
   AddTest(tests, "TerminalSession/ScrollUpSequenceUsesScrollRegion",
           TestTerminalSessionScrollUpSequenceUsesScrollRegion);
   AddTest(tests, "TerminalSession/ScrollDownSequenceUsesScrollRegion",

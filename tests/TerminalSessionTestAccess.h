@@ -38,6 +38,7 @@ struct TerminalSessionTestAccess {
     session.origin_mode_ = false;
     session.auto_wrap_mode_ = true;
     session.bracketed_paste_mode_ = false;
+    session.focus_event_mode_ = false;
     session.cursor_visible_ = true;
     session.rows_ = std::max<std::size_t>(1, rows);
     session.columns_ = std::max<std::size_t>(1, columns);
@@ -60,6 +61,11 @@ struct TerminalSessionTestAccess {
     std::scoped_lock lock(session.mutex_);
     session.default_launch_label_ = std::string(label);
     session.launch_label_ = session.default_launch_label_;
+  }
+
+  static void SetRunning(microide::terminal::TerminalSession& session, bool running) {
+    std::scoped_lock lock(session.mutex_);
+    session.running_ = running;
   }
 
   static std::string SentBytes(const microide::terminal::TerminalSession& session) {

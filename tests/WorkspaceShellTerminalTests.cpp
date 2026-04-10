@@ -94,6 +94,7 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
 
   std::string clipboard_text;
   WorkspaceShellTestAccess::SetClipboardTextWriter(
@@ -107,6 +108,46 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
 
   Expect(clipboard_text == "copied from term",
          "workspace terminal updates should route OSC 52 clipboard text into the clipboard writer");
+}
+
+void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1004h");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I",
+         "focused terminal tabs should receive an initial focus-in notification when focus mode is enabled");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_CTRL),
+         "Ctrl+Tab should move focus away from the terminal panel");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_CTRL),
+         "Ctrl+Tab should keep cycling focus targets");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_CTRL),
+         "Ctrl+Tab should return focus to the terminal panel");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O\x1b[I",
+         "terminal focus mode should emit focus-out and focus-in notifications as panel focus changes");
+}
+
+void TestWorkspaceShellTerminalFocusModeTracksWindowFocus() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1004h");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+
+  Expect(WorkspaceShellTestAccess::HandleWindowFocusEvent(shell, false),
+         "window focus loss should be handled");
+  Expect(WorkspaceShellTestAccess::HandleWindowFocusEvent(shell, true),
+         "window focus gain should be handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O\x1b[I",
+         "terminal focus mode should emit focus notifications when the IDE window focus changes");
 }
 
 void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
@@ -309,6 +350,10 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalTabsReflectOscTitles);
   AddTest(tests, "WorkspaceShell/TerminalOsc52CopiesToClipboard",
           TestWorkspaceShellTerminalOsc52CopiesToClipboard);
+  AddTest(tests, "WorkspaceShell/TerminalFocusModeTracksPanelFocus",
+          TestWorkspaceShellTerminalFocusModeTracksPanelFocus);
+  AddTest(tests, "WorkspaceShell/TerminalFocusModeTracksWindowFocus",
+          TestWorkspaceShellTerminalFocusModeTracksWindowFocus);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",

@@ -84,8 +84,10 @@ class TerminalSession {
   bool using_alternate_screen() const;
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
+  bool WantsFocusEvents() const;
   std::optional<std::string> ConsumePendingClipboardText();
   void PasteText(std::string_view text);
+  void SendFocusEvent(bool focused);
   bool SendMouseButton(MouseButton button,
                        bool pressed,
                        std::size_t row,
@@ -187,6 +189,7 @@ class TerminalSession {
   bool origin_mode_ = false;
   bool auto_wrap_mode_ = true;
   bool bracketed_paste_mode_ = false;
+  bool focus_event_mode_ = false;
   bool cursor_visible_ = true;
   std::optional<std::string> pending_clipboard_text_;
   std::size_t rows_ = 24;

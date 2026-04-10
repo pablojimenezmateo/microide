@@ -136,6 +136,34 @@ const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() cons
   return terminal_tabs_[active_terminal_tab_index_].get();
 }
 
+std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {
+  if (!window_has_input_focus_ || CurrentTextInputSurface() != TextInputSurface::Terminal ||
+      active_terminal_tab_index_ >= terminal_tabs_.size() ||
+      terminal_tabs_[active_terminal_tab_index_] == nullptr) {
+    return std::nullopt;
+  }
+  return active_terminal_tab_index_;
+}
+
+void WorkspaceShell::SyncTerminalFocusState() {
+  const std::optional<std::size_t> focused_index = FocusedTerminalTabIndex();
+  for (std::size_t index = 0; index < terminal_tabs_.size(); ++index) {
+    auto* terminal_tab = terminal_tabs_[index].get();
+    if (terminal_tab == nullptr) {
+      continue;
+    }
+
+    const bool should_focus = focused_index.has_value() && *focused_index == index &&
+                              terminal_tab->session.WantsFocusEvents();
+    if (terminal_tab->focus_events_active == should_focus) {
+      continue;
+    }
+
+    terminal_tab->session.SendFocusEvent(should_focus);
+    terminal_tab->focus_events_active = should_focus;
+  }
+}
+
 bool WorkspaceShell::MoveActiveTerminalTabTo(std::size_t index) {
   if (active_terminal_tab_index_ >= terminal_tabs_.size() || index >= terminal_tabs_.size()) {
     return false;
@@ -197,6 +225,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     }
   }
   ReapExitedTerminalTabs();
+  SyncTerminalFocusState();
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {

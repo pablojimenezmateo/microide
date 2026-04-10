@@ -265,6 +265,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     origin_mode_ = false;
     auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
+    focus_event_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
@@ -347,6 +348,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     origin_mode_ = false;
     auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
+    focus_event_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
@@ -410,6 +412,7 @@ void TerminalSession::Stop() {
     origin_mode_ = false;
     auto_wrap_mode_ = true;
     bracketed_paste_mode_ = false;
+    focus_event_mode_ = false;
     cursor_visible_ = true;
     primary_screen_ = ScreenState{};
     alternate_screen_ = ScreenState{};
@@ -446,6 +449,7 @@ void TerminalSession::Stop() {
   origin_mode_ = false;
   auto_wrap_mode_ = true;
   bracketed_paste_mode_ = false;
+  focus_event_mode_ = false;
   cursor_visible_ = true;
   primary_screen_ = ScreenState{};
   alternate_screen_ = ScreenState{};
@@ -649,11 +653,24 @@ bool TerminalSession::WantsMouseMotionCapture(bool buttons_down) const {
   }
 }
 
+bool TerminalSession::WantsFocusEvents() const {
+  std::scoped_lock lock(mutex_);
+  return focus_event_mode_;
+}
+
 std::optional<std::string> TerminalSession::ConsumePendingClipboardText() {
   std::scoped_lock lock(mutex_);
   std::optional<std::string> pending = std::move(pending_clipboard_text_);
   pending_clipboard_text_.reset();
   return pending;
+}
+
+void TerminalSession::SendFocusEvent(bool focused) {
+  std::scoped_lock lock(mutex_);
+  if (!focus_event_mode_) {
+    return;
+  }
+  SendBytesLocked(focused ? "\x1b[I" : "\x1b[O");
 }
 
 bool TerminalSession::SendMouseButton(MouseButton button,
@@ -1236,6 +1253,9 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       return;
     case 2004:
       bracketed_paste_mode_ = enabled;
+      return;
+    case 1004:
+      focus_event_mode_ = enabled;
       return;
     case 25:
       cursor_visible_ = enabled;

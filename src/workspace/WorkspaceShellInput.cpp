@@ -6,7 +6,23 @@
 
 namespace microide::workspace {
 
+namespace {
+
+struct ScopeExit {
+  std::function<void()> on_exit;
+
+  ~ScopeExit() {
+    if (on_exit) {
+      on_exit();
+    }
+  }
+};
+
+}  // namespace
+
 bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
+  const ScopeExit sync_terminal_focus{[this]() { SyncTerminalFocusState(); }};
+
   if (project_open_dialog_event_type_ != 0 && event.type == project_open_dialog_event_type_) {
     ConsumePendingProjectOpenDialogResult();
     return true;
@@ -38,6 +54,12 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       return HandleTextEditing(event.edit);
     case SDL_EVENT_TEXT_INPUT:
       return HandleTextInput(event.text);
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+      window_has_input_focus_ = true;
+      return true;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+      window_has_input_focus_ = false;
+      return true;
     case SDL_EVENT_KEY_DOWN:
       break;
     default:
@@ -85,7 +107,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     }
   }
 
-  const SDL_Keymod modifiers = SDL_GetModState();
+  const SDL_Keymod modifiers =
+      event.key.mod != SDL_KMOD_NONE ? event.key.mod : SDL_GetModState();
   if (tree_context_menu_.open) {
     switch (event.key.key) {
       case SDLK_ESCAPE:

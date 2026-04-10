@@ -459,6 +459,7 @@ class WorkspaceShell {
     terminal::TerminalSession session;
     int scroll_row = 0;
     bool follow_tail = true;
+    bool focus_events_active = false;
     bool mouse_selecting = false;
     std::optional<TerminalSelectionPosition> selection_anchor;
     std::optional<TerminalSelectionPosition> selection_head;
@@ -1062,6 +1063,8 @@ class WorkspaceShell {
   bool CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const;
   TerminalTabState* ActiveTerminalTab();
   const TerminalTabState* ActiveTerminalTab() const;
+  std::optional<std::size_t> FocusedTerminalTabIndex() const;
+  void SyncTerminalFocusState();
   bool MoveActiveTerminalTabTo(std::size_t index);
   void CloseTerminalTab(std::size_t index);
   void ConsumeTerminalSessionUpdates();
@@ -1156,6 +1159,7 @@ class WorkspaceShell {
   FocusTarget focus_ = FocusTarget::Sidebar;
   float sidebar_width_ = 288.0f;
   float bottom_panel_height_ = 184.0f;
+  bool window_has_input_focus_ = true;
   int sidebar_scroll_row_ = 0;
   int overlay_scroll_row_ = 0;
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs_;

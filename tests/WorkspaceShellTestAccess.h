@@ -240,6 +240,11 @@ struct WorkspaceShellTestAccess {
     event.key.mod = modifiers;
     return shell.HandleEvent(event);
   }
+  static bool HandleWindowFocusEvent(WorkspaceShell& shell, bool focused) {
+    SDL_Event event{};
+    event.type = focused ? SDL_EVENT_WINDOW_FOCUS_GAINED : SDL_EVENT_WINDOW_FOCUS_LOST;
+    return shell.HandleEvent(event);
+  }
   static bool HandleMouseButtonDown(WorkspaceShell& shell, float x, float y, Uint8 button) {
     SDL_Event event{};
     event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
