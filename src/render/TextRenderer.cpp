@@ -78,20 +78,25 @@ TextRenderer::TextRenderer()
 
 TextRenderer::~TextRenderer() = default;
 
-void TextRenderer::EnsureInitialized(SDL_Renderer* renderer) {
-  if (attempted_optional_backend_) {
-    return;
-  }
-  util::StartupTrace::Scope trace_scope("TextRenderer::EnsureInitialized");
-  attempted_optional_backend_ = true;
+void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
+                                     float presentation_scale_x,
+                                     float presentation_scale_y) {
+  if (!attempted_optional_backend_) {
+    util::StartupTrace::Scope trace_scope("TextRenderer::EnsureInitialized");
+    attempted_optional_backend_ = true;
 
 #if MICROIDE_HAS_SDL3_TTF
-  if (auto backend = SdlTtfTextBackend::Create(renderer); backend != nullptr) {
-    backend_ = std::move(backend);
-  }
+    if (auto backend = SdlTtfTextBackend::Create(renderer); backend != nullptr) {
+      backend_ = std::move(backend);
+    }
 #else
-  (void) renderer;
+    (void) renderer;
 #endif
+  }
+
+  if (backend_ != nullptr) {
+    backend_->SetPresentationScale(presentation_scale_x, presentation_scale_y);
+  }
 }
 
 float TextRenderer::CharWidth() const {

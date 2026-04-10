@@ -15,7 +15,9 @@ class TextRenderer {
   TextRenderer();
   ~TextRenderer();
 
-  void EnsureInitialized(SDL_Renderer* renderer);
+  void EnsureInitialized(SDL_Renderer* renderer,
+                         float presentation_scale_x = 1.0f,
+                         float presentation_scale_y = 1.0f);
   float CharWidth() const;
   float LineHeight() const;
   float MeasureWidth(std::string_view text) const;

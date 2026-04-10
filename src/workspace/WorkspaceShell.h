@@ -54,6 +54,7 @@ class WorkspaceShell {
   void RequestQuit();
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
+  void SetPresentationScale(float scale_x, float scale_y);
   void SetWindowChromeState(int width, int height, bool maximized, bool custom_enabled);
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
@@ -1219,6 +1220,8 @@ class WorkspaceShell {
   std::optional<SDL_Color> project_base_color_;
   EditorPreferences editor_preferences_;
   float ui_scale_ = 1.0f;
+  float presentation_scale_x_ = 1.0f;
+  float presentation_scale_y_ = 1.0f;
   bool custom_window_chrome_enabled_ = false;
   bool window_maximized_ = false;
   WindowAction pending_window_action_ = WindowAction::None;

@@ -89,6 +89,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
   src/util/StartupTrace.cpp
+  src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
   src/workspace/WorkspaceShellChrome.cpp
@@ -159,6 +160,7 @@ add_executable(microide_tests
   tests/TestMain.cpp
   tests/TestSupport.cpp
   tests/TextViewportTests.cpp
+  tests/WindowPresentationTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellProjectTests.cpp
   tests/WorkspaceShellSearchTests.cpp

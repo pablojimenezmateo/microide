@@ -18,6 +18,7 @@ namespace {
 
 constexpr float kFontPointSize = 13.0f;
 constexpr std::size_t kMaxCacheEntries = 512;
+constexpr float kMinPresentationScale = 0.1f;
 
 std::filesystem::path BasePath() {
   const char* raw_base_path = SDL_GetBasePath();
@@ -72,14 +73,50 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   }
   TTF_SetFontHinting(font_, TTF_HINTING_LIGHT_SUBPIXEL);
 
-  line_height_ = static_cast<float>(TTF_GetFontHeight(font_));
+  RefreshMetrics();
+  return true;
+}
+
+void SdlTtfTextBackend::SetPresentationScale(float scale_x, float scale_y) {
+  const float resolved_scale_x =
+      std::isfinite(scale_x) && scale_x > 0.0f ? scale_x : 1.0f;
+  const float resolved_scale_y =
+      std::isfinite(scale_y) && scale_y > 0.0f ? scale_y : 1.0f;
+  if (font_ == nullptr ||
+      (std::fabs(presentation_scale_x_ - resolved_scale_x) < 0.001f &&
+       std::fabs(presentation_scale_y_ - resolved_scale_y) < 0.001f)) {
+    return;
+  }
+
+  const int hdpi = std::max(1, static_cast<int>(std::lround(
+                                  72.0f * std::max(kMinPresentationScale, resolved_scale_x))));
+  const int vdpi = std::max(1, static_cast<int>(std::lround(
+                                  72.0f * std::max(kMinPresentationScale, resolved_scale_y))));
+  if (!TTF_SetFontSizeDPI(font_, kFontPointSize, hdpi, vdpi)) {
+    return;
+  }
+
+  presentation_scale_x_ = resolved_scale_x;
+  presentation_scale_y_ = resolved_scale_y;
+  ClearCache();
+  RefreshMetrics();
+}
+
+void SdlTtfTextBackend::RefreshMetrics() {
+  if (font_ == nullptr) {
+    return;
+  }
+
+  line_height_ =
+      static_cast<float>(TTF_GetFontHeight(font_)) / std::max(kMinPresentationScale, presentation_scale_y_);
   static constexpr std::string_view kAdvanceProbe = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
   int probe_width = 0;
   int probe_height = 0;
   if (TTF_GetStringSize(font_, kAdvanceProbe.data(), kAdvanceProbe.size(), &probe_width,
                         &probe_height)) {
     char_width_ = static_cast<float>(probe_width) /
-                  static_cast<float>(kAdvanceProbe.size());
+                  static_cast<float>(kAdvanceProbe.size()) /
+                  std::max(kMinPresentationScale, presentation_scale_x_);
   }
 
   if (char_width_ <= 0.0f) {
@@ -88,7 +125,6 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   if (line_height_ <= 0.0f) {
     line_height_ = 14.0f;
   }
-  return true;
 }
 
 float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
@@ -99,7 +135,7 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
   int width = 0;
   int height = 0;
   if (TTF_GetStringSize(font_, text.data(), text.size(), &width, &height)) {
-    return static_cast<float>(width);
+    return static_cast<float>(width) / std::max(kMinPresentationScale, presentation_scale_x_);
   }
 
   return static_cast<float>(text.size()) * char_width_;
@@ -122,8 +158,8 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
   const SDL_FRect destination = SDL_FRect{
       std::round(x),
       std::round(y),
-      static_cast<float>(entry->width),
-      static_cast<float>(entry->height),
+      static_cast<float>(entry->width) / std::max(kMinPresentationScale, presentation_scale_x_),
+      static_cast<float>(entry->height) / std::max(kMinPresentationScale, presentation_scale_y_),
   };
   SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
 }
@@ -146,8 +182,8 @@ void SdlTtfTextBackend::DrawStringOn(SDL_Renderer* renderer,
   const SDL_FRect destination = SDL_FRect{
       std::round(x),
       std::round(y),
-      static_cast<float>(entry->width),
-      static_cast<float>(entry->height),
+      static_cast<float>(entry->width) / std::max(kMinPresentationScale, presentation_scale_x_),
+      static_cast<float>(entry->height) / std::max(kMinPresentationScale, presentation_scale_y_),
   };
   SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
 }

@@ -293,7 +293,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
-  text_renderer_.EnsureInitialized(renderer);
+  text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   last_window_width_ = width;
   last_window_height_ = height;
   sidebar_width_ = ClampSidebarWidth(sidebar_width_, static_cast<float>(width));
@@ -316,6 +316,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   float mouse_x = 0.0f;
   float mouse_y = 0.0f;
   SDL_GetMouseState(&mouse_x, &mouse_y);
+  SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
   UpdateMouseCursor(mouse_x, mouse_y);
   const std::vector<terminal::TerminalLine> terminal_lines =
       ActiveTerminalTab() != nullptr
@@ -589,14 +590,26 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       return;
     }
 
+    float window_x0 = visual->area.x;
+    float window_y0 = visual->area.y;
+    float window_x1 = visual->area.x + visual->area.w;
+    float window_y1 = visual->area.y + visual->area.h;
+    float cursor_window_x = visual->cursor_x;
+    float cursor_window_y = visual->area.y;
+    SDL_RenderCoordinatesToWindow(renderer, visual->area.x, visual->area.y, &window_x0, &window_y0);
+    SDL_RenderCoordinatesToWindow(renderer, visual->area.x + visual->area.w,
+                                  visual->area.y + visual->area.h, &window_x1, &window_y1);
+    SDL_RenderCoordinatesToWindow(renderer, visual->cursor_x, visual->area.y, &cursor_window_x,
+                                  &cursor_window_y);
+
     const SDL_Rect area = SDL_Rect{
-        static_cast<int>(std::floor(visual->area.x)),
-        static_cast<int>(std::floor(visual->area.y)),
-        std::max(1, static_cast<int>(std::ceil(visual->area.w))),
-        std::max(1, static_cast<int>(std::ceil(visual->area.h))),
+        static_cast<int>(std::floor(std::min(window_x0, window_x1))),
+        static_cast<int>(std::floor(std::min(window_y0, window_y1))),
+        std::max(1, static_cast<int>(std::ceil(std::fabs(window_x1 - window_x0)))),
+        std::max(1, static_cast<int>(std::ceil(std::fabs(window_y1 - window_y0)))),
     };
-    const int cursor =
-        std::max(0, static_cast<int>(std::round(visual->cursor_x - visual->area.x)));
+    const int cursor = std::max(
+        0, static_cast<int>(std::round(cursor_window_x - static_cast<float>(area.x))));
     SDL_SetTextInputArea(render_window, &area, cursor);
   };
 

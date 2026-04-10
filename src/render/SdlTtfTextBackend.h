@@ -20,6 +20,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   ~SdlTtfTextBackend() override;
 
   const char* Name() const override { return "sdl3_ttf"; }
+  void SetPresentationScale(float scale_x, float scale_y) override;
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   float MeasureWidth(std::string_view text) const override;
@@ -45,6 +46,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   SdlTtfTextBackend() = default;
 
   bool Initialize(SDL_Renderer* renderer);
+  void RefreshMetrics();
   void ClearCache();
   static std::filesystem::path LocateFontFile();
   CacheEntry* ResolveEntry(std::string_view text,
@@ -58,6 +60,8 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   TTF_Font* font_ = nullptr;
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
+  float presentation_scale_x_ = 1.0f;
+  float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
   std::unordered_map<std::string, CacheEntry> cache_;
   std::deque<std::string> cache_order_;

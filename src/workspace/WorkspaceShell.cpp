@@ -709,6 +709,13 @@ bool WorkspaceShell::ConsumeQuitRequested() {
   return requested;
 }
 
+void WorkspaceShell::SetPresentationScale(float scale_x, float scale_y) {
+  presentation_scale_x_ =
+      std::isfinite(scale_x) && scale_x > 0.0f ? scale_x : 1.0f;
+  presentation_scale_y_ =
+      std::isfinite(scale_y) && scale_y > 0.0f ? scale_y : 1.0f;
+}
+
 void WorkspaceShell::SetWindowChromeState(int width,
                                           int height,
                                           bool maximized,

@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "util/StartupTrace.h"
+#include "util/WindowPresentation.h"
 
 namespace microide::app {
 
@@ -176,6 +177,7 @@ bool Application::HandleEvent(const SDL_Event& event) {
       return true;
     case SDL_EVENT_WINDOW_EXPOSED:
     case SDL_EVENT_WINDOW_RESIZED:
+    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       UpdateRendererPresentation();
       return true;
@@ -222,34 +224,37 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     return false;
   }
 
-  int window_width = 0;
-  int window_height = 0;
-  if (!SDL_GetWindowSize(window_, &window_width, &window_height)) {
-    SDL_Log("SDL_GetWindowSize failed: %s", SDL_GetError());
+  int pixel_width = 0;
+  int pixel_height = 0;
+  if (!SDL_GetRenderOutputSize(renderer_, &pixel_width, &pixel_height)) {
+    SDL_Log("SDL_GetRenderOutputSize failed: %s", SDL_GetError());
+    return false;
+  }
+  if (pixel_width <= 0 || pixel_height <= 0) {
     return false;
   }
 
-  const float ui_scale = std::max(0.1f, workspace_shell_.UiScale());
-  const int resolved_width =
-      std::max(1, static_cast<int>(std::lround(static_cast<float>(window_width) / ui_scale)));
-  const int resolved_height =
-      std::max(1, static_cast<int>(std::lround(static_cast<float>(window_height) / ui_scale)));
+  const util::WindowPresentation presentation = util::ComputeWindowPresentation(
+      pixel_width, pixel_height, SDL_GetWindowDisplayScale(window_), workspace_shell_.UiScale());
   const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
-  workspace_shell_.SetWindowChromeState(resolved_width, resolved_height,
+  workspace_shell_.SetPresentationScale(presentation.presentation_scale_x,
+                                        presentation.presentation_scale_y);
+  workspace_shell_.SetWindowChromeState(presentation.logical_width, presentation.logical_height,
                                         (flags & SDL_WINDOW_MAXIMIZED) != 0,
                                         custom_window_chrome_enabled_);
 
-  if (!SDL_SetRenderLogicalPresentation(renderer_, resolved_width, resolved_height,
+  if (!SDL_SetRenderLogicalPresentation(renderer_, presentation.logical_width,
+                                        presentation.logical_height,
                                         SDL_LOGICAL_PRESENTATION_STRETCH)) {
     SDL_Log("SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
     return false;
   }
 
   if (logical_width != nullptr) {
-    *logical_width = resolved_width;
+    *logical_width = presentation.logical_width;
   }
   if (logical_height != nullptr) {
-    *logical_height = resolved_height;
+    *logical_height = presentation.logical_height;
   }
   return true;
 }
