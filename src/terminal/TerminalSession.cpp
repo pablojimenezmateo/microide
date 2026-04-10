@@ -123,6 +123,27 @@ int MouseModifierBits(SDL_Keymod modifiers) {
   return bits;
 }
 
+std::string SanitizeOscTitle(std::string_view text) {
+  std::string sanitized;
+  sanitized.reserve(std::min<std::size_t>(text.size(), 256));
+  for (unsigned char character : text) {
+    if ((character < 0x20 && character != ' ') || character == 0x7f) {
+      continue;
+    }
+    sanitized.push_back(static_cast<char>(character));
+    if (sanitized.size() >= 256) {
+      break;
+    }
+  }
+
+  const std::size_t first = sanitized.find_first_not_of(' ');
+  if (first == std::string::npos) {
+    return {};
+  }
+  const std::size_t last = sanitized.find_last_not_of(' ');
+  return sanitized.substr(first, last - first + 1);
+}
+
 }  // namespace
 
 TerminalSession::~TerminalSession() {
@@ -141,7 +162,8 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   {
     std::scoped_lock lock(mutex_);
     working_directory_ = working_directory;
-    launch_label_ = command.empty() ? "terminal unavailable" : std::string(command);
+    default_launch_label_ = command.empty() ? "terminal unavailable" : std::string(command);
+    launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
     running_ = false;
     stop_requested_ = false;
@@ -219,7 +241,8 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   {
     std::scoped_lock lock(mutex_);
     working_directory_ = working_directory;
-    launch_label_ = command_string.empty() ? shell_name : command_string;
+    default_launch_label_ = command_string.empty() ? shell_name : command_string;
+    launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
     current_style_ = TerminalStyle{};
     escape_sequence_buffer_.clear();
@@ -287,6 +310,8 @@ void TerminalSession::Stop() {
     stop_requested_ = false;
     current_style_ = TerminalStyle{};
     escape_sequence_buffer_.clear();
+    default_launch_label_.clear();
+    launch_label_.clear();
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
     use_alternate_screen_ = false;
@@ -320,6 +345,8 @@ void TerminalSession::Stop() {
   stop_requested_ = false;
   current_style_ = TerminalStyle{};
   escape_sequence_buffer_.clear();
+  default_launch_label_.clear();
+  launch_label_.clear();
   escape_mode_ = EscapeMode::None;
   osc_escape_pending_ = false;
   use_alternate_screen_ = false;
@@ -687,6 +714,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     if (escape_mode_ == EscapeMode::Osc) {
       if (osc_escape_pending_) {
         if (byte == '\\') {
+          HandleOscSequenceLocked(escape_sequence_buffer_);
           escape_sequence_buffer_.clear();
           escape_mode_ = EscapeMode::None;
           osc_escape_pending_ = false;
@@ -695,6 +723,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         osc_escape_pending_ = false;
       }
       if (byte == '\a') {
+        HandleOscSequenceLocked(escape_sequence_buffer_);
         escape_sequence_buffer_.clear();
         escape_mode_ = EscapeMode::None;
         continue;
@@ -703,6 +732,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         osc_escape_pending_ = true;
         continue;
       }
+      escape_sequence_buffer_.push_back(static_cast<char>(byte));
       continue;
     }
 
@@ -1038,6 +1068,26 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     default:
       return;
   }
+}
+
+void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
+  if (sequence.empty() || sequence.front() != ']') {
+    return;
+  }
+
+  const std::string_view body = sequence.substr(1);
+  const std::size_t separator = body.find(';');
+  if (separator == std::string_view::npos) {
+    return;
+  }
+
+  const std::string_view command = body.substr(0, separator);
+  if (command != "0" && command != "1" && command != "2") {
+    return;
+  }
+
+  const std::string title = SanitizeOscTitle(body.substr(separator + 1));
+  launch_label_ = title.empty() ? default_launch_label_ : title;
 }
 
 void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {

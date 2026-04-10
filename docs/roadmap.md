@@ -5,7 +5,7 @@ This document is forward-looking.
 
 ## Reviewed Code Anchors
 
-This roadmap was rechecked against the current codebase on 2026-04-09 with emphasis on:
+This roadmap was rechecked against the current codebase on 2026-04-10 with emphasis on:
 
 - `src/project/ProjectSearchService.cpp`
 - `src/project/FileIndex.cpp`
@@ -54,6 +54,7 @@ The terminal is already useful, but it is still only a partial emulator.
 Current state:
 
 - PTY tabs, scrollback, keyboard input, selection/copy, and alternate-screen handling exist
+- terminal tabs now honor common OSC `0`, `1`, and `2` title updates emitted by shells and terminal apps
 - cursor-key input now switches between normal CSI and application SS3 sequences when terminal apps request DECCKM
 - origin mode now rebases cursor addressing to the active scroll region when terminal apps request DECOM
 - autowrap mode control and explicit `CSI S` / `CSI T` scrolling now work for alternate-screen apps
@@ -160,7 +161,7 @@ The highest-value remaining performance work is:
 
 - glyph-atlas style text rendering work
 - dirty-rect and caret-only invalidation
-- replace the current UI zoom path, which stretches a reduced logical framebuffer and blurs text, with a proper HiDPI scaling model that keeps layout and font rendering sharp at non-100% scales
+- validate the new HiDPI scaling path on mixed-scale and multi-monitor setups without regressing sharp text, input-coordinate alignment, or IME placement
 - preserve typing and scrolling latency as blame shadow text expands by keeping blame collection
   asynchronous, debounced on uncached viewport changes, and disabled for dirty or large buffers
 - startup and idle redraw profiling driven by `docs/startup-tracing.md`

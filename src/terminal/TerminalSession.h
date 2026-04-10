@@ -124,6 +124,7 @@ class TerminalSession {
   void ReaderMain(int master_fd, int child_pid);
   void AppendOutputLocked(std::string_view data);
   void HandleEscapeSequenceLocked(std::string_view sequence);
+  void HandleOscSequenceLocked(std::string_view sequence);
   void HandlePrivateModeLocked(int mode, bool enabled);
   void SendBytesLocked(std::string_view bytes);
   MouseTrackingMode CurrentMouseTrackingModeLocked() const;
@@ -165,6 +166,7 @@ class TerminalSession {
   ScreenState primary_screen_;
   ScreenState alternate_screen_;
   std::filesystem::path working_directory_;
+  std::string default_launch_label_;
   std::string launch_label_;
   TerminalStyle current_style_;
   std::string escape_sequence_buffer_;

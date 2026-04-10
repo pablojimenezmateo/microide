@@ -241,6 +241,39 @@ void TestTerminalSessionIgnoresCharsetDesignationEscapes() {
                  "charset designation escapes should not leak trailing selector bytes");
 }
 
+void TestTerminalSessionOscTitleBellUpdatesLaunchLabel() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]2;repo shell\x07");
+
+  Expect(session.LaunchLabel() == "repo shell",
+         "OSC title sequences terminated by BEL should update the terminal label");
+}
+
+void TestTerminalSessionOscTitleStUpdatesLaunchLabel() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;git status\x1b\\");
+
+  Expect(session.LaunchLabel() == "git status",
+         "OSC title sequences terminated by ST should update the terminal label");
+}
+
+void TestTerminalSessionEmptyOscTitleRestoresLaunchLabel() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]2;temporary\x07\x1b]2;\x07");
+
+  Expect(session.LaunchLabel() == "bash",
+         "empty OSC titles should restore the default launch label");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -278,6 +311,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDisableOriginModeRestoresAbsoluteCup);
   AddTest(tests, "TerminalSession/IgnoresCharsetDesignationEscapes",
           TestTerminalSessionIgnoresCharsetDesignationEscapes);
+  AddTest(tests, "TerminalSession/OscTitleBellUpdatesLaunchLabel",
+          TestTerminalSessionOscTitleBellUpdatesLaunchLabel);
+  AddTest(tests, "TerminalSession/OscTitleStUpdatesLaunchLabel",
+          TestTerminalSessionOscTitleStUpdatesLaunchLabel);
+  AddTest(tests, "TerminalSession/EmptyOscTitleRestoresLaunchLabel",
+          TestTerminalSessionEmptyOscTitleRestoresLaunchLabel);
 }
 
 }  // namespace microide::tests

@@ -3,7 +3,7 @@
 This file tracks the verified current state of the SDL rewrite.
 It is not a design document.
 
-Revalidated on 2026-04-09 by reading the current `src/*` and `tests/*` implementation together
+Revalidated on 2026-04-10 by reading the current `src/*` and `tests/*` implementation together
 with the remaining docs in this directory.
 
 ## Status Rules
@@ -61,6 +61,7 @@ These are done and should not be treated as open migration work:
 ### Terminal
 
 - `[~]` the terminal is useful for embedded shell work, including alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse-index scrolling, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste, basic device/cursor query replies, and charset-designation escape handling for common full-screen apps, but it is still not a full terminal emulator
+- `[x]` terminal tabs now honor common OSC `0`, `1`, and `2` title updates emitted by shells and full-screen terminal apps
 - `[ ]` broaden real-world terminal validation and fill the remaining ANSI or control-sequence gaps that matter in practice
 - `[x]` terminal-tab context menus now support copying the last command plus its rendered output, and they fall back to copying only the invoked command while full-screen apps own the alternate screen
 
@@ -91,6 +92,7 @@ These are done and should not be treated as open migration work:
 
 ### Rendering And Performance
 
+- `[x]` proper HiDPI scaling now derives logical presentation from display scale and render pixels, keeps IME areas and mouse hover coordinates aligned, and rerasterizes text sharply at non-100% UI scales
 - `[ ]` glyph-atlas style text rendering backend
 - `[ ]` dirty-rect invalidation
 - `[ ]` caret-only invalidation without wider redraw

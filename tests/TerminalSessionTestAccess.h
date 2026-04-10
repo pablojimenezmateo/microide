@@ -18,6 +18,7 @@ struct TerminalSessionTestAccess {
     session.primary_screen_ = microide::terminal::TerminalSession::ScreenState{};
     session.alternate_screen_ = microide::terminal::TerminalSession::ScreenState{};
     session.working_directory_.clear();
+    session.default_launch_label_.clear();
     session.launch_label_.clear();
     session.current_style_ = microide::terminal::TerminalStyle{};
     session.escape_sequence_buffer_.clear();
@@ -57,7 +58,8 @@ struct TerminalSessionTestAccess {
 
   static void SetLaunchLabel(microide::terminal::TerminalSession& session, std::string_view label) {
     std::scoped_lock lock(session.mutex_);
-    session.launch_label_ = std::string(label);
+    session.default_launch_label_ = std::string(label);
+    session.launch_label_ = session.default_launch_label_;
   }
 
   static std::string SentBytes(const microide::terminal::TerminalSession& session) {

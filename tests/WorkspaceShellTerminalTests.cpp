@@ -75,6 +75,20 @@ void TestWorkspaceShellArrowKeysHonorApplicationCursorMode() {
          "workspace terminal navigation should switch to SS3 sequences in application cursor mode");
 }
 
+void TestWorkspaceShellTerminalTabsReflectOscTitles() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]2;server logs\x07");
+
+  Expect(WorkspaceShellTestAccess::TerminalLaunchLabels(shell) ==
+             std::vector<std::string>{"server logs"},
+         "workspace terminal tabs should reflect OSC title updates from the terminal");
+}
+
 void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -271,6 +285,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCtrlVStillSendsControlV);
   AddTest(tests, "WorkspaceShell/TerminalArrowKeysHonorApplicationCursorMode",
           TestWorkspaceShellArrowKeysHonorApplicationCursorMode);
+  AddTest(tests, "WorkspaceShell/TerminalTabsReflectOscTitles",
+          TestWorkspaceShellTerminalTabsReflectOscTitles);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",
