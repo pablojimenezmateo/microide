@@ -159,33 +159,97 @@ struct ParsedGitConflictOutput {
   std::vector<compare::MergeChoice> conflict_choices;
 };
 
-std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::MergeModel& model,
-                                                              std::string_view text) {
-  std::vector<const compare::MergeHunk*> conflict_hunks;
-  conflict_hunks.reserve(model.hunks.size());
-  for (const auto& hunk : model.hunks) {
-    if (hunk.conflict) {
-      conflict_hunks.push_back(&hunk);
-    }
+struct ParsedGitConflictSegment {
+  bool conflict = false;
+  std::vector<std::string> plain_lines;
+  ParsedGitConflictBlock block;
+};
+
+std::size_t CommonPrefixLength(std::span<const std::string> lhs, std::span<const std::string> rhs) {
+  std::size_t prefix = 0;
+  while (prefix < lhs.size() && prefix < rhs.size() && lhs[prefix] == rhs[prefix]) {
+    ++prefix;
   }
-  if (conflict_hunks.empty()) {
+  return prefix;
+}
+
+compare::MergeChoice InferMergeChoiceFromLines(const compare::MergeHunk& hunk,
+                                               std::span<const std::string> lines) {
+  const std::vector<std::string> both_lines = compare::MergeChoiceLines(hunk, compare::MergeChoice::Both);
+  if (std::equal(lines.begin(), lines.end(), hunk.base_lines.begin(), hunk.base_lines.end())) {
+    return compare::MergeChoice::Base;
+  }
+  if (std::equal(lines.begin(), lines.end(), hunk.incoming_lines.begin(), hunk.incoming_lines.end())) {
+    return compare::MergeChoice::Incoming;
+  }
+  if (std::equal(lines.begin(), lines.end(), hunk.current_lines.begin(), hunk.current_lines.end())) {
+    return compare::MergeChoice::Current;
+  }
+  if (std::equal(lines.begin(), lines.end(), both_lines.begin(), both_lines.end())) {
+    return compare::MergeChoice::Both;
+  }
+
+  const std::size_t base_prefix = CommonPrefixLength(lines, hunk.base_lines);
+  const std::size_t incoming_prefix = CommonPrefixLength(lines, hunk.incoming_lines);
+  const std::size_t current_prefix = CommonPrefixLength(lines, hunk.current_lines);
+  const std::size_t both_prefix = CommonPrefixLength(lines, both_lines);
+  const std::size_t best_prefix = std::max({base_prefix, incoming_prefix, current_prefix, both_prefix});
+  if (best_prefix == 0) {
+    return hunk.choice;
+  }
+  if (current_prefix == best_prefix) {
+    return compare::MergeChoice::Current;
+  }
+  if (incoming_prefix == best_prefix) {
+    return compare::MergeChoice::Incoming;
+  }
+  if (both_prefix == best_prefix) {
+    return compare::MergeChoice::Both;
+  }
+  return compare::MergeChoice::Base;
+}
+
+std::optional<std::size_t> FindSequence(std::span<const std::string> haystack,
+                                        std::size_t start,
+                                        std::span<const std::string> needle) {
+  if (needle.empty()) {
+    return start;
+  }
+  if (haystack.size() < needle.size() || start > haystack.size() - needle.size()) {
     return std::nullopt;
   }
+  for (std::size_t i = start; i + needle.size() <= haystack.size(); ++i) {
+    if (std::equal(needle.begin(), needle.end(), haystack.begin() + static_cast<std::ptrdiff_t>(i))) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
 
-  ParsedGitConflictOutput parsed;
+std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::MergeModel& model,
+                                                              std::string_view text) {
+  bool saw_conflict_block = false;
+
   const std::vector<std::string> lines = SplitSyntaxLines(text);
+  ParsedGitConflictOutput parsed;
+  std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
-  std::size_t conflict_index = 0;
   while (line_index < lines.size()) {
     if (!LineStartsWith(lines[line_index], "<<<<<<<")) {
-      parsed.result_lines.push_back(lines[line_index]);
+      ParsedGitConflictSegment segment;
+      segment.plain_lines.push_back(lines[line_index]);
       ++line_index;
+      while (line_index < lines.size() && !LineStartsWith(lines[line_index], "<<<<<<<")) {
+        segment.plain_lines.push_back(lines[line_index]);
+        ++line_index;
+      }
+      segments.push_back(std::move(segment));
       continue;
     }
+    saw_conflict_block = true;
 
-    if (conflict_index >= conflict_hunks.size()) {
-      return std::nullopt;
-    }
+    ParsedGitConflictSegment segment;
+    segment.conflict = true;
 
     ParsedGitConflictBlock block;
     ++line_index;
@@ -215,17 +279,51 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
     }
     ++line_index;
 
-    const SelectedGitConflictBlock selected =
-        SelectGitConflictBlock(*conflict_hunks[conflict_index], block);
-    parsed.result_lines.insert(parsed.result_lines.end(), selected.lines.begin(), selected.lines.end());
-    parsed.conflict_lines.push_back(selected.lines);
-    parsed.conflict_choices.push_back(selected.choice);
-    ++conflict_index;
+    segment.block = std::move(block);
+    segments.push_back(std::move(segment));
   }
 
-  if (conflict_index != conflict_hunks.size()) {
+  if (!saw_conflict_block) {
     return std::nullopt;
   }
+
+  std::vector<const compare::MergeHunk*> conflict_hunks;
+  conflict_hunks.reserve(model.hunks.size());
+  for (const auto& hunk : model.hunks) {
+    if (hunk.conflict) {
+      conflict_hunks.push_back(&hunk);
+    }
+  }
+
+  const std::size_t conflict_segment_count = std::count_if(
+      segments.begin(), segments.end(), [](const auto& segment) { return segment.conflict; });
+  if (conflict_segment_count == conflict_hunks.size()) {
+    std::size_t conflict_segment_index = 0;
+    for (const auto& segment : segments) {
+      if (!segment.conflict) {
+        parsed.result_lines.insert(parsed.result_lines.end(), segment.plain_lines.begin(),
+                                   segment.plain_lines.end());
+        continue;
+      }
+      const SelectedGitConflictBlock selected =
+          SelectGitConflictBlock(*conflict_hunks[conflict_segment_index], segment.block);
+      parsed.result_lines.insert(parsed.result_lines.end(), selected.lines.begin(), selected.lines.end());
+      parsed.conflict_lines.push_back(selected.lines);
+      parsed.conflict_choices.push_back(selected.choice);
+      ++conflict_segment_index;
+    }
+  } else {
+    for (const auto& segment : segments) {
+      if (!segment.conflict) {
+        parsed.result_lines.insert(parsed.result_lines.end(), segment.plain_lines.begin(),
+                                   segment.plain_lines.end());
+        continue;
+      }
+      parsed.result_lines.insert(parsed.result_lines.end(), segment.block.current_lines.begin(),
+                                 segment.block.current_lines.end());
+    }
+  }
+
   if (parsed.result_lines.empty()) {
     parsed.result_lines.push_back("");
   }
@@ -282,7 +380,8 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
   std::size_t result_line = 0;
   int base_cursor = 0;
   std::size_t conflict_index = 0;
-  for (auto& hunk : model.hunks) {
+  for (std::size_t hunk_index = 0; hunk_index < model.hunks.size(); ++hunk_index) {
+    auto& hunk = model.hunks[hunk_index];
     const std::size_t unchanged_lines =
         static_cast<std::size_t>(std::max(0, hunk.base_start - base_cursor));
     incoming_line += unchanged_lines;
@@ -290,6 +389,19 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
     result_line += unchanged_lines;
 
     if (hunk.conflict) {
+      const std::size_t next_base_start =
+          hunk_index + 1 < model.hunks.size()
+              ? static_cast<std::size_t>(std::max(0, model.hunks[hunk_index + 1].base_start))
+              : model.base_lines.size();
+      const std::size_t post_context_start =
+          static_cast<std::size_t>(std::max(0, hunk.base_end));
+      const std::span<const std::string> post_context =
+          post_context_start <= model.base_lines.size() && post_context_start <= next_base_start
+              ? std::span<const std::string>(
+                    model.base_lines.data() + static_cast<std::ptrdiff_t>(post_context_start),
+                    next_base_start - post_context_start)
+              : std::span<const std::string>{};
+
       std::vector<std::string> committed_lines;
       bool valid = false;
       if (conflict_index < conflict_line_hints.size() && conflict_index < choice_hints.size()) {
@@ -303,10 +415,30 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           if (!MatchesLineSegment(result_lines, result_line, candidate_lines)) {
             continue;
           }
+          if (!post_context.empty()) {
+            const std::vector<std::string> post_context_lines(post_context.begin(), post_context.end());
+            const bool immediate_context_matches =
+                MatchesLineSegment(result_lines, result_line + candidate_lines.size(), post_context_lines);
+            const bool later_context_exists =
+                FindSequence(result_lines, result_line + candidate_lines.size(), post_context).has_value();
+            if (!immediate_context_matches && later_context_exists) {
+              continue;
+            }
+          }
           hunk.choice = choice;
           committed_lines = candidate_lines;
           valid = true;
           break;
+        }
+        if (!valid) {
+          if (const auto next_context = FindSequence(result_lines, result_line, post_context);
+              next_context.has_value() && *next_context >= result_line) {
+            committed_lines = std::vector<std::string>(
+                result_lines.begin() + static_cast<std::ptrdiff_t>(result_line),
+                result_lines.begin() + static_cast<std::ptrdiff_t>(*next_context));
+            hunk.choice = InferMergeChoiceFromLines(hunk, committed_lines);
+            valid = true;
+          }
         }
       }
 

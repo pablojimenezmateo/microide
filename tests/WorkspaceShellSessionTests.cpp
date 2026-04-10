@@ -498,6 +498,69 @@ void TestWorkspaceShellMergeEditorUsesWorkingTreeConflictMarkers() {
          "working-tree conflict markers should size the tracked conflict span to the edited block");
 }
 
+void TestWorkspaceShellMergeEditorParsesLargeWorkingTreeConflictBlock() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base,
+            "section 1\nvalue: base 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: base 2\ncontext: unchanged2\n");
+  WriteFile(incoming,
+            "section 1\nvalue: feature 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: feature 2\ncontext: unchanged2\n");
+  WriteFile(current,
+            "section 1\nvalue: main 1\ncontext: unchanged1\n\n"
+            "section 2\nvalue: main 2\ncontext: unchanged2\n");
+  WriteFile(output,
+            "section 1\n"
+            "<<<<<<< HEAD\n"
+            "value: main 1\n"
+            "this is multiline by design\n"
+            "context: unchanged1\n"
+            "\n"
+            "section 2\n"
+            "value: main 2\n"
+            "context: unchanged2\n"
+            "=======\n"
+            "value: feature 1\n"
+            "context: unchanged1\n"
+            "\n"
+            "section 2\n"
+            "value: feature 2\n"
+            "context: unchanged2\n"
+            ">>>>>>> feature-branch\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for large conflict-block fixture");
+
+  const auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!merge.result_viewport.dirty(),
+         "large working-tree conflict blocks should open clean");
+  Expect(merge.result_viewport.lines()[1] == "value: main 1",
+         "large working-tree conflict blocks should preserve current-side content");
+  Expect(merge.result_viewport.lines()[2] == "this is multiline by design",
+         "large working-tree conflict blocks should preserve extra current-side lines");
+  Expect(merge.result_viewport.lines()[6] == "value: main 2",
+         "large working-tree conflict blocks should continue with later current-side conflicts");
+  Expect(merge.result_viewport.lines()[7] == "context: unchanged2",
+         "large working-tree conflict blocks should keep later context lines in place");
+  Expect(merge.conflicts.size() == 2,
+         "large working-tree conflict blocks should still map back to individual merge conflicts");
+  Expect(merge.conflicts[0].valid,
+         "large working-tree conflict blocks should keep the first conflict actionable");
+  Expect(merge.conflicts[0].start_line == 1 && merge.conflicts[0].end_line == 3,
+         "large working-tree conflict blocks should expand the first conflict span around inserted lines");
+  Expect(merge.conflicts[1].valid,
+         "large working-tree conflict blocks should keep later conflicts actionable");
+  Expect(merge.conflicts[1].last_choice == MergeChoice::Current,
+         "later conflicts in a large block should infer the current-side choice");
+}
+
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -705,6 +768,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReopenMergeEditorRefreshesCleanTabFromOutput);
   AddTest(tests, "WorkspaceShell/MergeEditorUsesWorkingTreeConflictMarkers",
           TestWorkspaceShellMergeEditorUsesWorkingTreeConflictMarkers);
+  AddTest(tests, "WorkspaceShell/MergeEditorParsesLargeWorkingTreeConflictBlock",
+          TestWorkspaceShellMergeEditorParsesLargeWorkingTreeConflictBlock);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",
