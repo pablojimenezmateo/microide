@@ -30,23 +30,23 @@ void WorkspaceShell::ShowSidebarMode(SidebarMode mode, bool temporary) {
     CloseTreeContextMenu();
   }
 
-  if (sidebar_mode_ == SidebarMode::Search && mode != SidebarMode::Search) {
+  if (surface_.sidebar_mode == SidebarMode::Search && mode != SidebarMode::Search) {
     StopProjectSearch();
   }
 
   if (temporary) {
-    if (!sidebar_temporary_ && sidebar_visible_) {
-      sidebar_prev_mode_ = sidebar_mode_;
+    if (!surface_.sidebar_temporary && surface_.sidebar_visible) {
+      surface_.sidebar_prev_mode = surface_.sidebar_mode;
     }
   } else {
-    sidebar_prev_mode_ = SidebarMode::None;
+    surface_.sidebar_prev_mode = SidebarMode::None;
   }
 
-  sidebar_mode_ = mode;
-  sidebar_temporary_ = temporary;
-  sidebar_visible_ = true;
-  focus_ = FocusTarget::Sidebar;
-  sidebar_scroll_row_ = 0;
+  surface_.sidebar_mode = mode;
+  surface_.sidebar_temporary = temporary;
+  surface_.sidebar_visible = true;
+  surface_.focus = FocusTarget::Sidebar;
+  surface_.sidebar_scroll_row = 0;
 }
 
 void WorkspaceShell::ShowTreeSidebar(const std::filesystem::path& root) {
@@ -78,54 +78,54 @@ void WorkspaceShell::ShowGitSidebar() {
 }
 
 void WorkspaceShell::CloseSidebar() {
-  if (sidebar_mode_ == SidebarMode::Search) {
+  if (surface_.sidebar_mode == SidebarMode::Search) {
     StopProjectSearch();
   }
   CloseTreeContextMenu();
 
-  if (sidebar_temporary_ && sidebar_prev_mode_ != SidebarMode::None) {
+  if (surface_.sidebar_temporary && surface_.sidebar_prev_mode != SidebarMode::None) {
     RestorePreviousSidebar();
     return;
   }
 
-  sidebar_visible_ = false;
-  sidebar_temporary_ = false;
-  sidebar_prev_mode_ = SidebarMode::None;
-  if (focus_ == FocusTarget::Sidebar) {
-    focus_ = FocusTarget::Editor;
+  surface_.sidebar_visible = false;
+  surface_.sidebar_temporary = false;
+  surface_.sidebar_prev_mode = SidebarMode::None;
+  if (surface_.focus == FocusTarget::Sidebar) {
+    surface_.focus = FocusTarget::Editor;
   }
 }
 
 void WorkspaceShell::ToggleSidebar() {
-  if (sidebar_visible_) {
+  if (surface_.sidebar_visible) {
     CloseSidebar();
     return;
   }
 
-  if (sidebar_mode_ == SidebarMode::None) {
-    sidebar_mode_ = SidebarMode::Tree;
+  if (surface_.sidebar_mode == SidebarMode::None) {
+    surface_.sidebar_mode = SidebarMode::Tree;
   }
-  sidebar_visible_ = true;
-  sidebar_temporary_ = false;
-  focus_ = FocusTarget::Sidebar;
+  surface_.sidebar_visible = true;
+  surface_.sidebar_temporary = false;
+  surface_.focus = FocusTarget::Sidebar;
 }
 
 void WorkspaceShell::RestorePreviousSidebar() {
-  if (sidebar_mode_ == SidebarMode::Search && sidebar_prev_mode_ != SidebarMode::Search) {
+  if (surface_.sidebar_mode == SidebarMode::Search && surface_.sidebar_prev_mode != SidebarMode::Search) {
     StopProjectSearch();
   }
 
-  if (sidebar_prev_mode_ == SidebarMode::None) {
-    sidebar_temporary_ = false;
+  if (surface_.sidebar_prev_mode == SidebarMode::None) {
+    surface_.sidebar_temporary = false;
     return;
   }
 
-  sidebar_mode_ = sidebar_prev_mode_;
-  sidebar_prev_mode_ = SidebarMode::None;
-  sidebar_temporary_ = false;
-  sidebar_visible_ = true;
-  focus_ = FocusTarget::Sidebar;
-  sidebar_scroll_row_ = 0;
+  surface_.sidebar_mode = surface_.sidebar_prev_mode;
+  surface_.sidebar_prev_mode = SidebarMode::None;
+  surface_.sidebar_temporary = false;
+  surface_.sidebar_visible = true;
+  surface_.focus = FocusTarget::Sidebar;
+  surface_.sidebar_scroll_row = 0;
 }
 
 void WorkspaceShell::RefreshProjectFiles() {
@@ -262,7 +262,7 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 }
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
-  switch (sidebar_mode_) {
+  switch (surface_.sidebar_mode) {
     case SidebarMode::Search:
       return "Search";
     case SidebarMode::Git:
@@ -349,7 +349,7 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   if (layout.sidebar.h <= 0.0f) {
     return;
   }
@@ -357,13 +357,13 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
   const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
   const int max_scroll = std::max(
       0, static_cast<int>(std::ceil(static_cast<float>(BuildGitSidebarLines().size()) - visible_units)));
-  int scroll_row = std::clamp(sidebar_scroll_row_, 0, max_scroll);
+  int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
   if (*selected_line < static_cast<std::size_t>(scroll_row)) {
     scroll_row = static_cast<int>(*selected_line);
   } else if (*selected_line >= static_cast<std::size_t>(scroll_row + visible_rows)) {
     scroll_row = static_cast<int>(*selected_line) - visible_rows + 1;
   }
-  sidebar_scroll_row_ = std::clamp(scroll_row, 0, max_scroll);
+  surface_.sidebar_scroll_row = std::clamp(scroll_row, 0, max_scroll);
 }
 
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {

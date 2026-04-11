@@ -108,7 +108,7 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   terminal_tabs_.push_back(std::move(terminal_tab));
   active_terminal_tab_index_ = terminal_tabs_.size() - 1;
   if (focus_terminal) {
-    focus_ = FocusTarget::Panel;
+    surface_.focus = FocusTarget::Panel;
   }
 }
 
@@ -127,7 +127,7 @@ const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() cons
 }
 
 std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {
-  if (!window_has_input_focus_ || CurrentTextInputSurface() != TextInputSurface::Terminal ||
+  if (!surface_.window_has_input_focus || CurrentTextInputSurface() != TextInputSurface::Terminal ||
       active_terminal_tab_index_ >= terminal_tabs_.size() ||
       terminal_tabs_[active_terminal_tab_index_] == nullptr) {
     return std::nullopt;
@@ -168,7 +168,7 @@ bool WorkspaceShell::MoveActiveTerminalTabTo(std::size_t index) {
   terminal_tabs_.insert(terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(index),
                         std::move(moved_tab));
   active_terminal_tab_index_ = index;
-  focus_ = FocusTarget::Panel;
+  surface_.focus = FocusTarget::Panel;
   return true;
 }
 
@@ -181,8 +181,8 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
   if (terminal_tabs_.empty()) {
     active_terminal_tab_index_ = 0;
     ClearTerminalSelection();
-    if (focus_ == FocusTarget::Panel && !command_mode_) {
-      focus_ = FocusTarget::Editor;
+    if (surface_.focus == FocusTarget::Panel && !surface_.command_mode) {
+      surface_.focus = FocusTarget::Editor;
     }
     return;
   }
@@ -219,11 +219,11 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {
-  return command_mode_ || !terminal_tabs_.empty();
+  return surface_.command_mode || !terminal_tabs_.empty();
 }
 
 int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
-  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight(), command_mode_);
+  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight(), surface_.command_mode);
 }
 
 int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_rows) const {
@@ -383,8 +383,8 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
-  const SDL_FRect panel_content = BottomPanelContentRect(layout, command_mode_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const SDL_FRect panel_content = BottomPanelContentRect(layout, surface_.command_mode);
   const float text_x = panel_content.x + 12.0f;
   const float text_y = panel_content.y + 8.0f;
   const float line_height = text_renderer_.LineHeight();
@@ -430,8 +430,8 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
-  const SDL_FRect panel_content = BottomPanelContentRect(layout, command_mode_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const SDL_FRect panel_content = BottomPanelContentRect(layout, surface_.command_mode);
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;
   }

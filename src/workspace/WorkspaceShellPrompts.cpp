@@ -14,14 +14,14 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
   }
 
   dirty_prompt_visible_ = true;
-  dirty_prompt_previous_focus_ = focus_;
+  dirty_prompt_previous_focus_ = surface_.focus;
   dirty_prompt_state_.kind = DirtyPromptState::Kind::CloseTab;
   dirty_prompt_state_.tab_index = index;
   dirty_prompt_state_.dirty_tabs = {index};
   dirty_prompt_state_.dirty_count = 1;
   dirty_prompt_state_.path.clear();
   dirty_prompt_state_.selected_action = 0;
-  focus_ = FocusTarget::Overlay;
+  surface_.focus = FocusTarget::Overlay;
 }
 
 void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
@@ -36,14 +36,14 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
   }
 
   dirty_prompt_visible_ = true;
-  dirty_prompt_previous_focus_ = focus_;
+  dirty_prompt_previous_focus_ = surface_.focus;
   dirty_prompt_state_.kind = DirtyPromptState::Kind::CloseProject;
   dirty_prompt_state_.project_index = index;
   dirty_prompt_state_.dirty_tabs = dirty_tabs;
   dirty_prompt_state_.dirty_count = dirty_tabs.size();
   dirty_prompt_state_.path.clear();
   dirty_prompt_state_.selected_action = 0;
-  focus_ = FocusTarget::Overlay;
+  surface_.focus = FocusTarget::Overlay;
 }
 
 void WorkspaceShell::ShowDirtyPromptForQuit() {
@@ -56,7 +56,7 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
   }
 
   dirty_prompt_visible_ = true;
-  dirty_prompt_previous_focus_ = focus_;
+  dirty_prompt_previous_focus_ = surface_.focus;
   dirty_prompt_state_.kind = DirtyPromptState::Kind::Quit;
   dirty_prompt_state_.tab_index = active_tab_index_;
   dirty_prompt_state_.project_index = active_project_index_;
@@ -64,14 +64,14 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
   dirty_prompt_state_.dirty_count = dirty_count;
   dirty_prompt_state_.path.clear();
   dirty_prompt_state_.selected_action = 0;
-  focus_ = FocusTarget::Overlay;
+  surface_.focus = FocusTarget::Overlay;
 }
 
 void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
   dirty_prompt_visible_ = false;
   dirty_prompt_state_ = DirtyPromptState{};
   if (restore_focus) {
-    focus_ = dirty_prompt_previous_focus_;
+    surface_.focus = dirty_prompt_previous_focus_;
   }
 }
 
@@ -238,20 +238,20 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
                                        const std::filesystem::path& path,
                                        std::string input) {
   prompt_surface_visible_ = true;
-  prompt_surface_previous_focus_ = focus_;
+  prompt_surface_previous_focus_ = surface_.focus;
   prompt_surface_state_.kind = kind;
   prompt_surface_state_.action = action;
   prompt_surface_state_.path = path.lexically_normal();
   prompt_surface_state_.input = std::move(input);
   prompt_surface_state_.selected_button = 0;
-  focus_ = FocusTarget::Overlay;
+  surface_.focus = FocusTarget::Overlay;
 }
 
 void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
   prompt_surface_visible_ = false;
   prompt_surface_state_ = PromptSurfaceState{};
   if (restore_focus) {
-    focus_ = prompt_surface_previous_focus_;
+    surface_.focus = prompt_surface_previous_focus_;
   }
 }
 
@@ -311,8 +311,8 @@ std::filesystem::path WorkspaceShell::TreeMutationBasePath(ActionSource source) 
   if (project_root_.empty()) {
     return {};
   }
-  if (source == ActionSource::ContextMenu && tree_context_menu_.open &&
-      tree_context_menu_.target == TreeContextTargetKind::Background) {
+  if (source == ActionSource::ContextMenu && surface_.tree_context_menu.open &&
+      surface_.tree_context_menu.target == TreeContextTargetKind::Background) {
     return project_root_;
   }
 
@@ -506,13 +506,13 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
 
   if (resolution == DirtyPathResolution::RequirePrompt) {
     dirty_prompt_visible_ = true;
-    dirty_prompt_previous_focus_ = focus_;
+    dirty_prompt_previous_focus_ = surface_.focus;
     dirty_prompt_state_.kind = prompt_kind;
     dirty_prompt_state_.dirty_tabs = DirtyTabIndicesForPath(path);
     dirty_prompt_state_.dirty_count = dirty_targets.size();
     dirty_prompt_state_.path = path.lexically_normal();
     dirty_prompt_state_.selected_action = 0;
-    focus_ = FocusTarget::Overlay;
+    surface_.focus = FocusTarget::Overlay;
     return false;
   }
 
@@ -802,8 +802,8 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
 
   if (!compare_picker_path_.empty() && PathEqualsOrWithin(compare_picker_path_, old_path)) {
     compare_picker_path_ = ReplacePathPrefix(compare_picker_path_, old_path, new_path);
-    if (overlay_visible_ && overlay_mode_ == OverlayMode::CommitPicker) {
-      overlay_visible_ = false;
+    if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::CommitPicker) {
+      surface_.overlay_visible = false;
     }
   }
 }
@@ -919,8 +919,8 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
     compare_picker_query_.clear();
     compare_picker_commits_.clear();
     compare_picker_matches_.clear();
-    if (overlay_visible_ && overlay_mode_ == OverlayMode::CommitPicker) {
-      overlay_visible_ = false;
+    if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::CommitPicker) {
+      surface_.overlay_visible = false;
     }
   }
 }
@@ -984,7 +984,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     }
     if (state.action == PromptSurfaceState::Action::CreateDirectory) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
-      focus_ = FocusTarget::Sidebar;
+      surface_.focus = FocusTarget::Sidebar;
       return;
     }
 
@@ -992,7 +992,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
                               resolution != DirtyPathResolution::Discard);
     ClearEditorBlame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
-    focus_ = FocusTarget::Sidebar;
+    surface_.focus = FocusTarget::Sidebar;
     return;
   }
 
@@ -1000,7 +1000,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     const bool discarded = DiscardAllGitSidebarEntries();
     DismissPromptSurface(discarded ? false : true);
     if (discarded) {
-      focus_ = FocusTarget::Sidebar;
+      surface_.focus = FocusTarget::Sidebar;
     }
     return;
   }
@@ -1022,7 +1022,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   CloseOpenTabsForPath(state.path);
   ClearEditorBlame();
   RefreshProjectViewsAfterMutation(parent);
-  focus_ = FocusTarget::Sidebar;
+  surface_.focus = FocusTarget::Sidebar;
 }
 
 }  // namespace microide::workspace

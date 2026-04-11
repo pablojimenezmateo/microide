@@ -324,7 +324,7 @@ std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEdit
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const float copy_width = std::max(84.0f, text_renderer_.MeasureWidth("Copy SHA") + 18.0f);
   const float available_width = std::max(220.0f, layout.editor_surface.w - 16.0f);
   const float max_card_width = std::min(kBlamePopupMaxWidth, available_width);

@@ -55,10 +55,10 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_TEXT_INPUT:
       return HandleTextInput(event.text);
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
-      window_has_input_focus_ = true;
+      surface_.window_has_input_focus = true;
       return true;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
-      window_has_input_focus_ = false;
+      surface_.window_has_input_focus = false;
       return true;
     case SDL_EVENT_KEY_DOWN:
       break;
@@ -109,31 +109,31 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
 
   const SDL_Keymod modifiers =
       event.key.mod != SDL_KMOD_NONE ? event.key.mod : SDL_GetModState();
-  if (tree_context_menu_.open) {
+  if (surface_.tree_context_menu.open) {
     switch (event.key.key) {
       case SDLK_ESCAPE:
         CloseTreeContextMenu();
         return true;
       case SDLK_DOWN:
-        tree_context_menu_.active_item_index =
-            NextEnabledTreeContextMenuItemIndex(tree_context_menu_.active_item_index, 1);
+        surface_.tree_context_menu.active_item_index =
+            NextEnabledTreeContextMenuItemIndex(surface_.tree_context_menu.active_item_index, 1);
         return true;
       case SDLK_UP:
-        tree_context_menu_.active_item_index =
-            NextEnabledTreeContextMenuItemIndex(tree_context_menu_.active_item_index, -1);
+        surface_.tree_context_menu.active_item_index =
+            NextEnabledTreeContextMenuItemIndex(surface_.tree_context_menu.active_item_index, -1);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        if (tree_context_menu_.active_item_index >= 0) {
+        if (surface_.tree_context_menu.active_item_index >= 0) {
           return ExecuteTreeContextMenuItem(
-              static_cast<std::size_t>(tree_context_menu_.active_item_index));
+              static_cast<std::size_t>(surface_.tree_context_menu.active_item_index));
         }
         return true;
       default:
         return true;
     }
   }
-  if (menu_bar_open_) {
+  if (surface_.menu_bar_open) {
     switch (event.key.key) {
       case SDLK_ESCAPE:
         CloseMenuBar();
@@ -150,9 +150,9 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         return MoveActiveMenuItem(-1);
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        if (active_menu_item_index_ >= 0) {
-          return ExecuteMenuItem(active_menu_id_,
-                                 static_cast<std::size_t>(active_menu_item_index_));
+        if (surface_.active_menu_item_index >= 0) {
+          return ExecuteMenuItem(surface_.active_menu_id,
+                                 static_cast<std::size_t>(surface_.active_menu_item_index));
         }
         return true;
       default:
@@ -206,15 +206,15 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   }
   const bool active_compare_tab = ActiveTabIsCompare();
   const bool active_merge_tab = ActiveTabIsMerge();
-  if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
-      focus_ == FocusTarget::Editor && !active_compare_tab && ActiveEditableViewport() != nullptr &&
+  if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
+      surface_.focus == FocusTarget::Editor && !active_compare_tab && ActiveEditableViewport() != nullptr &&
       event.key.key == SDLK_A) {
     ExecuteAction(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
-  if ((modifiers & SDL_KMOD_CTRL) && !command_mode_ && !overlay_visible_ &&
-      focus_ == FocusTarget::Editor && !active_compare_tab) {
+  if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
+      surface_.focus == FocusTarget::Editor && !active_compare_tab) {
     if (!active_merge_tab && (modifiers & SDL_KMOD_SHIFT) && event.key.key == SDLK_F) {
       ExecuteAction(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
       return true;
@@ -280,17 +280,17 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     return true;
   }
 
-  if (command_mode_) {
+  if (surface_.command_mode) {
     switch (event.key.key) {
       case SDLK_ESCAPE:
-        command_mode_ = false;
+        surface_.command_mode = false;
         command_input_.clear();
         ResetCommandSessionState();
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
         if (command_input_.empty() || ExecuteCommand(command_input_)) {
-          command_mode_ = false;
+          surface_.command_mode = false;
           command_input_.clear();
           ResetCommandSessionState();
         }
@@ -324,44 +324,44 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       return true;
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
-        if (overlay_visible_) {
-          focus_ = FocusTarget::Overlay;
+        if (surface_.overlay_visible) {
+          surface_.focus = FocusTarget::Overlay;
           return true;
         }
         const bool include_panel = BottomPanelVisible();
         if (include_panel) {
-          if (sidebar_visible_) {
+          if (surface_.sidebar_visible) {
             if (modifiers & SDL_KMOD_SHIFT) {
-              focus_ = focus_ == FocusTarget::Sidebar
+              surface_.focus = surface_.focus == FocusTarget::Sidebar
                            ? FocusTarget::Panel
-                           : focus_ == FocusTarget::Panel ? FocusTarget::Editor
+                           : surface_.focus == FocusTarget::Panel ? FocusTarget::Editor
                                                           : FocusTarget::Sidebar;
             } else {
-              focus_ = focus_ == FocusTarget::Sidebar
+              surface_.focus = surface_.focus == FocusTarget::Sidebar
                            ? FocusTarget::Editor
-                           : focus_ == FocusTarget::Editor ? FocusTarget::Panel
+                           : surface_.focus == FocusTarget::Editor ? FocusTarget::Panel
                                                            : FocusTarget::Sidebar;
             }
           } else {
-            focus_ = focus_ == FocusTarget::Panel ? FocusTarget::Editor : FocusTarget::Panel;
+            surface_.focus = surface_.focus == FocusTarget::Panel ? FocusTarget::Editor : FocusTarget::Panel;
           }
-        } else if (sidebar_visible_ && !(modifiers & SDL_KMOD_SHIFT)) {
-          focus_ = focus_ == FocusTarget::Sidebar ? FocusTarget::Editor : FocusTarget::Sidebar;
-        } else if (sidebar_visible_) {
-          focus_ = focus_ == FocusTarget::Editor ? FocusTarget::Sidebar : FocusTarget::Editor;
+        } else if (surface_.sidebar_visible && !(modifiers & SDL_KMOD_SHIFT)) {
+          surface_.focus = surface_.focus == FocusTarget::Sidebar ? FocusTarget::Editor : FocusTarget::Sidebar;
+        } else if (surface_.sidebar_visible) {
+          surface_.focus = surface_.focus == FocusTarget::Editor ? FocusTarget::Sidebar : FocusTarget::Editor;
         } else {
-          focus_ = FocusTarget::Editor;
+          surface_.focus = FocusTarget::Editor;
         }
         return true;
       }
       break;
     case SDLK_ESCAPE:
-      if (overlay_visible_) {
+      if (surface_.overlay_visible) {
         DismissOverlay();
         return true;
       }
-      if (focus_ == FocusTarget::Sidebar && sidebar_visible_ &&
-          sidebar_temporary_ && sidebar_mode_ == SidebarMode::Search) {
+      if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible &&
+          surface_.sidebar_temporary && surface_.sidebar_mode == SidebarMode::Search) {
         CloseSidebar();
         return true;
       }
@@ -370,8 +370,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       break;
   }
 
-  if (focus_ == FocusTarget::Overlay) {
-    if (overlay_mode_ == OverlayMode::CommitPicker) {
+  if (surface_.focus == FocusTarget::Overlay) {
+    if (surface_.overlay_mode == OverlayMode::CommitPicker) {
       switch (event.key.key) {
         case SDLK_ESCAPE:
           DismissOverlay();
@@ -391,7 +391,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             if (last_window_width_ > 0 && last_window_height_ > 0) {
               const WorkspaceLayout layout = ComputeLayout(
                   static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                  sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                  surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
               RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
             }
           }
@@ -402,7 +402,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             if (last_window_width_ > 0 && last_window_height_ > 0) {
               const WorkspaceLayout layout = ComputeLayout(
                   static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                  sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                  surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
               RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
             }
           }
@@ -422,7 +422,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           return false;
       }
     }
-    if (overlay_mode_ == OverlayMode::BufferSearch) {
+    if (surface_.overlay_mode == OverlayMode::BufferSearch) {
       switch (event.key.key) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
@@ -449,14 +449,14 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       }
     }
 
-    if (overlay_mode_ == OverlayMode::BufferReplace) {
+    if (surface_.overlay_mode == OverlayMode::BufferReplace) {
       switch (event.key.key) {
         case SDLK_ESCAPE:
-          overlay_visible_ = false;
-          focus_ = FocusTarget::Editor;
+          surface_.overlay_visible = false;
+          surface_.focus = FocusTarget::Editor;
           return true;
         case SDLK_TAB:
-          buffer_search_field_ = buffer_search_field_ == BufferSearchField::Search
+          surface_.buffer_search_field = surface_.buffer_search_field == BufferSearchField::Search
                                      ? BufferSearchField::Replace
                                      : BufferSearchField::Search;
           return true;
@@ -481,7 +481,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveBufferSearchSelection(8);
           return true;
         case SDLK_BACKSPACE:
-          if (buffer_search_field_ == BufferSearchField::Search) {
+          if (surface_.buffer_search_field == BufferSearchField::Search) {
             if (RemoveLastUtf8Codepoint(&buffer_search_query_)) {
               RefreshBufferSearch();
             }
@@ -494,11 +494,11 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       }
     }
 
-    if (overlay_mode_ == OverlayMode::ProjectSearch) {
+    if (surface_.overlay_mode == OverlayMode::ProjectSearch) {
       switch (event.key.key) {
         case SDLK_ESCAPE:
-          overlay_visible_ = false;
-          focus_ = FocusTarget::Editor;
+          surface_.overlay_visible = false;
+          surface_.focus = FocusTarget::Editor;
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
@@ -550,8 +550,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     }
   }
 
-  if (focus_ == FocusTarget::Sidebar && sidebar_visible_) {
-    if (sidebar_mode_ == SidebarMode::Search) {
+  if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible) {
+    if (surface_.sidebar_mode == SidebarMode::Search) {
       const char input_character = KeycodeToAscii(event.key.key, modifiers);
       if (project_search_editing_) {
         switch (event.key.key) {
@@ -572,7 +572,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
 
       switch (event.key.key) {
         case SDLK_ESCAPE:
-          if (sidebar_temporary_) {
+          if (surface_.sidebar_temporary) {
             CloseSidebar();
             return true;
           }
@@ -585,10 +585,10 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             const auto& result = project_search_results_[project_search_selected_index_];
             OpenFile(project_root_ / result.relative_path);
             text_viewport_.MoveCursorTo(result.line, result.column);
-            if (sidebar_temporary_) {
+            if (surface_.sidebar_temporary) {
               RestorePreviousSidebar();
             }
-            focus_ = FocusTarget::Editor;
+            surface_.focus = FocusTarget::Editor;
           }
           return true;
         case SDLK_UP:
@@ -639,7 +639,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       }
     }
 
-    if (sidebar_mode_ == SidebarMode::Git) {
+    if (surface_.sidebar_mode == SidebarMode::Git) {
       switch (event.key.key) {
         case SDLK_UP:
           MoveGitSidebarSelection(-1);
@@ -718,11 +718,11 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     }
   }
 
-  if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
+  if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     return HandleTerminalKeyDown(event.key, modifiers);
   }
 
-  if (focus_ == FocusTarget::Editor && active_compare_tab) {
+  if (surface_.focus == FocusTarget::Editor && active_compare_tab) {
     CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab != nullptr && compare_tab->right_editable && compare_tab->right_view_active) {
       auto& viewport = compare_tab->right_viewport;
@@ -865,7 +865,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     }
   }
 
-  if (focus_ == FocusTarget::Editor && active_merge_tab) {
+  if (surface_.focus == FocusTarget::Editor && active_merge_tab) {
     MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr) {
       return false;
@@ -1085,7 +1085,7 @@ bool WorkspaceShell::CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifier
 }
 
 bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
-  if (menu_bar_open_ || tree_context_menu_.open) {
+  if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
     text_composition_ = TextCompositionState{};
     return true;
   }
@@ -1109,7 +1109,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
 }
 
 bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
-  if (menu_bar_open_ || tree_context_menu_.open) {
+  if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
     return true;
   }
   if (event.text == nullptr || event.text[0] == '\0' || dirty_prompt_visible_) {
@@ -1124,7 +1124,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     prompt_surface_state_.input.append(input);
     return true;
   }
-  if (command_mode_) {
+  if (surface_.command_mode) {
     command_input_.append(input);
     command_history_index_.reset();
     command_history_pending_input_.clear();
@@ -1132,8 +1132,8 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
 
-  if (overlay_visible_) {
-    switch (overlay_mode_) {
+  if (surface_.overlay_visible) {
+    switch (surface_.overlay_mode) {
       case OverlayMode::CommitPicker:
         compare_picker_query_.append(input);
         RefreshComparePicker();
@@ -1143,7 +1143,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
         RefreshBufferSearch();
         return true;
       case OverlayMode::BufferReplace:
-        if (buffer_search_field_ == BufferSearchField::Search) {
+        if (surface_.buffer_search_field == BufferSearchField::Search) {
           buffer_search_query_.append(input);
           RefreshBufferSearch();
         } else {
@@ -1162,13 +1162,13 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     }
   }
 
-  if (focus_ == FocusTarget::Sidebar && sidebar_visible_ && sidebar_mode_ == SidebarMode::Search &&
+  if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
       project_search_editing_) {
     project_search_edit_buffer_.append(input);
     return true;
   }
 
-  if (focus_ == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
+  if (surface_.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
     editor::TextViewport* viewport = ActiveEditableViewport();
     if (viewport == nullptr) {
       return false;
@@ -1188,7 +1188,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
 
-  if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
+  if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     ClearTerminalSelection();
     if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
       AppendTerminalPendingInput(input);

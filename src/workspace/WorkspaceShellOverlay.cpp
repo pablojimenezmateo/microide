@@ -18,24 +18,24 @@ constexpr std::size_t kMaxProjectSearchResults = 200;
 }  // namespace
 
 WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
-  return sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+  return surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
 }
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
-  overlay_visible_ = true;
-  overlay_mode_ = mode;
-  focus_ = FocusTarget::Overlay;
+  surface_.overlay_visible = true;
+  surface_.overlay_mode = mode;
+  surface_.focus = FocusTarget::Overlay;
   ResetOverlayScroll();
 }
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
-  overlay_visible_ = false;
-  focus_ = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
+  surface_.overlay_visible = false;
+  surface_.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
 }
 
 void WorkspaceShell::OpenBufferSearch() {
   ShowOverlay(OverlayMode::BufferSearch);
-  buffer_search_field_ = BufferSearchField::Search;
+  surface_.buffer_search_field = BufferSearchField::Search;
   buffer_search_query_.clear();
   buffer_replace_text_.clear();
   buffer_search_matches_.clear();
@@ -44,7 +44,7 @@ void WorkspaceShell::OpenBufferSearch() {
 
 void WorkspaceShell::OpenBufferReplace() {
   ShowOverlay(OverlayMode::BufferReplace);
-  buffer_search_field_ = BufferSearchField::Search;
+  surface_.buffer_search_field = BufferSearchField::Search;
   buffer_search_query_.clear();
   buffer_replace_text_.clear();
   buffer_search_matches_.clear();
@@ -120,21 +120,21 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   if (update.finished) {
     project_search_running_ = false;
   }
-  if (overlay_visible_ && overlay_mode_ == OverlayMode::ProjectSearch &&
+  if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::ProjectSearch &&
       last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
 
 void WorkspaceShell::ResetOverlayScroll() {
-  overlay_scroll_row_ = 0;
+  surface_.overlay_scroll_row = 0;
 }
 
 float WorkspaceShell::OverlayListStartOffset() const {
-  switch (overlay_mode_) {
+  switch (surface_.overlay_mode) {
     case OverlayMode::FileFinder:
       return 74.0f;
     case OverlayMode::BufferReplace:
@@ -154,7 +154,7 @@ int WorkspaceShell::OverlayVisibleRows(const SDL_FRect& overlay) const {
 }
 
 std::size_t WorkspaceShell::OverlayItemCount() const {
-  switch (overlay_mode_) {
+  switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
       return compare_picker_matches_.size();
     case OverlayMode::BufferSearch:
@@ -169,7 +169,7 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
 }
 
 std::size_t WorkspaceShell::OverlaySelectedIndex() const {
-  switch (overlay_mode_) {
+  switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
       return compare_picker_selected_index_;
     case OverlayMode::BufferSearch:
@@ -189,7 +189,7 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
     return;
   }
   const std::size_t clamped_index = std::min(index, item_count - 1);
-  switch (overlay_mode_) {
+  switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
       compare_picker_selected_index_ = clamped_index;
       break;
@@ -216,7 +216,7 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
 void WorkspaceShell::ClampOverlayScrollRow(const SDL_FRect& overlay) {
   const int visible_rows = OverlayVisibleRows(overlay);
   const int max_scroll = std::max(0, static_cast<int>(OverlayItemCount()) - visible_rows);
-  overlay_scroll_row_ = std::clamp(overlay_scroll_row_, 0, max_scroll);
+  surface_.overlay_scroll_row = std::clamp(surface_.overlay_scroll_row, 0, max_scroll);
 }
 
 void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
@@ -228,16 +228,16 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
   const int visible_rows = OverlayVisibleRows(overlay);
   const int max_scroll = std::max(0, static_cast<int>(OverlayItemCount()) - visible_rows);
   const int selected = static_cast<int>(std::min(OverlaySelectedIndex(), OverlayItemCount() - 1));
-  if (selected < overlay_scroll_row_) {
-    overlay_scroll_row_ = selected;
-  } else if (selected >= overlay_scroll_row_ + visible_rows) {
-    overlay_scroll_row_ = selected - visible_rows + 1;
+  if (selected < surface_.overlay_scroll_row) {
+    surface_.overlay_scroll_row = selected;
+  } else if (selected >= surface_.overlay_scroll_row + visible_rows) {
+    surface_.overlay_scroll_row = selected - visible_rows + 1;
   }
-  overlay_scroll_row_ = std::clamp(overlay_scroll_row_, 0, max_scroll);
+  surface_.overlay_scroll_row = std::clamp(surface_.overlay_scroll_row, 0, max_scroll);
 }
 
 bool WorkspaceShell::ActivateOverlaySelection() {
-  switch (overlay_mode_) {
+  switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
       OpenSelectedCompareCommit();
       return true;
@@ -541,10 +541,10 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   const auto& match = buffer_search_matches_[buffer_search_selected_index_];
   text_viewport_.MoveCursorTo(match.start.line, match.start.column);
-  if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
+  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -558,10 +558,10 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   const int max_index = static_cast<int>(project_search_results_.size()) - 1;
   project_search_selected_index_ =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
+  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -596,8 +596,8 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
 }
 
 std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() const {
-  if (!overlay_visible_ || (overlay_mode_ != OverlayMode::BufferSearch &&
-                            overlay_mode_ != OverlayMode::BufferReplace) ||
+  if (!surface_.overlay_visible || (surface_.overlay_mode != OverlayMode::BufferSearch &&
+                            surface_.overlay_mode != OverlayMode::BufferReplace) ||
       buffer_search_matches_.empty() ||
       buffer_search_selected_index_ >= buffer_search_matches_.size()) {
     return std::nullopt;

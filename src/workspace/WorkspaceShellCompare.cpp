@@ -479,7 +479,7 @@ void WorkspaceShell::UpdateMergeMaxVisualColumns(
 }
 
 void WorkspaceShell::OpenComparePicker() {
-  if (!sidebar_visible_ || sidebar_mode_ != SidebarMode::Tree) {
+  if (!surface_.sidebar_visible || surface_.sidebar_mode != SidebarMode::Tree) {
     return;
   }
 
@@ -754,8 +754,8 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
     if (last_window_width_ > 0 && last_window_height_ > 0) {
       const WorkspaceLayout layout =
           ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                        sidebar_visible_, BottomPanelVisible(), sidebar_width_,
-                        bottom_panel_height_);
+                        surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width,
+                        surface_.bottom_panel_height);
       const CompareSurfaceLayout surface_layout =
           ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
       ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
@@ -1053,10 +1053,10 @@ void WorkspaceShell::MoveComparePickerSelection(int delta) {
   const int max_index = static_cast<int>(compare_picker_matches_.size()) - 1;
   compare_picker_selected_index_ =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
+  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -1141,7 +1141,7 @@ bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
     active_tab_index_ = *existing_index;
     RevealActiveMergeSelection();
     EnsureActiveTabVisible();
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
     return true;
   }
   auto merge_tab =
@@ -1155,7 +1155,7 @@ bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
   active_tab_index_ = open_tabs_.size() - 1;
   RevealActiveMergeSelection();
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   return true;
 }
 
@@ -1238,7 +1238,7 @@ void WorkspaceShell::ScrollCompareRows(int delta) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const int max_scroll = CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows);
@@ -1254,7 +1254,7 @@ void WorkspaceShell::ScrollCompareColumns(int delta) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const std::size_t max_scroll =
@@ -1286,7 +1286,7 @@ void WorkspaceShell::ScrollMergeColumns(int delta) {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const MergeSurfaceLayout surface_layout =
       ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
   const std::size_t max_scroll =

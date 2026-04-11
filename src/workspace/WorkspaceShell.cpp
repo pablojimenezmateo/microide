@@ -372,7 +372,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
       return !project_root_.empty() &&
-             (tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind()) ==
+             (surface_.tree_context_menu.open ? surface_.tree_context_menu.target : SelectedTreeTargetKind()) ==
                  TreeContextTargetKind::File;
     case ActionId::CreateDirectory:
     case ActionId::CreateFile: {
@@ -380,7 +380,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
         return false;
       }
       const TreeContextTargetKind target =
-          tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind();
+          surface_.tree_context_menu.open ? surface_.tree_context_menu.target : SelectedTreeTargetKind();
       return target == TreeContextTargetKind::Directory || target == TreeContextTargetKind::Root ||
              target == TreeContextTargetKind::Background;
     }
@@ -390,7 +390,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
         return false;
       }
       const TreeContextTargetKind target =
-          tree_context_menu_.open ? tree_context_menu_.target : SelectedTreeTargetKind();
+          surface_.tree_context_menu.open ? surface_.tree_context_menu.target : SelectedTreeTargetKind();
       return target == TreeContextTargetKind::File || target == TreeContextTargetKind::Directory;
     }
     case ActionId::Compare:
@@ -555,7 +555,7 @@ const WorkspaceShell::MenuSpec* WorkspaceShell::FindMenuSpec(MenuId id) {
 }
 
 const project::TreeEntry* WorkspaceShell::SelectedTreeEntry() const {
-  if (sidebar_mode_ != SidebarMode::Tree) {
+  if (surface_.sidebar_mode != SidebarMode::Tree) {
     return nullptr;
   }
   const auto& entries = directory_tree_.entries();
@@ -692,7 +692,7 @@ void WorkspaceShell::Shutdown() {
 
 void WorkspaceShell::RequestQuit() {
   if (dirty_prompt_visible_) {
-    focus_ = FocusTarget::Overlay;
+    surface_.focus = FocusTarget::Overlay;
     return;
   }
 
@@ -760,13 +760,13 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
     }
   }
 
-  if (menu_bar_open_ || tree_context_menu_.open) {
+  if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
     return SDL_HITTEST_NORMAL;
   }
 
   const WorkspaceLayout layout =
-      ComputeLayout(window_width, window_height, sidebar_visible_, BottomPanelVisible(),
-                    sidebar_width_, bottom_panel_height_);
+      ComputeLayout(window_width, window_height, surface_.sidebar_visible, BottomPanelVisible(),
+                    surface_.sidebar_width, surface_.bottom_panel_height);
   if (!Contains(layout.menu_bar, x, y)) {
     return SDL_HITTEST_NORMAL;
   }
@@ -807,8 +807,8 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  return focus_ == FocusTarget::Editor && !command_mode_ && !dirty_prompt_visible_ &&
-         !overlay_visible_ && !menu_bar_open_ && !tree_context_menu_.open &&
+  return surface_.focus == FocusTarget::Editor && !surface_.command_mode && !dirty_prompt_visible_ &&
+         !surface_.overlay_visible && !surface_.menu_bar_open && !surface_.tree_context_menu.open &&
          ActiveTabIsEditor() && !text_viewport_.is_placeholder();
 }
 
@@ -928,7 +928,7 @@ void WorkspaceShell::RevealActiveCompareSelection() {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
@@ -1136,7 +1136,7 @@ void WorkspaceShell::RevealActiveMergeSelection() {
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const MergeSurfaceLayout surface_layout =
       ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
   ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
@@ -1471,7 +1471,7 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
     active_tab_index_ = *existing_index;
     RevealActiveCompareSelection();
     EnsureActiveTabVisible();
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
     return true;
   }
   const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
@@ -1496,7 +1496,7 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   active_tab_index_ = open_tabs_.size() - 1;
   RevealActiveCompareSelection();
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   return true;
 }
 
@@ -1519,7 +1519,7 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
     active_tab_index_ = *existing_index;
     RevealActiveCompareSelection();
     EnsureActiveTabVisible();
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
     return true;
   }
   const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
@@ -1542,7 +1542,7 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   active_tab_index_ = open_tabs_.size() - 1;
   RevealActiveCompareSelection();
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   return true;
 }
 
@@ -1555,7 +1555,7 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
     active_tab_index_ = *existing_index;
     RevealActiveMergeSelection();
     EnsureActiveTabVisible();
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
     return true;
   }
   const auto base_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":1");
@@ -1602,24 +1602,24 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
     active_tab_index_ = *existing_index;
     RevealActiveMergeSelection();
     EnsureActiveTabVisible();
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
     return true;
   }
   open_tabs_.push_back(std::move(*merge_tab));
   active_tab_index_ = open_tabs_.size() - 1;
   RevealActiveMergeSelection();
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   return true;
 }
 
 void WorkspaceShell::MoveFileFinderSelection(int delta) {
   file_finder_.MoveSelection(delta);
-  if (overlay_visible_ && last_window_width_ > 0 && last_window_height_ > 0) {
+  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(last_window_width_),
-                      static_cast<float>(last_window_height_), sidebar_visible_,
-                      BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                      static_cast<float>(last_window_height_), surface_.sidebar_visible,
+                      BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
     RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
   }
 }
@@ -1645,7 +1645,7 @@ bool WorkspaceShell::OpenUntitledTab() {
   });
   active_tab_index_ = open_tabs_.size() - 1;
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
   return true;
 }
@@ -1690,7 +1690,7 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
   });
   active_tab_index_ = open_tabs_.size() - 1;
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
   return true;
 }
@@ -1712,7 +1712,7 @@ bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
 
   active_tab_index_ = index;
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   return true;
 }
 
@@ -1806,20 +1806,20 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
                : TextInputSurface::None;
   }
 
-  if (menu_bar_open_ || tree_context_menu_.open) {
+  if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
     return TextInputSurface::None;
   }
 
-  if (command_mode_) {
+  if (surface_.command_mode) {
     return TextInputSurface::Command;
   }
 
-  if (overlay_visible_) {
-    switch (overlay_mode_) {
+  if (surface_.overlay_visible) {
+    switch (surface_.overlay_mode) {
       case OverlayMode::BufferSearch:
         return TextInputSurface::BufferSearch;
       case OverlayMode::BufferReplace:
-        return buffer_search_field_ == BufferSearchField::Search
+        return surface_.buffer_search_field == BufferSearchField::Search
                    ? TextInputSurface::BufferReplaceSearch
                    : TextInputSurface::BufferReplaceReplace;
       case OverlayMode::ProjectSearch:
@@ -1832,18 +1832,18 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     }
   }
 
-  if (focus_ == FocusTarget::Sidebar && sidebar_visible_ && sidebar_mode_ == SidebarMode::Search &&
+  if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
       project_search_editing_) {
     return project_search_edit_field_ == ProjectSearchEditField::Query
                ? TextInputSurface::SidebarSearchQuery
                : TextInputSurface::SidebarSearchReplace;
   }
 
-  if (focus_ == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
+  if (surface_.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
     return TextInputSurface::Editor;
   }
 
-  if (focus_ == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
+  if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     return TextInputSurface::Terminal;
   }
 
@@ -1896,7 +1896,7 @@ bool WorkspaceShell::ReopenActiveTab() {
   }
   SyncActiveEditorTabMetadata();
   InvalidateEditorBlamePath(reopen_path);
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
   return true;
 }
@@ -1933,8 +1933,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
             return true;
           case ProjectOpenDialogLaunchResult::Unavailable:
             if (source == ActionSource::Menu) {
-              command_mode_ = true;
-              focus_ = FocusTarget::Panel;
+              surface_.command_mode = true;
+              surface_.focus = FocusTarget::Panel;
               command_input_ = "project-open ";
               ResetCommandSessionState();
               return true;
@@ -1971,7 +1971,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::SidebarToggle: {
       const std::string tool = args.empty() ? std::string{} : args[0];
       if (tool == "git") {
-        if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Git) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Git) {
           CloseSidebar();
         } else {
           ShowGitSidebar();
@@ -1979,7 +1979,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       if (tool == "tree") {
-        if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Tree) {
           CloseSidebar();
         } else {
           const std::filesystem::path root_arg =
@@ -1990,7 +1990,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       if (tool == "search") {
         const std::string query = JoinCommandArguments(args, 1);
-        if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Search && !sidebar_temporary_) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search && !surface_.sidebar_temporary) {
           CloseSidebar();
         } else {
           ShowSearchSidebar(query, false);
@@ -2016,8 +2016,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         ShowSearchSidebar(JoinCommandArguments(args, 1), false);
         return true;
       }
-      sidebar_visible_ = true;
-      focus_ = FocusTarget::Sidebar;
+      surface_.sidebar_visible = true;
+      surface_.focus = FocusTarget::Sidebar;
       return true;
     }
     case ActionId::SidebarHide:
@@ -2030,7 +2030,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       try {
         const float width = std::stof(args[0]);
-        sidebar_width_ =
+        surface_.sidebar_width =
             ClampSidebarWidth(width, static_cast<float>(std::max(1, last_window_width_)));
       } catch (...) {
         return reject_command("sidebar-width requires a numeric width");
@@ -2176,16 +2176,16 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     }
     case ActionId::Focus: {
       const std::string target = args.empty() ? std::string{} : args[0];
-      if (target == "sidebar" && sidebar_visible_) {
-        focus_ = FocusTarget::Sidebar;
+      if (target == "sidebar" && surface_.sidebar_visible) {
+        surface_.focus = FocusTarget::Sidebar;
         return true;
       }
       if (target == "editor") {
-        focus_ = FocusTarget::Editor;
+        surface_.focus = FocusTarget::Editor;
         return true;
       }
-      if (target == "panel" && (command_mode_ || ActiveTerminalTab() != nullptr)) {
-        focus_ = FocusTarget::Panel;
+      if (target == "panel" && (surface_.command_mode || ActiveTerminalTab() != nullptr)) {
+        surface_.focus = FocusTarget::Panel;
         return true;
       }
       return reject_command("Cannot focus target: " + (target.empty() ? std::string("<empty>") : target));
@@ -2210,7 +2210,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       if (!root_arg.empty() && !OpenProjectTab(root_arg, true, true)) {
         return reject_command("Failed to open project: " + root_arg);
       }
-      if (source == ActionSource::Shortcut && overlay_visible_) {
+      if (source == ActionSource::Shortcut && surface_.overlay_visible) {
         DismissOverlay();
         return true;
       }
@@ -2314,7 +2314,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         path = ResolveTreeActionPath(source);
       } else if (!text_viewport_.path().empty()) {
         path = text_viewport_.path().lexically_normal();
-      } else if (sidebar_visible_ && sidebar_mode_ == SidebarMode::Tree) {
+      } else if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Tree) {
         const auto& entries = directory_tree_.entries();
         if (directory_tree_.selected_index() < entries.size() &&
             !entries[directory_tree_.selected_index()].is_directory) {
@@ -2554,7 +2554,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
 
       text_viewport_.MoveCursorTo(line, column > 0 ? column - 1 : 0);
-      focus_ = FocusTarget::Editor;
+      surface_.focus = FocusTarget::Editor;
       return true;
     }
     case ActionId::CloseActiveTab:
@@ -2563,8 +2563,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       return true;
     case ActionId::OpenCommandPrompt:
-      command_mode_ = true;
-      focus_ = FocusTarget::Panel;
+      surface_.command_mode = true;
+      surface_.focus = FocusTarget::Panel;
       command_input_.clear();
       ResetCommandSessionState();
       return true;
@@ -2573,7 +2573,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         viewport->SelectAll();
         ResetCaretBlink();
       }
-      focus_ = FocusTarget::Editor;
+      surface_.focus = FocusTarget::Editor;
       return true;
     case ActionId::Undo:
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
@@ -2808,7 +2808,7 @@ std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) c
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {
-  switch (drag_target_) {
+  switch (surface_.drag_target) {
     case DragTarget::SidebarDivider:
       return CursorKind::EwResize;
     case DragTarget::BottomPanelDivider:
@@ -2817,7 +2817,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const auto* editor_tab = ActiveEditorTab();
       const auto* split_node = editor_tab != nullptr
                                    ? FindEditorSplitNode(editor_tab->split_root.get(),
-                                                         drag_editor_split_path_)
+                                                         surface_.drag_editor_split_path)
                                    : nullptr;
       return split_node != nullptr &&
                      split_node->orientation == EditorSplitOrientation::Horizontal
@@ -2862,14 +2862,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    sidebar_visible_, BottomPanelVisible(), sidebar_width_, bottom_panel_height_);
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
 
-  if (tree_context_menu_.open) {
+  if (surface_.tree_context_menu.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect();
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(TreeContextMenuItems(tree_context_menu_.target),
-                                        tree_context_menu_.active_item_index, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(TreeContextMenuItems(surface_.tree_context_menu.target),
+                                        surface_.tree_context_menu.active_item_index, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
@@ -2878,21 +2878,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
-  if (menu_bar_open_) {
+  if (surface_.menu_bar_open) {
     if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(active_submenu_id_, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(surface_.active_submenu_id, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
       }
       return CursorKind::Default;
     }
-    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, active_menu_id_);
+    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, surface_.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(active_menu_id_, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(surface_.active_menu_id, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
@@ -2916,7 +2916,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (overlay_visible_) {
+  if (surface_.overlay_visible) {
     const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
     if (!Contains(overlay, x, y)) {
       return CursorKind::Default;
@@ -2930,7 +2930,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         MakeRect(overlay.x, overlay_list_y, overlay.w,
                  std::max(0.0f, overlay.y + overlay.h - overlay_list_y - 8.0f)),
         static_cast<float>(OverlayItemCount()), static_cast<float>(overlay_visible_rows),
-        static_cast<float>(std::clamp(overlay_scroll_row_, 0, overlay_max_scroll)));
+        static_cast<float>(std::clamp(surface_.overlay_scroll_row, 0, overlay_max_scroll)));
     if (overlay_scrollbar.has_value() && Contains(overlay_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
@@ -2938,11 +2938,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
 
-    if (overlay_mode_ == OverlayMode::BufferReplace) {
+    if (surface_.overlay_mode == OverlayMode::BufferReplace) {
       return y >= overlay.y + 40.0f && y < overlay.y + 82.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
-    if (overlay_mode_ == OverlayMode::CommitPicker) {
+    if (surface_.overlay_mode == OverlayMode::CommitPicker) {
       return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
@@ -2950,7 +2950,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                                                             : CursorKind::Default;
   }
 
-  if (sidebar_visible_ && Contains(SidebarResizeHandleRect(layout), x, y)) {
+  if (surface_.sidebar_visible && Contains(SidebarResizeHandleRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
   if (BottomPanelVisible() && Contains(BottomPanelResizeHandleRect(layout), x, y)) {
@@ -2985,11 +2985,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (sidebar_visible_ && Contains(layout.sidebar, x, y)) {
+  if (surface_.sidebar_visible && Contains(layout.sidebar, x, y)) {
     if (Contains(SidebarModeControlRect(layout.sidebar), x, y)) {
       return CursorKind::Pointer;
     }
-    if (sidebar_mode_ == SidebarMode::Search) {
+    if (surface_.sidebar_mode == SidebarMode::Search) {
       if (Contains(ProjectSearchQueryRect(layout.sidebar), x, y) ||
           Contains(ProjectSearchReplaceRect(layout.sidebar), x, y)) {
         return CursorKind::Text;
@@ -3009,7 +3009,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
       const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
       const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
-      const int line_index = std::clamp(sidebar_scroll_row_, 0, max_scroll) + clicked_row;
+      const int line_index = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll) + clicked_row;
       if (clicked_row >= 0 && line_index >= 0 && line_index < static_cast<int>(line_map.size()) &&
           line_map[static_cast<std::size_t>(line_index)] >= 0) {
         const SDL_FRect row_rect = MakeRect(
@@ -3020,7 +3020,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
-    if (sidebar_mode_ == SidebarMode::Git) {
+    if (surface_.sidebar_mode == SidebarMode::Git) {
       if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&
           CanStageAllGitSidebarEntries()) {
         return CursorKind::Pointer;
@@ -3041,7 +3041,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
       const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
-      const int line_index = std::clamp(sidebar_scroll_row_, 0, max_scroll) + clicked_row;
+      const int line_index = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll) + clicked_row;
       if (clicked_row < 0 || line_index < 0 || line_index >= static_cast<int>(lines.size())) {
         return CursorKind::Default;
       }
@@ -3091,7 +3091,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
                            (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
     const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
-    const int entry_index = std::clamp(sidebar_scroll_row_, 0, max_scroll) + clicked_row;
+    const int entry_index = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll) + clicked_row;
     if (clicked_row >= 0 && entry_index >= 0 && entry_index < static_cast<int>(entries.size())) {
       const SDL_FRect row_rect = MakeRect(layout.sidebar.x + kSidebarInset,
                                           list_y + static_cast<float>(clicked_row) * kSidebarRowHeight,
@@ -3122,7 +3122,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
       const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
       const auto scrollbar =
-          MakeVerticalScrollbarGeometry(BottomPanelContentRect(layout, command_mode_),
+          MakeVerticalScrollbarGeometry(BottomPanelContentRect(layout, surface_.command_mode),
                                         static_cast<float>(line_count),
                                         static_cast<float>(visible_rows),
                                         static_cast<float>(scroll_row));
@@ -3130,7 +3130,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Default;
       }
     }
-    if (command_mode_ && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
+    if (surface_.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }
     if (ActiveTerminalTab() != nullptr && y >= layout.bottom_panel.y + kBottomPanelHeaderHeight) {

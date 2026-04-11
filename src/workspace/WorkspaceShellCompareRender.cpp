@@ -221,7 +221,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
                                               surface.visible_columns);
   compare_tab->right_viewport.SetHorizontalScroll(compare_tab->horizontal_scroll);
   const bool draw_compare_caret =
-      focus_ == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
+      surface_.focus == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
       !(CurrentTextInputSurface() == TextInputSurface::Editor && !text_composition_.text.empty());
   const std::optional<editor::SelectionRange> right_selection =
       compare_tab->right_editable ? compare_tab->right_viewport.selection_range() : std::nullopt;
@@ -656,10 +656,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
                  theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.center_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 drag_target_ == DragTarget::MergeLeftDivider ? theme_.accent : theme_.border);
+                 surface_.drag_target == DragTarget::MergeLeftDivider ? theme_.accent : theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.right_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 drag_target_ == DragTarget::MergeRightDivider ? theme_.accent : theme_.border);
+                 surface_.drag_target == DragTarget::MergeRightDivider ? theme_.accent : theme_.border);
 
   text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
@@ -727,7 +727,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       BuildEditorBlameOverlay(merge_tab->result_viewport, result_rect, 280.0f);
   visible_editor_blame_overlay_ = merge_blame_overlay;
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport, result_rect,
-                               focus_ == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
+                               surface_.focus == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
                                merge_blame_overlay);
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();

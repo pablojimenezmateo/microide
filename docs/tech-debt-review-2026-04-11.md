@@ -18,6 +18,7 @@ Scope:
 - Extracted shared merge interaction geometry helpers for result viewports, visible conflict spans, and merge action buttons so render, mouse, cursor, and test code no longer maintain separate rect formulas.
 - Centralized standard overlay open/dismiss transitions behind shared `WorkspaceShell` helpers so keyboard and mouse overlay exits now restore focus through one path with direct shell tests.
 - Expanded command-prompt feedback beyond completion-only text so unknown commands, missing active-project preconditions, and invalid command arguments now stay visible instead of failing silently.
+- Grouped the shell’s sidebar, overlay, menu, drag, focus, and surface layout fields under a dedicated `SurfaceState` owner so workspace chrome state is no longer scattered across unrelated private members.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.

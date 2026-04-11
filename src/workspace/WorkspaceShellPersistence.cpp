@@ -185,9 +185,9 @@ bool WorkspaceShell::RestoreSessionState() {
   }
 
   PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = sidebar_visible_;
-  persisted_session.sidebar_width = sidebar_width_;
-  persisted_session.bottom_panel_height = bottom_panel_height_;
+  persisted_session.sidebar_visible = surface_.sidebar_visible;
+  persisted_session.sidebar_width = surface_.sidebar_width;
+  persisted_session.bottom_panel_height = surface_.bottom_panel_height;
   persisted_session.active_tab_index = active_tab_index_;
   if (!ParseProjectSessionText(*text, &persisted_session)) {
     return false;
@@ -195,8 +195,8 @@ bool WorkspaceShell::RestoreSessionState() {
 
   open_tabs_.clear();
   active_tab_index_ = 0;
-  overlay_visible_ = false;
-  command_mode_ = false;
+  surface_.overlay_visible = false;
+  surface_.command_mode = false;
   compare_picker_matches_.clear();
   compare_picker_commits_.clear();
   compare_picker_selected_index_ = 0;
@@ -415,23 +415,23 @@ bool WorkspaceShell::RestoreSessionState() {
     });
   }
 
-  sidebar_visible_ = persisted_session.sidebar_visible;
-  sidebar_width_ = persisted_session.sidebar_width;
-  bottom_panel_height_ = persisted_session.bottom_panel_height;
+  surface_.sidebar_visible = persisted_session.sidebar_visible;
+  surface_.sidebar_width = persisted_session.sidebar_width;
+  surface_.bottom_panel_height = persisted_session.bottom_panel_height;
 
   if (open_tabs_.empty()) {
     text_viewport_.SetPlaceholderText(
         "microide\n\n"
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
-    focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+    surface_.focus = surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
     return true;
   }
 
   const std::size_t active_index =
       std::min(persisted_session.active_tab_index, open_tabs_.size() - 1);
   active_tab_index_ = active_index;
-  focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+  surface_.focus = surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
   return true;
 }
 
@@ -455,9 +455,9 @@ void WorkspaceShell::SaveSessionState() {
   }
 
   PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = sidebar_visible_;
-  persisted_session.sidebar_width = sidebar_width_;
-  persisted_session.bottom_panel_height = bottom_panel_height_;
+  persisted_session.sidebar_visible = surface_.sidebar_visible;
+  persisted_session.sidebar_width = surface_.sidebar_width;
+  persisted_session.bottom_panel_height = surface_.bottom_panel_height;
   persisted_session.active_tab_index = 0;
 
   for (std::size_t tab_index = 0; tab_index < open_tabs_.size(); ++tab_index) {

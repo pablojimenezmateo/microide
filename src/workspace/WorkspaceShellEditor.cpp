@@ -70,7 +70,7 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
     directory_tree_.SelectPath(text_viewport_.path().lexically_normal());
   }
   EnsureActiveTabVisible();
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
 }
 
@@ -483,7 +483,7 @@ void WorkspaceShell::SetActiveEditorSplit(std::size_t index) {
     SyncActiveEditorTabMetadata();
     ResetCaretBlink();
   }
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
 }
 
 bool WorkspaceShell::ActivateOrderedEditorSplit(std::size_t order_index) {
@@ -561,7 +561,7 @@ bool WorkspaceShell::SplitActiveEditor(EditorSplitOrientation orientation) {
   if (auto* new_view = FindEditorView(*editor_tab, new_leaf_id); new_view != nullptr) {
     text_viewport_ = *new_view;
   }
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
   return true;
 }
@@ -581,7 +581,7 @@ bool WorkspaceShell::UnsplitActiveEditor() {
   const editor::TextViewport preserved_view = *active_view;
   *editor_tab = MakeEditorTabState(preserved_view);
   text_viewport_ = preserved_view;
-  focus_ = FocusTarget::Editor;
+  surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
   return true;
 }
@@ -827,7 +827,7 @@ void WorkspaceShell::CloseTab(std::size_t index) {
         "microide\n\n"
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
     return;
   }
 
@@ -859,7 +859,7 @@ void WorkspaceShell::CloseTab(std::size_t index) {
     if (!tab.path.empty()) {
       directory_tree_.SelectPath(tab.path);
     }
-    focus_ = FocusTarget::Editor;
+    surface_.focus = FocusTarget::Editor;
   }
 
   tab_scroll_index_ =
