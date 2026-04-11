@@ -331,8 +331,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
 
     if (!Contains(overlay, event.button.x, event.button.y)) {
-      overlay_visible_ = false;
-      focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+      DismissOverlay();
       return true;
     }
 

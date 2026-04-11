@@ -2193,10 +2193,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       file_index_.Refresh();
       file_finder_.SetIndex(&file_index_);
       file_finder_.SetQuery(JoinCommandArguments(args, 0));
-      overlay_visible_ = true;
-      overlay_mode_ = OverlayMode::FileFinder;
-      focus_ = FocusTarget::Overlay;
-      ResetOverlayScroll();
+      ShowOverlay(OverlayMode::FileFinder);
       return true;
     case ActionId::Files: {
       const std::string root_arg = args.empty() ? std::string{} : args[0];
@@ -2204,20 +2201,16 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       if (source == ActionSource::Shortcut && overlay_visible_) {
-        overlay_visible_ = false;
-        focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+        DismissOverlay();
         return true;
       }
       if (source != ActionSource::Shortcut && require_project()) {
         return true;
       }
-      overlay_visible_ = true;
-      overlay_mode_ = OverlayMode::FileFinder;
+      ShowOverlay(OverlayMode::FileFinder);
       file_index_.Refresh();
       file_finder_.SetIndex(&file_index_);
       file_finder_.SetQuery("");
-      focus_ = FocusTarget::Overlay;
-      ResetOverlayScroll();
       return true;
     }
     case ActionId::Tree: {

@@ -538,10 +538,7 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
     return true;
   }
 
-  overlay_visible_ = true;
-  overlay_mode_ = OverlayMode::CommitPicker;
-  focus_ = FocusTarget::Overlay;
-  ResetOverlayScroll();
+  ShowOverlay(OverlayMode::CommitPicker);
   return true;
 }
 
@@ -1088,8 +1085,7 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
     active_tab_index_ = *existing_index;
     RevealActiveCompareSelection();
     EnsureActiveTabVisible();
-    overlay_visible_ = false;
-    focus_ = FocusTarget::Editor;
+    DismissOverlay(true);
     return;
   }
   auto compare_tab = BuildCompareTabEntry(compare_picker_path_, commit);
@@ -1102,8 +1098,7 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
   active_tab_index_ = open_tabs_.size() - 1;
   RevealActiveCompareSelection();
   EnsureActiveTabVisible();
-  overlay_visible_ = false;
-  focus_ = FocusTarget::Editor;
+  DismissOverlay(true);
 }
 
 bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,

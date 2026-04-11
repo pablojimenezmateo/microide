@@ -17,28 +17,38 @@ constexpr std::size_t kMaxProjectSearchResults = 200;
 
 }  // namespace
 
-void WorkspaceShell::OpenBufferSearch() {
+WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
+  return sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+}
+
+void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   overlay_visible_ = true;
-  overlay_mode_ = OverlayMode::BufferSearch;
-  buffer_search_field_ = BufferSearchField::Search;
+  overlay_mode_ = mode;
   focus_ = FocusTarget::Overlay;
-  buffer_search_query_.clear();
-  buffer_replace_text_.clear();
-  buffer_search_matches_.clear();
-  buffer_search_selected_index_ = 0;
   ResetOverlayScroll();
 }
 
-void WorkspaceShell::OpenBufferReplace() {
-  overlay_visible_ = true;
-  overlay_mode_ = OverlayMode::BufferReplace;
+void WorkspaceShell::DismissOverlay(bool focus_editor) {
+  overlay_visible_ = false;
+  focus_ = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
+}
+
+void WorkspaceShell::OpenBufferSearch() {
+  ShowOverlay(OverlayMode::BufferSearch);
   buffer_search_field_ = BufferSearchField::Search;
-  focus_ = FocusTarget::Overlay;
   buffer_search_query_.clear();
   buffer_replace_text_.clear();
   buffer_search_matches_.clear();
   buffer_search_selected_index_ = 0;
-  ResetOverlayScroll();
+}
+
+void WorkspaceShell::OpenBufferReplace() {
+  ShowOverlay(OverlayMode::BufferReplace);
+  buffer_search_field_ = BufferSearchField::Search;
+  buffer_search_query_.clear();
+  buffer_replace_text_.clear();
+  buffer_search_matches_.clear();
+  buffer_search_selected_index_ = 0;
 }
 
 void WorkspaceShell::OpenProjectSearch() {
@@ -236,8 +246,7 @@ bool WorkspaceShell::ActivateOverlaySelection() {
         const auto& match = buffer_search_matches_[buffer_search_selected_index_];
         text_viewport_.MoveCursorTo(match.start.line, match.start.column);
       }
-      overlay_visible_ = false;
-      focus_ = FocusTarget::Editor;
+      DismissOverlay(true);
       return true;
     case OverlayMode::BufferReplace:
       ReplaceCurrentBufferSearchMatch();
@@ -248,8 +257,7 @@ bool WorkspaceShell::ActivateOverlaySelection() {
         const auto& result = project_search_results_[project_search_selected_index_];
         OpenFile(project_root_ / result.relative_path);
         text_viewport_.MoveCursorTo(result.line, result.column);
-        overlay_visible_ = false;
-        focus_ = FocusTarget::Editor;
+        DismissOverlay(true);
       }
       return true;
     case OverlayMode::FileFinder:
@@ -257,8 +265,7 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       if (const auto selected = file_finder_.SelectedPath(); selected.has_value()) {
         OpenFile(project_root_ / *selected);
       }
-      overlay_visible_ = false;
-      focus_ = FocusTarget::Editor;
+      DismissOverlay(true);
       return true;
   }
 }

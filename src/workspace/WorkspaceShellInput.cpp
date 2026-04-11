@@ -357,8 +357,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       break;
     case SDLK_ESCAPE:
       if (overlay_visible_) {
-        overlay_visible_ = false;
-        focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+        DismissOverlay();
         return true;
       }
       if (focus_ == FocusTarget::Sidebar && sidebar_visible_ &&
@@ -375,8 +374,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     if (overlay_mode_ == OverlayMode::CommitPicker) {
       switch (event.key.key) {
         case SDLK_ESCAPE:
-          overlay_visible_ = false;
-          focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
+          DismissOverlay();
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:

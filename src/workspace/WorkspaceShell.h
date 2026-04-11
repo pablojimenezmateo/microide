@@ -1075,6 +1075,9 @@ class WorkspaceShell {
   void OpenBufferSearch();
   void OpenBufferReplace();
   void OpenProjectSearch();
+  FocusTarget PrimarySurfaceFocusTarget() const;
+  void ShowOverlay(OverlayMode mode);
+  void DismissOverlay(bool focus_editor = false);
   void RefreshBufferSearch();
   void RefreshProjectSearch();
   void StopProjectSearch();

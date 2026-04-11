@@ -175,6 +175,72 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should prefill the typed open-project command");
 }
 
+void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "files shortcut should open the overlay");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "files shortcut should mark the overlay visible");
+  Expect(WorkspaceShellTestAccess::OverlayModeIsFileFinder(shell),
+         "files shortcut should open the file-finder overlay");
+  Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
+         "files shortcut should focus the overlay");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should close the overlay when it is visible");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "Escape should dismiss the visible overlay");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "closing the overlay with a visible sidebar should restore sidebar focus");
+}
+
+void TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "files shortcut should still open the overlay on the welcome surface");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "welcome files shortcut should mark the overlay visible");
+  Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
+         "welcome files shortcut should focus the overlay");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should close the welcome overlay");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "Escape should dismiss the welcome overlay");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "closing the welcome overlay should restore editor focus when no sidebar is visible");
+}
+
+void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "files shortcut should open the overlay before the outside click test");
+  const auto layout = microide::workspace::ComputeLayout(1280.0f, 720.0f, true, false, 288.0f, 184.0f);
+  const float click_x = layout.editor_area.x + 12.0f;
+  const float click_y = layout.editor_area.y + 12.0f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking outside the overlay should be handled");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "outside clicks should dismiss the overlay");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "outside-click overlay dismissal should restore the primary sidebar focus");
+}
+
 void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -756,6 +822,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
+  AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
+          TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
+  AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",
+          TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome);
+  AddTest(tests, "WorkspaceShell/OverlayOutsideClickRestoresPrimaryFocus",
+          TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",

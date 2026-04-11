@@ -232,6 +232,13 @@ struct WorkspaceShellTestAccess {
     return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
                                WorkspaceShell::ActionSource::Command);
   }
+  static void ResetProjectScopedState(WorkspaceShell& shell, bool show_welcome) {
+    shell.ResetProjectScopedState(show_welcome);
+  }
+  static bool ExecuteFilesFromShortcut(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::Files, {},
+                               WorkspaceShell::ActionSource::Shortcut);
+  }
   static void SetClipboardTextReader(
       WorkspaceShell& shell,
       std::function<std::optional<std::string>()> reader) {
@@ -637,6 +644,19 @@ struct WorkspaceShellTestAccess {
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.command_mode_; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_input_; }
+  static bool OverlayVisible(const WorkspaceShell& shell) { return shell.overlay_visible_; }
+  static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
+    return shell.overlay_mode_ == WorkspaceShell::OverlayMode::FileFinder;
+  }
+  static bool FocusIsEditor(const WorkspaceShell& shell) {
+    return shell.focus_ == WorkspaceShell::FocusTarget::Editor;
+  }
+  static bool FocusIsSidebar(const WorkspaceShell& shell) {
+    return shell.focus_ == WorkspaceShell::FocusTarget::Sidebar;
+  }
+  static bool FocusIsOverlay(const WorkspaceShell& shell) {
+    return shell.focus_ == WorkspaceShell::FocusTarget::Overlay;
+  }
   static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.menu_bar_open_; }
   static bool EditMenuOpen(const WorkspaceShell& shell) {
     return shell.menu_bar_open_ && shell.active_menu_id_ == WorkspaceShell::MenuId::Edit;
