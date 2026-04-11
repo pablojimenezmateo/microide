@@ -734,6 +734,18 @@ const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const 
   return &open_tabs_[active_tab_index_].compare.value();
 }
 
+ScrollSurfaceLayout WorkspaceShell::ComputeEditorScrollLayout(
+    const SDL_FRect& rect,
+    const editor::TextViewport& viewport,
+    const editor::EditorViewMetrics& metrics) const {
+  const std::size_t total_columns =
+      std::max<std::size_t>(metrics.visible_columns, MaxVisualColumns(viewport));
+  return ComputeScrollSurfaceLayout(rect, viewport.line_count(),
+                                    static_cast<int>(metrics.visible_rows),
+                                    static_cast<int>(viewport.scroll_line()), total_columns,
+                                    metrics.visible_columns, viewport.horizontal_scroll());
+}
+
 WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(
     const SDL_FRect& rect,
     const CompareTabState& compare_tab) const {
@@ -788,6 +800,15 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
   }
 
   return measure(show_vertical, show_horizontal);
+}
+
+ScrollSurfaceLayout WorkspaceShell::ComputeCompareScrollLayout(
+    const SDL_FRect& rect,
+    const CompareSurfaceLayout& surface,
+    const CompareTabState& compare_tab) const {
+  return ComputeScrollSurfaceLayout(rect, compare_tab.model.rows.size(), surface.visible_rows,
+                                    compare_tab.scroll_row, compare_tab.max_visual_columns,
+                                    surface.visible_columns, compare_tab.horizontal_scroll);
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
@@ -992,6 +1013,18 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
   }
 
   return measure(show_vertical, show_horizontal);
+}
+
+ScrollSurfaceLayout WorkspaceShell::ComputeMergeScrollLayout(
+    const SDL_FRect& rect,
+    const MergeSurfaceLayout& surface,
+    const MergeTabState& merge_tab) const {
+  const std::size_t line_count =
+      std::max({merge_tab.model.incoming_lines.size(), merge_tab.result_viewport.line_count(),
+                merge_tab.model.current_lines.size(), std::size_t{1}});
+  return ComputeScrollSurfaceLayout(rect, line_count, surface.visible_rows, merge_tab.scroll_row,
+                                    merge_tab.max_visual_columns, surface.visible_columns,
+                                    merge_tab.horizontal_scroll);
 }
 
 int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
@@ -2204,14 +2237,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (ActiveTerminalTab() != nullptr) {
       const std::size_t line_count =
           ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
-      const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
-      const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
-      const auto scrollbar =
-          MakeVerticalScrollbarGeometry(BottomPanelContentRect(layout, surface_.command_mode),
-                                        static_cast<float>(line_count),
-                                        static_cast<float>(visible_rows),
-                                        static_cast<float>(scroll_row));
-      if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
+      const auto panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
+      if (panel_layout.scroll.vertical_scrollbar.has_value() &&
+          Contains(panel_layout.scroll.vertical_scrollbar->track, x, y)) {
         return CursorKind::Default;
       }
     }
@@ -2244,26 +2272,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     const CompareSurfaceLayout surface_layout =
         ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-    const int scroll_row = std::clamp(compare_tab->scroll_row, 0,
-                                      CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows));
-    const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
-        layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
-        static_cast<float>(surface_layout.visible_rows), static_cast<float>(scroll_row),
-        surface_layout.show_horizontal);
-    if (vertical_scrollbar.has_value() && Contains(vertical_scrollbar->track, x, y)) {
+    const auto scroll_layout =
+        ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
+    if (scroll_layout.vertical_scrollbar.has_value() &&
+        Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
-    const auto horizontal_scrollbar =
-        surface_layout.show_horizontal
-            ? MakeHorizontalScrollbarGeometry(
-                  layout.editor_surface, static_cast<float>(compare_tab->max_visual_columns),
-                  static_cast<float>(surface_layout.visible_columns),
-                  static_cast<float>(std::min(compare_tab->horizontal_scroll,
-                                              CompareMaxScrollColumn(*compare_tab,
-                                                                     surface_layout.visible_columns))),
-                  surface_layout.show_vertical)
-            : std::nullopt;
-    if (horizontal_scrollbar.has_value() && Contains(horizontal_scrollbar->track, x, y)) {
+    if (scroll_layout.horizontal_scrollbar.has_value() &&
+        Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
     return CursorKind::Pointer;
@@ -2275,6 +2291,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     const MergeSurfaceLayout surface_layout =
         ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+    const auto scroll_layout =
+        ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
     const SDL_FRect left_divider_rect =
         MakeRect(surface_layout.center_x - surface_layout.divider_width, layout.editor_surface.y,
                  surface_layout.divider_width, layout.editor_surface.h);
@@ -2289,35 +2307,15 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         Contains(toolbar.save_rect, x, y) || Contains(toolbar.open_rect, x, y)) {
       return CursorKind::Pointer;
     }
-    const int scroll_row = std::clamp(merge_tab->scroll_row, 0,
-                                      MergeMaxScrollRow(*merge_tab, surface_layout.visible_rows));
-    const std::size_t line_count =
-        std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
-                  merge_tab->model.current_lines.size(), std::size_t{1}});
-    const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
-        layout.editor_surface, static_cast<float>(line_count),
-        static_cast<float>(surface_layout.visible_rows), static_cast<float>(scroll_row),
-        surface_layout.show_horizontal);
-    if (vertical_scrollbar.has_value() && Contains(vertical_scrollbar->track, x, y)) {
+    if (scroll_layout.vertical_scrollbar.has_value() &&
+        Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
-    const auto horizontal_scrollbar =
-        surface_layout.show_horizontal
-            ? MakeHorizontalScrollbarGeometry(
-                  layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),
-                  static_cast<float>(surface_layout.visible_columns),
-                  static_cast<float>(std::min(merge_tab->horizontal_scroll,
-                                              MergeMaxScrollColumn(*merge_tab,
-                                                                   surface_layout.visible_columns))),
-                  surface_layout.show_vertical)
-            : std::nullopt;
-    if (horizontal_scrollbar.has_value() && Contains(horizontal_scrollbar->track, x, y)) {
+    if (scroll_layout.horizontal_scrollbar.has_value() &&
+        Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
-    const float bottom_reserved =
-        surface_layout.show_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
-    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-    const float content_bottom = layout.editor_surface.y + content_height;
+    const float content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h;
     const SDL_FRect result_rect = ComputeMergeResultViewportRect(
         layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
         surface_layout.gutter_width, surface_layout.center_width, surface_layout.show_horizontal);
@@ -2390,27 +2388,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   const editor::EditorViewMetrics metrics =
       editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
-  const std::size_t total_columns =
-      std::max<std::size_t>(metrics.visible_columns, MaxVisualColumns(*viewport));
-  const bool show_vertical = viewport->line_count() > metrics.visible_rows;
-  const bool show_horizontal = total_columns > metrics.visible_columns;
-  if (show_vertical) {
-    const auto scrollbar = MakeVerticalScrollbarGeometry(
-        pane_it->rect, static_cast<float>(viewport->line_count()),
-        static_cast<float>(metrics.visible_rows), static_cast<float>(viewport->scroll_line()),
-        show_horizontal);
-    if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
+  const auto scroll_layout = ComputeEditorScrollLayout(pane_it->rect, *viewport, metrics);
+  if (scroll_layout.vertical_scrollbar.has_value() &&
+      Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
+    return CursorKind::Default;
   }
-  if (show_horizontal) {
-    const auto scrollbar = MakeHorizontalScrollbarGeometry(
-        pane_it->rect, static_cast<float>(total_columns),
-        static_cast<float>(metrics.visible_columns),
-        static_cast<float>(viewport->horizontal_scroll()), show_vertical);
-    if (scrollbar.has_value() && Contains(scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
+  if (scroll_layout.horizontal_scrollbar.has_value() &&
+      Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
+    return CursorKind::Default;
   }
   if (const editor::EditorBlameLine* blame_line = EditorBlameLineAtPosition(x, y);
       blame_line != nullptr) {

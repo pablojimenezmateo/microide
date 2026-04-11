@@ -29,6 +29,7 @@ using microide::workspace::ComputeOverlaySurfaceRect;
 using microide::workspace::ComputePromptSurfaceButtonRects;
 using microide::workspace::ComputePromptSurfaceInputRect;
 using microide::workspace::ComputePromptSurfaceRect;
+using microide::workspace::ComputeScrollSurfaceLayout;
 using microide::workspace::ComputeScrollableListLayout;
 using microide::workspace::ComputeScrollbarThumb;
 using microide::workspace::ComputeVisibleLineRangeRect;
@@ -219,6 +220,34 @@ void TestWorkspaceSharedScrollbarEdgeCases() {
       MakeVerticalScrollbarGeometry(MakeRect(0.0f, 0.0f, 100.0f, 100.0f), 8.0f, 10.0f, 0.0f, false);
   Expect(!hidden_vertical.has_value(),
          "vertical scrollbar geometry should be absent when content does not overflow");
+}
+
+void TestWorkspaceSharedScrollSurfaceLayout() {
+  const auto dual_axis = ComputeScrollSurfaceLayout(MakeRect(0.0f, 0.0f, 200.0f, 120.0f), 20, 8,
+                                                    15, 50, 20, 40);
+  Expect(dual_axis.show_vertical && dual_axis.show_horizontal,
+         "scroll surface layout should flag both axes when both dimensions overflow");
+  Expect(dual_axis.max_vertical_scroll == 12 && dual_axis.vertical_scroll == 12,
+         "scroll surface layout should clamp vertical scroll to the computed max");
+  Expect(dual_axis.max_horizontal_scroll == 30 && dual_axis.horizontal_scroll == 30,
+         "scroll surface layout should clamp horizontal scroll to the computed max");
+  Expect(dual_axis.content_rect.w == 188.0f && dual_axis.content_rect.h == 108.0f,
+         "scroll surface layout should reserve shared scrollbar space from the content rect");
+  Expect(dual_axis.vertical_scrollbar.has_value() &&
+             dual_axis.vertical_scrollbar->track.h == 104.0f,
+         "scroll surface layout should reserve horizontal scrollbar height from the vertical track");
+  Expect(dual_axis.horizontal_scrollbar.has_value() &&
+             dual_axis.horizontal_scrollbar->track.w == 184.0f,
+         "scroll surface layout should reserve vertical scrollbar width from the horizontal track");
+
+  const auto vertical_only = ComputeScrollSurfaceLayout(MakeRect(10.0f, 20.0f, 120.0f, 80.0f), 5,
+                                                        8, -4, 12, 24, 9);
+  Expect(!vertical_only.show_vertical && !vertical_only.show_horizontal,
+         "scroll surface layout should hide scrollbars when both dimensions fit");
+  Expect(vertical_only.vertical_scroll == 0 && vertical_only.horizontal_scroll == 0,
+         "scroll surface layout should clamp both scroll positions back to zero when content fits");
+  Expect(vertical_only.content_rect.x == 10.0f && vertical_only.content_rect.w == 120.0f,
+         "scroll surface layout should preserve the full content rect when no scrollbars are needed");
 }
 
 void TestWorkspaceSharedScrollableListLayout() {
@@ -427,6 +456,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/PromptGeometry", TestWorkspaceSharedPromptGeometry);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
+  AddTest(tests, "WorkspaceShared/ScrollSurfaceLayout", TestWorkspaceSharedScrollSurfaceLayout);
   AddTest(tests, "WorkspaceShared/ScrollableListLayout",
           TestWorkspaceSharedScrollableListLayout);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);

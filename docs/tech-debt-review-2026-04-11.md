@@ -31,6 +31,7 @@ Scope:
 - Extracted shared editor split-axis layout helpers so pane rects, divider rects, and drag extents no longer use separate formulas in `WorkspaceShellEditor.cpp` and `WorkspaceShellMouse.cpp`.
 - Extracted shared dirty-prompt and prompt-surface geometry helpers so render, hit-testing, and focus routing no longer keep separate dialog/button/input rect formulas.
 - Extracted shared scrollable-list layout helpers so overlay, project-search, git-sidebar, and tree-sidebar render, mouse, cursor, drag, and wheel paths no longer maintain separate row, visible-window, and scrollbar formulas; added direct layout tests that also caught and fixed an above-list hit-testing boundary bug.
+- Extracted shared scroll-surface layout helpers so bottom-panel, compare, merge, and editor scrollbar render, cursor, drag, and wheel paths now share clamped scroll ranges, reserved content bounds, and scrollbar geometry instead of recomputing them independently across `WorkspaceShellRender.cpp`, `WorkspaceShellMouse.cpp`, `WorkspaceShell.cpp`, `WorkspaceShellCompare.cpp`, and `WorkspaceShellTerminal.cpp`.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.
@@ -114,6 +115,29 @@ Impact:
 Recommendation:
 
 - Extract a shared scroll-surface model for bottom-panel logs and compare/merge viewports, or define dedicated helpers for those families the same way list surfaces now use `ScrollableListLayout`.
+
+Resolution:
+
+- Addressed in this cleanup pass by introducing `ComputeScrollSurfaceLayout` plus shell-level wrappers for bottom-panel logs, compare, merge, and editor panes.
+
+### 13. Compare and merge content-hit translation is still spread across mode-specific code
+
+Priority: Medium
+
+Evidence:
+
+- `WorkspaceShellCompareRender.cpp` still combines compare-row visibility, syntax-window selection, and editable-right-pane cursor placement in one render path.
+- `WorkspaceShellMouse.cpp` still maps merge result clicks, drag selection, and hover-state updates by recomputing `EditorViewRenderer::ComputeMetrics(...)` and then translating rows and columns inline.
+- `WorkspaceShellRender.cpp` still derives active text-input caret geometry for merge/compare by recomputing those same surface metrics instead of consuming a shared interaction model.
+
+Impact:
+
+- Scrollbar coordination is now shared, but text-hit testing and caret/selection translation still live in multiple mode-specific branches.
+- Future compare/merge cursor or selection fixes will still require coordinated edits across render and input paths.
+
+Recommendation:
+
+- Extract a compare/merge interaction model that owns visible-row metrics, result-viewport rects, and row/column translation helpers the same way scroll surfaces now own scrollbar geometry.
 
 ## Executive Summary
 

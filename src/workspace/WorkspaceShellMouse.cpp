@@ -14,17 +14,11 @@ namespace {
 
 constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
-constexpr float kScrollbarThickness = 10.0f;
-constexpr float kScrollbarInset = 2.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
 constexpr float kMergeToolbarHeight = 54.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr float kTabDragStartDistance = 6.0f;
-
-std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
-  return viewport.max_visual_columns();
-}
 
 template <typename VisibleTabType>
 std::size_t StripInsertionSlot(const SDL_FRect& strip,
@@ -660,26 +654,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_LEFT && BottomPanelVisible()) {
     const std::size_t line_count =
         ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.SnapshotLines().size() : 0;
-    const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
-    const int max_scroll = std::max(0, static_cast<int>(line_count) - visible_rows);
-    const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
-    const auto scrollbar =
-        MakeVerticalScrollbarGeometry(BottomPanelContentRect(layout, surface_.command_mode),
-                                      static_cast<float>(line_count),
-                                      static_cast<float>(visible_rows),
-                                      static_cast<float>(scroll_row));
-    if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+    const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
+    if (panel_layout.scroll.vertical_scrollbar.has_value() &&
+        Contains(panel_layout.scroll.vertical_scrollbar->track, event.button.x, event.button.y)) {
       surface_.drag_target = DragTarget::BottomPanelScrollbar;
       surface_.drag_scrollbar_offset =
-          Contains(scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - scrollbar->thumb.y
-              : scrollbar->thumb.h * 0.5f;
+          Contains(panel_layout.scroll.vertical_scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.y) -
+                    panel_layout.scroll.vertical_scrollbar->thumb.y
+              : panel_layout.scroll.vertical_scrollbar->thumb.h * 0.5f;
       SetBottomPanelScrollRow(
           std::clamp(static_cast<int>(std::lround(
-                         ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
+                         ScrollUnitsForPointer(*panel_layout.scroll.vertical_scrollbar,
+                                              static_cast<float>(event.button.y),
                                               surface_.drag_scrollbar_offset))),
-                     0, max_scroll),
-          line_count, visible_rows);
+                     0, panel_layout.scroll.max_vertical_scroll),
+          line_count, panel_layout.scroll.visible_rows);
       if (ActiveTerminalTab() != nullptr) {
         surface_.focus = FocusTarget::Panel;
       }
@@ -759,51 +749,44 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
     const CompareSurfaceLayout surface_layout =
         ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-    ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
-    ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
+    const auto scroll_layout =
+        ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
+    compare_tab->scroll_row = scroll_layout.vertical_scroll;
+    compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
     SyncCompareViewportScroll(*compare_tab);
 
-    const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
-        layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
-        static_cast<float>(surface_layout.visible_rows), static_cast<float>(compare_tab->scroll_row),
-        surface_layout.show_horizontal);
-    if (vertical_scrollbar.has_value() &&
-        Contains(vertical_scrollbar->track, event.button.x, event.button.y)) {
+    if (scroll_layout.vertical_scrollbar.has_value() &&
+        Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
       surface_.drag_target = DragTarget::CompareVerticalScrollbar;
       surface_.drag_scrollbar_offset =
-          Contains(vertical_scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - vertical_scrollbar->thumb.y
-              : vertical_scrollbar->thumb.h * 0.5f;
+          Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.y) - scroll_layout.vertical_scrollbar->thumb.y
+              : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
       const int target_scroll = std::clamp(
           static_cast<int>(std::lround(ScrollUnitsForPointer(
-              *vertical_scrollbar, static_cast<float>(event.button.y), surface_.drag_scrollbar_offset))),
-          0, CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows));
+              *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
+              surface_.drag_scrollbar_offset))),
+          0, scroll_layout.max_vertical_scroll);
       compare_tab->scroll_row = target_scroll;
       SyncCompareViewportScroll(*compare_tab);
       surface_.focus = FocusTarget::Editor;
       return true;
     }
 
-    if (surface_layout.show_horizontal) {
-      const auto horizontal_scrollbar = MakeHorizontalScrollbarGeometry(
-          layout.editor_surface, static_cast<float>(compare_tab->max_visual_columns),
-          static_cast<float>(surface_layout.visible_columns),
-          static_cast<float>(compare_tab->horizontal_scroll), surface_layout.show_vertical);
-      if (horizontal_scrollbar.has_value() &&
-          Contains(horizontal_scrollbar->track, event.button.x, event.button.y)) {
-        surface_.drag_target = DragTarget::CompareHorizontalScrollbar;
-        surface_.drag_scrollbar_offset =
-            Contains(horizontal_scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.x) - horizontal_scrollbar->thumb.x
-                : horizontal_scrollbar->thumb.w * 0.5f;
-        compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*horizontal_scrollbar,
-                                                  static_cast<float>(event.button.x),
-                                                  surface_.drag_scrollbar_offset))));
-        SyncCompareViewportScroll(*compare_tab);
-        surface_.focus = FocusTarget::Editor;
-        return true;
-      }
+    if (scroll_layout.horizontal_scrollbar.has_value() &&
+        Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
+      surface_.drag_target = DragTarget::CompareHorizontalScrollbar;
+      surface_.drag_scrollbar_offset =
+          Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.x) - scroll_layout.horizontal_scrollbar->thumb.x
+              : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
+      compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
+          0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
+                                                static_cast<float>(event.button.x),
+                                                surface_.drag_scrollbar_offset))));
+      SyncCompareViewportScroll(*compare_tab);
+      surface_.focus = FocusTarget::Editor;
+      return true;
     }
 
     const int clicked_row =
@@ -848,15 +831,16 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
     const MergeSurfaceLayout surface_layout =
         ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-    merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
+    const auto scroll_layout =
+        ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
+    merge_tab->scroll_row = scroll_layout.vertical_scroll;
+    merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+    merge_tab->result_viewport.SetScrollLine(
+        static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
     merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
     merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
     merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-    ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
-    ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
-    const float bottom_reserved = surface_layout.show_horizontal ? kScrollbarThickness + kScrollbarInset : 0.0f;
-    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-    const float content_bottom = layout.editor_surface.y + content_height;
+    const float content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h;
     const SDL_FRect result_rect = ComputeMergeResultViewportRect(
         layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
         surface_layout.gutter_width, surface_layout.center_width, surface_layout.show_horizontal);
@@ -1003,51 +987,39 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
     }
 
-    const std::size_t line_count =
-        std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
-                  merge_tab->model.current_lines.size(), std::size_t{1}});
-    const auto vertical_scrollbar = MakeVerticalScrollbarGeometry(
-        layout.editor_surface, static_cast<float>(line_count),
-        static_cast<float>(surface_layout.visible_rows), static_cast<float>(merge_tab->scroll_row),
-        surface_layout.show_horizontal);
-    if (vertical_scrollbar.has_value() &&
-        Contains(vertical_scrollbar->track, event.button.x, event.button.y)) {
+    if (scroll_layout.vertical_scrollbar.has_value() &&
+        Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
       surface_.drag_target = DragTarget::CompareVerticalScrollbar;
       surface_.drag_scrollbar_offset =
-          Contains(vertical_scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - vertical_scrollbar->thumb.y
-              : vertical_scrollbar->thumb.h * 0.5f;
+          Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.y) - scroll_layout.vertical_scrollbar->thumb.y
+              : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
       merge_tab->scroll_row = std::clamp(
           static_cast<int>(std::lround(ScrollUnitsForPointer(
-              *vertical_scrollbar, static_cast<float>(event.button.y), surface_.drag_scrollbar_offset))),
-          0, MergeMaxScrollRow(*merge_tab, surface_layout.visible_rows));
+              *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
+              surface_.drag_scrollbar_offset))),
+          0, scroll_layout.max_vertical_scroll);
       merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
       merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
       surface_.focus = FocusTarget::Editor;
       return true;
     }
 
-    if (surface_layout.show_horizontal) {
-      const auto horizontal_scrollbar = MakeHorizontalScrollbarGeometry(
-          layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),
-          static_cast<float>(surface_layout.visible_columns),
-          static_cast<float>(merge_tab->horizontal_scroll), surface_layout.show_vertical);
-      if (horizontal_scrollbar.has_value() &&
-          Contains(horizontal_scrollbar->track, event.button.x, event.button.y)) {
-        surface_.drag_target = DragTarget::CompareHorizontalScrollbar;
-        surface_.drag_scrollbar_offset =
-            Contains(horizontal_scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.x) - horizontal_scrollbar->thumb.x
-                : horizontal_scrollbar->thumb.w * 0.5f;
-        merge_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*horizontal_scrollbar,
-                                                  static_cast<float>(event.button.x),
-                                                  surface_.drag_scrollbar_offset))));
-        merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
-        merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-        surface_.focus = FocusTarget::Editor;
-        return true;
-      }
+    if (scroll_layout.horizontal_scrollbar.has_value() &&
+        Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
+      surface_.drag_target = DragTarget::CompareHorizontalScrollbar;
+      surface_.drag_scrollbar_offset =
+          Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.x) - scroll_layout.horizontal_scrollbar->thumb.x
+              : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
+      merge_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
+          0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
+                                                static_cast<float>(event.button.x),
+                                                surface_.drag_scrollbar_offset))));
+      merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
+      merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+      surface_.focus = FocusTarget::Editor;
+      return true;
     }
 
     if (Contains(result_rect, event.button.x, event.button.y)) {
@@ -1128,45 +1100,34 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, editor_rect);
   text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
-  const std::size_t total_columns =
-      std::max<std::size_t>(text_viewport_.visible_columns(), MaxVisualColumns(text_viewport_));
-  const bool show_vertical = text_viewport_.line_count() > text_viewport_.visible_lines();
-  const bool show_horizontal = total_columns > text_viewport_.visible_columns();
-  if (show_vertical) {
-    const auto scrollbar = MakeVerticalScrollbarGeometry(
-        editor_rect, static_cast<float>(text_viewport_.line_count()),
-        static_cast<float>(text_viewport_.visible_lines()),
-        static_cast<float>(text_viewport_.scroll_line()), show_horizontal);
-    if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
-      surface_.drag_target = DragTarget::EditorVerticalScrollbar;
-      surface_.drag_scrollbar_offset =
-          Contains(scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - scrollbar->thumb.y
-              : scrollbar->thumb.h * 0.5f;
-      text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
-          0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
-                                                surface_.drag_scrollbar_offset)))));
-      surface_.focus = FocusTarget::Editor;
-      return true;
-    }
+  const auto scroll_layout = ComputeEditorScrollLayout(editor_rect, text_viewport_, metrics);
+  if (scroll_layout.vertical_scrollbar.has_value() &&
+      Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
+    surface_.drag_target = DragTarget::EditorVerticalScrollbar;
+    surface_.drag_scrollbar_offset =
+        Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
+            ? static_cast<float>(event.button.y) - scroll_layout.vertical_scrollbar->thumb.y
+            : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
+    text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
+        0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
+                                              static_cast<float>(event.button.y),
+                                              surface_.drag_scrollbar_offset)))));
+    surface_.focus = FocusTarget::Editor;
+    return true;
   }
-  if (show_horizontal) {
-    const auto scrollbar = MakeHorizontalScrollbarGeometry(
-        editor_rect, static_cast<float>(total_columns),
-        static_cast<float>(text_viewport_.visible_columns()),
-        static_cast<float>(text_viewport_.horizontal_scroll()), show_vertical);
-    if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
-      surface_.drag_target = DragTarget::EditorHorizontalScrollbar;
-      surface_.drag_scrollbar_offset =
-          Contains(scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.x) - scrollbar->thumb.x
-              : scrollbar->thumb.w * 0.5f;
-      text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
-          0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.x),
-                                                surface_.drag_scrollbar_offset)))));
-      surface_.focus = FocusTarget::Editor;
-      return true;
-    }
+  if (scroll_layout.horizontal_scrollbar.has_value() &&
+      Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
+    surface_.drag_target = DragTarget::EditorHorizontalScrollbar;
+    surface_.drag_scrollbar_offset =
+        Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
+            ? static_cast<float>(event.button.x) - scroll_layout.horizontal_scrollbar->thumb.x
+            : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
+    text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
+        0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
+                                              static_cast<float>(event.button.x),
+                                              surface_.drag_scrollbar_offset)))));
+    surface_.focus = FocusTarget::Editor;
+    return true;
   }
 
   const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
@@ -1607,25 +1568,20 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (surface_.drag_target == DragTarget::BottomPanelScrollbar && BottomPanelVisible()) {
       const std::size_t line_count =
           ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.SnapshotLines().size() : 0;
-      const int visible_rows = BottomPanelVisibleRows(drag_layout.bottom_panel.h);
-      const int max_scroll = std::max(0, static_cast<int>(line_count) - visible_rows);
-      const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
-      const auto scrollbar =
-          MakeVerticalScrollbarGeometry(BottomPanelContentRect(drag_layout, surface_.command_mode),
-                                        static_cast<float>(line_count),
-                                        static_cast<float>(visible_rows),
-                                        static_cast<float>(scroll_row));
-      if (!scrollbar.has_value()) {
+      const BottomPanelLogLayout panel_layout =
+          ComputeBottomPanelLogLayout(drag_layout, line_count);
+      if (!panel_layout.scroll.vertical_scrollbar.has_value()) {
         surface_.drag_target = DragTarget::None;
         surface_.drag_scrollbar_offset = 0.0f;
         return false;
       }
       SetBottomPanelScrollRow(
           std::clamp(static_cast<int>(std::lround(
-                         ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+                         ScrollUnitsForPointer(*panel_layout.scroll.vertical_scrollbar,
+                                              static_cast<float>(event.motion.y),
                                               surface_.drag_scrollbar_offset))),
-                     0, max_scroll),
-          line_count, visible_rows);
+                     0, panel_layout.scroll.max_vertical_scroll),
+          line_count, panel_layout.scroll.visible_rows);
       if (ActiveTerminalTab() != nullptr) {
         surface_.focus = FocusTarget::Panel;
       }
@@ -1662,38 +1618,34 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         }
         const CompareSurfaceLayout surface_layout =
             ComputeCompareSurfaceLayout(drag_layout.editor_surface, *compare_tab);
-        ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
-        ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
+        const auto scroll_layout =
+            ComputeCompareScrollLayout(drag_layout.editor_surface, surface_layout, *compare_tab);
+        compare_tab->scroll_row = scroll_layout.vertical_scroll;
+        compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
         if (surface_.drag_target == DragTarget::CompareVerticalScrollbar) {
-          const auto scrollbar = MakeVerticalScrollbarGeometry(
-              drag_layout.editor_surface, static_cast<float>(compare_tab->model.rows.size()),
-              static_cast<float>(surface_layout.visible_rows),
-              static_cast<float>(compare_tab->scroll_row), surface_layout.show_horizontal);
-          if (!scrollbar.has_value()) {
+          if (!scroll_layout.vertical_scrollbar.has_value()) {
             surface_.drag_target = DragTarget::None;
             surface_.drag_scrollbar_offset = 0.0f;
             return false;
           }
           const int target_scroll = std::clamp(
               static_cast<int>(std::lround(ScrollUnitsForPointer(
-                  *scrollbar, static_cast<float>(event.motion.y), surface_.drag_scrollbar_offset))),
-              0, CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows));
+                  *scroll_layout.vertical_scrollbar, static_cast<float>(event.motion.y),
+                  surface_.drag_scrollbar_offset))),
+              0, scroll_layout.max_vertical_scroll);
           compare_tab->scroll_row = target_scroll;
           SyncCompareViewportScroll(*compare_tab);
           surface_.focus = FocusTarget::Editor;
           return true;
         }
-        const auto scrollbar = MakeHorizontalScrollbarGeometry(
-            drag_layout.editor_surface, static_cast<float>(compare_tab->max_visual_columns),
-            static_cast<float>(surface_layout.visible_columns),
-            static_cast<float>(compare_tab->horizontal_scroll), surface_layout.show_vertical);
-        if (!scrollbar.has_value()) {
+        if (!scroll_layout.horizontal_scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.x),
+            0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
+                                                  static_cast<float>(event.motion.x),
                                                   surface_.drag_scrollbar_offset))));
         SyncCompareViewportScroll(*compare_tab);
         surface_.focus = FocusTarget::Editor;
@@ -1708,25 +1660,21 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       const MergeSurfaceLayout surface_layout =
           ComputeMergeSurfaceLayout(drag_layout.editor_surface, *merge_tab);
-      ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
-      ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
+      const auto scroll_layout =
+          ComputeMergeScrollLayout(drag_layout.editor_surface, surface_layout, *merge_tab);
+      merge_tab->scroll_row = scroll_layout.vertical_scroll;
+      merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
       if (surface_.drag_target == DragTarget::CompareVerticalScrollbar) {
-        const std::size_t line_count =
-            std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
-                      merge_tab->model.current_lines.size(), std::size_t{1}});
-        const auto scrollbar = MakeVerticalScrollbarGeometry(
-            drag_layout.editor_surface, static_cast<float>(line_count),
-            static_cast<float>(surface_layout.visible_rows), static_cast<float>(merge_tab->scroll_row),
-            surface_layout.show_horizontal);
-        if (!scrollbar.has_value()) {
+        if (!scroll_layout.vertical_scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         const int target_scroll = std::clamp(
             static_cast<int>(std::lround(ScrollUnitsForPointer(
-                *scrollbar, static_cast<float>(event.motion.y), surface_.drag_scrollbar_offset))),
-            0, MergeMaxScrollRow(*merge_tab, surface_layout.visible_rows));
+                *scroll_layout.vertical_scrollbar, static_cast<float>(event.motion.y),
+                surface_.drag_scrollbar_offset))),
+            0, scroll_layout.max_vertical_scroll);
         merge_tab->scroll_row = target_scroll;
         merge_tab->result_viewport.SetScrollLine(
             static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
@@ -1734,17 +1682,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         surface_.focus = FocusTarget::Editor;
         return true;
       }
-      const auto scrollbar = MakeHorizontalScrollbarGeometry(
-          drag_layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),
-          static_cast<float>(surface_layout.visible_columns),
-          static_cast<float>(merge_tab->horizontal_scroll), surface_layout.show_vertical);
-      if (!scrollbar.has_value()) {
+      if (!scroll_layout.horizontal_scrollbar.has_value()) {
         surface_.drag_target = DragTarget::None;
         surface_.drag_scrollbar_offset = 0.0f;
         return false;
       }
       merge_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
-          0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.x),
+          0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
+                                                static_cast<float>(event.motion.x),
                                                 surface_.drag_scrollbar_offset))));
       merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
       merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
@@ -1762,36 +1707,27 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
           text_renderer_, text_viewport_, editor_rect);
       text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      const std::size_t total_columns =
-          std::max<std::size_t>(text_viewport_.visible_columns(), MaxVisualColumns(text_viewport_));
-      const bool show_vertical = text_viewport_.line_count() > text_viewport_.visible_lines();
-      const bool show_horizontal = total_columns > text_viewport_.visible_columns();
+      const auto scroll_layout = ComputeEditorScrollLayout(editor_rect, text_viewport_, metrics);
 
       if (surface_.drag_target == DragTarget::EditorVerticalScrollbar) {
-        const auto scrollbar = MakeVerticalScrollbarGeometry(
-            editor_rect, static_cast<float>(text_viewport_.line_count()),
-            static_cast<float>(text_viewport_.visible_lines()),
-            static_cast<float>(text_viewport_.scroll_line()), show_horizontal);
-        if (!scrollbar.has_value()) {
+        if (!scroll_layout.vertical_scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+            0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
+                                                  static_cast<float>(event.motion.y),
                                                   surface_.drag_scrollbar_offset)))));
       } else {
-        const auto scrollbar = MakeHorizontalScrollbarGeometry(
-            editor_rect, static_cast<float>(total_columns),
-            static_cast<float>(text_viewport_.visible_columns()),
-            static_cast<float>(text_viewport_.horizontal_scroll()), show_vertical);
-        if (!scrollbar.has_value()) {
+        if (!scroll_layout.horizontal_scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.x),
+            0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
+                                                  static_cast<float>(event.motion.x),
                                                   surface_.drag_scrollbar_offset)))));
       }
       surface_.focus = FocusTarget::Editor;
@@ -1864,18 +1800,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           !(surface_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
         const MergeSurfaceLayout surface_layout =
             ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+        const auto scroll_layout =
+            ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
         merge_tab->result_viewport.SetScrollLine(
-            static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
-        merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
+            static_cast<std::size_t>(std::max(0, scroll_layout.vertical_scroll)));
+        merge_tab->result_viewport.SetHorizontalScroll(scroll_layout.horizontal_scroll);
         merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
         merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-        ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
-        ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
-
-        const float bottom_reserved =
-            surface_layout.show_horizontal ? kScrollbarThickness + kScrollbarInset : 0.0f;
-        const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-        const float content_bottom = layout.editor_surface.y + content_height;
+        const float content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h;
         const SDL_FRect result_rect = ComputeMergeResultViewportRect(
             layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
             surface_layout.gutter_width, surface_layout.center_width,
@@ -2121,14 +2053,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
     const MergeSurfaceLayout surface_layout =
         ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-    const float bottom_reserved =
-        surface_layout.show_horizontal ? kScrollbarThickness + kScrollbarInset : 0.0f;
-    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-    const SDL_FRect result_rect =
-        MakeRect(surface_layout.center_x, surface_layout.rows_y - 8.0f,
-                 surface_layout.gutter_width + surface_layout.center_width,
-                 std::max(0.0f, layout.editor_surface.y + content_height -
-                                      (surface_layout.rows_y - 8.0f)));
+    const SDL_FRect result_rect = ComputeMergeResultViewportRect(
+        layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
+        surface_layout.gutter_width, surface_layout.center_width,
+        surface_layout.show_horizontal);
     if (!Contains(result_rect, event.motion.x, event.motion.y)) {
       return false;
     }
@@ -2288,11 +2216,11 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   if (BottomPanelVisible() && Contains(layout.bottom_panel, event.wheel.mouse_x, event.wheel.mouse_y)) {
     const std::size_t line_count =
         ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.SnapshotLines().size() : 0;
-    const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
-    const int max_scroll = std::max(0, static_cast<int>(line_count) - visible_rows);
-    const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
-    SetBottomPanelScrollRow(std::clamp(scroll_row - vertical_ticks, 0, max_scroll), line_count,
-                            visible_rows);
+    const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
+    SetBottomPanelScrollRow(
+        std::clamp(panel_layout.scroll.vertical_scroll - vertical_ticks, 0,
+                   panel_layout.scroll.max_vertical_scroll),
+        line_count, panel_layout.scroll.visible_rows);
     if (ActiveTerminalTab() != nullptr) {
       surface_.focus = FocusTarget::Panel;
     }
@@ -2320,9 +2248,11 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
         if (merge_tab != nullptr) {
           const MergeSurfaceLayout surface_layout =
               ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+          const auto scroll_layout =
+              ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
           merge_tab->scroll_row =
-              std::clamp(merge_tab->scroll_row - vertical_ticks * 3, 0,
-                         MergeMaxScrollRow(*merge_tab, surface_layout.visible_rows));
+              std::clamp(scroll_layout.vertical_scroll - vertical_ticks * 3, 0,
+                         scroll_layout.max_vertical_scroll);
           merge_tab->result_viewport.SetScrollLine(
               static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
           merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());

@@ -189,6 +189,20 @@ struct ScrollableListLayout {
   int scroll_row = 0;
 };
 
+struct ScrollSurfaceLayout {
+  SDL_FRect content_rect{};
+  std::optional<ScrollbarGeometry> vertical_scrollbar;
+  std::optional<ScrollbarGeometry> horizontal_scrollbar;
+  bool show_vertical = false;
+  bool show_horizontal = false;
+  int visible_rows = 1;
+  int vertical_scroll = 0;
+  int max_vertical_scroll = 0;
+  std::size_t visible_columns = 1;
+  std::size_t horizontal_scroll = 0;
+  std::size_t max_horizontal_scroll = 0;
+};
+
 struct EditorSplitAxisLayout {
   bool vertical = true;
   float total_extent = 0.0f;
@@ -333,6 +347,13 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
 std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog);
+ScrollSurfaceLayout ComputeScrollSurfaceLayout(const SDL_FRect& area,
+                                               std::size_t total_rows,
+                                               int visible_rows,
+                                               int requested_vertical_scroll,
+                                               std::size_t total_columns = 0,
+                                               std::size_t visible_columns = 1,
+                                               std::size_t requested_horizontal_scroll = 0);
 ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
                                                  float list_y,
                                                  std::size_t item_count,

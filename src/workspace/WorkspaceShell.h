@@ -302,6 +302,15 @@ class WorkspaceShell {
     SDL_FRect save_rect{};
   };
 
+  struct BottomPanelLogLayout {
+    SDL_FRect content_rect{};
+    float text_x = 0.0f;
+    float text_y = 0.0f;
+    float text_width = 0.0f;
+    float line_height = 0.0f;
+    ScrollSurfaceLayout scroll;
+  };
+
   struct TabEntry {
     enum class Kind {
       Editor,
@@ -1016,11 +1025,17 @@ class WorkspaceShell {
   std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
   std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;
+  ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,
+                                                const editor::TextViewport& viewport,
+                                                const editor::EditorViewMetrics& metrics) const;
   bool ActiveTabIsCompare() const;
   CompareTabState* ActiveCompareTab();
   const CompareTabState* ActiveCompareTab() const;
   CompareSurfaceLayout ComputeCompareSurfaceLayout(const SDL_FRect& rect,
                                                    const CompareTabState& compare_tab) const;
+  ScrollSurfaceLayout ComputeCompareScrollLayout(const SDL_FRect& rect,
+                                                 const CompareSurfaceLayout& surface,
+                                                 const CompareTabState& compare_tab) const;
   int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const;
   void ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows) const;
   std::size_t CompareMaxScrollColumn(const CompareTabState& compare_tab,
@@ -1032,6 +1047,9 @@ class WorkspaceShell {
   MergeTabState* ActiveMergeTab();
   const MergeTabState* ActiveMergeTab() const;
   MergeSurfaceLayout ComputeMergeSurfaceLayout(const SDL_FRect& rect,
+                                               const MergeTabState& merge_tab) const;
+  ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect,
+                                               const MergeSurfaceLayout& surface,
                                                const MergeTabState& merge_tab) const;
   MergeToolbarLayout ComputeMergeToolbarLayout(const SDL_FRect& rect,
                                               const MergeSurfaceLayout& surface) const;
@@ -1290,6 +1308,8 @@ class WorkspaceShell {
   void ConsumeTerminalSessionUpdates();
   void ReapExitedTerminalTabs();
   bool BottomPanelVisible() const;
+  BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
+                                                   std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
   int BottomPanelScrollRow(std::size_t line_count, int visible_rows) const;
   void SetBottomPanelScrollRow(int scroll_row, std::size_t line_count, int visible_rows);

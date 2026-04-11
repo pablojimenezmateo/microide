@@ -10,6 +10,10 @@ namespace microide::workspace {
 
 namespace {
 
+constexpr float kBottomPanelTextInset = 12.0f;
+constexpr float kBottomPanelTextTopInset = 8.0f;
+constexpr float kBottomPanelScrollbarTextReserve = 16.0f;
+
 void EraseLastUtf8Codepoint(std::string& text) {
   if (text.empty()) {
     return;
@@ -222,6 +226,26 @@ bool WorkspaceShell::BottomPanelVisible() const {
   return surface_.command_mode || !terminal_tabs_.empty();
 }
 
+WorkspaceShell::BottomPanelLogLayout WorkspaceShell::ComputeBottomPanelLogLayout(
+    const WorkspaceLayout& layout,
+    std::size_t line_count) const {
+  BottomPanelLogLayout panel_layout;
+  panel_layout.content_rect = BottomPanelContentRect(layout, surface_.command_mode);
+  panel_layout.text_x = panel_layout.content_rect.x + kBottomPanelTextInset;
+  panel_layout.text_y = panel_layout.content_rect.y + kBottomPanelTextTopInset;
+  panel_layout.line_height = text_renderer_.LineHeight();
+
+  const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
+  const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
+  panel_layout.scroll =
+      ComputeScrollSurfaceLayout(panel_layout.content_rect, line_count, visible_rows, scroll_row);
+  panel_layout.text_width =
+      std::max(0.0f, panel_layout.content_rect.w - kBottomPanelTextInset * 2.0f -
+                         (panel_layout.scroll.show_vertical ? kBottomPanelScrollbarTextReserve
+                                                            : 0.0f));
+  return panel_layout;
+}
+
 int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
   return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight(), surface_.command_mode);
 }
@@ -384,24 +408,23 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
-  const SDL_FRect panel_content = BottomPanelContentRect(layout, surface_.command_mode);
-  const float text_x = panel_content.x + 12.0f;
-  const float text_y = panel_content.y + 8.0f;
-  const float line_height = text_renderer_.LineHeight();
-  if (line_height <= 0.0f || y < text_y || y >= panel_content.y + panel_content.h) {
+  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, lines.size());
+  if (panel_layout.line_height <= 0.0f || y < panel_layout.text_y ||
+      y >= panel_layout.content_rect.y + panel_layout.content_rect.h) {
     return std::nullopt;
   }
 
-  const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
-  const int scroll_row = BottomPanelScrollRow(lines.size(), visible_rows);
-  const int local_row = static_cast<int>((static_cast<float>(y) - text_y) / line_height);
-  if (local_row < 0 || local_row >= visible_rows) {
+  const int local_row =
+      static_cast<int>((static_cast<float>(y) - panel_layout.text_y) / panel_layout.line_height);
+  if (local_row < 0 || local_row >= panel_layout.scroll.visible_rows) {
     return std::nullopt;
   }
 
-  const std::size_t row = std::min<std::size_t>(static_cast<std::size_t>(scroll_row + local_row),
-                                                lines.size() - 1);
-  const float local_x = std::max(0.0f, static_cast<float>(x) - text_x);
+  const std::size_t row =
+      std::min<std::size_t>(static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
+                                                     local_row),
+                            lines.size() - 1);
+  const float local_x = std::max(0.0f, static_cast<float>(x) - panel_layout.text_x);
   const std::size_t column = static_cast<std::size_t>(
       std::max(0L, std::lround(local_x / std::max(1.0f, text_renderer_.CharWidth()))));
   return TerminalSelectionPosition{

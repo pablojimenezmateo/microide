@@ -1241,8 +1241,10 @@ void WorkspaceShell::ScrollCompareRows(int delta) {
                     surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-  const int max_scroll = CompareMaxScrollRow(*compare_tab, surface_layout.visible_rows);
-  compare_tab->scroll_row = std::clamp(compare_tab->scroll_row + delta, 0, max_scroll);
+  const auto scroll_layout =
+      ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
+  compare_tab->scroll_row =
+      std::clamp(scroll_layout.vertical_scroll + delta, 0, scroll_layout.max_vertical_scroll);
   SyncCompareViewportScroll(*compare_tab);
 }
 
@@ -1257,12 +1259,13 @@ void WorkspaceShell::ScrollCompareColumns(int delta) {
                     surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-  const std::size_t max_scroll =
-      CompareMaxScrollColumn(*compare_tab, surface_layout.visible_columns);
+  const auto scroll_layout =
+      ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
   const long long target_scroll =
-      static_cast<long long>(compare_tab->horizontal_scroll) + static_cast<long long>(delta);
+      static_cast<long long>(scroll_layout.horizontal_scroll) + static_cast<long long>(delta);
   compare_tab->horizontal_scroll = static_cast<std::size_t>(
-      std::clamp(target_scroll, 0LL, static_cast<long long>(max_scroll)));
+      std::clamp(target_scroll, 0LL,
+                 static_cast<long long>(scroll_layout.max_horizontal_scroll)));
   SyncCompareViewportScroll(*compare_tab);
 }
 
@@ -1289,12 +1292,13 @@ void WorkspaceShell::ScrollMergeColumns(int delta) {
                     surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   const MergeSurfaceLayout surface_layout =
       ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-  const std::size_t max_scroll =
-      MergeMaxScrollColumn(*merge_tab, surface_layout.visible_columns);
+  const auto scroll_layout =
+      ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
   const long long target_scroll =
-      static_cast<long long>(merge_tab->horizontal_scroll) + static_cast<long long>(delta);
+      static_cast<long long>(scroll_layout.horizontal_scroll) + static_cast<long long>(delta);
   merge_tab->horizontal_scroll = static_cast<std::size_t>(
-      std::clamp(target_scroll, 0LL, static_cast<long long>(max_scroll)));
+      std::clamp(target_scroll, 0LL,
+                 static_cast<long long>(scroll_layout.max_horizontal_scroll)));
   merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 }

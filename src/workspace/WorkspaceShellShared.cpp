@@ -1411,6 +1411,40 @@ SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
                   kPromptSurfaceInputHeight);
 }
 
+ScrollSurfaceLayout ComputeScrollSurfaceLayout(const SDL_FRect& area,
+                                               std::size_t total_rows,
+                                               int visible_rows,
+                                               int requested_vertical_scroll,
+                                               std::size_t total_columns,
+                                               std::size_t visible_columns,
+                                               std::size_t requested_horizontal_scroll) {
+  ScrollSurfaceLayout layout;
+  layout.visible_rows = std::max(1, visible_rows);
+  layout.max_vertical_scroll = TailScrollRowForContent(total_rows, layout.visible_rows);
+  layout.vertical_scroll =
+      ClampScrollRowToContent(requested_vertical_scroll, total_rows, layout.visible_rows);
+  layout.visible_columns = std::max<std::size_t>(1, visible_columns);
+  layout.max_horizontal_scroll =
+      total_columns > layout.visible_columns ? total_columns - layout.visible_columns : 0;
+  layout.horizontal_scroll = std::min(requested_horizontal_scroll, layout.max_horizontal_scroll);
+  layout.show_vertical = layout.max_vertical_scroll > 0;
+  layout.show_horizontal = layout.max_horizontal_scroll > 0;
+
+  const float reserved_width = layout.show_vertical ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+  const float reserved_height =
+      layout.show_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+  layout.content_rect =
+      MakeRect(area.x, area.y, std::max(0.0f, area.w - reserved_width),
+               std::max(0.0f, area.h - reserved_height));
+  layout.vertical_scrollbar = MakeVerticalScrollbarGeometry(
+      area, static_cast<float>(total_rows), static_cast<float>(layout.visible_rows),
+      static_cast<float>(layout.vertical_scroll), layout.show_horizontal);
+  layout.horizontal_scrollbar = MakeHorizontalScrollbarGeometry(
+      area, static_cast<float>(total_columns), static_cast<float>(layout.visible_columns),
+      static_cast<float>(layout.horizontal_scroll), layout.show_vertical);
+  return layout;
+}
+
 ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
                                                  float list_y,
                                                  std::size_t item_count,

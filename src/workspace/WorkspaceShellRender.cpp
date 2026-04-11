@@ -22,7 +22,6 @@ constexpr float kSidebarRowHeight = 20.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 constexpr float kScrollbarThickness = 10.0f;
-constexpr float kScrollbarInset = 2.0f;
 constexpr float kBottomPanelCommandTopPadding = 8.0f;
 constexpr float kCompareMarkerLaneWidth = 6.0f;
 constexpr float kCompareMarkerLaneGap = 3.0f;
@@ -126,10 +125,6 @@ void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &marker.rect);
   }
-}
-
-std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
-  return viewport.max_visual_columns();
 }
 
 char GitMarker(project::GitFileStatus status) {
@@ -465,14 +460,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           }
           const MergeSurfaceLayout surface_layout =
               ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-          const float bottom_reserved = surface_layout.show_horizontal ? kScrollbarThickness + kScrollbarInset
-                                                                      : 0.0f;
-          const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-          const SDL_FRect result_rect = MakeRect(
-              surface_layout.center_x, surface_layout.rows_y - 8.0f,
-              surface_layout.gutter_width + surface_layout.center_width,
-              std::max(0.0f, layout.editor_surface.y + content_height -
-                                   (surface_layout.rows_y - 8.0f)));
+          const SDL_FRect result_rect = ComputeMergeResultViewportRect(
+              layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
+              surface_layout.gutter_width, surface_layout.center_width,
+              surface_layout.show_horizontal);
           const editor::EditorViewMetrics metrics =
               editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport,
                                                          result_rect);
@@ -770,15 +761,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, active);
         }
       };
-  const auto draw_horizontal_scrollbar =
-      [&](const SDL_FRect& area, float total_units, float visible_units, float scroll_units,
-          bool active = false, bool reserve_vertical = false) {
-        if (const auto geometry = MakeHorizontalScrollbarGeometry(area, total_units, visible_units,
-                                                                  scroll_units, reserve_vertical);
-            geometry.has_value()) {
-          DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, active);
-        }
-      };
   const auto terminal_styles_equal = [](const terminal::TerminalStyle& lhs,
                                         const terminal::TerminalStyle& rhs) {
     const auto colors_equal = [](const std::optional<SDL_Color>& left,
@@ -927,19 +909,17 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (compare_tab != nullptr) {
       const CompareSurfaceLayout surface_layout =
           ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-      ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
-      ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
-      if (const auto geometry =
-              MakeVerticalScrollbarGeometry(layout.editor_surface,
-                                            static_cast<float>(compare_tab->model.rows.size()),
-                                            static_cast<float>(surface_layout.visible_rows),
-                                            static_cast<float>(compare_tab->scroll_row),
-                                            surface_layout.show_horizontal);
-          geometry.has_value()) {
+      const auto scroll_layout =
+          ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
+      compare_tab->scroll_row = scroll_layout.vertical_scroll;
+      compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+      if (scroll_layout.vertical_scrollbar.has_value()) {
         const SDL_FRect marker_lane = MakeRect(
             std::max(layout.editor_surface.x,
-                     geometry->track.x - kCompareMarkerLaneGap - kCompareMarkerLaneWidth),
-            geometry->track.y, kCompareMarkerLaneWidth, geometry->track.h);
+                     scroll_layout.vertical_scrollbar->track.x - kCompareMarkerLaneGap -
+                         kCompareMarkerLaneWidth),
+            scroll_layout.vertical_scrollbar->track.y, kCompareMarkerLaneWidth,
+            scroll_layout.vertical_scrollbar->track.h);
         const SDL_FRect marker_inner_lane =
             MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
                      std::max(0.0f, marker_lane.w - 2.0f),
@@ -947,16 +927,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
         DrawRect(renderer, marker_lane, theme_.border);
         DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
-        DrawScrollbarTrack(renderer, theme_, geometry->track);
-        DrawScrollbarThumb(renderer, theme_, geometry->thumb,
+        DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+        DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                            surface_.drag_target == DragTarget::CompareVerticalScrollbar);
       }
-      if (surface_layout.show_horizontal) {
-        draw_horizontal_scrollbar(
-            layout.editor_surface, static_cast<float>(compare_tab->max_visual_columns),
-            static_cast<float>(surface_layout.visible_columns),
-            static_cast<float>(compare_tab->horizontal_scroll),
-            surface_.drag_target == DragTarget::CompareHorizontalScrollbar, surface_layout.show_vertical);
+      if (scroll_layout.horizontal_scrollbar.has_value()) {
+        DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+                      scroll_layout.horizontal_scrollbar->thumb,
+                      surface_.drag_target == DragTarget::CompareHorizontalScrollbar);
       }
     }
   } else if (ActiveTabIsMerge()) {
@@ -964,21 +942,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (merge_tab != nullptr) {
       const MergeSurfaceLayout surface_layout =
           ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-      ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);
-      ClampMergeHorizontalScroll(*merge_tab, surface_layout.visible_columns);
+      const auto scroll_layout =
+          ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
+      merge_tab->scroll_row = scroll_layout.vertical_scroll;
+      merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
       const std::size_t line_count =
           std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
                     merge_tab->model.current_lines.size(), std::size_t{1}});
-      if (const auto geometry =
-              MakeVerticalScrollbarGeometry(layout.editor_surface, static_cast<float>(line_count),
-                                            static_cast<float>(surface_layout.visible_rows),
-                                            static_cast<float>(merge_tab->scroll_row),
-                                            surface_layout.show_horizontal);
-          geometry.has_value()) {
+      if (scroll_layout.vertical_scrollbar.has_value()) {
         const SDL_FRect marker_lane = MakeRect(
             std::max(layout.editor_surface.x,
-                     geometry->track.x - kCompareMarkerLaneGap - kCompareMarkerLaneWidth),
-            geometry->track.y, kCompareMarkerLaneWidth, geometry->track.h);
+                     scroll_layout.vertical_scrollbar->track.x - kCompareMarkerLaneGap -
+                         kCompareMarkerLaneWidth),
+            scroll_layout.vertical_scrollbar->track.y, kCompareMarkerLaneWidth,
+            scroll_layout.vertical_scrollbar->track.h);
         const SDL_FRect marker_inner_lane =
             MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
                      std::max(0.0f, marker_lane.w - 2.0f),
@@ -1002,16 +979,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
         DrawRect(renderer, marker_lane, theme_.border);
         DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs);
-        DrawScrollbarTrack(renderer, theme_, geometry->track);
-        DrawScrollbarThumb(renderer, theme_, geometry->thumb,
+        DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+        DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                            surface_.drag_target == DragTarget::CompareVerticalScrollbar);
       }
-      if (surface_layout.show_horizontal) {
-        draw_horizontal_scrollbar(
-            layout.editor_surface, static_cast<float>(merge_tab->max_visual_columns),
-            static_cast<float>(surface_layout.visible_columns),
-            static_cast<float>(merge_tab->horizontal_scroll),
-            surface_.drag_target == DragTarget::CompareHorizontalScrollbar, surface_layout.show_vertical);
+      if (scroll_layout.horizontal_scrollbar.has_value()) {
+        DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+                      scroll_layout.horizontal_scrollbar->thumb,
+                      surface_.drag_target == DragTarget::CompareHorizontalScrollbar);
       }
     }
   } else {
@@ -1029,23 +1004,18 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const editor::EditorViewMetrics metrics =
           editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      const std::size_t total_columns =
-          std::max<std::size_t>(viewport->visible_columns(), MaxVisualColumns(*viewport));
-      const bool show_vertical = viewport->line_count() > viewport->visible_lines();
-      const bool show_horizontal = total_columns > viewport->visible_columns();
-      if (show_vertical) {
-        draw_vertical_scrollbar(pane.rect, static_cast<float>(viewport->line_count()),
-                                static_cast<float>(viewport->visible_lines()),
-                                static_cast<float>(viewport->scroll_line()),
-                                pane.active && surface_.drag_target == DragTarget::EditorVerticalScrollbar,
-                                show_horizontal);
+      const auto scroll_layout = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
+      if (scroll_layout.vertical_scrollbar.has_value()) {
+        DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track,
+                      scroll_layout.vertical_scrollbar->thumb,
+                      pane.active &&
+                          surface_.drag_target == DragTarget::EditorVerticalScrollbar);
       }
-      if (show_horizontal) {
-        draw_horizontal_scrollbar(
-            pane.rect, static_cast<float>(total_columns),
-            static_cast<float>(viewport->visible_columns()),
-            static_cast<float>(viewport->horizontal_scroll()),
-            pane.active && surface_.drag_target == DragTarget::EditorHorizontalScrollbar, show_vertical);
+      if (scroll_layout.horizontal_scrollbar.has_value()) {
+        DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+                      scroll_layout.horizontal_scrollbar->thumb,
+                      pane.active &&
+                          surface_.drag_target == DragTarget::EditorHorizontalScrollbar);
       }
     }
     for (const EditorSplitDividerLayout& divider :
@@ -1661,23 +1631,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                              "Command");
     }
 
-    const SDL_FRect panel_content = BottomPanelContentRect(layout, surface_.command_mode);
-    const float logs_y = panel_content.y + 8.0f;
     const std::size_t panel_line_count = terminal_panel ? terminal_lines.size() : 0;
-    const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
-    const int max_scroll = std::max(0, static_cast<int>(panel_line_count) - visible_rows);
-    const int scroll_row = BottomPanelScrollRow(panel_line_count, visible_rows);
-    SetBottomPanelScrollRow(scroll_row, panel_line_count, visible_rows);
-    const float log_width =
-        panel_content.w - 24.0f - (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f);
-    for (int row = 0; row < visible_rows; ++row) {
-      const int index = scroll_row + row;
+    const BottomPanelLogLayout panel_layout =
+        ComputeBottomPanelLogLayout(layout, panel_line_count);
+    SetBottomPanelScrollRow(panel_layout.scroll.vertical_scroll, panel_line_count,
+                            panel_layout.scroll.visible_rows);
+    for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
+      const int index = panel_layout.scroll.vertical_scroll + row;
       if (index >= static_cast<int>(panel_line_count)) {
         break;
       }
-      const float line_y = logs_y + static_cast<float>(row) * text_renderer_.LineHeight();
+      const float line_y =
+          panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
       if (terminal_panel) {
-        draw_terminal_line(panel_content.x + 12.0f, line_y, log_width,
+        draw_terminal_line(panel_layout.text_x, line_y, panel_layout.text_width,
                            terminal_lines[static_cast<std::size_t>(index)],
                            static_cast<std::size_t>(index));
       }
@@ -1688,18 +1655,21 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                                    active_terminal->session.cursor_visible()) {
         const std::size_t cursor_row = active_terminal->session.cursor_row();
         const std::size_t cursor_column = active_terminal->session.cursor_column();
-        if (cursor_row >= static_cast<std::size_t>(scroll_row) &&
-            cursor_row < static_cast<std::size_t>(scroll_row + visible_rows) &&
+        if (cursor_row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) &&
+            cursor_row < static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
+                                                  panel_layout.scroll.visible_rows) &&
             (surface_.focus != FocusTarget::Panel || CaretVisibleNow())) {
           const float char_width = std::max(1.0f, text_renderer_.CharWidth());
           const float cursor_x =
-              panel_content.x + 12.0f + static_cast<float>(cursor_column) * char_width;
+              panel_layout.text_x + static_cast<float>(cursor_column) * char_width;
           const float cursor_y =
-              logs_y + static_cast<float>(cursor_row - static_cast<std::size_t>(scroll_row)) *
-                           text_renderer_.LineHeight();
-          if (cursor_x < panel_content.x + panel_content.w - 2.0f) {
+              panel_layout.text_y +
+              static_cast<float>(cursor_row -
+                                 static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
+                  panel_layout.line_height;
+          if (cursor_x < panel_layout.content_rect.x + panel_layout.content_rect.w - 2.0f) {
             DrawFilledRect(renderer,
-                           MakeRect(cursor_x, cursor_y - 1.0f, 1.5f, text_renderer_.LineHeight()),
+                           MakeRect(cursor_x, cursor_y - 1.0f, 1.5f, panel_layout.line_height),
                            theme_.cursor);
           }
         }
@@ -1722,10 +1692,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                              "> " + command_.input);
     }
 
-    draw_vertical_scrollbar(
-        panel_content,
-        static_cast<float>(panel_line_count), static_cast<float>(visible_rows),
-        static_cast<float>(scroll_row), surface_.drag_target == DragTarget::BottomPanelScrollbar);
+    if (panel_layout.scroll.vertical_scrollbar.has_value()) {
+      DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
+                    panel_layout.scroll.vertical_scrollbar->thumb,
+                    surface_.drag_target == DragTarget::BottomPanelScrollbar);
+    }
   }
 
   if (surface_.menu_bar_open) {
