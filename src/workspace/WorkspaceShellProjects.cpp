@@ -34,6 +34,39 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   state.file_finder.SetIndex(&state.file_index);
 }
 
+bool WorkspaceShell::HasActiveProjectCatalogEntry() const {
+  return !project_root_.empty() && project_catalog_.active_index < project_catalog_.entries.size();
+}
+
+WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry(std::size_t index) {
+  return index < project_catalog_.entries.size() ? project_catalog_.entries[index].get() : nullptr;
+}
+
+const WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry(
+    std::size_t index) const {
+  return index < project_catalog_.entries.size() ? project_catalog_.entries[index].get() : nullptr;
+}
+
+std::filesystem::path WorkspaceShell::ProjectCatalogRoot(std::size_t index) const {
+  if (index >= project_catalog_.entries.size()) {
+    return {};
+  }
+  if (!project_root_.empty() && index == project_catalog_.active_index) {
+    return project_root_;
+  }
+  const auto* state = ProjectCatalogEntry(index);
+  return state != nullptr ? state->root : std::filesystem::path{};
+}
+
+void WorkspaceShell::PersistActiveProjectCatalogEntry() {
+  if (!HasActiveProjectCatalogEntry()) {
+    return;
+  }
+  SaveConfigState();
+  SaveSessionState();
+  StoreCurrentProjectState(*project_catalog_.entries[project_catalog_.active_index]);
+}
+
 WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
     const SurfaceState& state) {
   return ProjectSurfaceState{
@@ -467,37 +500,31 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     return true;
   }
 
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
-    const std::filesystem::path open_root =
-        (!project_root_.empty() && i == active_project_index_) ? project_root_
-        : projects_[i] != nullptr                               ? projects_[i]->root
-                                                               : std::filesystem::path{};
-    if (open_root == normalized_root) {
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    if (ProjectCatalogRoot(i) == normalized_root) {
       return SwitchProject(i, log_feedback);
     }
   }
 
-  const bool had_active_project = !project_root_.empty() && active_project_index_ < projects_.size();
-  const std::size_t previous_active_index = active_project_index_;
+  const bool had_active_project = HasActiveProjectCatalogEntry();
+  const std::size_t previous_active_index = project_catalog_.active_index;
   if (had_active_project) {
-    SaveConfigState();
-    SaveSessionState();
-    StoreCurrentProjectState(*projects_[active_project_index_]);
+    PersistActiveProjectCatalogEntry();
   }
 
   auto project_state = std::make_unique<ProjectWorkspaceState>();
   project_state->root = normalized_root;
   project_state->initialized = true;
-  projects_.push_back(std::move(project_state));
-  active_project_index_ = projects_.size() - 1;
+  project_catalog_.entries.push_back(std::move(project_state));
+  project_catalog_.active_index = project_catalog_.entries.size() - 1;
 
   if (!InitializeCurrentProject(normalized_root, restore_persistence, log_feedback)) {
-    projects_.pop_back();
-    if (had_active_project && previous_active_index < projects_.size()) {
-      active_project_index_ = previous_active_index;
-      ActivateProjectState(*projects_[active_project_index_], true);
+    project_catalog_.entries.pop_back();
+    if (had_active_project && previous_active_index < project_catalog_.entries.size()) {
+      project_catalog_.active_index = previous_active_index;
+      ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
     } else {
-      active_project_index_ = 0;
+      project_catalog_.active_index = 0;
       ResetProjectScopedState(true);
     }
     return false;
@@ -510,29 +537,27 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   (void) log_feedback;
-  if (index >= projects_.size()) {
+  if (index >= project_catalog_.entries.size()) {
     return false;
   }
   CloseTreeContextMenu();
-  if (!project_root_.empty() && index == active_project_index_) {
+  if (HasActiveProjectCatalogEntry() && index == project_catalog_.active_index) {
     EnsureActiveProjectVisible();
     return true;
   }
 
-  if (!project_root_.empty() && active_project_index_ < projects_.size()) {
-    SaveConfigState();
-    SaveSessionState();
-    StoreCurrentProjectState(*projects_[active_project_index_]);
+  if (HasActiveProjectCatalogEntry()) {
+    PersistActiveProjectCatalogEntry();
   }
 
-  const std::size_t previous_active_index = active_project_index_;
-  active_project_index_ = index;
-  if (!ActivateProjectState(*projects_[index], true)) {
-    if (!project_root_.empty() && previous_active_index < projects_.size()) {
-      active_project_index_ = previous_active_index;
-      ActivateProjectState(*projects_[active_project_index_], true);
+  const std::size_t previous_active_index = project_catalog_.active_index;
+  project_catalog_.active_index = index;
+  if (!ActivateProjectState(*project_catalog_.entries[index], true)) {
+    if (!project_root_.empty() && previous_active_index < project_catalog_.entries.size()) {
+      project_catalog_.active_index = previous_active_index;
+      ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
     } else {
-      active_project_index_ = 0;
+      project_catalog_.active_index = 0;
       ResetProjectScopedState(true);
     }
     return false;
@@ -543,24 +568,24 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
-  if (active_project_index_ >= projects_.size() || index >= projects_.size()) {
+  if (project_catalog_.active_index >= project_catalog_.entries.size() || index >= project_catalog_.entries.size()) {
     return false;
   }
-  if (active_project_index_ == index) {
+  if (project_catalog_.active_index == index) {
     return true;
   }
 
   std::unique_ptr<ProjectWorkspaceState> moved_project =
-      std::move(projects_[active_project_index_]);
-  projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
-  projects_.insert(projects_.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
-  active_project_index_ = index;
+      std::move(project_catalog_.entries[project_catalog_.active_index]);
+  project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(project_catalog_.active_index));
+  project_catalog_.entries.insert(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
+  project_catalog_.active_index = index;
   EnsureActiveProjectVisible();
   return true;
 }
 
 void WorkspaceShell::RequestCloseProject(std::size_t index) {
-  if (index >= projects_.size()) {
+  if (index >= project_catalog_.entries.size()) {
     return;
   }
   if (!DirtyEditorTabIndicesForProject(index).empty()) {
@@ -571,47 +596,42 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
-  if (index >= projects_.size()) {
+  if (index >= project_catalog_.entries.size()) {
     return;
   }
 
-  const bool closing_active = !project_root_.empty() && index == active_project_index_;
-  const std::filesystem::path project_root =
-      closing_active ? project_root_
-                     : (projects_[index] != nullptr ? projects_[index]->root
-                                                    : std::filesystem::path{});
+  const bool closing_active = HasActiveProjectCatalogEntry() && index == project_catalog_.active_index;
+  const std::filesystem::path project_root = ProjectCatalogRoot(index);
 
   if (closing_active) {
-    SaveConfigState();
-    SaveSessionState();
-    StoreCurrentProjectState(*projects_[index]);
+    PersistActiveProjectCatalogEntry();
   }
 
-  projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(index));
-  if (projects_.empty()) {
-    active_project_index_ = 0;
-    project_tab_scroll_index_ = 0;
+  project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index));
+  if (project_catalog_.entries.empty()) {
+    project_catalog_.active_index = 0;
+    project_catalog_.tab_scroll_index = 0;
     ResetProjectScopedState(true);
     SaveWorkspaceSession();
     return;
   }
 
   if (closing_active) {
-    active_project_index_ = std::min(index, projects_.size() - 1);
-    if (!ActivateProjectState(*projects_[active_project_index_], true)) {
-      projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
-      if (projects_.empty()) {
-        active_project_index_ = 0;
-        project_tab_scroll_index_ = 0;
+    project_catalog_.active_index = std::min(index, project_catalog_.entries.size() - 1);
+    if (!ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true)) {
+      project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(project_catalog_.active_index));
+      if (project_catalog_.entries.empty()) {
+        project_catalog_.active_index = 0;
+        project_catalog_.tab_scroll_index = 0;
         ResetProjectScopedState(true);
         SaveWorkspaceSession();
         return;
       }
-      active_project_index_ = std::min(active_project_index_, projects_.size() - 1);
-      ActivateProjectState(*projects_[active_project_index_], true);
+      project_catalog_.active_index = std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
+      ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
     }
-  } else if (active_project_index_ > index) {
-    --active_project_index_;
+  } else if (project_catalog_.active_index > index) {
+    --project_catalog_.active_index;
   }
 
   EnsureActiveProjectVisible();

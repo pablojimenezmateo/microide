@@ -415,7 +415,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return true;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev:
-      return !project_root_.empty() && projects_.size() > 1;
+      return !project_root_.empty() && project_catalog_.entries.size() > 1;
     case ActionId::TabMove:
     case ActionId::TabSwitch:
       return !project_root_.empty() && !open_tabs_.empty();
@@ -551,9 +551,9 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
   last_mouse_position_valid_ = false;
   quit_requested_ = false;
   prompts_.dirty_visible = false;
-  projects_.clear();
-  active_project_index_ = 0;
-  project_tab_scroll_index_ = 0;
+  project_catalog_.entries.clear();
+  project_catalog_.active_index = 0;
+  project_catalog_.tab_scroll_index = 0;
 
   project_search_runtime_.Initialize();
 
@@ -607,20 +607,18 @@ void WorkspaceShell::Shutdown() {
   SaveUserConfig();
   git_blame_service_.Stop();
 
-  if (!projects_.empty() && !project_root_.empty() && active_project_index_ < projects_.size()) {
-    SaveConfigState();
-    SaveSessionState();
-    StoreCurrentProjectState(*projects_[active_project_index_]);
+  if (HasActiveProjectCatalogEntry()) {
+    PersistActiveProjectCatalogEntry();
   }
 
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
-    if (projects_[i] == nullptr || !projects_[i]->initialized || i == active_project_index_) {
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    if (project_catalog_.entries[i] == nullptr || !project_catalog_.entries[i]->initialized || i == project_catalog_.active_index) {
       continue;
     }
-    LoadProjectState(*projects_[i]);
+    LoadProjectState(*project_catalog_.entries[i]);
     SaveConfigState();
     SaveSessionState();
-    StoreCurrentProjectState(*projects_[i]);
+    StoreCurrentProjectState(*project_catalog_.entries[i]);
   }
   SaveWorkspaceSession();
 
@@ -659,8 +657,8 @@ void WorkspaceShell::RequestQuit() {
   }
 
   std::size_t dirty_count = DirtyEditorTabIndices().size();
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
-    if (!project_root_.empty() && i == active_project_index_) {
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    if (HasActiveProjectCatalogEntry() && i == project_catalog_.active_index) {
       continue;
     }
     dirty_count += DirtyEditorTabIndicesForProject(i).size();
@@ -1323,14 +1321,14 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(
     std::size_t project_index) const {
-  if (project_index >= projects_.size()) {
+  if (project_index >= project_catalog_.entries.size()) {
     return {};
   }
-  if (!project_root_.empty() && project_index == active_project_index_) {
+  if (HasActiveProjectCatalogEntry() && project_index == project_catalog_.active_index) {
     return DirtyEditorTabIndices();
   }
-  return projects_[project_index] == nullptr ? std::vector<std::size_t>{}
-                                             : DirtyEditorTabIndices(*projects_[project_index]);
+  const auto* state = ProjectCatalogEntry(project_index);
+  return state == nullptr ? std::vector<std::size_t>{} : DirtyEditorTabIndices(*state);
 }
 
 
@@ -1967,13 +1965,10 @@ std::string WorkspaceShell::ProjectLabelForRoot(const std::filesystem::path& roo
 }
 
 std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
-  if (index >= projects_.size()) {
+  if (index >= project_catalog_.entries.size()) {
     return {};
   }
-  const std::filesystem::path root =
-      (!project_root_.empty() && index == active_project_index_) ? project_root_
-      : projects_[index] != nullptr                               ? projects_[index]->root
-                                                                 : std::filesystem::path{};
+  const std::filesystem::path root = ProjectCatalogRoot(index);
   const std::string label = ProjectLabelForRoot(root);
   return DirtyEditorTabIndicesForProject(index).empty() ? label : "*" + label;
 }

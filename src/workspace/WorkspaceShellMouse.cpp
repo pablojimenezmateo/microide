@@ -1474,14 +1474,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     switch (tab_drag_state_.kind) {
       case TabDragKind::Project:
         if (Contains(drag_layout.project_tab_strip, event.motion.x, event.motion.y) &&
-            !projects_.empty()) {
+            !project_catalog_.entries.empty()) {
           const auto visible_tabs = ComputeVisibleProjectTabs(drag_layout.project_tab_strip);
           const std::size_t insertion_slot =
               StripInsertionSlot(drag_layout.project_tab_strip, visible_tabs,
-                                 static_cast<float>(event.motion.x), projects_.size());
+                                 static_cast<float>(event.motion.x), project_catalog_.entries.size());
           const std::size_t target_index =
-              MoveTargetIndexForInsertion(insertion_slot, active_project_index_, projects_.size());
-          if (target_index != active_project_index_ && MoveActiveProjectTo(target_index)) {
+              MoveTargetIndexForInsertion(insertion_slot, project_catalog_.active_index, project_catalog_.entries.size());
+          if (target_index != project_catalog_.active_index && MoveActiveProjectTo(target_index)) {
             tab_drag_state_.reordered = true;
           }
         }
@@ -2391,10 +2391,10 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   }
 
   if (Contains(layout.project_tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
-      !projects_.empty()) {
-    const int max_scroll = std::max(0, static_cast<int>(projects_.size()) - 1);
-    project_tab_scroll_index_ =
-        std::clamp(project_tab_scroll_index_ - vertical_ticks, 0, max_scroll);
+      !project_catalog_.entries.empty()) {
+    const int max_scroll = std::max(0, static_cast<int>(project_catalog_.entries.size()) - 1);
+    project_catalog_.tab_scroll_index =
+        std::clamp(project_catalog_.tab_scroll_index - vertical_ticks, 0, max_scroll);
     return true;
   }
 

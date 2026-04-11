@@ -25,7 +25,7 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
 }
 
 void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
-  if (index >= projects_.size()) {
+  if (index >= project_catalog_.entries.size()) {
     return;
   }
 
@@ -48,8 +48,8 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
 
 void WorkspaceShell::ShowDirtyPromptForQuit() {
   std::size_t dirty_count = DirtyEditorTabIndices().size();
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
-    if (!project_root_.empty() && i == active_project_index_) {
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    if (HasActiveProjectCatalogEntry() && i == project_catalog_.active_index) {
       continue;
     }
     dirty_count += DirtyEditorTabIndicesForProject(i).size();
@@ -59,7 +59,7 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
   prompts_.dirty_previous_focus = surface_.focus;
   prompts_.dirty.kind = DirtyPromptState::Kind::Quit;
   prompts_.dirty.tab_index = active_tab_index_;
-  prompts_.dirty.project_index = active_project_index_;
+  prompts_.dirty.project_index = project_catalog_.active_index;
   prompts_.dirty.dirty_tabs = DirtyEditorTabIndices();
   prompts_.dirty.dirty_count = dirty_count;
   prompts_.dirty.path.clear();
@@ -113,12 +113,12 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
   }
 
   if (prompt.kind == DirtyPromptState::Kind::CloseProject) {
-    if (prompt.project_index >= projects_.size()) {
+    if (prompt.project_index >= project_catalog_.entries.size()) {
       DismissDirtyPrompt(true);
       return;
     }
     if (prompt.selected_action == 0 &&
-        (prompt.project_index != active_project_index_ || project_root_.empty())) {
+        (prompt.project_index != project_catalog_.active_index || project_root_.empty())) {
       if (!SwitchProject(prompt.project_index, false)) {
         DismissDirtyPrompt(true);
         return;
@@ -132,16 +132,16 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
       }
     }
     DismissDirtyPrompt(false);
-    CloseProject(active_project_index_);
+    CloseProject(project_catalog_.active_index);
     return;
   }
 
   if (prompt.selected_action == 0) {
-    const std::size_t project_count = projects_.size();
-    const std::size_t original_active_index = active_project_index_;
+    const std::size_t project_count = project_catalog_.entries.size();
+    const std::size_t original_active_index = project_catalog_.active_index;
     const bool had_active_project = !project_root_.empty();
     for (std::size_t i = 0; i < project_count; ++i) {
-      if (i >= projects_.size()) {
+      if (i >= project_catalog_.entries.size()) {
         break;
       }
       if (!SwitchProject(i, false)) {
@@ -153,7 +153,7 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
         }
       }
     }
-    if (had_active_project && original_active_index < projects_.size()) {
+    if (had_active_project && original_active_index < project_catalog_.entries.size()) {
       SwitchProject(original_active_index, false);
     }
   }
@@ -202,11 +202,7 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
   }
 
   if (prompts_.dirty.kind == DirtyPromptState::Kind::CloseProject) {
-    const std::filesystem::path project_root =
-        prompts_.dirty.project_index < projects_.size() &&
-                projects_[prompts_.dirty.project_index] != nullptr
-            ? projects_[prompts_.dirty.project_index]->root
-            : project_root_;
+    const std::filesystem::path project_root = ProjectCatalogRoot(prompts_.dirty.project_index);
     const std::string label = ProjectLabelForRoot(project_root);
     return prompts_.dirty.dirty_count == 1
                ? "Save the dirty tab before closing " + label + "?"

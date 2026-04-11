@@ -139,23 +139,23 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
       }
       return ActionDispatchResult::Handled;
     case ActionId::ProjectClose:
-      if (projects_.empty() || project_root_.empty()) {
+      if (project_catalog_.entries.empty() || project_root_.empty()) {
         return reject("No active project");
       }
-      RequestCloseProject(active_project_index_);
+      RequestCloseProject(project_catalog_.active_index);
       return ActionDispatchResult::Handled;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev: {
-      if (projects_.empty() || project_root_.empty()) {
+      if (project_catalog_.entries.empty() || project_root_.empty()) {
         return reject("No active project");
       }
-      if (projects_.size() == 1) {
+      if (project_catalog_.entries.size() == 1) {
         return reject("Only one project tab is open");
       }
       const int delta = id == ActionId::ProjectNext ? 1 : -1;
-      const int project_count = static_cast<int>(projects_.size());
+      const int project_count = static_cast<int>(project_catalog_.entries.size());
       const int next_index =
-          (static_cast<int>(active_project_index_) + delta + project_count) % project_count;
+          (static_cast<int>(project_catalog_.active_index) + delta + project_count) % project_count;
       SwitchProject(static_cast<std::size_t>(next_index), true);
       return ActionDispatchResult::Handled;
     }

@@ -792,6 +792,12 @@ class WorkspaceShell {
     EditorPreferences editor_preferences;
   };
 
+  struct ProjectCatalogState {
+    std::vector<std::unique_ptr<ProjectWorkspaceState>> entries;
+    std::size_t active_index = 0;
+    int tab_scroll_index = 0;
+  };
+
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
   static constexpr float kProjectSearchButtonTop = 72.0f;
@@ -885,6 +891,11 @@ class WorkspaceShell {
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
   void RebindProjectState(ProjectWorkspaceState& state);
+  bool HasActiveProjectCatalogEntry() const;
+  ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index);
+  const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
+  std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
+  void PersistActiveProjectCatalogEntry();
   static ProjectSurfaceState CaptureProjectSurfaceState(const SurfaceState& state);
   void ApplyProjectSurfaceState(const ProjectSurfaceState& state);
   void ResetProjectScopedState(bool show_welcome);
@@ -1320,9 +1331,7 @@ class WorkspaceShell {
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
-  std::vector<std::unique_ptr<ProjectWorkspaceState>> projects_;
-  std::size_t active_project_index_ = 0;
-  int project_tab_scroll_index_ = 0;
+  ProjectCatalogState project_catalog_;
   std::filesystem::path project_root_;
   project::DirectoryTree directory_tree_;
   project::FileIndex file_index_;

@@ -612,9 +612,9 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     return false;
   }
 
-  projects_.clear();
-  active_project_index_ = 0;
-  project_tab_scroll_index_ = 0;
+  project_catalog_.entries.clear();
+  project_catalog_.active_index = 0;
+  project_catalog_.tab_scroll_index = 0;
 
   if (persisted_session.project_roots.empty()) {
     ResetProjectScopedState(true);
@@ -631,23 +631,23 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     auto project_state = std::make_unique<ProjectWorkspaceState>();
     project_state->root = normalized_root;
     project_state->restore_persistence_on_activate = true;
-    projects_.push_back(std::move(project_state));
+    project_catalog_.entries.push_back(std::move(project_state));
   }
 
-  if (projects_.empty()) {
+  if (project_catalog_.entries.empty()) {
     ResetProjectScopedState(true);
     return true;
   }
 
-  active_project_index_ = std::min(persisted_session.active_project_index, projects_.size() - 1);
-  if (!ActivateProjectState(*projects_[active_project_index_], true)) {
-    projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
-    if (projects_.empty()) {
+  project_catalog_.active_index = std::min(persisted_session.active_project_index, project_catalog_.entries.size() - 1);
+  if (!ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true)) {
+    project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(project_catalog_.active_index));
+    if (project_catalog_.entries.empty()) {
       ResetProjectScopedState(true);
       return true;
     }
-    active_project_index_ = std::min(active_project_index_, projects_.size() - 1);
-    ActivateProjectState(*projects_[active_project_index_], true);
+    project_catalog_.active_index = std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
+    ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
   }
   EnsureActiveProjectVisible();
   return true;
@@ -669,11 +669,10 @@ void WorkspaceShell::SaveWorkspaceSession() {
 
   PersistedWorkspaceSessionState persisted_session;
   persisted_session.active_project_index =
-      projects_.empty() ? 0 : std::min(active_project_index_, projects_.size() - 1);
-  persisted_session.project_roots.reserve(projects_.size());
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
-    const std::filesystem::path project_root =
-        projects_[i] != nullptr ? projects_[i]->root : std::filesystem::path{};
+      project_catalog_.entries.empty() ? 0 : std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
+  persisted_session.project_roots.reserve(project_catalog_.entries.size());
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    const std::filesystem::path project_root = ProjectCatalogRoot(i);
     if (project_root.empty()) {
       continue;
     }

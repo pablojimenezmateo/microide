@@ -17,7 +17,7 @@ constexpr float kTabCloseButtonRightInset = 6.0f;
 }  // namespace
 
 float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
-  if (index >= projects_.size()) {
+  if (index >= project_catalog_.entries.size()) {
     return 156.0f;
   }
   return std::clamp(text_renderer_.MeasureWidth(ProjectTabDisplayTitle(index)) + 58.0f, 156.0f,
@@ -25,14 +25,14 @@ float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
 }
 
 void WorkspaceShell::EnsureActiveProjectVisible() {
-  if (projects_.empty()) {
-    project_tab_scroll_index_ = 0;
+  if (project_catalog_.entries.empty()) {
+    project_catalog_.tab_scroll_index = 0;
     return;
   }
 
   std::vector<float> widths;
-  widths.reserve(projects_.size());
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
+  widths.reserve(project_catalog_.entries.size());
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
     widths.push_back(ProjectTabWidthForIndex(i));
   }
 
@@ -41,30 +41,27 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
   const float start_x = 12.0f;
   const float gap = 1.0f;
   const float max_tab_x = std::max(start_x + 120.0f, strip_width - 12.0f);
-  project_tab_scroll_index_ =
+  project_catalog_.tab_scroll_index =
       static_cast<int>(EnsureVisibleStripIndex(widths, start_x, gap, max_tab_x,
-                                               static_cast<std::size_t>(std::max(0, project_tab_scroll_index_)),
-                                               active_project_index_));
+                                               static_cast<std::size_t>(std::max(0, project_catalog_.tab_scroll_index)),
+                                               project_catalog_.active_index));
 }
 
 std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisibleProjectTabs(
     const SDL_FRect& project_tab_strip) const {
   std::vector<VisibleProjectTab> tabs;
-  if (projects_.empty()) {
+  if (project_catalog_.entries.empty()) {
     return tabs;
   }
 
   std::vector<float> widths;
   std::vector<std::string> display_titles;
   std::vector<std::string> tooltip_labels;
-  widths.reserve(projects_.size());
-  display_titles.reserve(projects_.size());
-  tooltip_labels.reserve(projects_.size());
-  for (std::size_t i = 0; i < projects_.size(); ++i) {
-    const std::filesystem::path root =
-        (!project_root_.empty() && i == active_project_index_) ? project_root_
-        : projects_[i] != nullptr                               ? projects_[i]->root
-                                                               : std::filesystem::path{};
+  widths.reserve(project_catalog_.entries.size());
+  display_titles.reserve(project_catalog_.entries.size());
+  tooltip_labels.reserve(project_catalog_.entries.size());
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    const std::filesystem::path root = ProjectCatalogRoot(i);
     display_titles.push_back(ProjectTabDisplayTitle(i));
     tooltip_labels.push_back(root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string());
     widths.push_back(std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f, 156.0f,
@@ -79,10 +76,10 @@ std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisiblePro
       std::max(start_x + 120.0f, project_tab_strip.x + project_tab_strip.w - 12.0f);
   const auto visible = ComputeVisibleStripLayouts(
       widths, start_x, gap, max_tab_x,
-      static_cast<std::size_t>(std::clamp(project_tab_scroll_index_, 0,
-                                          std::max(0, static_cast<int>(projects_.size()) - 1))));
+      static_cast<std::size_t>(std::clamp(project_catalog_.tab_scroll_index, 0,
+                                          std::max(0, static_cast<int>(project_catalog_.entries.size()) - 1))));
   const auto models = BuildChromeTabRenderItems(
-      visible, tab_y, tab_height, {}, active_project_index_, display_titles, tooltip_labels,
+      visible, tab_y, tab_height, {}, project_catalog_.active_index, display_titles, tooltip_labels,
       kTabCloseButtonSize, kTabCloseButtonRightInset);
 
   tabs.reserve(models.size());

@@ -579,15 +579,9 @@ struct WorkspaceShellTestAccess {
   }
   static std::vector<std::filesystem::path> ProjectRoots(const WorkspaceShell& shell) {
     std::vector<std::filesystem::path> roots;
-    roots.reserve(shell.projects_.size());
-    for (std::size_t i = 0; i < shell.projects_.size(); ++i) {
-      if (!shell.project_root_.empty() && i == shell.active_project_index_) {
-        roots.push_back(shell.project_root_);
-      } else if (shell.projects_[i] != nullptr) {
-        roots.push_back(shell.projects_[i]->root);
-      } else {
-        roots.emplace_back();
-      }
+    roots.reserve(shell.project_catalog_.entries.size());
+    for (std::size_t i = 0; i < shell.project_catalog_.entries.size(); ++i) {
+      roots.push_back(shell.ProjectCatalogRoot(i));
     }
     return roots;
   }
@@ -619,9 +613,9 @@ struct WorkspaceShellTestAccess {
   static std::filesystem::path SelectedTreePath(const WorkspaceShell& shell) {
     return shell.SelectedTreePath();
   }
-  static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.projects_.size(); }
+  static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.project_catalog_.entries.size(); }
   static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {
-    return shell.active_project_index_;
+    return shell.project_catalog_.active_index;
   }
   static const std::filesystem::path& ProjectRoot(const WorkspaceShell& shell) {
     return shell.project_root_;
