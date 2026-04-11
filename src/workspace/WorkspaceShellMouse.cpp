@@ -28,8 +28,6 @@ constexpr float kPromptSurfaceButtonHeight = 28.0f;
 constexpr float kPromptSurfaceButtonGap = 10.0f;
 constexpr float kScrollbarThickness = 10.0f;
 constexpr float kScrollbarInset = 2.0f;
-constexpr float kEditorSplitDividerThickness = 6.0f;
-constexpr float kMinSplitPaneExtent = 180.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
 constexpr float kMergeToolbarHeight = 54.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
@@ -1610,74 +1608,47 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
 
       const bool vertical = split_node->orientation == EditorSplitOrientation::Vertical;
-      const std::size_t child_count = split_node->children.size();
-      const float total_extent =
-          std::max(0.0f,
-                   (vertical ? node_rect->w : node_rect->h) -
-                       kEditorSplitDividerThickness * static_cast<float>(child_count - 1));
-      if (total_extent <= 0.0f) {
+      std::vector<float> size_fractions(split_node->children.size(), 0.0f);
+      for (std::size_t i = 0; i < split_node->children.size(); ++i) {
+        size_fractions[i] = split_node->children[i]->size_fraction;
+      }
+      const auto split_layout = ComputeEditorSplitAxisLayout(*node_rect, vertical, size_fractions);
+      if (!split_layout.has_value() || split_layout->total_extent <= 0.0f ||
+          split_layout->extents.size() != split_node->children.size()) {
         return false;
-      }
-
-      std::vector<float> weights(child_count, 0.0f);
-      float total_weight = 0.0f;
-      for (std::size_t i = 0; i < child_count; ++i) {
-        weights[i] = std::max(0.0f, split_node->children[i]->size_fraction);
-        total_weight += weights[i];
-      }
-      if (total_weight <= 0.0f) {
-        std::fill(weights.begin(), weights.end(), 1.0f);
-        total_weight = static_cast<float>(child_count);
-      }
-
-      std::vector<float> extents(child_count, 0.0f);
-      float remaining_extent = total_extent;
-      float remaining_weight = total_weight;
-      for (std::size_t i = 0; i < child_count; ++i) {
-        const std::size_t remaining_children = child_count - i;
-        extents[i] = remaining_children == 1
-                         ? remaining_extent
-                         : std::floor(remaining_weight > 0.0f
-                                          ? remaining_extent * (weights[i] / remaining_weight)
-                                          : remaining_extent /
-                                                static_cast<float>(remaining_children));
-        if (remaining_extent > kMinSplitPaneExtent * static_cast<float>(remaining_children)) {
-          extents[i] = std::clamp(
-              extents[i], kMinSplitPaneExtent,
-              remaining_extent -
-                  kMinSplitPaneExtent * static_cast<float>(remaining_children - 1));
-        }
-        remaining_extent = std::max(0.0f, remaining_extent - extents[i]);
-        remaining_weight = std::max(0.0f, remaining_weight - weights[i]);
       }
 
       float before_extent = 0.0f;
       for (std::size_t i = 0; i < surface_.drag_editor_split_divider_index; ++i) {
-        before_extent += extents[i];
+        before_extent += split_layout->extents[i];
       }
-      const float pair_extent =
-          extents[surface_.drag_editor_split_divider_index] + extents[surface_.drag_editor_split_divider_index + 1];
+      const float pair_extent = split_layout->extents[surface_.drag_editor_split_divider_index] +
+                                split_layout->extents[surface_.drag_editor_split_divider_index +
+                                                      1];
       const float min_extent =
-          total_extent > kMinSplitPaneExtent * static_cast<float>(child_count) ? kMinSplitPaneExtent
-                                                                                : 0.0f;
+          split_layout->total_extent >
+                  split_layout->min_pane_extent *
+                      static_cast<float>(split_layout->extents.size())
+              ? split_layout->min_pane_extent
+              : 0.0f;
       float leading_extent =
           vertical ? static_cast<float>(event.motion.x) - node_rect->x - before_extent -
-                         kEditorSplitDividerThickness *
+                         split_layout->divider_thickness *
                              static_cast<float>(surface_.drag_editor_split_divider_index) -
-                         kEditorSplitDividerThickness * 0.5f
+                         split_layout->divider_thickness * 0.5f
                    : static_cast<float>(event.motion.y) - node_rect->y - before_extent -
-                         kEditorSplitDividerThickness *
+                         split_layout->divider_thickness *
                              static_cast<float>(surface_.drag_editor_split_divider_index) -
-                         kEditorSplitDividerThickness * 0.5f;
+                         split_layout->divider_thickness * 0.5f;
       leading_extent =
           pair_extent <= min_extent * 2.0f
               ? std::clamp(leading_extent, 0.0f, pair_extent)
               : std::clamp(leading_extent, min_extent, pair_extent - min_extent);
       const float trailing_extent = std::max(0.0f, pair_extent - leading_extent);
       split_node->children[surface_.drag_editor_split_divider_index]->size_fraction =
-          leading_extent / total_extent;
+          leading_extent / split_layout->total_extent;
       split_node->children[surface_.drag_editor_split_divider_index + 1]->size_fraction =
-          trailing_extent / total_extent;
+          trailing_extent / split_layout->total_extent;
       NormalizeEditorSplitNode(*split_node);
       surface_.focus = FocusTarget::Editor;
       return true;

@@ -175,6 +175,16 @@ struct VisibleLineRangeLayout {
   std::size_t visible_rows = 0;
 };
 
+struct EditorSplitAxisLayout {
+  bool vertical = true;
+  float total_extent = 0.0f;
+  float divider_thickness = 0.0f;
+  float min_pane_extent = 0.0f;
+  std::vector<float> extents;
+  std::vector<SDL_FRect> child_rects;
+  std::vector<SDL_FRect> divider_rects;
+};
+
 enum class GitSidebarSection {
   Modified,
   Outgoing,
@@ -288,6 +298,10 @@ WorkspaceLayout ComputeLayout(float window_width,
                               bool bottom_panel_visible,
                               float sidebar_width,
                               float bottom_panel_height);
+std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
+    const SDL_FRect& rect,
+    bool vertical,
+    std::span<const float> size_fractions);
 bool Contains(const SDL_FRect& rect, float x, float y);
 float ClampSidebarWidth(float width, float window_width);
 float ClampBottomPanelHeight(float height, float window_height);

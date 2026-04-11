@@ -36,6 +36,8 @@ constexpr float kOverlayMinWidth = 520.0f;
 constexpr float kOverlayMaxWidth = 840.0f;
 constexpr float kOverlayMinHeight = 220.0f;
 constexpr float kOverlayMaxHeight = 360.0f;
+constexpr float kEditorSplitDividerThickness = 6.0f;
+constexpr float kMinSplitPaneExtent = 180.0f;
 
 std::uint64_t StablePathHash(std::string_view text) {
   std::uint64_t hash = 1469598103934665603ull;
@@ -1205,6 +1207,74 @@ WorkspaceLayout ComputeLayout(float window_width,
   layout.editor_surface =
       MakeRect(layout.editor_area.x, layout.editor_area.y + kHeaderHeight + kDivider,
                layout.editor_area.w, layout.editor_area.h - kHeaderHeight - kDivider);
+  return layout;
+}
+
+std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
+    const SDL_FRect& rect,
+    bool vertical,
+    std::span<const float> size_fractions) {
+  if (size_fractions.empty()) {
+    return std::nullopt;
+  }
+
+  EditorSplitAxisLayout layout;
+  layout.vertical = vertical;
+  layout.divider_thickness = kEditorSplitDividerThickness;
+  layout.min_pane_extent = kMinSplitPaneExtent;
+  layout.extents.resize(size_fractions.size(), 0.0f);
+  layout.child_rects.reserve(size_fractions.size());
+  if (size_fractions.size() > 1) {
+    layout.divider_rects.reserve(size_fractions.size() - 1);
+  }
+
+  layout.total_extent = std::max(
+      0.0f, (vertical ? rect.w : rect.h) -
+                kEditorSplitDividerThickness * static_cast<float>(size_fractions.size() - 1));
+  std::vector<float> weights(size_fractions.size(), 0.0f);
+  float total_weight = 0.0f;
+  for (std::size_t i = 0; i < size_fractions.size(); ++i) {
+    weights[i] = std::max(0.0f, size_fractions[i]);
+    total_weight += weights[i];
+  }
+  if (total_weight <= 0.0f) {
+    std::fill(weights.begin(), weights.end(), 1.0f);
+    total_weight = static_cast<float>(weights.size());
+  }
+
+  float cursor = vertical ? rect.x : rect.y;
+  float remaining_extent = layout.total_extent;
+  float remaining_weight = total_weight;
+  for (std::size_t i = 0; i < weights.size(); ++i) {
+    const std::size_t remaining_children = weights.size() - i;
+    float child_extent = remaining_children == 1
+                             ? remaining_extent
+                             : std::floor(remaining_weight > 0.0f
+                                              ? remaining_extent * (weights[i] / remaining_weight)
+                                              : remaining_extent /
+                                                    static_cast<float>(remaining_children));
+    if (remaining_extent > kMinSplitPaneExtent * static_cast<float>(remaining_children)) {
+      child_extent = std::clamp(
+          child_extent, kMinSplitPaneExtent,
+          remaining_extent - kMinSplitPaneExtent * static_cast<float>(remaining_children - 1));
+    }
+
+    layout.extents[i] = std::max(0.0f, child_extent);
+    layout.child_rects.push_back(vertical ? MakeRect(cursor, rect.y, layout.extents[i], rect.h)
+                                          : MakeRect(rect.x, cursor, rect.w, layout.extents[i]));
+
+    cursor += layout.extents[i];
+    remaining_extent = std::max(0.0f, remaining_extent - layout.extents[i]);
+    remaining_weight = std::max(0.0f, remaining_weight - weights[i]);
+
+    if (i + 1 < weights.size()) {
+      layout.divider_rects.push_back(
+          vertical ? MakeRect(cursor, rect.y, kEditorSplitDividerThickness, rect.h)
+                   : MakeRect(rect.x, cursor, rect.w, kEditorSplitDividerThickness));
+      cursor += kEditorSplitDividerThickness;
+    }
+  }
+
   return layout;
 }
 

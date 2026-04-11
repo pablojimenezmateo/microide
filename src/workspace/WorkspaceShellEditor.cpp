@@ -4,16 +4,11 @@
 #include <cmath>
 #include <optional>
 
+#include "workspace/WorkspaceShellShared.h"
+
 namespace microide::workspace {
 
 namespace {
-
-constexpr float kEditorSplitDividerThickness = 6.0f;
-constexpr float kMinSplitPaneExtent = 180.0f;
-
-SDL_FRect MakeRect(float x, float y, float w, float h) {
-  return SDL_FRect{x, y, w, h};
-}
 
 std::string EditorTabLabel(const editor::TextViewport& viewport) {
   if (!viewport.path().empty()) {
@@ -629,63 +624,33 @@ void WorkspaceShell::CollectEditorPaneLayouts(
   }
 
   const bool vertical = node->orientation == EditorSplitOrientation::Vertical;
-  const std::size_t child_count = node->children.size();
-  const float total_extent = std::max(
-      0.0f, (vertical ? rect.w : rect.h) -
-                kEditorSplitDividerThickness * static_cast<float>(child_count - 1));
-  std::vector<float> weights(child_count, 0.0f);
-  float total_weight = 0.0f;
-  for (std::size_t i = 0; i < child_count; ++i) {
-    weights[i] = std::max(0.0f, node->children[i]->size_fraction);
-    total_weight += weights[i];
+  std::vector<float> size_fractions(node->children.size(), 0.0f);
+  for (std::size_t i = 0; i < node->children.size(); ++i) {
+    size_fractions[i] = node->children[i]->size_fraction;
   }
-  if (total_weight <= 0.0f) {
-    std::fill(weights.begin(), weights.end(), 1.0f);
-    total_weight = static_cast<float>(weights.size());
+  const auto split_layout = ComputeEditorSplitAxisLayout(rect, vertical, size_fractions);
+  if (!split_layout.has_value()) {
+    return;
   }
 
-  float cursor = vertical ? rect.x : rect.y;
-  float remaining_extent = total_extent;
-  float remaining_weight = total_weight;
-  for (std::size_t i = 0; i < child_count; ++i) {
-    const std::size_t remaining_children = child_count - i;
-    float child_extent = remaining_children == 1
-                             ? remaining_extent
-                             : std::floor(remaining_weight > 0.0f
-                                              ? remaining_extent * (weights[i] / remaining_weight)
-                                              : remaining_extent /
-                                                    static_cast<float>(remaining_children));
-    if (remaining_extent > kMinSplitPaneExtent * static_cast<float>(remaining_children)) {
-      child_extent = std::clamp(
-          child_extent, kMinSplitPaneExtent,
-          remaining_extent - kMinSplitPaneExtent * static_cast<float>(remaining_children - 1));
-    }
-
-    const SDL_FRect child_rect =
-        vertical ? MakeRect(cursor, rect.y, std::max(0.0f, child_extent), rect.h)
-                 : MakeRect(rect.x, cursor, rect.w, std::max(0.0f, child_extent));
+  for (std::size_t i = 0; i < node->children.size(); ++i) {
     if (path != nullptr) {
       path->push_back(i);
     }
-    CollectEditorPaneLayouts(editor_tab, node->children[i].get(), child_rect, panes, dividers, path);
+    CollectEditorPaneLayouts(editor_tab, node->children[i].get(), split_layout->child_rects[i],
+                             panes, dividers, path);
     if (path != nullptr) {
       path->pop_back();
     }
 
-    cursor += child_extent;
-    remaining_extent = std::max(0.0f, remaining_extent - child_extent);
-    remaining_weight = std::max(0.0f, remaining_weight - weights[i]);
-
-    if (i + 1 < child_count) {
+    if (i < split_layout->divider_rects.size()) {
       if (dividers != nullptr && path != nullptr) {
         dividers->push_back(EditorSplitDividerLayout{
             .node_path = *path,
             .divider_index = i,
-            .rect = vertical ? MakeRect(cursor, rect.y, kEditorSplitDividerThickness, rect.h)
-                             : MakeRect(rect.x, cursor, rect.w, kEditorSplitDividerThickness),
+            .rect = split_layout->divider_rects[i],
         });
       }
-      cursor += kEditorSplitDividerThickness;
     }
   }
 }
@@ -719,50 +684,17 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeEditorSplitNodeRect(
     }
 
     const bool vertical = node->orientation == EditorSplitOrientation::Vertical;
-    const std::size_t child_count = node->children.size();
-    const float total_extent = std::max(
-        0.0f, (vertical ? rect.w : rect.h) -
-                  kEditorSplitDividerThickness * static_cast<float>(child_count - 1));
-    std::vector<float> weights(child_count, 0.0f);
-    float total_weight = 0.0f;
-    for (std::size_t i = 0; i < child_count; ++i) {
-      weights[i] = std::max(0.0f, node->children[i]->size_fraction);
-      total_weight += weights[i];
+    std::vector<float> size_fractions(node->children.size(), 0.0f);
+    for (std::size_t i = 0; i < node->children.size(); ++i) {
+      size_fractions[i] = node->children[i]->size_fraction;
     }
-    if (total_weight <= 0.0f) {
-      std::fill(weights.begin(), weights.end(), 1.0f);
-      total_weight = static_cast<float>(weights.size());
+    const auto split_layout = ComputeEditorSplitAxisLayout(rect, vertical, size_fractions);
+    if (!split_layout.has_value()) {
+      return std::nullopt;
     }
 
-    float cursor = vertical ? rect.x : rect.y;
-    float remaining_extent = total_extent;
-    float remaining_weight = total_weight;
-    for (std::size_t i = 0; i < child_count; ++i) {
-      const std::size_t remaining_children = child_count - i;
-      float child_extent = remaining_children == 1
-                               ? remaining_extent
-                               : std::floor(remaining_weight > 0.0f
-                                                ? remaining_extent * (weights[i] / remaining_weight)
-                                                : remaining_extent /
-                                                      static_cast<float>(remaining_children));
-      if (remaining_extent > kMinSplitPaneExtent * static_cast<float>(remaining_children)) {
-        child_extent = std::clamp(
-            child_extent, kMinSplitPaneExtent,
-            remaining_extent - kMinSplitPaneExtent * static_cast<float>(remaining_children - 1));
-      }
-
-      const SDL_FRect child_rect =
-          vertical ? MakeRect(cursor, rect.y, std::max(0.0f, child_extent), rect.h)
-                   : MakeRect(rect.x, cursor, rect.w, std::max(0.0f, child_extent));
-      if (i == child_index) {
-        return self(self, node->children[i].get(), child_rect, depth + 1);
-      }
-
-      cursor += child_extent + kEditorSplitDividerThickness;
-      remaining_extent = std::max(0.0f, remaining_extent - child_extent);
-      remaining_weight = std::max(0.0f, remaining_weight - weights[i]);
-    }
-    return std::nullopt;
+    return self(self, node->children[child_index].get(), split_layout->child_rects[child_index],
+                depth + 1);
   };
 
   return compute_rect(compute_rect, editor_tab->split_root.get(), editor_surface, 0);

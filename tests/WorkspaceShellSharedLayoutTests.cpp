@@ -14,6 +14,7 @@ using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
 using microide::workspace::BuildChromeTabRenderItems;
 using microide::workspace::BuildCompareScrollbarMarkers;
+using microide::workspace::ComputeEditorSplitAxisLayout;
 using microide::workspace::BuildMergeScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
 using microide::workspace::ClampSidebarWidth;
@@ -223,6 +224,40 @@ void TestWorkspaceSharedChromeTabRenderItems() {
          "chrome tab hover helper should ignore pointers outside every tab");
 }
 
+void TestWorkspaceSharedEditorSplitLayout() {
+  const auto even_vertical = ComputeEditorSplitAxisLayout(
+      MakeRect(10.0f, 20.0f, 300.0f, 120.0f), true, std::vector<float>{1.0f, 1.0f});
+  Expect(even_vertical.has_value(), "editor split layout should exist for non-empty child lists");
+  Expect(even_vertical->total_extent == 294.0f,
+         "editor split layout should reserve shared divider thickness from the axis extent");
+  Expect(even_vertical->child_rects.size() == 2 && even_vertical->divider_rects.size() == 1,
+         "editor split layout should produce one child rect per pane and one divider per gap");
+  Expect(even_vertical->child_rects[0].w == 147.0f && even_vertical->child_rects[1].w == 147.0f,
+         "editor split layout should split equal fractions evenly across the remaining extent");
+  Expect(even_vertical->divider_rects[0].x == 157.0f && even_vertical->divider_rects[0].w == 6.0f,
+         "editor split layout should place the divider after the leading child extent");
+
+  const auto clamped_vertical = ComputeEditorSplitAxisLayout(
+      MakeRect(0.0f, 0.0f, 600.0f, 80.0f), true, std::vector<float>{0.9f, 0.05f, 0.05f});
+  Expect(clamped_vertical.has_value(), "editor split layout should handle skewed fractions");
+  Expect(clamped_vertical->extents[0] <= 228.0f && clamped_vertical->extents[1] >= 179.0f &&
+             clamped_vertical->extents[2] >= 179.0f,
+         "editor split layout should cap an oversized leading pane and keep later panes near the shared minimum extent");
+
+  const auto even_horizontal = ComputeEditorSplitAxisLayout(
+      MakeRect(0.0f, 0.0f, 120.0f, 240.0f), false, std::vector<float>{0.0f, 0.0f, 0.0f});
+  Expect(even_horizontal.has_value(), "editor split layout should normalize zero weights");
+  Expect(even_horizontal->child_rects[0].h == 76.0f && even_horizontal->child_rects[1].h == 76.0f &&
+             even_horizontal->child_rects[2].h == 76.0f,
+         "editor split layout should evenly distribute zero-weight panes");
+  Expect(even_horizontal->divider_rects[0].y == 76.0f && even_horizontal->divider_rects[1].y == 158.0f,
+         "editor split layout should advance divider positions by child extent plus divider thickness");
+
+  Expect(!ComputeEditorSplitAxisLayout(MakeRect(0.0f, 0.0f, 100.0f, 100.0f), true, {})
+              .has_value(),
+         "editor split layout should be absent for empty split-node children");
+}
+
 void TestWorkspaceSharedMergeInteractionGeometry() {
   Expect(ComputeChromeButtonWidth(4.0f) == 64.0f,
          "chrome button width should clamp to the minimum width");
@@ -309,6 +344,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
           TestWorkspaceSharedChromeTabRenderItems);
+  AddTest(tests, "WorkspaceShared/EditorSplitLayout", TestWorkspaceSharedEditorSplitLayout);
   AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",
           TestWorkspaceSharedMergeInteractionGeometry);
   AddTest(tests, "WorkspaceShared/OverlayRectHelpers", TestWorkspaceSharedOverlayRectHelpers);

@@ -28,6 +28,7 @@ Scope:
 - Grouped the project tab list, active project index, and project-tab strip scroll state under a dedicated `ProjectCatalogState` owner and added catalog helpers for active-entry persistence and resolved project roots.
 - Centralized project catalog activation, post-removal recovery, and shutdown persistence behind shared catalog helpers so open/switch/close/restore flows no longer each maintain their own rollback logic.
 - Extracted ordered keydown handlers into `src/workspace/WorkspaceShellKeyInput.cpp` so `WorkspaceShell::HandleEvent` now routes prompt, menu, command, overlay, sidebar, compare, merge, and editor input through named subsystem helpers.
+- Extracted shared editor split-axis layout helpers so pane rects, divider rects, and drag extents no longer use separate formulas in `WorkspaceShellEditor.cpp` and `WorkspaceShellMouse.cpp`.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.
