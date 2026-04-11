@@ -314,6 +314,11 @@ float BottomPanelCommandReservedHeight(bool command_mode);
 SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout, bool command_mode);
 SDL_FRect BottomPanelCommandAreaRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelCommandPromptRect(const WorkspaceLayout& layout);
+SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full);
+std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
+SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
+std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog);
+SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog);
 std::optional<TerminalSelectionBounds> NormalizeTerminalSelection(
     std::optional<TerminalSelectionPoint> anchor,
     std::optional<TerminalSelectionPoint> head);

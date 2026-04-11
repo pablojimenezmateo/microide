@@ -29,6 +29,7 @@ Scope:
 - Centralized project catalog activation, post-removal recovery, and shutdown persistence behind shared catalog helpers so open/switch/close/restore flows no longer each maintain their own rollback logic.
 - Extracted ordered keydown handlers into `src/workspace/WorkspaceShellKeyInput.cpp` so `WorkspaceShell::HandleEvent` now routes prompt, menu, command, overlay, sidebar, compare, merge, and editor input through named subsystem helpers.
 - Extracted shared editor split-axis layout helpers so pane rects, divider rects, and drag extents no longer use separate formulas in `WorkspaceShellEditor.cpp` and `WorkspaceShellMouse.cpp`.
+- Extracted shared dirty-prompt and prompt-surface geometry helpers so render, hit-testing, and focus routing no longer keep separate dialog/button/input rect formulas.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.

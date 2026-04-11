@@ -44,17 +44,6 @@ constexpr float kOverlayMinWidth = 520.0f;
 constexpr float kOverlayMaxWidth = 840.0f;
 constexpr float kOverlayMinHeight = 220.0f;
 constexpr float kOverlayMaxHeight = 360.0f;
-constexpr float kDirtyPromptWidth = 460.0f;
-constexpr float kDirtyPromptHeight = 176.0f;
-constexpr float kDirtyPromptButtonWidth = 96.0f;
-constexpr float kDirtyPromptButtonHeight = 28.0f;
-constexpr float kDirtyPromptButtonGap = 10.0f;
-constexpr float kPromptSurfaceWidth = 520.0f;
-constexpr float kPromptSurfaceHeight = 188.0f;
-constexpr float kPromptSurfaceInputHeight = 24.0f;
-constexpr float kPromptSurfaceButtonWidth = 108.0f;
-constexpr float kPromptSurfaceButtonHeight = 28.0f;
-constexpr float kPromptSurfaceButtonGap = 10.0f;
 constexpr float kScrollbarThickness = 10.0f;
 constexpr float kScrollbarInset = 2.0f;
 constexpr float kScrollbarMinThumbLength = 24.0f;
@@ -101,50 +90,6 @@ constexpr std::array<std::string_view, 3> kUiScaleCommands = {
     "reset",
     "up",
 };
-
-SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full) {
-  const float width = std::min(kDirtyPromptWidth, full.w - 32.0f);
-  const float height = std::min(kDirtyPromptHeight, full.h - 32.0f);
-  return MakeRect(full.x + std::floor((full.w - width) * 0.5f),
-                  full.y + std::floor((full.h - height) * 0.5f), width, height);
-}
-
-std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) {
-  const float total_width =
-      kDirtyPromptButtonWidth * 3.0f + kDirtyPromptButtonGap * 2.0f;
-  const float start_x = dialog.x + dialog.w - total_width - 16.0f;
-  const float y = dialog.y + dialog.h - kDirtyPromptButtonHeight - 16.0f;
-  return {
-      MakeRect(start_x, y, kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
-      MakeRect(start_x + kDirtyPromptButtonWidth + kDirtyPromptButtonGap, y,
-               kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
-      MakeRect(start_x + (kDirtyPromptButtonWidth + kDirtyPromptButtonGap) * 2.0f, y,
-               kDirtyPromptButtonWidth, kDirtyPromptButtonHeight),
-  };
-}
-
-SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
-  const float width = std::min(kPromptSurfaceWidth, full.w - 32.0f);
-  const float height = std::min(kPromptSurfaceHeight, full.h - 32.0f);
-  return MakeRect(full.x + std::floor((full.w - width) * 0.5f),
-                  full.y + std::floor((full.h - height) * 0.5f), width, height);
-}
-
-std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog) {
-  const float total_width =
-      kPromptSurfaceButtonWidth * 2.0f + kPromptSurfaceButtonGap;
-  const float start_x = dialog.x + dialog.w - total_width - 16.0f;
-  const float y = dialog.y + dialog.h - kPromptSurfaceButtonHeight - 16.0f;
-  return {
-      MakeRect(start_x, y, kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight),
-      MakeRect(start_x + kPromptSurfaceButtonWidth + kPromptSurfaceButtonGap, y,
-               kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight),
-  };
-}
-
-SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
-  return MakeRect(dialog.x + 16.0f, dialog.y + 98.0f, dialog.w - 32.0f, kPromptSurfaceInputHeight);
-}
 
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();

@@ -14,6 +14,8 @@ using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
 using microide::workspace::BuildChromeTabRenderItems;
 using microide::workspace::BuildCompareScrollbarMarkers;
+using microide::workspace::ComputeDirtyPromptButtonRects;
+using microide::workspace::ComputeDirtyPromptRect;
 using microide::workspace::ComputeEditorSplitAxisLayout;
 using microide::workspace::BuildMergeScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
@@ -24,6 +26,9 @@ using microide::workspace::ComputeMergeResultActionButtonRects;
 using microide::workspace::ComputeMergeResultViewportRect;
 using microide::workspace::ComputeMergeSourceActionButtonRect;
 using microide::workspace::ComputeOverlaySurfaceRect;
+using microide::workspace::ComputePromptSurfaceButtonRects;
+using microide::workspace::ComputePromptSurfaceInputRect;
+using microide::workspace::ComputePromptSurfaceRect;
 using microide::workspace::ComputeScrollbarThumb;
 using microide::workspace::ComputeVisibleLineRangeRect;
 using microide::workspace::ComputeVisibleStripLayouts;
@@ -166,6 +171,39 @@ void TestWorkspaceSharedPanelGeometryHelpers() {
   Expect(command_area.y >= content.y + content.h, "command area should sit below panel content");
   Expect(prompt.y >= command_area.y, "command prompt should stay inside the command area");
   Expect(prompt.x > command_area.x, "command prompt should honor horizontal inset");
+}
+
+void TestWorkspaceSharedPromptGeometry() {
+  const SDL_FRect full = MakeRect(0.0f, 0.0f, 800.0f, 600.0f);
+  const SDL_FRect dirty_prompt = ComputeDirtyPromptRect(full);
+  Expect(dirty_prompt.x == 170.0f && dirty_prompt.y == 212.0f && dirty_prompt.w == 460.0f &&
+             dirty_prompt.h == 176.0f,
+         "dirty prompt rect should stay centered while preserving the shared prompt size");
+
+  const auto dirty_buttons = ComputeDirtyPromptButtonRects(dirty_prompt);
+  Expect(dirty_buttons[0].x == 306.0f && dirty_buttons[2].x == 518.0f &&
+             dirty_buttons[0].y == 344.0f,
+         "dirty prompt button rects should align to the shared footer button layout");
+
+  const SDL_FRect prompt_surface = ComputePromptSurfaceRect(full);
+  Expect(prompt_surface.x == 140.0f && prompt_surface.y == 206.0f &&
+             prompt_surface.w == 520.0f && prompt_surface.h == 188.0f,
+         "prompt surface rect should stay centered while preserving the shared surface size");
+
+  const auto prompt_buttons = ComputePromptSurfaceButtonRects(prompt_surface);
+  Expect(prompt_buttons[0].x == 418.0f && prompt_buttons[1].x == 536.0f &&
+             prompt_buttons[0].y == 350.0f,
+         "prompt surface button rects should align to the shared footer button layout");
+
+  const SDL_FRect input_rect = ComputePromptSurfaceInputRect(prompt_surface);
+  Expect(input_rect.x == 156.0f && input_rect.y == 304.0f && input_rect.w == 488.0f &&
+             input_rect.h == 24.0f,
+         "prompt surface input rect should align to the shared text-input slot");
+
+  const SDL_FRect compact_prompt = ComputePromptSurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f));
+  Expect(compact_prompt.x == 16.0f && compact_prompt.y == 16.0f && compact_prompt.w == 268.0f &&
+             compact_prompt.h == 168.0f,
+         "prompt surface rect should clamp to the compact fallback when the window is small");
 }
 
 void TestWorkspaceSharedScrollbarEdgeCases() {
@@ -340,6 +378,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/MergeScrollbarMarkers",
           TestWorkspaceSharedMergeScrollbarMarkers);
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
+  AddTest(tests, "WorkspaceShared/PromptGeometry", TestWorkspaceSharedPromptGeometry);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
