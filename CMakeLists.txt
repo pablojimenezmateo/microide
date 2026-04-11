@@ -105,6 +105,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellBlame.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellInput.cpp
+  src/workspace/WorkspaceShellKeyInput.cpp
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp
