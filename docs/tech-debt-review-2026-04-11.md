@@ -23,6 +23,8 @@ Scope:
 - Reshaped per-project activation snapshots around explicit `ProjectSurfaceState` and `CommandState` structs so project switching no longer re-flattens those subsystems into ad hoc field copies.
 - Grouped buffer search, project search, and commit-picker data under a dedicated `OverlayWorkflowState` owner and reshaped per-project activation snapshots to move that workflow as one subsystem.
 - Grouped git sidebar entries, base-ref selection, and repo-availability state under a dedicated `GitSidebarState` owner so repository sidebar state no longer travels as five unrelated members.
+- Extracted project-search async service wiring into `WorkspaceProjectSearchRuntime` so SDL wake-event registration, active run tracking, and service ownership no longer live as loose `WorkspaceShell` fields.
+- Replaced the monolithic `ExecuteAction` switch with grouped project, sidebar, search, tab, edit, and global action handlers so command execution now has explicit subsystem boundaries.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.
@@ -65,6 +67,28 @@ Impact:
 Recommendation:
 
 - Extract a dedicated project-search controller/runtime object that owns the wake event type, run token, and service interaction alongside the grouped search state.
+
+Resolution:
+
+- Addressed in this cleanup pass by introducing `WorkspaceProjectSearchRuntime`.
+
+### 11. Project tab lifecycle still mixes catalog changes, persistence, rollback, and activation in one flow
+
+Priority: Medium
+
+Evidence:
+
+- `src/workspace/WorkspaceShellProjects.cpp` still handles open, switch, and close project-tab flows inline.
+- Those flows combine catalog mutation, persistence writes, active-project snapshotting, recovery/rollback, and activation in the same methods.
+
+Impact:
+
+- Project-tab behavior still has a relatively high blast radius.
+- Failure handling remains harder to reason about than the new state/controller boundaries around search and actions.
+
+Recommendation:
+
+- Extract a dedicated project catalog or activation coordinator that owns tab-list mutation, persistence checkpoints, and rollback behavior.
 
 ## Executive Summary
 

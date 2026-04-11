@@ -87,22 +87,23 @@ void WorkspaceShell::RefreshProjectSearch() {
   }
 
   overlay_workflow_.project_search.running = true;
-  project_search_run_id_ =
-      project_search_service_.Start(project_root_, overlay_workflow_.project_search.query, overlay_workflow_.project_search.options);
+  project_search_runtime_.Start(project_root_, overlay_workflow_.project_search.query,
+                                overlay_workflow_.project_search.options);
   ResetOverlayScroll();
 }
 
 void WorkspaceShell::StopProjectSearch() {
-  project_search_service_.Stop();
+  project_search_runtime_.Stop();
   overlay_workflow_.project_search.running = false;
-  project_search_run_id_ = 0;
 }
 
 void WorkspaceShell::ConsumeProjectSearchUpdates() {
-  auto update = project_search_service_.TakePendingUpdate();
-  if (update.run_id == 0 || update.run_id != project_search_run_id_) {
+  const std::optional<project::ProjectSearchUpdate> maybe_update =
+      project_search_runtime_.ConsumeActiveUpdate();
+  if (!maybe_update.has_value()) {
     return;
   }
+  auto update = *maybe_update;
 
   for (auto& result : update.results) {
     if (overlay_workflow_.project_search.results.size() >= kMaxProjectSearchResults) {

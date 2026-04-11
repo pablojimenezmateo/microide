@@ -27,7 +27,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     ConsumePendingProjectOpenDialogResult();
     return true;
   }
-  if (project_search_event_type_ != 0 && event.type == project_search_event_type_) {
+  if (project_search_runtime_.HandlesEvent(event.type)) {
     ConsumeProjectSearchUpdates();
     return true;
   }

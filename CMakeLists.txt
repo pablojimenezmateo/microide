@@ -99,6 +99,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
+  src/workspace/WorkspaceShellActions.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellCommand.cpp
   src/workspace/WorkspaceShellBlame.cpp
@@ -110,6 +111,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellPersistence.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspaceShellPrompts.cpp
+  src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellShared.cpp

@@ -248,7 +248,6 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   git_sidebar_.base_label.clear();
   git_sidebar_.repo_available = false;
   git_sidebar_.selected_index = 0;
-  project_search_run_id_ = 0;
   overlay_workflow_.compare_picker.path.clear();
   overlay_workflow_.compare_picker.query.clear();
   overlay_workflow_.compare_picker.commits.clear();
@@ -407,7 +406,6 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   overlay_workflow_ = std::move(state.overlay_workflow);
   overlay_workflow_.project_search.running = false;
   git_sidebar_ = std::move(state.git_sidebar);
-  project_search_run_id_ = 0;
   command_ = std::move(state.command);
   active_colorscheme_name_ = state.active_colorscheme_name;
   project_base_color_ = state.project_base_color;

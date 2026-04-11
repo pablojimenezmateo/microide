@@ -27,6 +27,7 @@
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
+#include "workspace/WorkspaceProjectSearchRuntime.h"
 
 namespace microide::workspace {
 
@@ -614,6 +615,12 @@ class WorkspaceShell {
     ContextMenu,
   };
 
+  enum class ActionDispatchResult {
+    Unhandled,
+    Handled,
+    Rejected,
+  };
+
   struct ActionSpec {
     ActionId id;
     std::string_view command_name;
@@ -800,6 +807,30 @@ class WorkspaceShell {
   bool ExecuteAction(ActionId id,
                      const std::vector<std::string>& args,
                      ActionSource source);
+  ActionDispatchResult ExecuteProjectAction(ActionId id,
+                                           const std::vector<std::string>& args,
+                                           ActionSource source,
+                                           std::string* rejection_feedback);
+  ActionDispatchResult ExecuteSidebarAction(ActionId id,
+                                           const std::vector<std::string>& args,
+                                           ActionSource source,
+                                           std::string* rejection_feedback);
+  ActionDispatchResult ExecuteSearchAction(ActionId id,
+                                          const std::vector<std::string>& args,
+                                          ActionSource source,
+                                          std::string* rejection_feedback);
+  ActionDispatchResult ExecuteTabAction(ActionId id,
+                                       const std::vector<std::string>& args,
+                                       ActionSource source,
+                                       std::string* rejection_feedback);
+  ActionDispatchResult ExecuteEditAction(ActionId id,
+                                        const std::vector<std::string>& args,
+                                        ActionSource source,
+                                        std::string* rejection_feedback);
+  ActionDispatchResult ExecuteGlobalAction(ActionId id,
+                                          const std::vector<std::string>& args,
+                                          ActionSource source,
+                                          std::string* rejection_feedback);
   static std::span<const MenuSpec> MenuSpecs();
   static const MenuSpec* FindMenuSpec(MenuId id);
   static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
@@ -1307,15 +1338,13 @@ class WorkspaceShell {
   int last_window_height_ = 0;
   OverlayWorkflowState overlay_workflow_;
   GitSidebarState git_sidebar_;
-  std::uint64_t project_search_run_id_ = 0;
-  Uint32 project_search_event_type_ = 0;
+  WorkspaceProjectSearchRuntime project_search_runtime_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
   project::GitBlameService git_blame_service_;
   std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
   std::optional<std::size_t> active_editor_blame_popup_line_;
-  project::ProjectSearchService project_search_service_;
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
   std::function<bool(std::string_view)> clipboard_text_writer_;
