@@ -168,6 +168,13 @@ struct ChromeTabRenderItem {
   std::string tooltip_label;
 };
 
+struct VisibleLineRangeLayout {
+  float first_line_y = 0.0f;
+  float line_height = 14.0f;
+  std::size_t scroll_line = 0;
+  std::size_t visible_rows = 0;
+};
+
 enum class GitSidebarSection {
   Modified,
   Outgoing,
@@ -327,6 +334,7 @@ std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
     const SDL_FRect& track,
     std::size_t total_rows,
     const std::vector<MergeScrollbarMarkerInput>& inputs);
+float ComputeChromeButtonWidth(float measured_label_width);
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,
@@ -364,6 +372,33 @@ std::string HoveredChromeTabTooltipLabel(const std::vector<TabLike>& tabs, float
   return HoveredChromeTabTooltipLabel(std::span<const TabLike>(tabs), x, y);
 }
 
+SDL_FRect ComputeMergeResultViewportRect(const SDL_FRect& editor_surface,
+                                         float center_x,
+                                         float rows_y,
+                                         float gutter_width,
+                                         float center_width,
+                                         bool show_horizontal);
+std::optional<SDL_FRect> ComputeVisibleLineRangeRect(const SDL_FRect& viewport_rect,
+                                                     const VisibleLineRangeLayout& layout,
+                                                     std::size_t start_line,
+                                                     std::size_t end_line);
+SDL_FRect ComputeMergeSourceActionButtonRect(float pane_x,
+                                             float gutter_width,
+                                             float rows_y,
+                                             float line_height,
+                                             int scroll_row,
+                                             std::size_t end_line,
+                                             float content_bottom,
+                                             float button_width,
+                                             float button_height);
+std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
+    float start_x,
+    float rows_y,
+    float content_bottom,
+    const std::optional<SDL_FRect>& conflict_rect,
+    const std::array<float, 4>& widths,
+    float button_height,
+    float button_gap);
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area);
 std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     const std::vector<GitSidebarSection>& entry_sections,

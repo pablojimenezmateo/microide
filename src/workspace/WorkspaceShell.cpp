@@ -972,8 +972,7 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
   constexpr float kMergeToolbarButtonHeight = 22.0f;
   constexpr float kMergeToolbarButtonGap = 8.0f;
   const auto make_button_rect = [&](float x, std::string_view label) {
-    const float width =
-        std::clamp(text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
+    const float width = ComputeChromeButtonWidth(text_renderer_.MeasureWidth(label));
     return MakeRect(x, surface.button_y, width, kMergeToolbarButtonHeight);
   };
 
@@ -3195,16 +3194,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (Contains(left_divider_rect, x, y) || Contains(right_divider_rect, x, y)) {
       return CursorKind::EwResize;
     }
-    const auto make_button_rect = [&](float button_x, float button_y, std::string_view label) {
-      const float width =
-          std::clamp(text_renderer_.MeasureWidth(label) + 18.0f, 64.0f, 160.0f);
-      return MakeRect(button_x, button_y, width, 22.0f);
-    };
-    const SDL_FRect save_rect = make_button_rect(layout.editor_surface.x + layout.editor_surface.w - 92.0f,
-                                                 surface_layout.button_y, "Save");
-    const SDL_FRect open_rect = make_button_rect(save_rect.x - 104.0f, surface_layout.button_y,
-                                                 "Open Result");
-    if (Contains(save_rect, x, y) || Contains(open_rect, x, y)) {
+    const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(layout.editor_surface, surface_layout);
+    if (Contains(toolbar.prev_rect, x, y) || Contains(toolbar.next_rect, x, y) ||
+        Contains(toolbar.save_rect, x, y) || Contains(toolbar.open_rect, x, y)) {
       return CursorKind::Pointer;
     }
     const int scroll_row = std::clamp(merge_tab->scroll_row, 0,
@@ -3235,11 +3227,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     const float bottom_reserved =
         surface_layout.show_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
     const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-    const SDL_FRect result_rect =
-        MakeRect(surface_layout.center_x, surface_layout.rows_y - 8.0f,
-                 surface_layout.gutter_width + surface_layout.center_width,
-                 std::max(0.0f, layout.editor_surface.y + content_height -
-                                      (surface_layout.rows_y - 8.0f)));
+    const float content_bottom = layout.editor_surface.y + content_height;
+    const SDL_FRect result_rect = ComputeMergeResultViewportRect(
+        layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
+        surface_layout.gutter_width, surface_layout.center_width, surface_layout.show_horizontal);
     if (Contains(result_rect, x, y)) {
       if (merge_tab->hover_state.has_value() &&
           merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
@@ -3248,29 +3239,29 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         if (conflict.valid) {
           const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
               text_renderer_, merge_tab->result_viewport, result_rect);
-          const std::size_t scroll_line = merge_tab->result_viewport.scroll_line();
-          const std::size_t visible_end_line = scroll_line + metrics.visible_rows;
-          const std::size_t rect_start = std::max(conflict.start_line, scroll_line);
-          const std::size_t rect_end = std::max(conflict.end_line, conflict.start_line + 1);
-          if (rect_end > scroll_line && rect_start < visible_end_line) {
-            const float conflict_y =
-                metrics.first_line_y +
-                static_cast<float>(rect_start - scroll_line) * metrics.line_height;
-            const float conflict_h =
-                static_cast<float>(std::min(rect_end, visible_end_line) - rect_start) *
-                metrics.line_height;
-            float button_y = conflict_y + conflict_h + 2.0f;
-            if (button_y + 22.0f > layout.editor_surface.y + content_height - 4.0f) {
-              button_y = std::max(surface_layout.rows_y + 2.0f, conflict_y - 24.0f);
-            }
-            float button_x = surface_layout.center_x + surface_layout.gutter_width;
-            const SDL_FRect base_rect = make_button_rect(button_x, button_y, "Base");
-            button_x += base_rect.w + 8.0f;
-            const SDL_FRect incoming_rect = make_button_rect(button_x, button_y, "Incoming");
-            button_x += incoming_rect.w + 8.0f;
-            const SDL_FRect current_rect = make_button_rect(button_x, button_y, "Current");
-            button_x += current_rect.w + 8.0f;
-            const SDL_FRect both_rect = make_button_rect(button_x, button_y, "Both");
+          const VisibleLineRangeLayout result_line_layout = {
+              .first_line_y = metrics.first_line_y,
+              .line_height = metrics.line_height,
+              .scroll_line = merge_tab->result_viewport.scroll_line(),
+              .visible_rows = metrics.visible_rows,
+          };
+          const std::optional<SDL_FRect> conflict_rect = ComputeVisibleLineRangeRect(
+              result_rect, result_line_layout, conflict.start_line,
+              std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
+          if (conflict_rect.has_value()) {
+            const std::array<float, 4> action_widths = {
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Incoming")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Current")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
+            };
+            const std::array<SDL_FRect, 4> action_rects = ComputeMergeResultActionButtonRects(
+                surface_layout.center_x + surface_layout.gutter_width, surface_layout.rows_y,
+                content_bottom, conflict_rect, action_widths, 22.0f, 8.0f);
+            const SDL_FRect& base_rect = action_rects[0];
+            const SDL_FRect& incoming_rect = action_rects[1];
+            const SDL_FRect& current_rect = action_rects[2];
+            const SDL_FRect& both_rect = action_rects[3];
             if (Contains(base_rect, x, y) || Contains(incoming_rect, x, y) ||
                 Contains(current_rect, x, y) || Contains(both_rect, x, y)) {
               return CursorKind::Pointer;

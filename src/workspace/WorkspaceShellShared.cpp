@@ -1549,6 +1549,10 @@ std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
   return markers;
 }
 
+float ComputeChromeButtonWidth(float measured_label_width) {
+  return std::clamp(measured_label_width + 18.0f, 64.0f, 160.0f);
+}
+
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,
@@ -1646,6 +1650,78 @@ std::vector<ChromeTabRenderItem> BuildChromeTabRenderItems(
   }
 
   return items;
+}
+
+SDL_FRect ComputeMergeResultViewportRect(const SDL_FRect& editor_surface,
+                                         float center_x,
+                                         float rows_y,
+                                         float gutter_width,
+                                         float center_width,
+                                         bool show_horizontal) {
+  const float bottom_reserved = show_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+  const float content_height = std::max(0.0f, editor_surface.h - bottom_reserved);
+  return MakeRect(center_x, rows_y - 8.0f, gutter_width + center_width,
+                  std::max(0.0f, editor_surface.y + content_height - (rows_y - 8.0f)));
+}
+
+std::optional<SDL_FRect> ComputeVisibleLineRangeRect(const SDL_FRect& viewport_rect,
+                                                     const VisibleLineRangeLayout& layout,
+                                                     std::size_t start_line,
+                                                     std::size_t end_line) {
+  if (viewport_rect.w <= 0.0f || viewport_rect.h <= 0.0f || end_line <= start_line ||
+      layout.visible_rows == 0 || layout.line_height <= 0.0f) {
+    return std::nullopt;
+  }
+
+  const std::size_t visible_end_line = layout.scroll_line + layout.visible_rows;
+  const std::size_t rect_start = std::max(start_line, layout.scroll_line);
+  const std::size_t rect_end = std::max(end_line, start_line + 1);
+  if (rect_end <= layout.scroll_line || rect_start >= visible_end_line) {
+    return std::nullopt;
+  }
+
+  const float y =
+      layout.first_line_y + static_cast<float>(rect_start - layout.scroll_line) * layout.line_height;
+  const float h =
+      static_cast<float>(std::min(rect_end, visible_end_line) - rect_start) * layout.line_height;
+  return MakeRect(viewport_rect.x, y - 1.0f, viewport_rect.w, h);
+}
+
+SDL_FRect ComputeMergeSourceActionButtonRect(float pane_x,
+                                             float gutter_width,
+                                             float rows_y,
+                                             float line_height,
+                                             int scroll_row,
+                                             std::size_t end_line,
+                                             float content_bottom,
+                                             float button_width,
+                                             float button_height) {
+  float y = rows_y +
+            static_cast<float>(static_cast<long long>(end_line) - scroll_row) * line_height + 2.0f;
+  y = std::min(y, content_bottom - button_height - 4.0f);
+  return MakeRect(pane_x + gutter_width, y, button_width, button_height);
+}
+
+std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
+    float start_x,
+    float rows_y,
+    float content_bottom,
+    const std::optional<SDL_FRect>& conflict_rect,
+    const std::array<float, 4>& widths,
+    float button_height,
+    float button_gap) {
+  float y = conflict_rect.has_value() ? conflict_rect->y + conflict_rect->h + 2.0f : rows_y + 2.0f;
+  if (y + button_height > content_bottom - 4.0f && conflict_rect.has_value()) {
+    y = std::max(rows_y + 2.0f, conflict_rect->y - button_height - 2.0f);
+  }
+
+  float x = start_x;
+  std::array<SDL_FRect, 4> rects{};
+  for (std::size_t i = 0; i < rects.size(); ++i) {
+    rects[i] = MakeRect(x, y, widths[i], button_height);
+    x += widths[i] + button_gap;
+  }
+  return rects;
 }
 
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {

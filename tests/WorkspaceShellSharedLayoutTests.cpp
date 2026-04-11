@@ -17,9 +17,14 @@ using microide::workspace::BuildCompareScrollbarMarkers;
 using microide::workspace::BuildMergeScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
 using microide::workspace::ClampSidebarWidth;
+using microide::workspace::ComputeChromeButtonWidth;
 using microide::workspace::ComputeLayout;
+using microide::workspace::ComputeMergeResultActionButtonRects;
+using microide::workspace::ComputeMergeResultViewportRect;
+using microide::workspace::ComputeMergeSourceActionButtonRect;
 using microide::workspace::ComputeOverlaySurfaceRect;
 using microide::workspace::ComputeScrollbarThumb;
+using microide::workspace::ComputeVisibleLineRangeRect;
 using microide::workspace::ComputeVisibleStripLayouts;
 using microide::workspace::EnsureVisibleStripIndex;
 using microide::workspace::HoveredChromeTabTooltipLabel;
@@ -27,6 +32,7 @@ using microide::workspace::MakeHorizontalScrollbarGeometry;
 using microide::workspace::MakeRect;
 using microide::workspace::MakeVerticalScrollbarGeometry;
 using microide::workspace::ScrollUnitsForPointer;
+using microide::workspace::VisibleLineRangeLayout;
 
 void TestWorkspaceSharedLayoutHelpers() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
@@ -217,6 +223,58 @@ void TestWorkspaceSharedChromeTabRenderItems() {
          "chrome tab hover helper should ignore pointers outside every tab");
 }
 
+void TestWorkspaceSharedMergeInteractionGeometry() {
+  Expect(ComputeChromeButtonWidth(4.0f) == 64.0f,
+         "chrome button width should clamp to the minimum width");
+  Expect(ComputeChromeButtonWidth(90.0f) == 108.0f,
+         "chrome button width should preserve measured width plus padding");
+  Expect(ComputeChromeButtonWidth(240.0f) == 160.0f,
+         "chrome button width should clamp to the maximum width");
+
+  const SDL_FRect editor_surface = MakeRect(100.0f, 200.0f, 640.0f, 320.0f);
+  const SDL_FRect result_rect =
+      ComputeMergeResultViewportRect(editor_surface, 280.0f, 260.0f, 32.0f, 180.0f, true);
+  Expect(result_rect.x == 280.0f && result_rect.y == 252.0f && result_rect.w == 212.0f,
+         "merge result rect should preserve the shared merge viewport origin and width");
+  Expect(result_rect.h == 256.0f,
+         "merge result rect should reserve horizontal scrollbar space when present");
+
+  const VisibleLineRangeLayout line_layout = {
+      .first_line_y = 300.0f,
+      .line_height = 18.0f,
+      .scroll_line = 5,
+      .visible_rows = 4,
+  };
+  const std::optional<SDL_FRect> visible_rect =
+      ComputeVisibleLineRangeRect(result_rect, line_layout, 6, 8);
+  Expect(visible_rect.has_value(),
+         "visible line range rect should exist when the requested span is on screen");
+  Expect(visible_rect->y == 317.0f && visible_rect->h == 36.0f,
+         "visible line range rect should align to the visible line span");
+  Expect(!ComputeVisibleLineRangeRect(result_rect, line_layout, 10, 11).has_value(),
+         "visible line range rect should be absent for off-screen spans");
+
+  const SDL_FRect accept_rect = ComputeMergeSourceActionButtonRect(
+      120.0f, 30.0f, 260.0f, 18.0f, 5, 8, 508.0f, 90.0f, 22.0f);
+  Expect(accept_rect.x == 150.0f && accept_rect.y == 316.0f,
+         "merge source action rect should anchor to the pane gutter and source line");
+
+  const std::array<float, 4> action_widths = {64.0f, 82.0f, 84.0f, 70.0f};
+  const auto action_rects = ComputeMergeResultActionButtonRects(
+      320.0f, 260.0f, 508.0f, visible_rect, action_widths, 22.0f, 8.0f);
+  Expect(action_rects[0].x == 320.0f && action_rects[0].y == 355.0f,
+         "merge result action rects should start below the visible conflict span");
+  Expect(action_rects[1].x == 392.0f && action_rects[2].x == 482.0f &&
+             action_rects[3].x == 574.0f,
+         "merge result action rects should advance by width plus shared gap");
+
+  const auto clamped_action_rects = ComputeMergeResultActionButtonRects(
+      320.0f, 260.0f, 380.0f, std::optional<SDL_FRect>{MakeRect(320.0f, 360.0f, 212.0f, 30.0f)},
+      action_widths, 22.0f, 8.0f);
+  Expect(clamped_action_rects[0].y == 336.0f,
+         "merge result action rects should move above the conflict when they would overflow");
+}
+
 void TestWorkspaceSharedOverlayRectHelpers() {
   const SDL_FRect roomy = ComputeOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
   Expect(roomy.w == 696.0f,
@@ -251,6 +309,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
           TestWorkspaceSharedChromeTabRenderItems);
+  AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",
+          TestWorkspaceSharedMergeInteractionGeometry);
   AddTest(tests, "WorkspaceShared/OverlayRectHelpers", TestWorkspaceSharedOverlayRectHelpers);
 }
 
