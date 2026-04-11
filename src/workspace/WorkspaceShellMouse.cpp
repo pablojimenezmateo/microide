@@ -575,21 +575,21 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return true;
       }
       if (Contains(ProjectSearchModeButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        if (project_search_editing_) {
+        if (overlay_workflow_.project_search.editing) {
           CommitProjectSearchEdit();
         }
         ToggleProjectSearchPatternMode();
         return true;
       }
       if (Contains(ProjectSearchCaseButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        if (project_search_editing_) {
+        if (overlay_workflow_.project_search.editing) {
           CommitProjectSearchEdit();
         }
         CycleProjectSearchCaseMode();
         return true;
       }
       if (Contains(ProjectSearchHiddenButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        if (project_search_editing_) {
+        if (overlay_workflow_.project_search.editing) {
           CommitProjectSearchEdit();
         }
         ToggleProjectSearchHiddenFiles();
@@ -610,9 +610,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         const int line_index = scroll_row + clicked_row;
         if (line_index >= 0 && line_index < static_cast<int>(line_map.size()) &&
             line_map[static_cast<std::size_t>(line_index)] >= 0) {
-          project_search_selected_index_ =
+          overlay_workflow_.project_search.selected_index =
               static_cast<std::size_t>(line_map[static_cast<std::size_t>(line_index)]);
-          const auto& result = project_search_results_[project_search_selected_index_];
+          const auto& result = overlay_workflow_.project_search.results[overlay_workflow_.project_search.selected_index];
           OpenFile(project_root_ / result.relative_path);
           text_viewport_.MoveCursorTo(result.line, result.column);
           if (surface_.sidebar_temporary) {
@@ -665,8 +665,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return true;
       }
 
-      git_sidebar_selected_index_ = static_cast<std::size_t>(line.entry_index);
-      const auto& entry = git_sidebar_entries_[git_sidebar_selected_index_];
+      git_sidebar_.selected_index = static_cast<std::size_t>(line.entry_index);
+      const auto& entry = git_sidebar_.entries[git_sidebar_.selected_index];
       const SDL_FRect row_rect = MakeRect(layout.sidebar.x + inset,
                                           list_top + static_cast<float>(clicked_row) * row_height,
                                           row_width, row_height - 2.0f);
@@ -679,9 +679,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
             MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
         if (Contains(stage_rect, event.button.x, event.button.y)) {
           if (entry.staged) {
-            UnstageGitSidebarEntry(git_sidebar_selected_index_);
+            UnstageGitSidebarEntry(git_sidebar_.selected_index);
           } else {
-            StageGitSidebarEntry(git_sidebar_selected_index_);
+            StageGitSidebarEntry(git_sidebar_.selected_index);
           }
           return true;
         }
@@ -691,11 +691,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         const SDL_FRect discard_rect =
             MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
         if (Contains(discard_rect, event.button.x, event.button.y)) {
-          DiscardGitSidebarEntry(git_sidebar_selected_index_);
+          DiscardGitSidebarEntry(git_sidebar_.selected_index);
           return true;
         }
       }
-      OpenGitSidebarEntry(git_sidebar_selected_index_);
+      OpenGitSidebarEntry(git_sidebar_.selected_index);
       return true;
     }
 

@@ -21,6 +21,8 @@ Scope:
 - Grouped the shell’s sidebar, overlay, menu, drag, focus, and surface layout fields under a dedicated `SurfaceState` owner so workspace chrome state is no longer scattered across unrelated private members.
 - Grouped command prompt input/history/feedback under a dedicated `CommandState` owner and grouped dirty-prompt plus prompt-surface flow under a dedicated `PromptState` owner.
 - Reshaped per-project activation snapshots around explicit `ProjectSurfaceState` and `CommandState` structs so project switching no longer re-flattens those subsystems into ad hoc field copies.
+- Grouped buffer search, project search, and commit-picker data under a dedicated `OverlayWorkflowState` owner and reshaped per-project activation snapshots to move that workflow as one subsystem.
+- Grouped git sidebar entries, base-ref selection, and repo-availability state under a dedicated `GitSidebarState` owner so repository sidebar state no longer travels as five unrelated members.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.
@@ -45,6 +47,24 @@ Impact:
 Resolution:
 
 - Replaced those examples with generic `/path/to/...` forms in this cleanup pass.
+
+### 10. Project-search async runtime is still split between workflow state and service wiring
+
+Priority: Medium
+
+Evidence:
+
+- `src/workspace/WorkspaceShell.h` now groups project-search UI state under `OverlayWorkflowState::project_search`, but `project_search_run_id_`, `project_search_event_type_`, and `project_search_service_` remain standalone shell members.
+- `src/workspace/WorkspaceShellOverlay.cpp` still coordinates the project-search lifecycle by mutating both the grouped state object and those separate async service/runtime fields.
+
+Impact:
+
+- Ownership is clearer than before, but the async controller boundary is still implicit.
+- Future project-search refactors still need cross-file coordination between UI state, service wake events, and run-token validation.
+
+Recommendation:
+
+- Extract a dedicated project-search controller/runtime object that owns the wake event type, run token, and service interaction alongside the grouped search state.
 
 ## Executive Summary
 

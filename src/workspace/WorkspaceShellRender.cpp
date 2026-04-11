@@ -451,7 +451,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                    pane.active && draw_editor_caret,
                                    pane.active && (surface_.overlay_mode == OverlayMode::BufferSearch ||
                                                    surface_.overlay_mode == OverlayMode::BufferReplace)
-                                       ? buffer_search_query_
+                                       ? overlay_workflow_.buffer_search.query
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay);
@@ -622,21 +622,21 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         std::string prefix = "> ";
         switch (surface) {
           case TextInputSurface::BufferSearch:
-            prefix += buffer_search_query_;
+            prefix += overlay_workflow_.buffer_search.query;
             break;
           case TextInputSurface::BufferReplaceSearch:
-            prefix = "find: " + buffer_search_query_;
+            prefix = "find: " + overlay_workflow_.buffer_search.query;
             break;
           case TextInputSurface::BufferReplaceReplace:
             text_y = overlay.y + 62.0f;
-            prefix = "replace: " + buffer_replace_text_;
+            prefix = "replace: " + overlay_workflow_.buffer_search.replace_text;
             break;
           case TextInputSurface::ProjectSearchOverlay:
-            prefix += project_search_query_;
+            prefix += overlay_workflow_.project_search.query;
             break;
           case TextInputSurface::CommitPicker:
             text_y = overlay.y + 62.0f;
-            prefix += compare_picker_query_;
+            prefix += overlay_workflow_.compare_picker.query;
             break;
           case TextInputSurface::FileFinder:
           default:
@@ -656,7 +656,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       }
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace: {
-        if (!surface_.sidebar_visible || surface_.sidebar_mode != SidebarMode::Search || !project_search_editing_) {
+        if (!surface_.sidebar_visible || surface_.sidebar_mode != SidebarMode::Search || !overlay_workflow_.project_search.editing) {
           return std::nullopt;
         }
         const float text_x = layout.sidebar.x + kSidebarInset;
@@ -664,8 +664,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
             layout.sidebar.y + (surface == TextInputSurface::SidebarSearchQuery ? 38.0f : 54.0f);
         const std::string prefix =
             surface == TextInputSurface::SidebarSearchQuery
-                ? "search> " + project_search_edit_buffer_
-                : "replace> " + project_search_edit_buffer_;
+                ? "search> " + overlay_workflow_.project_search.edit_buffer
+                : "replace> " + overlay_workflow_.project_search.edit_buffer;
         const float cursor_x = text_x + text_renderer_.MeasureWidth(prefix);
         return TextInputVisual{
             .surface = surface,
@@ -1202,24 +1202,24 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
     if (surface_.sidebar_mode == SidebarMode::Search) {
       const std::string active_query =
-          project_search_editing_ && project_search_edit_field_ == ProjectSearchEditField::Query
-              ? project_search_edit_buffer_
-              : project_search_query_;
+          overlay_workflow_.project_search.editing && overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
+              ? overlay_workflow_.project_search.edit_buffer
+              : overlay_workflow_.project_search.query;
       const std::string active_replace =
-          project_search_editing_ && project_search_edit_field_ == ProjectSearchEditField::Replace
-              ? project_search_edit_buffer_
-              : project_replace_text_;
+          overlay_workflow_.project_search.editing && overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Replace
+              ? overlay_workflow_.project_search.edit_buffer
+              : overlay_workflow_.project_search.replace_text;
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 38.0f,
-                   project_search_editing_ &&
-                           project_search_edit_field_ == ProjectSearchEditField::Query
+                   overlay_workflow_.project_search.editing &&
+                           overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
                        ? theme_.text_primary
                        : theme_.text_secondary,
                    theme_.surface_background,
                    TruncateLabel("search> " + active_query,
                                  layout.sidebar.w - kSidebarInset * 2.0f));
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + 54.0f,
-                   project_search_editing_ &&
-                           project_search_edit_field_ == ProjectSearchEditField::Replace
+                   overlay_workflow_.project_search.editing &&
+                           overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Replace
                        ? theme_.text_primary
                        : theme_.text_secondary,
                    theme_.surface_background,
@@ -1242,35 +1242,35 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       };
 
       draw_search_button(ProjectSearchModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
-                         project_search_options_.pattern_mode ==
+                         overlay_workflow_.project_search.options.pattern_mode ==
                              project::ProjectSearchPatternMode::Regex);
       draw_search_button(ProjectSearchCaseButtonRect(layout.sidebar), ProjectSearchCaseButtonLabel(),
-                         project_search_options_.case_mode !=
+                         overlay_workflow_.project_search.options.case_mode !=
                              project::ProjectSearchCaseMode::Smart);
       draw_search_button(ProjectSearchHiddenButtonRect(layout.sidebar),
-                         ProjectSearchHiddenButtonLabel(), project_search_options_.show_hidden);
+                         ProjectSearchHiddenButtonLabel(), overlay_workflow_.project_search.options.show_hidden);
 
       const std::string match_actions =
           ProjectSearchCanReplaceAll()
               ? "/ query  = replace  r rerun  R replace all"
               : "/ query  = replace  r rerun  R needs literal mode";
       const std::string status_text =
-          project_search_editing_
-              ? (project_search_edit_field_ == ProjectSearchEditField::Query
+          overlay_workflow_.project_search.editing
+              ? (overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
                      ? "Editing query  |  Enter apply  Esc cancel"
                      : "Editing replace  |  Enter apply  Esc cancel")
-          : !project_search_error_.empty()
+          : !overlay_workflow_.project_search.error.empty()
               ? "Error  |  / query  = replace  r rerun"
-          : project_search_running_
-              ? "Searching " + std::to_string(project_search_results_.size()) + " matches"
-          : project_search_results_.empty()
-              ? (project_search_query_.empty()
+          : overlay_workflow_.project_search.running
+              ? "Searching " + std::to_string(overlay_workflow_.project_search.results.size()) + " matches"
+          : overlay_workflow_.project_search.results.empty()
+              ? (overlay_workflow_.project_search.query.empty()
                      ? "/ query  = replace  |  buttons change mode, case, hidden"
                      : "No matches  |  " + match_actions)
-          : project_search_truncated_
-              ? "Showing first " + std::to_string(project_search_results_.size()) +
+          : overlay_workflow_.project_search.truncated
+              ? "Showing first " + std::to_string(overlay_workflow_.project_search.results.size()) +
                     " matches  |  " + match_actions
-              : std::to_string(project_search_results_.size()) + " matches  |  " + match_actions;
+              : std::to_string(overlay_workflow_.project_search.results.size()) + " matches  |  " + match_actions;
       draw_text_on(layout.sidebar.x + kSidebarInset, layout.sidebar.y + kProjectSearchStatusTop,
                    theme_.text_muted,
                    theme_.surface_background,
@@ -1285,7 +1285,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
                              (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
       int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      const int selected_line = ProjectSearchLineForResult(project_search_selected_index_);
+      const int selected_line = ProjectSearchLineForResult(overlay_workflow_.project_search.selected_index);
       if (selected_line < scroll_row) {
         scroll_row = selected_line;
       } else if (selected_line >= scroll_row + visible_rows) {
@@ -1310,14 +1310,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           const std::size_t next_result_index =
               static_cast<std::size_t>(std::min(line_index + 1, static_cast<int>(line_map.size()) - 1));
           const auto& file_result =
-              project_search_results_[static_cast<std::size_t>(line_map[next_result_index])];
+              overlay_workflow_.project_search.results[static_cast<std::size_t>(line_map[next_result_index])];
           draw_vcentered_text_on(row_rect, 4.0f, theme_.text_primary, theme_.surface_background,
                                  TruncateLabel(file_result.relative_path.string(), row_rect.w - 8.0f));
           continue;
         }
 
-        const auto& result = project_search_results_[static_cast<std::size_t>(result_index)];
-        const bool selected = static_cast<std::size_t>(result_index) == project_search_selected_index_;
+        const auto& result = overlay_workflow_.project_search.results[static_cast<std::size_t>(result_index)];
+        const bool selected = static_cast<std::size_t>(result_index) == overlay_workflow_.project_search.selected_index;
         if (selected) {
           DrawFilledRect(renderer, row_rect, theme_.row_highlight);
         }
@@ -1332,11 +1332,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       }
 
       if (line_map.empty()) {
-        const std::string placeholder = !project_search_error_.empty()
-                                            ? "Error: " + project_search_error_
-                                        : project_search_running_
+        const std::string placeholder = !overlay_workflow_.project_search.error.empty()
+                                            ? "Error: " + overlay_workflow_.project_search.error
+                                        : overlay_workflow_.project_search.running
                                             ? "Searching..."
-                                        : project_search_query_.empty() ? "Project search is idle"
+                                        : overlay_workflow_.project_search.query.empty() ? "Project search is idle"
                                                                         : "No matches";
         draw_text_on(layout.sidebar.x + kSidebarInset, list_y + 4.0f, theme_.text_muted,
                      theme_.surface_background,
@@ -1407,8 +1407,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           continue;
         }
 
-        const auto& entry = git_sidebar_entries_[static_cast<std::size_t>(line.entry_index)];
-        const bool selected = static_cast<std::size_t>(line.entry_index) == git_sidebar_selected_index_;
+        const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
+        const bool selected = static_cast<std::size_t>(line.entry_index) == git_sidebar_.selected_index;
         if (selected) {
           DrawFilledRect(renderer, row_rect, theme_.row_highlight);
           DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
@@ -1609,25 +1609,25 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Search Buffer");
       draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_secondary,
-                   theme_.overlay_background, "> " + buffer_search_query_);
+                   theme_.overlay_background, "> " + overlay_workflow_.buffer_search.query);
       const std::string summary =
-          buffer_search_matches_.empty()
+          overlay_workflow_.buffer_search.matches.empty()
               ? "No matches"
-              : std::to_string(buffer_search_selected_index_ + 1) + " / " +
-                    std::to_string(buffer_search_matches_.size()) + " matches";
+              : std::to_string(overlay_workflow_.buffer_search.selected_index + 1) + " / " +
+                    std::to_string(overlay_workflow_.buffer_search.matches.size()) + " matches";
       draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_muted,
                    theme_.overlay_background, summary);
       for (int row = 0; row < overlay_visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
-        if (item_index >= static_cast<int>(buffer_search_matches_.size())) {
+        if (item_index >= static_cast<int>(overlay_workflow_.buffer_search.matches.size())) {
           break;
         }
-        const auto& match = buffer_search_matches_[static_cast<std::size_t>(item_index)];
+        const auto& match = overlay_workflow_.buffer_search.matches[static_cast<std::size_t>(item_index)];
         const std::string label =
             "Ln " + std::to_string(match.start.line + 1) + ", Col " +
             std::to_string(match.start.column + 1) + "  " +
             TruncateLabel(text_viewport_.lines()[match.start.line], overlay.w - 150.0f);
-        draw_overlay_row(row, static_cast<int>(buffer_search_selected_index_) - surface_.overlay_scroll_row,
+        draw_overlay_row(row, static_cast<int>(overlay_workflow_.buffer_search.selected_index) - surface_.overlay_scroll_row,
                          label);
       }
     } else if (surface_.overlay_mode == OverlayMode::BufferReplace) {
@@ -1636,77 +1636,77 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f,
                    surface_.buffer_search_field == BufferSearchField::Search ? theme_.text_primary
                                                                      : theme_.text_secondary,
-                   theme_.overlay_background, "find: " + buffer_search_query_);
+                   theme_.overlay_background, "find: " + overlay_workflow_.buffer_search.query);
       draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f,
                    surface_.buffer_search_field == BufferSearchField::Replace ? theme_.text_primary
                                                                       : theme_.text_secondary,
-                   theme_.overlay_background, "replace: " + buffer_replace_text_);
+                   theme_.overlay_background, "replace: " + overlay_workflow_.buffer_search.replace_text);
       const std::string summary =
-          buffer_search_matches_.empty()
+          overlay_workflow_.buffer_search.matches.empty()
               ? "No matches"
-              : std::to_string(buffer_search_selected_index_ + 1) + " / " +
-                    std::to_string(buffer_search_matches_.size()) +
+              : std::to_string(overlay_workflow_.buffer_search.selected_index + 1) + " / " +
+                    std::to_string(overlay_workflow_.buffer_search.matches.size()) +
                     " matches  |  Enter replace  Ctrl+Enter replace all";
       draw_text_on(overlay.x + overlay_inset, overlay.y + 82.0f, theme_.text_muted,
                    theme_.overlay_background, TruncateLabel(summary, overlay.w - 36.0f));
       for (int row = 0; row < overlay_visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
-        if (item_index >= static_cast<int>(buffer_search_matches_.size())) {
+        if (item_index >= static_cast<int>(overlay_workflow_.buffer_search.matches.size())) {
           break;
         }
-        const auto& match = buffer_search_matches_[static_cast<std::size_t>(item_index)];
+        const auto& match = overlay_workflow_.buffer_search.matches[static_cast<std::size_t>(item_index)];
         const std::string label =
             "Ln " + std::to_string(match.start.line + 1) + ", Col " +
             std::to_string(match.start.column + 1) + "  " +
             TruncateLabel(text_viewport_.lines()[match.start.line], overlay.w - 150.0f);
-        draw_overlay_row(row, static_cast<int>(buffer_search_selected_index_) - surface_.overlay_scroll_row,
+        draw_overlay_row(row, static_cast<int>(overlay_workflow_.buffer_search.selected_index) - surface_.overlay_scroll_row,
                          label);
       }
     } else if (surface_.overlay_mode == OverlayMode::ProjectSearch) {
       draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Project Search");
       draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_secondary,
-                   theme_.overlay_background, "> " + project_search_query_);
+                   theme_.overlay_background, "> " + overlay_workflow_.project_search.query);
       const std::string summary =
-          project_search_results_.empty()
+          overlay_workflow_.project_search.results.empty()
               ? "No results"
-          : project_search_truncated_
-              ? std::to_string(project_search_selected_index_ + 1) + " / " +
-                    std::to_string(project_search_results_.size()) + " shown (capped)"
-              : std::to_string(project_search_selected_index_ + 1) + " / " +
-                    std::to_string(project_search_results_.size()) + " results";
+          : overlay_workflow_.project_search.truncated
+              ? std::to_string(overlay_workflow_.project_search.selected_index + 1) + " / " +
+                    std::to_string(overlay_workflow_.project_search.results.size()) + " shown (capped)"
+              : std::to_string(overlay_workflow_.project_search.selected_index + 1) + " / " +
+                    std::to_string(overlay_workflow_.project_search.results.size()) + " results";
       draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_muted,
                    theme_.overlay_background, summary);
       for (int row = 0; row < overlay_visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
-        if (item_index >= static_cast<int>(project_search_results_.size())) {
+        if (item_index >= static_cast<int>(overlay_workflow_.project_search.results.size())) {
           break;
         }
-        const auto& result = project_search_results_[static_cast<std::size_t>(item_index)];
+        const auto& result = overlay_workflow_.project_search.results[static_cast<std::size_t>(item_index)];
         const std::string label =
             result.relative_path.string() + ":" + std::to_string(result.line + 1) + ":" +
             std::to_string(result.column + 1) + "  " +
             TruncateLabel(result.preview, overlay.w - 220.0f);
-        draw_overlay_row(row, static_cast<int>(project_search_selected_index_) - surface_.overlay_scroll_row,
+        draw_overlay_row(row, static_cast<int>(overlay_workflow_.project_search.selected_index) - surface_.overlay_scroll_row,
                          label);
       }
     } else if (surface_.overlay_mode == OverlayMode::CommitPicker) {
       draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Compare against commit");
       draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_muted,
-                   theme_.overlay_background, compare_picker_path_.filename().string());
+                   theme_.overlay_background, overlay_workflow_.compare_picker.path.filename().string());
       draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_secondary,
-                   theme_.overlay_background, "> " + compare_picker_query_);
+                   theme_.overlay_background, "> " + overlay_workflow_.compare_picker.query);
       for (int row = 0; row < overlay_visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
-        if (item_index >= static_cast<int>(compare_picker_matches_.size())) {
+        if (item_index >= static_cast<int>(overlay_workflow_.compare_picker.matches.size())) {
           break;
         }
-        const auto& commit = compare_picker_matches_[static_cast<std::size_t>(item_index)];
-        draw_overlay_row(row, static_cast<int>(compare_picker_selected_index_) - surface_.overlay_scroll_row,
+        const auto& commit = overlay_workflow_.compare_picker.matches[static_cast<std::size_t>(item_index)];
+        draw_overlay_row(row, static_cast<int>(overlay_workflow_.compare_picker.selected_index) - surface_.overlay_scroll_row,
                          commit.short_hash + "  " + commit.subject);
       }
-      if (compare_picker_matches_.empty()) {
+      if (overlay_workflow_.compare_picker.matches.empty()) {
         draw_text_on(overlay.x + overlay_inset, overlay.y + 92.0f, theme_.text_muted,
                      theme_.overlay_background, "No matching commits");
       }

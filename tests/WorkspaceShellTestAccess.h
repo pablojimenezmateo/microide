@@ -628,16 +628,16 @@ struct WorkspaceShellTestAccess {
   }
   static const std::vector<project::ProjectSearchResult>& ProjectSearchResults(
       const WorkspaceShell& shell) {
-    return shell.project_search_results_;
+    return shell.overlay_workflow_.project_search.results;
   }
   static bool ProjectSearchRunning(const WorkspaceShell& shell) {
-    return shell.project_search_running_;
+    return shell.overlay_workflow_.project_search.running;
   }
   static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
-    return shell.project_search_truncated_;
+    return shell.overlay_workflow_.project_search.truncated;
   }
   static const std::string& ProjectSearchError(const WorkspaceShell& shell) {
-    return shell.project_search_error_;
+    return shell.overlay_workflow_.project_search.error;
   }
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_open_dialog_active_;

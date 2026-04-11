@@ -60,13 +60,13 @@ void WorkspaceShell::ShowTreeSidebar(const std::filesystem::path& root) {
 }
 
 void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
-  if (!query.empty() || project_search_query_.empty()) {
-    project_search_query_ = std::move(query);
+  if (!query.empty() || overlay_workflow_.project_search.query.empty()) {
+    overlay_workflow_.project_search.query = std::move(query);
   }
-  project_search_edit_buffer_ = project_search_query_;
-  project_search_editing_ = project_search_query_.empty();
-  project_search_edit_field_ = ProjectSearchEditField::Query;
-  project_search_selected_index_ = 0;
+  overlay_workflow_.project_search.edit_buffer = overlay_workflow_.project_search.query;
+  overlay_workflow_.project_search.editing = overlay_workflow_.project_search.query.empty();
+  overlay_workflow_.project_search.edit_field = ProjectSearchEditField::Query;
+  overlay_workflow_.project_search.selected_index = 0;
   RefreshProjectSearch();
   ShowSidebarMode(SidebarMode::Search, temporary);
 }
@@ -137,26 +137,26 @@ void WorkspaceShell::RefreshProjectFiles() {
 
 void WorkspaceShell::RefreshGitSidebar() {
   const std::filesystem::path previous_path =
-      git_sidebar_selected_index_ < git_sidebar_entries_.size()
-          ? git_sidebar_entries_[git_sidebar_selected_index_].path
+      git_sidebar_.selected_index < git_sidebar_.entries.size()
+          ? git_sidebar_.entries[git_sidebar_.selected_index].path
           : std::filesystem::path{};
   const GitSidebarEntry::Section previous_section =
-      git_sidebar_selected_index_ < git_sidebar_entries_.size()
-          ? git_sidebar_entries_[git_sidebar_selected_index_].section
+      git_sidebar_.selected_index < git_sidebar_.entries.size()
+          ? git_sidebar_.entries[git_sidebar_.selected_index].section
           : GitSidebarEntry::Section::Modified;
 
-  git_sidebar_entries_.clear();
-  git_base_ref_.clear();
-  git_base_label_.clear();
-  git_repo_available_ = false;
-  git_sidebar_selected_index_ = 0;
+  git_sidebar_.entries.clear();
+  git_sidebar_.base_ref.clear();
+  git_sidebar_.base_label.clear();
+  git_sidebar_.repo_available = false;
+  git_sidebar_.selected_index = 0;
   if (project_root_.empty()) {
     return;
   }
 
   const auto working_entries = project::CollectGitWorkingTreeEntries(project_root_);
   for (const auto& entry : working_entries) {
-    git_sidebar_entries_.push_back(GitSidebarEntry{
+    git_sidebar_.entries.push_back(GitSidebarEntry{
         .section = GitSidebarEntry::Section::Modified,
         .path = (project_root_ / entry.relative_path).lexically_normal(),
         .relative_path = entry.relative_path,
@@ -168,13 +168,13 @@ void WorkspaceShell::RefreshGitSidebar() {
 
   const auto base_ref = project::ResolveGitBaseReference(project_root_);
   if (base_ref.has_value()) {
-    git_repo_available_ = true;
-    git_base_ref_ = base_ref->ref;
-    git_base_label_ = base_ref->label;
+    git_sidebar_.repo_available = true;
+    git_sidebar_.base_ref = base_ref->ref;
+    git_sidebar_.base_label = base_ref->label;
     const auto outgoing_entries =
-        project::CollectGitBranchOutgoingFiles(project_root_, git_base_ref_);
+        project::CollectGitBranchOutgoingFiles(project_root_, git_sidebar_.base_ref);
     for (const auto& entry : outgoing_entries) {
-      git_sidebar_entries_.push_back(GitSidebarEntry{
+      git_sidebar_.entries.push_back(GitSidebarEntry{
           .section = GitSidebarEntry::Section::Outgoing,
           .path = (project_root_ / entry.relative_path).lexically_normal(),
           .relative_path = entry.relative_path,
@@ -182,13 +182,13 @@ void WorkspaceShell::RefreshGitSidebar() {
       });
     }
   } else {
-    git_repo_available_ = std::filesystem::exists(project_root_ / ".git");
+    git_sidebar_.repo_available = std::filesystem::exists(project_root_ / ".git");
   }
 
-  for (std::size_t i = 0; i < git_sidebar_entries_.size(); ++i) {
-    if (git_sidebar_entries_[i].path == previous_path &&
-        git_sidebar_entries_[i].section == previous_section) {
-      git_sidebar_selected_index_ = i;
+  for (std::size_t i = 0; i < git_sidebar_.entries.size(); ++i) {
+    if (git_sidebar_.entries[i].path == previous_path &&
+        git_sidebar_.entries[i].section == previous_section) {
+      git_sidebar_.selected_index = i;
       RevealSelectedGitSidebarLine();
       return;
     }
@@ -286,15 +286,15 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
   std::vector<GitSidebarSection> sections;
-  sections.reserve(git_sidebar_entries_.size());
-  for (const auto& entry : git_sidebar_entries_) {
+  sections.reserve(git_sidebar_.entries.size());
+  for (const auto& entry : git_sidebar_.entries) {
     sections.push_back(entry.section == GitSidebarEntry::Section::Modified
                            ? GitSidebarSection::Modified
                            : GitSidebarSection::Outgoing);
   }
 
   const auto specs =
-      BuildGitSidebarLineSpecs(sections, git_repo_available_, git_base_ref_, git_base_label_);
+      BuildGitSidebarLineSpecs(sections, git_sidebar_.repo_available, git_sidebar_.base_ref, git_sidebar_.base_label);
   std::vector<GitSidebarLine> lines;
   lines.reserve(specs.size());
   for (const GitSidebarLineSpec& spec : specs) {
@@ -314,27 +314,27 @@ std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines
 }
 
 std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
-  if (git_sidebar_selected_index_ >= git_sidebar_entries_.size()) {
+  if (git_sidebar_.selected_index >= git_sidebar_.entries.size()) {
     return std::nullopt;
   }
 
   std::vector<GitSidebarSection> sections;
-  sections.reserve(git_sidebar_entries_.size());
-  for (const auto& entry : git_sidebar_entries_) {
+  sections.reserve(git_sidebar_.entries.size());
+  for (const auto& entry : git_sidebar_.entries) {
     sections.push_back(entry.section == GitSidebarEntry::Section::Modified
                            ? GitSidebarSection::Modified
                            : GitSidebarSection::Outgoing);
   }
   const auto specs =
-      BuildGitSidebarLineSpecs(sections, git_repo_available_, git_base_ref_, git_base_label_);
-  return FindSelectedGitSidebarLineIndex(specs, git_sidebar_selected_index_);
+      BuildGitSidebarLineSpecs(sections, git_sidebar_.repo_available, git_sidebar_.base_ref, git_sidebar_.base_label);
+  return FindSelectedGitSidebarLineIndex(specs, git_sidebar_.selected_index);
 }
 
 const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry() const {
-  if (git_sidebar_selected_index_ >= git_sidebar_entries_.size()) {
+  if (git_sidebar_.selected_index >= git_sidebar_.entries.size()) {
     return nullptr;
   }
-  return &git_sidebar_entries_[git_sidebar_selected_index_];
+  return &git_sidebar_.entries[git_sidebar_.selected_index];
 }
 
 void WorkspaceShell::RevealSelectedGitSidebarLine() {
@@ -367,43 +367,43 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
 }
 
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {
-  if (git_sidebar_entries_.empty() || delta == 0) {
+  if (git_sidebar_.entries.empty() || delta == 0) {
     return;
   }
-  const int current = static_cast<int>(git_sidebar_selected_index_);
-  const int max_index = static_cast<int>(git_sidebar_entries_.size()) - 1;
-  git_sidebar_selected_index_ =
+  const int current = static_cast<int>(git_sidebar_.selected_index);
+  const int max_index = static_cast<int>(git_sidebar_.entries.size()) - 1;
+  git_sidebar_.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealSelectedGitSidebarLine();
 }
 
 bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
-  if (entry_index >= git_sidebar_entries_.size()) {
+  if (entry_index >= git_sidebar_.entries.size()) {
     return false;
   }
-  const auto& entry = git_sidebar_entries_[entry_index];
+  const auto& entry = git_sidebar_.entries[entry_index];
   if (entry.section == GitSidebarEntry::Section::Modified) {
     if (entry.conflicted) {
       return OpenGitConflictMerge(entry.path);
     }
     return OpenWorkingTreeComparison(entry.path, "HEAD", "HEAD");
   }
-  if (git_base_ref_.empty()) {
+  if (git_sidebar_.base_ref.empty()) {
     return false;
   }
-  return OpenBranchHeadComparison(entry.path, git_base_ref_,
-                                  git_base_label_.empty() ? git_base_ref_ : git_base_label_,
+  return OpenBranchHeadComparison(entry.path, git_sidebar_.base_ref,
+                                  git_sidebar_.base_label.empty() ? git_sidebar_.base_ref : git_sidebar_.base_label,
                                   "HEAD", "HEAD");
 }
 
 bool WorkspaceShell::CanStageAllGitSidebarEntries() const {
-  return std::any_of(git_sidebar_entries_.begin(), git_sidebar_entries_.end(), [](const auto& entry) {
+  return std::any_of(git_sidebar_.entries.begin(), git_sidebar_.entries.end(), [](const auto& entry) {
     return entry.section == GitSidebarEntry::Section::Modified && !entry.staged;
   });
 }
 
 bool WorkspaceShell::CanDiscardAllGitSidebarEntries() const {
-  return std::any_of(git_sidebar_entries_.begin(), git_sidebar_entries_.end(), [](const auto& entry) {
+  return std::any_of(git_sidebar_.entries.begin(), git_sidebar_.entries.end(), [](const auto& entry) {
     return entry.section == GitSidebarEntry::Section::Modified;
   });
 }
@@ -413,8 +413,8 @@ bool WorkspaceShell::StageAllGitSidebarEntries() {
     return false;
   }
   std::vector<std::filesystem::path> affected_paths;
-  affected_paths.reserve(git_sidebar_entries_.size());
-  for (const auto& entry : git_sidebar_entries_) {
+  affected_paths.reserve(git_sidebar_.entries.size());
+  for (const auto& entry : git_sidebar_.entries) {
     if (entry.section != GitSidebarEntry::Section::Modified || entry.staged) {
       continue;
     }
@@ -452,8 +452,8 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
   }
 
   std::vector<std::filesystem::path> affected_paths;
-  affected_paths.reserve(git_sidebar_entries_.size());
-  for (const auto& entry : git_sidebar_entries_) {
+  affected_paths.reserve(git_sidebar_.entries.size());
+  for (const auto& entry : git_sidebar_.entries) {
     if (entry.section != GitSidebarEntry::Section::Modified) {
       continue;
     }
@@ -476,10 +476,10 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
 }
 
 bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
-  if (entry_index >= git_sidebar_entries_.size()) {
+  if (entry_index >= git_sidebar_.entries.size()) {
     return false;
   }
-  const auto& entry = git_sidebar_entries_[entry_index];
+  const auto& entry = git_sidebar_.entries[entry_index];
   if (entry.section != GitSidebarEntry::Section::Modified || entry.staged) {
     return false;
   }
@@ -492,10 +492,10 @@ bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
 }
 
 bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
-  if (entry_index >= git_sidebar_entries_.size()) {
+  if (entry_index >= git_sidebar_.entries.size()) {
     return false;
   }
-  const auto& entry = git_sidebar_entries_[entry_index];
+  const auto& entry = git_sidebar_.entries[entry_index];
   if (entry.section != GitSidebarEntry::Section::Modified || !entry.staged) {
     return false;
   }
@@ -508,10 +508,10 @@ bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
 }
 
 bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
-  if (entry_index >= git_sidebar_entries_.size()) {
+  if (entry_index >= git_sidebar_.entries.size()) {
     return false;
   }
-  const auto& entry = git_sidebar_entries_[entry_index];
+  const auto& entry = git_sidebar_.entries[entry_index];
   if (entry.section != GitSidebarEntry::Section::Modified) {
     return false;
   }

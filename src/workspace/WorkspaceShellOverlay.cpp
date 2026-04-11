@@ -36,39 +36,39 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
 void WorkspaceShell::OpenBufferSearch() {
   ShowOverlay(OverlayMode::BufferSearch);
   surface_.buffer_search_field = BufferSearchField::Search;
-  buffer_search_query_.clear();
-  buffer_replace_text_.clear();
-  buffer_search_matches_.clear();
-  buffer_search_selected_index_ = 0;
+  overlay_workflow_.buffer_search.query.clear();
+  overlay_workflow_.buffer_search.replace_text.clear();
+  overlay_workflow_.buffer_search.matches.clear();
+  overlay_workflow_.buffer_search.selected_index = 0;
 }
 
 void WorkspaceShell::OpenBufferReplace() {
   ShowOverlay(OverlayMode::BufferReplace);
   surface_.buffer_search_field = BufferSearchField::Search;
-  buffer_search_query_.clear();
-  buffer_replace_text_.clear();
-  buffer_search_matches_.clear();
-  buffer_search_selected_index_ = 0;
+  overlay_workflow_.buffer_search.query.clear();
+  overlay_workflow_.buffer_search.replace_text.clear();
+  overlay_workflow_.buffer_search.matches.clear();
+  overlay_workflow_.buffer_search.selected_index = 0;
 }
 
 void WorkspaceShell::OpenProjectSearch() {
   if (project_root_.empty()) {
     return;
   }
-  project_search_query_.clear();
-  project_search_results_.clear();
-  project_search_selected_index_ = 0;
-  project_replace_text_.clear();
+  overlay_workflow_.project_search.query.clear();
+  overlay_workflow_.project_search.results.clear();
+  overlay_workflow_.project_search.selected_index = 0;
+  overlay_workflow_.project_search.replace_text.clear();
   ResetOverlayScroll();
   ShowSearchSidebar("", true);
 }
 
 void WorkspaceShell::RefreshBufferSearch() {
-  buffer_search_matches_ = FindLiteralSearchMatches(text_viewport_.lines(), buffer_search_query_);
-  buffer_search_selected_index_ = 0;
+  overlay_workflow_.buffer_search.matches = FindLiteralSearchMatches(text_viewport_.lines(), overlay_workflow_.buffer_search.query);
+  overlay_workflow_.buffer_search.selected_index = 0;
 
-  if (!buffer_search_matches_.empty()) {
-    const auto& match = buffer_search_matches_.front();
+  if (!overlay_workflow_.buffer_search.matches.empty()) {
+    const auto& match = overlay_workflow_.buffer_search.matches.front();
     text_viewport_.MoveCursorTo(match.start.line, match.start.column);
   }
   ResetOverlayScroll();
@@ -76,25 +76,25 @@ void WorkspaceShell::RefreshBufferSearch() {
 
 void WorkspaceShell::RefreshProjectSearch() {
   StopProjectSearch();
-  project_search_results_.clear();
-  project_search_selected_index_ = 0;
-  project_search_truncated_ = false;
-  project_search_error_.clear();
+  overlay_workflow_.project_search.results.clear();
+  overlay_workflow_.project_search.selected_index = 0;
+  overlay_workflow_.project_search.truncated = false;
+  overlay_workflow_.project_search.error.clear();
 
-  if (project_root_.empty() || project_search_query_.empty()) {
+  if (project_root_.empty() || overlay_workflow_.project_search.query.empty()) {
     ResetOverlayScroll();
     return;
   }
 
-  project_search_running_ = true;
+  overlay_workflow_.project_search.running = true;
   project_search_run_id_ =
-      project_search_service_.Start(project_root_, project_search_query_, project_search_options_);
+      project_search_service_.Start(project_root_, overlay_workflow_.project_search.query, overlay_workflow_.project_search.options);
   ResetOverlayScroll();
 }
 
 void WorkspaceShell::StopProjectSearch() {
   project_search_service_.Stop();
-  project_search_running_ = false;
+  overlay_workflow_.project_search.running = false;
   project_search_run_id_ = 0;
 }
 
@@ -105,20 +105,20 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
 
   for (auto& result : update.results) {
-    if (project_search_results_.size() >= kMaxProjectSearchResults) {
-      project_search_truncated_ = true;
+    if (overlay_workflow_.project_search.results.size() >= kMaxProjectSearchResults) {
+      overlay_workflow_.project_search.truncated = true;
       StopProjectSearch();
       break;
     }
-    project_search_results_.push_back(std::move(result));
+    overlay_workflow_.project_search.results.push_back(std::move(result));
   }
 
-  project_search_truncated_ = project_search_truncated_ || update.truncated;
+  overlay_workflow_.project_search.truncated = overlay_workflow_.project_search.truncated || update.truncated;
   if (!update.error.empty()) {
-    project_search_error_ = std::move(update.error);
+    overlay_workflow_.project_search.error = std::move(update.error);
   }
   if (update.finished) {
-    project_search_running_ = false;
+    overlay_workflow_.project_search.running = false;
   }
   if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::ProjectSearch &&
       last_window_width_ > 0 && last_window_height_ > 0) {
@@ -156,12 +156,12 @@ int WorkspaceShell::OverlayVisibleRows(const SDL_FRect& overlay) const {
 std::size_t WorkspaceShell::OverlayItemCount() const {
   switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
-      return compare_picker_matches_.size();
+      return overlay_workflow_.compare_picker.matches.size();
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
-      return buffer_search_matches_.size();
+      return overlay_workflow_.buffer_search.matches.size();
     case OverlayMode::ProjectSearch:
-      return project_search_results_.size();
+      return overlay_workflow_.project_search.results.size();
     case OverlayMode::FileFinder:
     default:
       return file_finder_.results().size();
@@ -171,12 +171,12 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
 std::size_t WorkspaceShell::OverlaySelectedIndex() const {
   switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
-      return compare_picker_selected_index_;
+      return overlay_workflow_.compare_picker.selected_index;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
-      return buffer_search_selected_index_;
+      return overlay_workflow_.buffer_search.selected_index;
     case OverlayMode::ProjectSearch:
-      return project_search_selected_index_;
+      return overlay_workflow_.project_search.selected_index;
     case OverlayMode::FileFinder:
     default:
       return file_finder_.selected_index();
@@ -191,18 +191,18 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
   const std::size_t clamped_index = std::min(index, item_count - 1);
   switch (surface_.overlay_mode) {
     case OverlayMode::CommitPicker:
-      compare_picker_selected_index_ = clamped_index;
+      overlay_workflow_.compare_picker.selected_index = clamped_index;
       break;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
-      buffer_search_selected_index_ = clamped_index;
-      if (!buffer_search_matches_.empty()) {
-        const auto& match = buffer_search_matches_[buffer_search_selected_index_];
+      overlay_workflow_.buffer_search.selected_index = clamped_index;
+      if (!overlay_workflow_.buffer_search.matches.empty()) {
+        const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
         text_viewport_.MoveCursorTo(match.start.line, match.start.column);
       }
       break;
     case OverlayMode::ProjectSearch:
-      project_search_selected_index_ = clamped_index;
+      overlay_workflow_.project_search.selected_index = clamped_index;
       break;
     case OverlayMode::FileFinder:
     default: {
@@ -242,8 +242,8 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       OpenSelectedCompareCommit();
       return true;
     case OverlayMode::BufferSearch:
-      if (!buffer_search_matches_.empty()) {
-        const auto& match = buffer_search_matches_[buffer_search_selected_index_];
+      if (!overlay_workflow_.buffer_search.matches.empty()) {
+        const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
         text_viewport_.MoveCursorTo(match.start.line, match.start.column);
       }
       DismissOverlay(true);
@@ -252,9 +252,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       ReplaceCurrentBufferSearchMatch();
       return true;
     case OverlayMode::ProjectSearch:
-      if (!project_search_results_.empty() &&
-          project_search_selected_index_ < project_search_results_.size()) {
-        const auto& result = project_search_results_[project_search_selected_index_];
+      if (!overlay_workflow_.project_search.results.empty() &&
+          overlay_workflow_.project_search.selected_index < overlay_workflow_.project_search.results.size()) {
+        const auto& result = overlay_workflow_.project_search.results[overlay_workflow_.project_search.selected_index];
         OpenFile(project_root_ / result.relative_path);
         text_viewport_.MoveCursorTo(result.line, result.column);
         DismissOverlay(true);
@@ -271,28 +271,28 @@ bool WorkspaceShell::ActivateOverlaySelection() {
 }
 
 void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
-  project_search_edit_field_ = field;
-  project_search_edit_buffer_ =
-      field == ProjectSearchEditField::Query ? project_search_query_ : project_replace_text_;
-  project_search_editing_ = true;
+  overlay_workflow_.project_search.edit_field = field;
+  overlay_workflow_.project_search.edit_buffer =
+      field == ProjectSearchEditField::Query ? overlay_workflow_.project_search.query : overlay_workflow_.project_search.replace_text;
+  overlay_workflow_.project_search.editing = true;
 }
 
 void WorkspaceShell::CommitProjectSearchEdit() {
-  project_search_editing_ = false;
-  if (project_search_edit_field_ == ProjectSearchEditField::Query) {
-    project_search_query_ = project_search_edit_buffer_;
+  overlay_workflow_.project_search.editing = false;
+  if (overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query) {
+    overlay_workflow_.project_search.query = overlay_workflow_.project_search.edit_buffer;
     RefreshProjectSearch();
     return;
   }
 
-  project_replace_text_ = project_search_edit_buffer_;
+  overlay_workflow_.project_search.replace_text = overlay_workflow_.project_search.edit_buffer;
 }
 
 void WorkspaceShell::CancelProjectSearchEdit() {
-  project_search_edit_buffer_ =
-      project_search_edit_field_ == ProjectSearchEditField::Query ? project_search_query_
-                                                                  : project_replace_text_;
-  project_search_editing_ = false;
+  overlay_workflow_.project_search.edit_buffer =
+      overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query ? overlay_workflow_.project_search.query
+                                                                  : overlay_workflow_.project_search.replace_text;
+  overlay_workflow_.project_search.editing = false;
 }
 
 SDL_FRect WorkspaceShell::ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const {
@@ -338,12 +338,12 @@ SDL_FRect WorkspaceShell::ProjectSearchHiddenButtonRect(const SDL_FRect& sidebar
 }
 
 std::string WorkspaceShell::ProjectSearchModeButtonLabel() const {
-  return project_search_options_.pattern_mode == project::ProjectSearchPatternMode::Regex ? "Rx"
+  return overlay_workflow_.project_search.options.pattern_mode == project::ProjectSearchPatternMode::Regex ? "Rx"
                                                                                            : "Lit";
 }
 
 std::string WorkspaceShell::ProjectSearchCaseButtonLabel() const {
-  switch (project_search_options_.case_mode) {
+  switch (overlay_workflow_.project_search.options.case_mode) {
     case project::ProjectSearchCaseMode::Sensitive:
       return "Case";
     case project::ProjectSearchCaseMode::Insensitive:
@@ -355,56 +355,56 @@ std::string WorkspaceShell::ProjectSearchCaseButtonLabel() const {
 }
 
 std::string WorkspaceShell::ProjectSearchHiddenButtonLabel() const {
-  return project_search_options_.show_hidden ? "Hide+" : "Hide-";
+  return overlay_workflow_.project_search.options.show_hidden ? "Hide+" : "Hide-";
 }
 
 bool WorkspaceShell::ProjectSearchCanReplaceAll() const {
-  return project_search_options_.pattern_mode == project::ProjectSearchPatternMode::Literal &&
-         !project_search_query_.empty();
+  return overlay_workflow_.project_search.options.pattern_mode == project::ProjectSearchPatternMode::Literal &&
+         !overlay_workflow_.project_search.query.empty();
 }
 
 bool WorkspaceShell::ProjectSearchReplaceCaseSensitive() const {
-  switch (project_search_options_.case_mode) {
+  switch (overlay_workflow_.project_search.options.case_mode) {
     case project::ProjectSearchCaseMode::Sensitive:
       return true;
     case project::ProjectSearchCaseMode::Insensitive:
       return false;
     case project::ProjectSearchCaseMode::Smart:
     default:
-      return UsesCaseSensitiveLiteralMatch(project_search_query_);
+      return UsesCaseSensitiveLiteralMatch(overlay_workflow_.project_search.query);
   }
 }
 
 void WorkspaceShell::ToggleProjectSearchPatternMode() {
-  project_search_options_.pattern_mode =
-      project_search_options_.pattern_mode == project::ProjectSearchPatternMode::Literal
+  overlay_workflow_.project_search.options.pattern_mode =
+      overlay_workflow_.project_search.options.pattern_mode == project::ProjectSearchPatternMode::Literal
           ? project::ProjectSearchPatternMode::Regex
           : project::ProjectSearchPatternMode::Literal;
   RefreshProjectSearch();
 }
 
 void WorkspaceShell::CycleProjectSearchCaseMode() {
-  switch (project_search_options_.case_mode) {
+  switch (overlay_workflow_.project_search.options.case_mode) {
     case project::ProjectSearchCaseMode::Smart:
-      project_search_options_.case_mode = project::ProjectSearchCaseMode::Sensitive;
+      overlay_workflow_.project_search.options.case_mode = project::ProjectSearchCaseMode::Sensitive;
       break;
     case project::ProjectSearchCaseMode::Sensitive:
-      project_search_options_.case_mode = project::ProjectSearchCaseMode::Insensitive;
+      overlay_workflow_.project_search.options.case_mode = project::ProjectSearchCaseMode::Insensitive;
       break;
     case project::ProjectSearchCaseMode::Insensitive:
-      project_search_options_.case_mode = project::ProjectSearchCaseMode::Smart;
+      overlay_workflow_.project_search.options.case_mode = project::ProjectSearchCaseMode::Smart;
       break;
   }
   RefreshProjectSearch();
 }
 
 void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
-  project_search_options_.show_hidden = !project_search_options_.show_hidden;
+  overlay_workflow_.project_search.options.show_hidden = !overlay_workflow_.project_search.options.show_hidden;
   RefreshProjectSearch();
 }
 
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
-  if (project_search_query_.empty()) {
+  if (overlay_workflow_.project_search.query.empty()) {
     return;
   }
 
@@ -423,7 +423,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   std::vector<PendingProjectReplace> pending;
 
   const std::vector<std::filesystem::path> files = project::CollectProjectFiles(
-      project_root_, project_search_options_.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+      project_root_, overlay_workflow_.project_search.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
                                                          : project::ProjectFileScanMode::ExcludeHidden);
   for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = project_root_ / relative_path;
@@ -443,7 +443,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
     std::string updated_content = content;
     const std::size_t replacements = ReplaceLiteralMatchesInText(
-        updated_content, project_search_query_, project_replace_text_, case_sensitive);
+        updated_content, overlay_workflow_.project_search.query, overlay_workflow_.project_search.replace_text, case_sensitive);
     if (replacements == 0) {
       continue;
     }
@@ -523,7 +523,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 }
 
 std::vector<int> WorkspaceShell::BuildProjectSearchLineMap() const {
-  return BuildProjectSearchResultLineMap(project_search_results_);
+  return BuildProjectSearchResultLineMap(overlay_workflow_.project_search.results);
 }
 
 int WorkspaceShell::ProjectSearchLineForResult(std::size_t index) const {
@@ -531,15 +531,15 @@ int WorkspaceShell::ProjectSearchLineForResult(std::size_t index) const {
 }
 
 void WorkspaceShell::MoveBufferSearchSelection(int delta) {
-  if (buffer_search_matches_.empty() || delta == 0) {
+  if (overlay_workflow_.buffer_search.matches.empty() || delta == 0) {
     return;
   }
 
-  const int current = static_cast<int>(buffer_search_selected_index_);
-  const int max_index = static_cast<int>(buffer_search_matches_.size()) - 1;
-  buffer_search_selected_index_ =
+  const int current = static_cast<int>(overlay_workflow_.buffer_search.selected_index);
+  const int max_index = static_cast<int>(overlay_workflow_.buffer_search.matches.size()) - 1;
+  overlay_workflow_.buffer_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  const auto& match = buffer_search_matches_[buffer_search_selected_index_];
+  const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
   text_viewport_.MoveCursorTo(match.start.line, match.start.column);
   if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
@@ -550,13 +550,13 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
 }
 
 void WorkspaceShell::MoveProjectSearchSelection(int delta) {
-  if (project_search_results_.empty() || delta == 0) {
+  if (overlay_workflow_.project_search.results.empty() || delta == 0) {
     return;
   }
 
-  const int current = static_cast<int>(project_search_selected_index_);
-  const int max_index = static_cast<int>(project_search_results_.size()) - 1;
-  project_search_selected_index_ =
+  const int current = static_cast<int>(overlay_workflow_.project_search.selected_index);
+  const int max_index = static_cast<int>(overlay_workflow_.project_search.results.size()) - 1;
+  overlay_workflow_.project_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
@@ -567,42 +567,42 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
 }
 
 void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
-  if (buffer_search_matches_.empty() ||
-      buffer_search_selected_index_ >= buffer_search_matches_.size()) {
+  if (overlay_workflow_.buffer_search.matches.empty() ||
+      overlay_workflow_.buffer_search.selected_index >= overlay_workflow_.buffer_search.matches.size()) {
     return;
   }
 
-  const auto match = buffer_search_matches_[buffer_search_selected_index_];
-  if (!text_viewport_.ReplaceRange(match, buffer_replace_text_)) {
+  const auto match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
+  if (!text_viewport_.ReplaceRange(match, overlay_workflow_.buffer_search.replace_text)) {
     return;
   }
 
   RefreshBufferSearch();
-  if (!buffer_search_matches_.empty()) {
-    buffer_search_selected_index_ =
-        std::min(buffer_search_selected_index_, buffer_search_matches_.size() - 1);
-    const auto& next_match = buffer_search_matches_[buffer_search_selected_index_];
+  if (!overlay_workflow_.buffer_search.matches.empty()) {
+    overlay_workflow_.buffer_search.selected_index =
+        std::min(overlay_workflow_.buffer_search.selected_index, overlay_workflow_.buffer_search.matches.size() - 1);
+    const auto& next_match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
     text_viewport_.MoveCursorTo(next_match.start.line, next_match.start.column);
   }
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
-  if (buffer_search_query_.empty()) {
+  if (overlay_workflow_.buffer_search.query.empty()) {
     return;
   }
 
-  text_viewport_.ReplaceAll(buffer_search_query_, buffer_replace_text_);
+  text_viewport_.ReplaceAll(overlay_workflow_.buffer_search.query, overlay_workflow_.buffer_search.replace_text);
   RefreshBufferSearch();
 }
 
 std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() const {
   if (!surface_.overlay_visible || (surface_.overlay_mode != OverlayMode::BufferSearch &&
                             surface_.overlay_mode != OverlayMode::BufferReplace) ||
-      buffer_search_matches_.empty() ||
-      buffer_search_selected_index_ >= buffer_search_matches_.size()) {
+      overlay_workflow_.buffer_search.matches.empty() ||
+      overlay_workflow_.buffer_search.selected_index >= overlay_workflow_.buffer_search.matches.size()) {
     return std::nullopt;
   }
-  return buffer_search_matches_[buffer_search_selected_index_];
+  return overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
 }
 
 }  // namespace microide::workspace

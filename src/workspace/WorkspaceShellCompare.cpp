@@ -505,19 +505,19 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
     return false;
   }
 
-  compare_picker_path_ = path.lexically_normal();
-  compare_picker_query_.clear();
-  compare_picker_commits_ = project::CollectGitFileHistory(project_root_, compare_picker_path_);
+  overlay_workflow_.compare_picker.path = path.lexically_normal();
+  overlay_workflow_.compare_picker.query.clear();
+  overlay_workflow_.compare_picker.commits = project::CollectGitFileHistory(project_root_, overlay_workflow_.compare_picker.path);
   RefreshComparePicker();
-  if (compare_picker_matches_.empty()) {
+  if (overlay_workflow_.compare_picker.matches.empty()) {
     return false;
   }
 
   if (!commit_spec.empty()) {
     const std::string lowered_commit_spec = ToLower(commit_spec);
     std::vector<std::size_t> matching_indices;
-    for (std::size_t i = 0; i < compare_picker_matches_.size(); ++i) {
-      const auto& commit = compare_picker_matches_[i];
+    for (std::size_t i = 0; i < overlay_workflow_.compare_picker.matches.size(); ++i) {
+      const auto& commit = overlay_workflow_.compare_picker.matches[i];
       const std::string lowered_hash = ToLower(commit.hash);
       const std::string lowered_short_hash = ToLower(commit.short_hash);
       if (StartsWith(lowered_hash, lowered_commit_spec) ||
@@ -533,7 +533,7 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
       return false;
     }
 
-    compare_picker_selected_index_ = matching_indices.front();
+    overlay_workflow_.compare_picker.selected_index = matching_indices.front();
     OpenSelectedCompareCommit();
     return true;
   }
@@ -1028,30 +1028,30 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
 }
 
 void WorkspaceShell::RefreshComparePicker() {
-  compare_picker_matches_.clear();
-  compare_picker_selected_index_ = 0;
+  overlay_workflow_.compare_picker.matches.clear();
+  overlay_workflow_.compare_picker.selected_index = 0;
 
-  const std::string lowered_query = ToLower(compare_picker_query_);
-  for (const auto& commit : compare_picker_commits_) {
+  const std::string lowered_query = ToLower(overlay_workflow_.compare_picker.query);
+  for (const auto& commit : overlay_workflow_.compare_picker.commits) {
     if (!lowered_query.empty()) {
       const std::string text = ToLower(commit.short_hash + " " + commit.subject);
       if (text.find(lowered_query) == std::string::npos) {
         continue;
       }
     }
-    compare_picker_matches_.push_back(commit);
+    overlay_workflow_.compare_picker.matches.push_back(commit);
   }
   ResetOverlayScroll();
 }
 
 void WorkspaceShell::MoveComparePickerSelection(int delta) {
-  if (compare_picker_matches_.empty() || delta == 0) {
+  if (overlay_workflow_.compare_picker.matches.empty() || delta == 0) {
     return;
   }
 
-  const int current = static_cast<int>(compare_picker_selected_index_);
-  const int max_index = static_cast<int>(compare_picker_matches_.size()) - 1;
-  compare_picker_selected_index_ =
+  const int current = static_cast<int>(overlay_workflow_.compare_picker.selected_index);
+  const int max_index = static_cast<int>(overlay_workflow_.compare_picker.matches.size()) - 1;
+  overlay_workflow_.compare_picker.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
     const WorkspaceLayout layout =
@@ -1062,22 +1062,22 @@ void WorkspaceShell::MoveComparePickerSelection(int delta) {
 }
 
 void WorkspaceShell::OpenSelectedCompareCommit() {
-  if (compare_picker_matches_.empty() ||
-      compare_picker_selected_index_ >= compare_picker_matches_.size()) {
+  if (overlay_workflow_.compare_picker.matches.empty() ||
+      overlay_workflow_.compare_picker.selected_index >= overlay_workflow_.compare_picker.matches.size()) {
     return;
   }
 
-  OpenComparison(compare_picker_matches_[compare_picker_selected_index_]);
+  OpenComparison(overlay_workflow_.compare_picker.matches[overlay_workflow_.compare_picker.selected_index]);
 }
 
 void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
   if (const auto existing_index =
-          FindOpenCompareTabIndex(compare_picker_path_, commit.hash, "WORKTREE");
+          FindOpenCompareTabIndex(overlay_workflow_.compare_picker.path, commit.hash, "WORKTREE");
       existing_index.has_value()) {
     SyncActiveEditorTab();
     if (open_tabs_[*existing_index].compare.has_value()) {
       auto rebuilt =
-          BuildCompareTabEntry(compare_picker_path_, open_tabs_[*existing_index].compare.value());
+          BuildCompareTabEntry(overlay_workflow_.compare_picker.path, open_tabs_[*existing_index].compare.value());
       if (rebuilt.has_value() && rebuilt->compare.has_value()) {
         open_tabs_[*existing_index] = std::move(*rebuilt);
       }
@@ -1088,7 +1088,7 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
     DismissOverlay(true);
     return;
   }
-  auto compare_tab = BuildCompareTabEntry(compare_picker_path_, commit);
+  auto compare_tab = BuildCompareTabEntry(overlay_workflow_.compare_picker.path, commit);
   if (!compare_tab.has_value()) {
     return;
   }

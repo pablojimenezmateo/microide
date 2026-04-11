@@ -711,6 +711,49 @@ class WorkspaceShell {
     std::string feedback_text;
   };
 
+  struct BufferSearchState {
+    std::string query;
+    std::string replace_text;
+    std::vector<editor::SelectionRange> matches;
+    std::size_t selected_index = 0;
+  };
+
+  struct ProjectSearchState {
+    std::string query;
+    project::ProjectSearchOptions options;
+    std::string edit_buffer;
+    bool editing = false;
+    ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
+    std::string replace_text;
+    std::vector<project::ProjectSearchResult> results;
+    std::size_t selected_index = 0;
+    bool running = false;
+    bool truncated = false;
+    std::string error;
+  };
+
+  struct ComparePickerState {
+    std::filesystem::path path;
+    std::string query;
+    std::vector<project::GitCommitEntry> commits;
+    std::vector<project::GitCommitEntry> matches;
+    std::size_t selected_index = 0;
+  };
+
+  struct OverlayWorkflowState {
+    BufferSearchState buffer_search;
+    ProjectSearchState project_search;
+    ComparePickerState compare_picker;
+  };
+
+  struct GitSidebarState {
+    std::vector<GitSidebarEntry> entries;
+    std::string base_ref;
+    std::string base_label;
+    bool repo_available = false;
+    std::size_t selected_index = 0;
+  };
+
   struct PromptState {
     bool dirty_visible = false;
     FocusTarget dirty_previous_focus = FocusTarget::Editor;
@@ -734,31 +777,8 @@ class WorkspaceShell {
     ProjectSurfaceState surface;
     std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
     std::size_t active_terminal_tab_index = 0;
-    std::string buffer_search_query;
-    std::string buffer_replace_text;
-    std::vector<editor::SelectionRange> buffer_search_matches;
-    std::size_t buffer_search_selected_index = 0;
-    std::string project_search_query;
-    project::ProjectSearchOptions project_search_options;
-    std::string project_search_edit_buffer;
-    bool project_search_editing = false;
-    ProjectSearchEditField project_search_edit_field = ProjectSearchEditField::Query;
-    std::string project_replace_text;
-    std::vector<project::ProjectSearchResult> project_search_results;
-    std::size_t project_search_selected_index = 0;
-    bool project_search_running = false;
-    bool project_search_truncated = false;
-    std::string project_search_error;
-    std::vector<GitSidebarEntry> git_sidebar_entries;
-    std::string git_base_ref;
-    std::string git_base_label;
-    bool git_repo_available = false;
-    std::size_t git_sidebar_selected_index = 0;
-    std::filesystem::path compare_picker_path;
-    std::string compare_picker_query;
-    std::vector<project::GitCommitEntry> compare_picker_commits;
-    std::vector<project::GitCommitEntry> compare_picker_matches;
-    std::size_t compare_picker_selected_index = 0;
+    OverlayWorkflowState overlay_workflow;
+    GitSidebarState git_sidebar;
     CommandState command;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
@@ -1285,26 +1305,8 @@ class WorkspaceShell {
   std::size_t active_terminal_tab_index_ = 0;
   int last_window_width_ = 0;
   int last_window_height_ = 0;
-  std::string buffer_search_query_;
-  std::string buffer_replace_text_;
-  std::vector<editor::SelectionRange> buffer_search_matches_;
-  std::size_t buffer_search_selected_index_ = 0;
-  std::string project_search_query_;
-  project::ProjectSearchOptions project_search_options_;
-  std::string project_search_edit_buffer_;
-  bool project_search_editing_ = false;
-  ProjectSearchEditField project_search_edit_field_ = ProjectSearchEditField::Query;
-  std::string project_replace_text_;
-  std::vector<project::ProjectSearchResult> project_search_results_;
-  std::size_t project_search_selected_index_ = 0;
-  bool project_search_running_ = false;
-  bool project_search_truncated_ = false;
-  std::string project_search_error_;
-  std::vector<GitSidebarEntry> git_sidebar_entries_;
-  std::string git_base_ref_;
-  std::string git_base_label_;
-  bool git_repo_available_ = false;
-  std::size_t git_sidebar_selected_index_ = 0;
+  OverlayWorkflowState overlay_workflow_;
+  GitSidebarState git_sidebar_;
   std::uint64_t project_search_run_id_ = 0;
   Uint32 project_search_event_type_ = 0;
   Uint32 git_blame_event_type_ = 0;
@@ -1321,11 +1323,6 @@ class WorkspaceShell {
   bool project_open_dialog_active_ = false;
   std::mutex project_open_dialog_mutex_;
   PendingProjectOpenDialogResult pending_project_open_dialog_result_;
-  std::filesystem::path compare_picker_path_;
-  std::string compare_picker_query_;
-  std::vector<project::GitCommitEntry> compare_picker_commits_;
-  std::vector<project::GitCommitEntry> compare_picker_matches_;
-  std::size_t compare_picker_selected_index_ = 0;
   PromptState prompts_;
   bool quit_requested_ = false;
   CommandState command_;

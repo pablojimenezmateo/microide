@@ -197,9 +197,9 @@ bool WorkspaceShell::RestoreSessionState() {
   active_tab_index_ = 0;
   surface_.overlay_visible = false;
   surface_.command_mode = false;
-  compare_picker_matches_.clear();
-  compare_picker_commits_.clear();
-  compare_picker_selected_index_ = 0;
+  overlay_workflow_.compare_picker.matches.clear();
+  overlay_workflow_.compare_picker.commits.clear();
+  overlay_workflow_.compare_picker.selected_index = 0;
 
   for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
     if (persisted_tab.kind == "compare") {

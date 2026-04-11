@@ -386,8 +386,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveComparePickerSelection(1);
           return true;
         case SDLK_HOME:
-          if (!compare_picker_matches_.empty()) {
-            compare_picker_selected_index_ = 0;
+          if (!overlay_workflow_.compare_picker.matches.empty()) {
+            overlay_workflow_.compare_picker.selected_index = 0;
             if (last_window_width_ > 0 && last_window_height_ > 0) {
               const WorkspaceLayout layout = ComputeLayout(
                   static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
@@ -397,8 +397,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           }
           return true;
         case SDLK_END:
-          if (!compare_picker_matches_.empty()) {
-            compare_picker_selected_index_ = compare_picker_matches_.size() - 1;
+          if (!overlay_workflow_.compare_picker.matches.empty()) {
+            overlay_workflow_.compare_picker.selected_index = overlay_workflow_.compare_picker.matches.size() - 1;
             if (last_window_width_ > 0 && last_window_height_ > 0) {
               const WorkspaceLayout layout = ComputeLayout(
                   static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
@@ -414,7 +414,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveComparePickerSelection(8);
           return true;
         case SDLK_BACKSPACE:
-          if (RemoveLastUtf8Codepoint(&compare_picker_query_)) {
+          if (RemoveLastUtf8Codepoint(&overlay_workflow_.compare_picker.query)) {
             RefreshComparePicker();
           }
           return true;
@@ -440,7 +440,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveBufferSearchSelection(8);
           return true;
         case SDLK_BACKSPACE:
-          if (RemoveLastUtf8Codepoint(&buffer_search_query_)) {
+          if (RemoveLastUtf8Codepoint(&overlay_workflow_.buffer_search.query)) {
             RefreshBufferSearch();
           }
           return true;
@@ -482,11 +482,11 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           return true;
         case SDLK_BACKSPACE:
           if (surface_.buffer_search_field == BufferSearchField::Search) {
-            if (RemoveLastUtf8Codepoint(&buffer_search_query_)) {
+            if (RemoveLastUtf8Codepoint(&overlay_workflow_.buffer_search.query)) {
               RefreshBufferSearch();
             }
           } else {
-            RemoveLastUtf8Codepoint(&buffer_replace_text_);
+            RemoveLastUtf8Codepoint(&overlay_workflow_.buffer_search.replace_text);
           }
           return true;
         default:
@@ -516,7 +516,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveProjectSearchSelection(8);
           return true;
         case SDLK_BACKSPACE:
-          if (RemoveLastUtf8Codepoint(&project_search_query_)) {
+          if (RemoveLastUtf8Codepoint(&overlay_workflow_.project_search.query)) {
             RefreshProjectSearch();
           }
           return true;
@@ -553,7 +553,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible) {
     if (surface_.sidebar_mode == SidebarMode::Search) {
       const char input_character = KeycodeToAscii(event.key.key, modifiers);
-      if (project_search_editing_) {
+      if (overlay_workflow_.project_search.editing) {
         switch (event.key.key) {
           case SDLK_ESCAPE:
             CancelProjectSearchEdit();
@@ -563,7 +563,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             CommitProjectSearchEdit();
             return true;
           case SDLK_BACKSPACE:
-            RemoveLastUtf8Codepoint(&project_search_edit_buffer_);
+            RemoveLastUtf8Codepoint(&overlay_workflow_.project_search.edit_buffer);
             return true;
           default:
             return false;
@@ -580,9 +580,9 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_RIGHT:
-          if (!project_search_results_.empty() &&
-              project_search_selected_index_ < project_search_results_.size()) {
-            const auto& result = project_search_results_[project_search_selected_index_];
+          if (!overlay_workflow_.project_search.results.empty() &&
+              overlay_workflow_.project_search.selected_index < overlay_workflow_.project_search.results.size()) {
+            const auto& result = overlay_workflow_.project_search.results[overlay_workflow_.project_search.selected_index];
             OpenFile(project_root_ / result.relative_path);
             text_viewport_.MoveCursorTo(result.line, result.column);
             if (surface_.sidebar_temporary) {
@@ -598,13 +598,13 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveProjectSearchSelection(1);
           return true;
         case SDLK_HOME:
-          if (!project_search_results_.empty()) {
-            project_search_selected_index_ = 0;
+          if (!overlay_workflow_.project_search.results.empty()) {
+            overlay_workflow_.project_search.selected_index = 0;
           }
           return true;
         case SDLK_END:
-          if (!project_search_results_.empty()) {
-            project_search_selected_index_ = project_search_results_.size() - 1;
+          if (!overlay_workflow_.project_search.results.empty()) {
+            overlay_workflow_.project_search.selected_index = overlay_workflow_.project_search.results.size() - 1;
           }
           return true;
         case SDLK_PAGEUP:
@@ -648,14 +648,14 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           MoveGitSidebarSelection(1);
           return true;
         case SDLK_HOME:
-          if (!git_sidebar_entries_.empty()) {
-            git_sidebar_selected_index_ = 0;
+          if (!git_sidebar_.entries.empty()) {
+            git_sidebar_.selected_index = 0;
             RevealSelectedGitSidebarLine();
           }
           return true;
         case SDLK_END:
-          if (!git_sidebar_entries_.empty()) {
-            git_sidebar_selected_index_ = git_sidebar_entries_.size() - 1;
+          if (!git_sidebar_.entries.empty()) {
+            git_sidebar_.selected_index = git_sidebar_.entries.size() - 1;
             RevealSelectedGitSidebarLine();
           }
           return true;
@@ -667,19 +667,19 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
-          return OpenGitSidebarEntry(git_sidebar_selected_index_);
+          return OpenGitSidebarEntry(git_sidebar_.selected_index);
         case SDLK_R:
           return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
         default: {
           const char input_character = KeycodeToAscii(event.key.key, modifiers);
           if (input_character == 's') {
-            return StageGitSidebarEntry(git_sidebar_selected_index_);
+            return StageGitSidebarEntry(git_sidebar_.selected_index);
           }
           if (input_character == 'u') {
-            return UnstageGitSidebarEntry(git_sidebar_selected_index_);
+            return UnstageGitSidebarEntry(git_sidebar_.selected_index);
           }
           if (input_character == 'x') {
-            return DiscardGitSidebarEntry(git_sidebar_selected_index_);
+            return DiscardGitSidebarEntry(git_sidebar_.selected_index);
           }
           return false;
         }
@@ -1135,23 +1135,23 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   if (surface_.overlay_visible) {
     switch (surface_.overlay_mode) {
       case OverlayMode::CommitPicker:
-        compare_picker_query_.append(input);
+        overlay_workflow_.compare_picker.query.append(input);
         RefreshComparePicker();
         return true;
       case OverlayMode::BufferSearch:
-        buffer_search_query_.append(input);
+        overlay_workflow_.buffer_search.query.append(input);
         RefreshBufferSearch();
         return true;
       case OverlayMode::BufferReplace:
         if (surface_.buffer_search_field == BufferSearchField::Search) {
-          buffer_search_query_.append(input);
+          overlay_workflow_.buffer_search.query.append(input);
           RefreshBufferSearch();
         } else {
-          buffer_replace_text_.append(input);
+          overlay_workflow_.buffer_search.replace_text.append(input);
         }
         return true;
       case OverlayMode::ProjectSearch:
-        project_search_query_.append(input);
+        overlay_workflow_.project_search.query.append(input);
         RefreshProjectSearch();
         return true;
       case OverlayMode::FileFinder:
@@ -1163,8 +1163,8 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   }
 
   if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
-      project_search_editing_) {
-    project_search_edit_buffer_.append(input);
+      overlay_workflow_.project_search.editing) {
+    overlay_workflow_.project_search.edit_buffer.append(input);
     return true;
   }
 

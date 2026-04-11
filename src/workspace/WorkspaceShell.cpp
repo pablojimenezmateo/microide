@@ -1833,8 +1833,8 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   }
 
   if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
-      project_search_editing_) {
-    return project_search_edit_field_ == ProjectSearchEditField::Query
+      overlay_workflow_.project_search.editing) {
+    return overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
                ? TextInputSurface::SidebarSearchQuery
                : TextInputSurface::SidebarSearchReplace;
   }
@@ -2246,7 +2246,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return reject_command("search is unavailable in compare and merge tabs");
       }
       OpenBufferSearch();
-      buffer_search_query_ = JoinCommandArguments(args, 0);
+      overlay_workflow_.buffer_search.query = JoinCommandArguments(args, 0);
       RefreshBufferSearch();
       return true;
     case ActionId::ReplaceInBuffer:
@@ -2345,7 +2345,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       if (!std::filesystem::exists(path)) {
         return reject_command("Compare path does not exist: " + path.string());
       }
-      compare_picker_path_ = path.lexically_normal();
+      overlay_workflow_.compare_picker.path = path.lexically_normal();
       OpenComparison(project::GitCommitEntry{
           .hash = "HEAD",
           .short_hash = "HEAD",
@@ -3055,7 +3055,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return CursorKind::Default;
       }
-      const auto& entry = git_sidebar_entries_[static_cast<std::size_t>(line.entry_index)];
+      const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
       if (entry.section == GitSidebarEntry::Section::Modified) {
         float right_edge = row_rect.x + row_rect.w - 8.0f;
         const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";

@@ -604,7 +604,7 @@ void WorkspaceShell::RefreshProjectViewsAfterMutation(
   } else if (!project_root_.empty()) {
     directory_tree_.SelectPath(project_root_);
   }
-  if (!project_search_query_.empty()) {
+  if (!overlay_workflow_.project_search.query.empty()) {
     RefreshProjectSearch();
   }
 }
@@ -800,8 +800,8 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     CloseTab(index);
   }
 
-  if (!compare_picker_path_.empty() && PathEqualsOrWithin(compare_picker_path_, old_path)) {
-    compare_picker_path_ = ReplacePathPrefix(compare_picker_path_, old_path, new_path);
+  if (!overlay_workflow_.compare_picker.path.empty() && PathEqualsOrWithin(overlay_workflow_.compare_picker.path, old_path)) {
+    overlay_workflow_.compare_picker.path = ReplacePathPrefix(overlay_workflow_.compare_picker.path, old_path, new_path);
     if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::CommitPicker) {
       surface_.overlay_visible = false;
     }
@@ -914,11 +914,11 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
     CloseTab(index);
   }
 
-  if (!compare_picker_path_.empty() && PathEqualsOrWithin(compare_picker_path_, path)) {
-    compare_picker_path_.clear();
-    compare_picker_query_.clear();
-    compare_picker_commits_.clear();
-    compare_picker_matches_.clear();
+  if (!overlay_workflow_.compare_picker.path.empty() && PathEqualsOrWithin(overlay_workflow_.compare_picker.path, path)) {
+    overlay_workflow_.compare_picker.path.clear();
+    overlay_workflow_.compare_picker.query.clear();
+    overlay_workflow_.compare_picker.commits.clear();
+    overlay_workflow_.compare_picker.matches.clear();
     if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::CommitPicker) {
       surface_.overlay_visible = false;
     }
