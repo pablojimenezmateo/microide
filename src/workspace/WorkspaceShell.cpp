@@ -2799,12 +2799,8 @@ std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) c
     return {};
   }
 
-  for (const VisibleTab& tab : ComputeVisibleTabs(tab_strip)) {
-    if (Contains(tab.rect, last_mouse_x_, last_mouse_y_)) {
-      return TabTooltipLabel(tab.index);
-    }
-  }
-  return {};
+  const auto visible_tabs = ComputeVisibleTabs(tab_strip);
+  return HoveredChromeTabTooltipLabel(visible_tabs, last_mouse_x_, last_mouse_y_);
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {

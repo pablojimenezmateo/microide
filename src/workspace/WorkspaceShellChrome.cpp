@@ -1,7 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
-#include <cmath>
+#include <utility>
 #include <vector>
 
 #include "workspace/WorkspaceShellShared.h"
@@ -13,10 +13,6 @@ namespace {
 constexpr float kBottomPanelHeaderButtonSize = 18.0f;
 constexpr float kTabCloseButtonSize = 14.0f;
 constexpr float kTabCloseButtonRightInset = 6.0f;
-
-float CenteredInset(float outer_size, float inner_size) {
-  return std::floor(std::max(0.0f, outer_size - inner_size) * 0.5f);
-}
 
 }  // namespace
 
@@ -59,9 +55,20 @@ std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisiblePro
   }
 
   std::vector<float> widths;
+  std::vector<std::string> display_titles;
+  std::vector<std::string> tooltip_labels;
   widths.reserve(projects_.size());
+  display_titles.reserve(projects_.size());
+  tooltip_labels.reserve(projects_.size());
   for (std::size_t i = 0; i < projects_.size(); ++i) {
-    widths.push_back(ProjectTabWidthForIndex(i));
+    const std::filesystem::path root =
+        (!project_root_.empty() && i == active_project_index_) ? project_root_
+        : projects_[i] != nullptr                               ? projects_[i]->root
+                                                               : std::filesystem::path{};
+    display_titles.push_back(ProjectTabDisplayTitle(i));
+    tooltip_labels.push_back(root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string());
+    widths.push_back(std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f, 156.0f,
+                                260.0f));
   }
 
   const float tab_y = project_tab_strip.y + 2.0f;
@@ -74,18 +81,20 @@ std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisiblePro
       widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(project_tab_scroll_index_, 0,
                                           std::max(0, static_cast<int>(projects_.size()) - 1))));
+  const auto models = BuildChromeTabRenderItems(
+      visible, tab_y, tab_height, {}, active_project_index_, display_titles, tooltip_labels,
+      kTabCloseButtonSize, kTabCloseButtonRightInset);
 
-  tabs.reserve(visible.size());
-  for (const StripSlotLayout& slot : visible) {
+  tabs.reserve(models.size());
+  for (const ChromeTabRenderItem& model : models) {
     VisibleProjectTab tab;
-    tab.index = slot.index;
-    tab.active = slot.index == active_project_index_;
-    tab.rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
-    tab.close_rect =
-        MakeRect(tab.rect.x + tab.rect.w - kTabCloseButtonRightInset - kTabCloseButtonSize,
-                 tab.rect.y + CenteredInset(tab.rect.h, kTabCloseButtonSize),
-                 kTabCloseButtonSize, kTabCloseButtonSize);
-    tabs.push_back(tab);
+    tab.index = model.index;
+    tab.rect = model.rect;
+    tab.close_rect = model.close_rect;
+    tab.active = model.active;
+    tab.display_title = model.display_title;
+    tab.tooltip_label = model.tooltip_label;
+    tabs.push_back(std::move(tab));
   }
 
   return tabs;
@@ -130,9 +139,16 @@ std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
   }
 
   std::vector<float> widths;
+  std::vector<std::string> display_titles;
+  std::vector<std::string> tooltip_labels;
   widths.reserve(open_tabs_.size());
+  display_titles.reserve(open_tabs_.size());
+  tooltip_labels.reserve(open_tabs_.size());
   for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
-    widths.push_back(TabWidthForIndex(i));
+    display_titles.push_back(TabDisplayTitle(i));
+    tooltip_labels.push_back(TabTooltipLabel(i));
+    widths.push_back(
+        std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f, 132.0f, 220.0f));
   }
 
   const float tab_y = tab_strip.y + 2.0f;
@@ -145,18 +161,20 @@ std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
       widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(tab_scroll_index_, 0,
                                           std::max(0, static_cast<int>(open_tabs_.size()) - 1))));
+  const auto models = BuildChromeTabRenderItems(
+      visible, tab_y, tab_height, {}, active_tab_index_, display_titles, tooltip_labels,
+      kTabCloseButtonSize, kTabCloseButtonRightInset);
 
-  tabs.reserve(visible.size());
-  for (const StripSlotLayout& slot : visible) {
+  tabs.reserve(models.size());
+  for (const ChromeTabRenderItem& model : models) {
     VisibleTab tab;
-    tab.index = slot.index;
-    tab.active = slot.index == active_tab_index_;
-    tab.rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
-    tab.close_rect =
-        MakeRect(tab.rect.x + tab.rect.w - kTabCloseButtonRightInset - kTabCloseButtonSize,
-                 tab.rect.y + CenteredInset(tab.rect.h, kTabCloseButtonSize),
-                 kTabCloseButtonSize, kTabCloseButtonSize);
-    tabs.push_back(tab);
+    tab.index = model.index;
+    tab.rect = model.rect;
+    tab.close_rect = model.close_rect;
+    tab.active = model.active;
+    tab.display_title = model.display_title;
+    tab.tooltip_label = model.tooltip_label;
+    tabs.push_back(std::move(tab));
   }
 
   return tabs;
@@ -171,8 +189,12 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
 
   std::vector<std::size_t> terminal_indices;
   std::vector<float> widths;
+  std::vector<std::string> display_titles;
+  std::vector<std::string> tooltip_labels;
   terminal_indices.reserve(terminal_tabs_.size());
   widths.reserve(terminal_tabs_.size());
+  display_titles.reserve(terminal_tabs_.size());
+  tooltip_labels.reserve(terminal_tabs_.size());
   for (std::size_t i = 0; i < terminal_tabs_.size(); ++i) {
     const TerminalTabState* terminal_tab = terminal_tabs_[i].get();
     if (terminal_tab == nullptr) {
@@ -184,7 +206,10 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
       label = "terminal";
     }
     terminal_indices.push_back(i);
-    widths.push_back(std::clamp(text_renderer_.MeasureWidth(label) + 38.0f, 84.0f, 220.0f));
+    display_titles.push_back(label);
+    tooltip_labels.push_back(label);
+    widths.push_back(
+        std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 38.0f, 84.0f, 220.0f));
   }
 
   const float tab_y = panel_header.y + 2.0f;
@@ -194,19 +219,20 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
   const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
   const auto visible = ComputeVisibleStripLayouts(widths, start_x, gap, max_tab_x, 0);
+  const auto models = BuildChromeTabRenderItems(
+      visible, tab_y, tab_height, terminal_indices, active_terminal_tab_index_, display_titles,
+      tooltip_labels, kTabCloseButtonSize, kTabCloseButtonRightInset);
 
-  tabs.reserve(visible.size());
-  for (const StripSlotLayout& slot : visible) {
-    const std::size_t terminal_index = terminal_indices[slot.index];
+  tabs.reserve(models.size());
+  for (const ChromeTabRenderItem& model : models) {
     VisibleTerminalTab tab;
-    tab.index = terminal_index;
-    tab.active = terminal_index == active_terminal_tab_index_;
-    tab.rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
-    tab.close_rect =
-        MakeRect(tab.rect.x + tab.rect.w - kTabCloseButtonRightInset - kTabCloseButtonSize,
-                 tab.rect.y + CenteredInset(tab.rect.h, kTabCloseButtonSize),
-                 kTabCloseButtonSize, kTabCloseButtonSize);
-    tabs.push_back(tab);
+    tab.index = model.index;
+    tab.rect = model.rect;
+    tab.close_rect = model.close_rect;
+    tab.active = model.active;
+    tab.display_title = model.display_title;
+    tab.tooltip_label = model.tooltip_label;
+    tabs.push_back(std::move(tab));
   }
 
   return tabs;

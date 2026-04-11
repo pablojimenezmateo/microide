@@ -14,6 +14,7 @@ Scope:
 - Removed the stale `help` command-completion branch from `src/workspace/WorkspaceShellCommand.cpp`.
 - Added `WorkspaceShell::DocumentedCommandUsages()` and a README consistency test so command docs are now checked against the action table.
 - Extracted pure chrome text helpers in `src/workspace/WorkspaceShellShared.cpp` for tab titles, tooltips, and breadcrumbs, and added direct tests for those helpers.
+- Extracted shared chrome tab render-item builders and hover-tooltip helpers so top-level tab-strip rendering no longer recomputes labels inline in `WorkspaceShellRender.cpp`.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.

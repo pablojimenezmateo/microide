@@ -12,6 +12,7 @@ namespace {
 using microide::workspace::BottomPanelCommandAreaRect;
 using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
+using microide::workspace::BuildChromeTabRenderItems;
 using microide::workspace::BuildCompareScrollbarMarkers;
 using microide::workspace::BuildMergeScrollbarMarkers;
 using microide::workspace::ClampBottomPanelHeight;
@@ -21,6 +22,7 @@ using microide::workspace::ComputeOverlaySurfaceRect;
 using microide::workspace::ComputeScrollbarThumb;
 using microide::workspace::ComputeVisibleStripLayouts;
 using microide::workspace::EnsureVisibleStripIndex;
+using microide::workspace::HoveredChromeTabTooltipLabel;
 using microide::workspace::MakeHorizontalScrollbarGeometry;
 using microide::workspace::MakeRect;
 using microide::workspace::MakeVerticalScrollbarGeometry;
@@ -187,6 +189,34 @@ void TestWorkspaceSharedStripLayoutHelpers() {
          "visible strip index should remain at zero for empty strips");
 }
 
+void TestWorkspaceSharedChromeTabRenderItems() {
+  const std::vector<microide::workspace::StripSlotLayout> slots = {
+      {.index = 0, .x = 12.0f, .width = 90.0f},
+      {.index = 2, .x = 108.0f, .width = 120.0f},
+  };
+  const std::vector<std::size_t> model_indices = {5, 6, 7};
+  const std::vector<std::string> display_titles = {"alpha", "beta", "*gamma"};
+  const std::vector<std::string> tooltip_labels = {"path/a", "path/b", "path/c"};
+
+  const auto items = BuildChromeTabRenderItems(slots, 24.0f, 22.0f, model_indices, 7,
+                                               display_titles, tooltip_labels, 14.0f, 6.0f);
+  Expect(items.size() == 2, "chrome tab builder should preserve visible item count");
+  Expect(items[0].index == 5 && !items[0].active,
+         "chrome tab builder should map slot indices through the provided model indices");
+  Expect(items[1].index == 7 && items[1].active,
+         "chrome tab builder should mark the requested active tab");
+  Expect(items[0].display_title == "alpha" && items[1].display_title == "*gamma",
+         "chrome tab builder should preserve display labels");
+  Expect(items[0].tooltip_label == "path/a" && items[1].tooltip_label == "path/c",
+         "chrome tab builder should preserve tooltip labels");
+  Expect(items[0].close_rect.x > items[0].rect.x && items[0].close_rect.y >= items[0].rect.y,
+         "chrome tab builder should place the close button inside the tab bounds");
+  Expect(HoveredChromeTabTooltipLabel(items, 150.0f, 30.0f) == "path/c",
+         "chrome tab hover helper should return the tooltip for the hovered tab");
+  Expect(HoveredChromeTabTooltipLabel(items, 4.0f, 4.0f).empty(),
+         "chrome tab hover helper should ignore pointers outside every tab");
+}
+
 void TestWorkspaceSharedOverlayRectHelpers() {
   const SDL_FRect roomy = ComputeOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
   Expect(roomy.w == 696.0f,
@@ -219,6 +249,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);
+  AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
+          TestWorkspaceSharedChromeTabRenderItems);
   AddTest(tests, "WorkspaceShared/OverlayRectHelpers", TestWorkspaceSharedOverlayRectHelpers);
 }
 

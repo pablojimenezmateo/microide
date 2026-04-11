@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <utility>
 
 namespace microide::workspace {
 
@@ -1608,6 +1609,43 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
   }
 
   return first_visible;
+}
+
+std::vector<ChromeTabRenderItem> BuildChromeTabRenderItems(
+    std::span<const StripSlotLayout> slots,
+    float tab_y,
+    float tab_height,
+    std::span<const std::size_t> model_indices,
+    std::size_t active_index,
+    std::span<const std::string> display_titles,
+    std::span<const std::string> tooltip_labels,
+    float close_button_size,
+    float close_button_right_inset) {
+  std::vector<ChromeTabRenderItem> items;
+  items.reserve(slots.size());
+
+  for (const StripSlotLayout& slot : slots) {
+    const std::size_t model_index =
+        slot.index < model_indices.size() ? model_indices[slot.index] : slot.index;
+    const SDL_FRect rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
+    ChromeTabRenderItem item;
+    item.index = model_index;
+    item.rect = rect;
+    item.close_rect = MakeRect(
+        rect.x + rect.w - close_button_right_inset - close_button_size,
+        rect.y + std::floor(std::max(0.0f, rect.h - close_button_size) * 0.5f), close_button_size,
+        close_button_size);
+    item.active = model_index == active_index;
+    if (slot.index < display_titles.size()) {
+      item.display_title = display_titles[slot.index];
+    }
+    if (slot.index < tooltip_labels.size()) {
+      item.tooltip_label = tooltip_labels[slot.index];
+    }
+    items.push_back(std::move(item));
+  }
+
+  return items;
 }
 
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {

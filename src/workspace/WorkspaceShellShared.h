@@ -5,6 +5,7 @@
 #include <array>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -156,6 +157,15 @@ struct StripSlotLayout {
   std::size_t index = 0;
   float x = 0.0f;
   float width = 0.0f;
+};
+
+struct ChromeTabRenderItem {
+  std::size_t index = 0;
+  SDL_FRect rect{};
+  SDL_FRect close_rect{};
+  bool active = false;
+  std::string display_title;
+  std::string tooltip_label;
 };
 
 enum class GitSidebarSection {
@@ -328,6 +338,32 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
                                     float max_x,
                                     std::size_t current_first_index,
                                     std::size_t active_index);
+std::vector<ChromeTabRenderItem> BuildChromeTabRenderItems(
+    std::span<const StripSlotLayout> slots,
+    float tab_y,
+    float tab_height,
+    std::span<const std::size_t> model_indices,
+    std::size_t active_index,
+    std::span<const std::string> display_titles,
+    std::span<const std::string> tooltip_labels,
+    float close_button_size,
+    float close_button_right_inset);
+
+template <typename TabLike>
+std::string HoveredChromeTabTooltipLabel(std::span<const TabLike> tabs, float x, float y) {
+  for (const TabLike& tab : tabs) {
+    if (Contains(tab.rect, x, y)) {
+      return tab.tooltip_label;
+    }
+  }
+  return {};
+}
+
+template <typename TabLike>
+std::string HoveredChromeTabTooltipLabel(const std::vector<TabLike>& tabs, float x, float y) {
+  return HoveredChromeTabTooltipLabel(std::span<const TabLike>(tabs), x, y);
+}
+
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area);
 std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     const std::vector<GitSidebarSection>& entry_sections,

@@ -1121,7 +1121,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
     draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
                            tab.active ? theme_.chrome_active : theme_.surface_raised,
-                           TruncateLabel(ProjectTabDisplayTitle(tab.index), tab.rect.w - 46.0f));
+                           TruncateLabel(tab.display_title, tab.rect.w - 46.0f));
     draw_tab_close_button(tab.close_rect,
                           tab.active ? theme_.text_secondary : theme_.text_disabled,
                           tab.active ? theme_.text_primary : theme_.text_secondary);
@@ -1143,10 +1143,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
                        theme_.accent);
       }
-      const std::string display_title = TabDisplayTitle(tab.index);
       draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
                              tab.active ? theme_.chrome_active : theme_.surface_raised,
-                             TruncateLabel(display_title, tab.rect.w - 46.0f));
+                             TruncateLabel(tab.display_title, tab.rect.w - 46.0f));
       draw_tab_close_button(tab.close_rect,
                             tab.active ? theme_.text_secondary : theme_.text_disabled,
                             tab.active ? theme_.text_primary : theme_.text_secondary);
@@ -1759,12 +1758,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
                          theme_.accent);
         }
-        std::string label = terminal_tab->session.LaunchLabel();
-        if (label.empty()) {
-          label = "terminal";
-        }
         draw_vcentered_text_on(tab.rect, 8.0f, foreground, background,
-                               TruncateLabel(label, tab.rect.w - 40.0f));
+                               TruncateLabel(tab.display_title, tab.rect.w - 40.0f));
         draw_tab_close_button(tab.close_rect, foreground, theme_.text_primary);
       }
       const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);

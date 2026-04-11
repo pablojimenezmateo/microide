@@ -347,6 +347,8 @@ class WorkspaceShell {
     SDL_FRect rect{};
     SDL_FRect close_rect{};
     bool active = false;
+    std::string display_title;
+    std::string tooltip_label;
   };
 
   struct VisibleProjectTab {
@@ -354,6 +356,8 @@ class WorkspaceShell {
     SDL_FRect rect{};
     SDL_FRect close_rect{};
     bool active = false;
+    std::string display_title;
+    std::string tooltip_label;
   };
 
   struct VisibleMenuBarItem {
@@ -373,6 +377,8 @@ class WorkspaceShell {
     SDL_FRect rect{};
     SDL_FRect close_rect{};
     bool active = false;
+    std::string display_title;
+    std::string tooltip_label;
   };
 
   struct GitSidebarEntry {
