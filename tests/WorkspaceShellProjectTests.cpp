@@ -175,6 +175,61 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should prefill the typed open-project command");
 }
 
+void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "bogus-command"),
+         "text input should populate the command prompt");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should attempt to execute the typed command");
+
+  Expect(WorkspaceShellTestAccess::CommandMode(shell),
+         "unknown commands should keep the command prompt open");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Unknown command: bogus-command",
+         "unknown commands should report an explicit prompt error");
+}
+
+void TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt before the missing-project test");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "search"),
+         "text input should populate the missing-project command");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should attempt the missing-project command");
+
+  Expect(WorkspaceShellTestAccess::CommandMode(shell),
+         "project-dependent command failures should keep the prompt open");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "No active project",
+         "project-dependent command failures should report the missing project");
+}
+
+void TestWorkspaceShellOpenCommandRequiresPath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt before the open-path test");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "open"),
+         "text input should populate the open command");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should attempt the open command");
+
+  Expect(WorkspaceShellTestAccess::CommandMode(shell),
+         "open without a path should keep the prompt open");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "open requires a path",
+         "open without a path should report the missing path explicitly");
+}
+
 void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -822,6 +877,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
+  AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
+          TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
+  AddTest(tests, "WorkspaceShell/CommandReportsMissingProjectInsteadOfSilentNoOp",
+          TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp);
+  AddTest(tests, "WorkspaceShell/OpenCommandRequiresPath",
+          TestWorkspaceShellOpenCommandRequiresPath);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",

@@ -644,6 +644,9 @@ struct WorkspaceShellTestAccess {
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.command_mode_; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_input_; }
+  static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
+    return shell.CommandPromptStatusText();
+  }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.overlay_visible_; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
     return shell.overlay_mode_ == WorkspaceShell::OverlayMode::FileFinder;

@@ -712,7 +712,7 @@ class WorkspaceShell {
     std::vector<std::string> command_history;
     std::optional<std::size_t> command_history_index;
     std::string command_history_pending_input;
-    std::string command_completion_feedback;
+    std::string command_feedback_text;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
@@ -1137,7 +1137,8 @@ class WorkspaceShell {
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
   void ResetCommandSessionState();
-  void ClearCommandCompletionFeedback();
+  void ClearCommandFeedback();
+  bool RejectCommandAction(ActionSource source, std::string feedback);
   void PushCommandHistory(std::string command_line);
   void StepCommandHistory(int delta);
   void CompleteCommandInput();
@@ -1313,7 +1314,7 @@ class WorkspaceShell {
   std::vector<std::string> command_history_;
   std::optional<std::size_t> command_history_index_;
   std::string command_history_pending_input_;
-  std::string command_completion_feedback_;
+  std::string command_feedback_text_;
   std::vector<std::string> available_colorscheme_names_;
   std::string active_colorscheme_name_ = "default";
   std::optional<SDL_Color> project_base_color_;

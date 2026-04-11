@@ -1908,8 +1908,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     CloseTreeContextMenu();
   }
 
-  const auto require_project = [&]() {
-    return project_root_.empty();
+  const auto reject_command = [&](std::string feedback) {
+    return RejectCommandAction(source, std::move(feedback));
   };
 
   switch (id) {
@@ -1943,18 +1943,23 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         }
         return true;
       }
-      OpenProjectTab(std::filesystem::path(args[0]), true, true);
+      if (!OpenProjectTab(std::filesystem::path(args[0]), true, true)) {
+        return reject_command("Failed to open project: " + args[0]);
+      }
       return true;
     case ActionId::ProjectClose:
       if (projects_.empty() || project_root_.empty()) {
-        return true;
+        return reject_command("No active project");
       }
       RequestCloseProject(active_project_index_);
       return true;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev: {
-      if (projects_.empty() || project_root_.empty() || projects_.size() == 1) {
-        return true;
+      if (projects_.empty() || project_root_.empty()) {
+        return reject_command("No active project");
+      }
+      if (projects_.size() == 1) {
+        return reject_command("Only one project tab is open");
       }
       const int delta = id == ActionId::ProjectNext ? 1 : -1;
       const int project_count = static_cast<int>(projects_.size());
@@ -2021,18 +2026,19 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::SidebarWidth:
       if (args.empty()) {
-        return true;
+        return reject_command("sidebar-width requires a numeric width");
       }
       try {
         const float width = std::stof(args[0]);
         sidebar_width_ =
             ClampSidebarWidth(width, static_cast<float>(std::max(1, last_window_width_)));
       } catch (...) {
+        return reject_command("sidebar-width requires a numeric width");
       }
       return true;
     case ActionId::TabSize:
       if (args.empty()) {
-        return true;
+        return reject_command("tab-size requires an integer from 1 to 16");
       }
       try {
         editor_preferences_.tab_size =
@@ -2040,11 +2046,12 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         ApplyEditorPreferencesToAllTabs();
         SaveConfigState();
       } catch (...) {
+        return reject_command("tab-size requires an integer from 1 to 16");
       }
       return true;
     case ActionId::IndentWidth:
       if (args.empty()) {
-        return true;
+        return reject_command("indent-width requires an integer from 1 to 16");
       }
       try {
         editor_preferences_.indent_width =
@@ -2052,11 +2059,12 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         ApplyEditorPreferencesToAllTabs();
         SaveConfigState();
       } catch (...) {
+        return reject_command("indent-width requires an integer from 1 to 16");
       }
       return true;
     case ActionId::UiScale:
       if (args.empty()) {
-        return true;
+        return reject_command("ui-scale requires a preset or numeric value");
       }
       if (args[0] == "up") {
         ApplyUiScale(StepUiScale(ui_scale_, 1), true, true);
@@ -2072,16 +2080,18 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       if (const auto scale = ParseUiScaleValue(args[0]); scale.has_value()) {
         ApplyUiScale(*scale, true, true);
+      } else {
+        return reject_command("ui-scale requires a preset or numeric value");
       }
       return true;
     case ActionId::SoftTabs:
       if (args.empty()) {
-        return true;
+        return reject_command("soft-tabs expects on or off");
       }
       if (const std::string value = ToLower(args[0]);
           value != "on" && value != "off" && value != "true" && value != "false" &&
           value != "1" && value != "0") {
-        return true;
+        return reject_command("soft-tabs expects on or off");
       } else {
         editor_preferences_.soft_tabs =
             value == "on" || value == "true" || value == "1";
@@ -2090,25 +2100,25 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       SaveConfigState();
       return true;
     case ActionId::TreeRefresh:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       RefreshProjectFiles();
       return true;
     case ActionId::GitRefresh:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       RefreshProjectFiles();
       return true;
     case ActionId::CreateFile:
     case ActionId::CreateDirectory: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const std::filesystem::path base_path = TreeMutationBasePath(source);
       if (base_path.empty()) {
-        return true;
+        return reject_command("No target directory selected");
       }
       OpenPromptSurface(id == ActionId::CreateFile ? PromptSurfaceState::Action::CreateFile
                                                    : PromptSurfaceState::Action::CreateDirectory,
@@ -2116,24 +2126,24 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     }
     case ActionId::RenamePath: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        return true;
+        return reject_command("No path selected");
       }
       OpenPromptSurface(PromptSurfaceState::Action::RenamePath,
                         PromptSurfaceState::Kind::TextInput, path, path.filename().string());
       return true;
     }
     case ActionId::DeletePath: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        return true;
+        return reject_command("No path selected");
       }
       OpenPromptSurface(PromptSurfaceState::Action::DeletePath,
                         PromptSurfaceState::Kind::Confirm, path);
@@ -2141,12 +2151,12 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     }
     case ActionId::CopyRelativePath:
     case ActionId::CopyAbsolutePath: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        return true;
+        return reject_command("No path selected");
       }
 
       std::string clipboard_text;
@@ -2154,7 +2164,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         std::error_code error;
         const std::filesystem::path relative = std::filesystem::relative(path, project_root_, error);
         if (error || relative.empty()) {
-          return true;
+          return reject_command("Unable to resolve a relative path for the selection");
         }
         clipboard_text = relative.generic_string();
       } else {
@@ -2178,17 +2188,17 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         focus_ = FocusTarget::Panel;
         return true;
       }
-      return true;
+      return reject_command("Cannot focus target: " + (target.empty() ? std::string("<empty>") : target));
     }
     case ActionId::Term:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       OpenTerminal(JoinCommandArguments(args, 0));
       return true;
     case ActionId::Find:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       file_index_.Refresh();
       file_finder_.SetIndex(&file_index_);
@@ -2198,14 +2208,14 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::Files: {
       const std::string root_arg = args.empty() ? std::string{} : args[0];
       if (!root_arg.empty() && !OpenProjectTab(root_arg, true, true)) {
-        return true;
+        return reject_command("Failed to open project: " + root_arg);
       }
       if (source == ActionSource::Shortcut && overlay_visible_) {
         DismissOverlay();
         return true;
       }
-      if (source != ActionSource::Shortcut && require_project()) {
-        return true;
+      if (source != ActionSource::Shortcut && project_root_.empty()) {
+        return reject_command("No active project");
       }
       ShowOverlay(OverlayMode::FileFinder);
       file_index_.Refresh();
@@ -2216,24 +2226,24 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::Tree: {
       const std::filesystem::path root_arg =
           args.empty() ? std::filesystem::path{} : std::filesystem::path(args[0]);
-      if (root_arg.empty() && require_project()) {
-        return true;
+      if (root_arg.empty() && project_root_.empty()) {
+        return reject_command("No active project");
       }
       ShowTreeSidebar(root_arg);
       return true;
     }
     case ActionId::ProjectSearch:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       ShowSearchSidebar(JoinCommandArguments(args, 0), true);
       return true;
     case ActionId::Search:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
-        return true;
+        return reject_command("search is unavailable in compare and merge tabs");
       }
       OpenBufferSearch();
       buffer_search_query_ = JoinCommandArguments(args, 0);
@@ -2243,11 +2253,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       OpenBufferReplace();
       return true;
     case ActionId::Open:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       if (args.empty()) {
-        return true;
+        return reject_command("open requires a path");
       }
       {
         std::filesystem::path path = args[0];
@@ -2260,10 +2270,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         if (editor_tab != nullptr && editor_tab->views.size() > 1) {
           editor::TextViewport opened_view;
           if (!opened_view.OpenFile(path)) {
-            return true;
+            return reject_command("Failed to open file: " + path.string());
           }
           if (!ReplaceActiveEditorView(opened_view)) {
-            return true;
+            return reject_command("Failed to replace the active split with: " + path.string());
           }
           return true;
         }
@@ -2273,16 +2283,16 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        return true;
+        return reject_command("No path selected");
       }
       if (id == ActionId::OpenSelectedTreeItemInNewTab) {
         if (!OpenFileInNewTab(path)) {
-          return true;
+          return reject_command("Failed to open file in a new tab: " + path.string());
         }
       } else {
         OpenFile(path);
@@ -2290,8 +2300,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     }
     case ActionId::Compare: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       std::filesystem::path path;
       if (!args.empty()) {
@@ -2313,11 +2323,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
 
       if (path.empty()) {
-        return true;
+        return reject_command("No file selected for compare");
       }
 
       if (!std::filesystem::exists(path)) {
-        return true;
+        return reject_command("Compare path does not exist: " + path.string());
       }
 
       const std::string commit_spec = args.size() > 1 ? args[1] : "";
@@ -2325,15 +2335,15 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     }
     case ActionId::CompareHead: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        return true;
+        return reject_command("No file selected for compare-head");
       }
       if (!std::filesystem::exists(path)) {
-        return true;
+        return reject_command("Compare path does not exist: " + path.string());
       }
       compare_picker_path_ = path.lexically_normal();
       OpenComparison(project::GitCommitEntry{
@@ -2344,11 +2354,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     }
     case ActionId::Merge: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       if (args.size() < 3 || args.size() > 4) {
-        return true;
+        return reject_command("merge requires base, incoming, current, and optional output paths");
       }
 
       auto resolve_path = [&](const std::string& text) {
@@ -2366,15 +2376,15 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
           args.size() > 3 ? resolve_path(args[3]) : current_path;
       if (!std::filesystem::exists(base_path) || !std::filesystem::exists(incoming_path) ||
           !std::filesystem::exists(current_path)) {
-        return true;
+        return reject_command("merge requires existing base, incoming, and current files");
       }
 
       OpenMergeEditor(base_path, incoming_path, current_path, output_path);
       return true;
     }
     case ActionId::Tab:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       if (args.empty()) {
         OpenUntitledTab();
@@ -2389,33 +2399,33 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         path = path.lexically_normal();
 
         if (!OpenFileInNewTab(path)) {
-          return true;
+          return reject_command("Failed to open file in a new tab: " + path.string());
         }
       }
 
       return true;
     case ActionId::TabSwitch: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       std::string error_message;
       const std::optional<std::size_t> tab_index =
           FindTabIndexBySpecifier(JoinCommandArguments(args, 0), &error_message);
       if (!tab_index.has_value()) {
-        return true;
+        return reject_command(error_message.empty() ? "No matching tab" : error_message);
       }
       ActivateTab(*tab_index);
       return true;
     }
     case ActionId::TabMove:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       if (args.empty()) {
-        return true;
+        return reject_command("tabmove requires a tab slot or relative offset");
       }
       if (open_tabs_.empty()) {
-        return true;
+        return reject_command("No open tabs");
       }
       {
         std::size_t parsed_length = 0;
@@ -2423,10 +2433,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         try {
           slot = std::stoi(args[0], &parsed_length);
         } catch (...) {
-          return true;
+          return reject_command("tabmove requires a tab slot or relative offset");
         }
         if (parsed_length != args[0].size()) {
-          return true;
+          return reject_command("tabmove requires a tab slot or relative offset");
         }
 
         const bool relative = !args[0].empty() && (args[0].front() == '+' || args[0].front() == '-');
@@ -2438,24 +2448,26 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
     case ActionId::Reopen:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       ReopenActiveTab();
       return true;
     case ActionId::Save:
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       if (SaveTab(active_tab_index_)) {
         if (source == ActionSource::Shortcut) {
           ResetCaretBlink();
         }
+      } else {
+        return reject_command("Save failed");
       }
       return true;
     case ActionId::Vsplit: {
-      if (require_project()) {
-        return true;
+      if (project_root_.empty()) {
+        return reject_command("No active project");
       }
       const EditorSplitOrientation orientation = EditorSplitOrientation::Vertical;
 
@@ -2473,13 +2485,13 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
 
         editor::TextViewport opened_view;
         if (!opened_view.OpenFile(path)) {
-          return true;
+          return reject_command("Failed to open file: " + path.string());
         }
         if (!SplitActiveEditor(orientation)) {
-          return true;
+          return reject_command("Failed to split the active editor");
         }
         if (!ReplaceActiveEditorView(opened_view)) {
-          return true;
+          return reject_command("Failed to replace the active split with: " + path.string());
         }
       }
 

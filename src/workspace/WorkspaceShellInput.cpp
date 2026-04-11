@@ -299,7 +299,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         RemoveLastUtf8Codepoint(&command_input_);
         command_history_index_.reset();
         command_history_pending_input_.clear();
-        ClearCommandCompletionFeedback();
+        ClearCommandFeedback();
         return true;
       case SDLK_UP:
         StepCommandHistory(-1);
@@ -1128,7 +1128,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     command_input_.append(input);
     command_history_index_.reset();
     command_history_pending_input_.clear();
-    ClearCommandCompletionFeedback();
+    ClearCommandFeedback();
     return true;
   }
 
