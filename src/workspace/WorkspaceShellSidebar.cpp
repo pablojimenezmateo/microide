@@ -251,6 +251,28 @@ float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) cons
                             kSidebarRowHeight);
 }
 
+ScrollableListLayout WorkspaceShell::ComputeProjectSearchSidebarListLayout(
+    const SDL_FRect& sidebar_rect,
+    std::size_t line_count) const {
+  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kProjectSearchResultsTop,
+                                     line_count, surface_.sidebar_scroll_row, kSidebarInset,
+                                     kSidebarRowHeight, kSidebarRowHeight - 2.0f);
+}
+
+ScrollableListLayout WorkspaceShell::ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                                 std::size_t line_count) const {
+  return ComputeScrollableListLayout(sidebar_rect, GitSidebarListTop(sidebar_rect), line_count,
+                                     surface_.sidebar_scroll_row, kSidebarInset, kSidebarRowHeight,
+                                     kSidebarRowHeight - 2.0f, 0.0f, 0.0f, true);
+}
+
+ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                                  std::size_t line_count) const {
+  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kSidebarHeaderHeight + 6.0f,
+                                     line_count, surface_.sidebar_scroll_row, kSidebarInset,
+                                     kSidebarRowHeight, kSidebarRowHeight - 2.0f);
+}
+
 SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
   if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
@@ -353,17 +375,10 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
   if (layout.sidebar.h <= 0.0f) {
     return;
   }
-  const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
-  const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
-  const int max_scroll = std::max(
-      0, static_cast<int>(std::ceil(static_cast<float>(BuildGitSidebarLines().size()) - visible_units)));
-  int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-  if (*selected_line < static_cast<std::size_t>(scroll_row)) {
-    scroll_row = static_cast<int>(*selected_line);
-  } else if (*selected_line >= static_cast<std::size_t>(scroll_row + visible_rows)) {
-    scroll_row = static_cast<int>(*selected_line) - visible_rows + 1;
-  }
-  surface_.sidebar_scroll_row = std::clamp(scroll_row, 0, max_scroll);
+  const auto lines = BuildGitSidebarLines();
+  const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+  surface_.sidebar_scroll_row =
+      RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
 }
 
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {

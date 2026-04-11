@@ -30,6 +30,7 @@ Scope:
 - Extracted ordered keydown handlers into `src/workspace/WorkspaceShellKeyInput.cpp` so `WorkspaceShell::HandleEvent` now routes prompt, menu, command, overlay, sidebar, compare, merge, and editor input through named subsystem helpers.
 - Extracted shared editor split-axis layout helpers so pane rects, divider rects, and drag extents no longer use separate formulas in `WorkspaceShellEditor.cpp` and `WorkspaceShellMouse.cpp`.
 - Extracted shared dirty-prompt and prompt-surface geometry helpers so render, hit-testing, and focus routing no longer keep separate dialog/button/input rect formulas.
+- Extracted shared scrollable-list layout helpers so overlay, project-search, git-sidebar, and tree-sidebar render, mouse, cursor, drag, and wheel paths no longer maintain separate row, visible-window, and scrollbar formulas; added direct layout tests that also caught and fixed an above-list hit-testing boundary bug.
 - Moved line-based persistence encode/decode into shared serializer helpers with round-trip coverage for user config, project config, project session, and workspace session state.
 - Moved `src/editor/RuntimeSyntaxGenerated.cpp` behind a dedicated CMake object target so the generated translation unit no longer sits in the hand-edited core source list.
 - Restored the documented runtime output layout under `build/microide/` during the CMake cleanup.
@@ -94,6 +95,25 @@ Impact:
 Recommendation:
 
 - Extract a dedicated project catalog or activation coordinator that owns tab-list mutation, persistence checkpoints, and rollback behavior.
+
+### 12. Bottom-panel and compare/merge scroll surfaces still duplicate viewport math
+
+Priority: Medium
+
+Evidence:
+
+- `src/workspace/WorkspaceShellRender.cpp:1667-1727` still computes bottom-panel visible rows, max scroll, content width, and scrollbar inputs inline.
+- `src/workspace/WorkspaceShellMouse.cpp:663-682`, `src/workspace/WorkspaceShellMouse.cpp:1610-1628`, and `src/workspace/WorkspaceShellMouse.cpp:2291-2295` repeat bottom-panel scroll math for hit-testing, dragging, and wheel scrolling.
+- `src/workspace/WorkspaceShellRender.cpp:930-1013` and `src/workspace/WorkspaceShellMouse.cpp:762-1047` still keep separate compare/merge scrollbar calculations and drag handling.
+
+Impact:
+
+- The new list-layout extraction reduced duplication for overlay and sidebar surfaces, but scroll coordination is still not uniform across the workspace.
+- Future scrollbar or hit-testing fixes in compare/merge or the terminal panel still require multi-file edits with a real risk of drift.
+
+Recommendation:
+
+- Extract a shared scroll-surface model for bottom-panel logs and compare/merge viewports, or define dedicated helpers for those families the same way list surfaces now use `ScrollableListLayout`.
 
 ## Executive Summary
 

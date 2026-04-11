@@ -29,6 +29,7 @@ using microide::workspace::ComputeOverlaySurfaceRect;
 using microide::workspace::ComputePromptSurfaceButtonRects;
 using microide::workspace::ComputePromptSurfaceInputRect;
 using microide::workspace::ComputePromptSurfaceRect;
+using microide::workspace::ComputeScrollableListLayout;
 using microide::workspace::ComputeScrollbarThumb;
 using microide::workspace::ComputeVisibleLineRangeRect;
 using microide::workspace::ComputeVisibleStripLayouts;
@@ -37,7 +38,10 @@ using microide::workspace::HoveredChromeTabTooltipLabel;
 using microide::workspace::MakeHorizontalScrollbarGeometry;
 using microide::workspace::MakeRect;
 using microide::workspace::MakeVerticalScrollbarGeometry;
+using microide::workspace::RevealScrollableListIndex;
 using microide::workspace::ScrollUnitsForPointer;
+using microide::workspace::ScrollableListIndexAtY;
+using microide::workspace::ScrollableListRowRect;
 using microide::workspace::VisibleLineRangeLayout;
 
 void TestWorkspaceSharedLayoutHelpers() {
@@ -217,6 +221,49 @@ void TestWorkspaceSharedScrollbarEdgeCases() {
          "vertical scrollbar geometry should be absent when content does not overflow");
 }
 
+void TestWorkspaceSharedScrollableListLayout() {
+  const auto discrete = ComputeScrollableListLayout(
+      MakeRect(10.0f, 20.0f, 220.0f, 140.0f), 50.0f, 8, 7, 12.0f, 20.0f, 18.0f);
+  Expect(discrete.visible_units == 5.0f && discrete.visible_rows == 5,
+         "scrollable list layout should floor discrete visible units to whole rows");
+  Expect(discrete.max_scroll == 3 && discrete.scroll_row == 3,
+         "scrollable list layout should clamp scroll rows to the computed max");
+  Expect(discrete.row_width == 180.0f && discrete.list_rect.h == 110.0f,
+         "scrollable list layout should reserve scrollbar width only when overflow exists");
+  Expect(discrete.scrollbar.has_value(),
+         "scrollable list layout should surface scrollbar geometry when items overflow");
+
+  const SDL_FRect row_rect = ScrollableListRowRect(discrete, 2);
+  Expect(row_rect.x == 22.0f && row_rect.y == 90.0f && row_rect.w == 180.0f &&
+             row_rect.h == 18.0f,
+         "scrollable list row rect should align rows to the shared inset and step");
+
+  const auto visible_index = ScrollableListIndexAtY(discrete, 91.0f);
+  Expect(visible_index.has_value() && *visible_index == 5,
+         "scrollable list hit testing should translate y positions through the scroll row");
+  Expect(!ScrollableListIndexAtY(discrete, 49.0f).has_value() &&
+             !ScrollableListIndexAtY(discrete, 150.0f).has_value(),
+         "scrollable list hit testing should ignore y positions outside visible rows");
+
+  const auto reveal = ComputeScrollableListLayout(
+      MakeRect(0.0f, 0.0f, 200.0f, 100.0f), 20.0f, 10, 2, 10.0f, 20.0f, 18.0f);
+  Expect(RevealScrollableListIndex(reveal, 1) == 1,
+         "reveal helper should scroll upward when the selection is above the viewport");
+  Expect(RevealScrollableListIndex(reveal, 5) == 2,
+         "reveal helper should leave the scroll row unchanged when the selection stays visible");
+  Expect(RevealScrollableListIndex(reveal, 7) == 4,
+         "reveal helper should scroll downward just enough to show the selection");
+
+  const auto fractional = ComputeScrollableListLayout(
+      MakeRect(0.0f, 0.0f, 200.0f, 109.0f), 1.0f, 10, 8, 10.0f, 20.0f, 18.0f, 0.0f, 5.0f, true);
+  Expect(std::fabs(fractional.visible_units - 5.4f) < 0.01f && fractional.visible_rows == 5,
+         "scrollable list layout should preserve fractional visible units when requested");
+  Expect(fractional.max_scroll == 5 && fractional.scroll_row == 5,
+         "fractional scrollable list layout should clamp against the fractional max scroll");
+  Expect(fractional.list_rect.h == 103.0f,
+         "scrollable list layout should honor separate scrollbar bottom padding");
+}
+
 void TestWorkspaceSharedStripLayoutHelpers() {
   const std::vector<float> widths = {90.0f, 100.0f, 80.0f, 70.0f};
   const auto visible = ComputeVisibleStripLayouts(widths, 12.0f, 6.0f, 215.0f, 0);
@@ -380,6 +427,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);
   AddTest(tests, "WorkspaceShared/PromptGeometry", TestWorkspaceSharedPromptGeometry);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
+  AddTest(tests, "WorkspaceShared/ScrollableListLayout",
+          TestWorkspaceSharedScrollableListLayout);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
           TestWorkspaceSharedChromeTabRenderItems);

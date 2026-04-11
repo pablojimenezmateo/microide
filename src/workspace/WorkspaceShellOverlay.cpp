@@ -148,10 +148,14 @@ float WorkspaceShell::OverlayListStartOffset() const {
   }
 }
 
+ScrollableListLayout WorkspaceShell::ComputeOverlayListLayout(const SDL_FRect& overlay) const {
+  return ComputeScrollableListLayout(overlay, overlay.y + OverlayListStartOffset(),
+                                     OverlayItemCount(), surface_.overlay_scroll_row, 18.0f,
+                                     22.0f, 18.0f, 16.0f, 8.0f);
+}
+
 int WorkspaceShell::OverlayVisibleRows(const SDL_FRect& overlay) const {
-  constexpr float kOverlayRowHeight = 22.0f;
-  const float available_height = overlay.h - OverlayListStartOffset() - 16.0f;
-  return std::max(1, static_cast<int>(std::floor(std::max(0.0f, available_height) / kOverlayRowHeight)));
+  return ComputeOverlayListLayout(overlay).visible_rows;
 }
 
 std::size_t WorkspaceShell::OverlayItemCount() const {
@@ -215,9 +219,7 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
 }
 
 void WorkspaceShell::ClampOverlayScrollRow(const SDL_FRect& overlay) {
-  const int visible_rows = OverlayVisibleRows(overlay);
-  const int max_scroll = std::max(0, static_cast<int>(OverlayItemCount()) - visible_rows);
-  surface_.overlay_scroll_row = std::clamp(surface_.overlay_scroll_row, 0, max_scroll);
+  surface_.overlay_scroll_row = ComputeOverlayListLayout(overlay).scroll_row;
 }
 
 void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
@@ -226,15 +228,9 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
     return;
   }
 
-  const int visible_rows = OverlayVisibleRows(overlay);
-  const int max_scroll = std::max(0, static_cast<int>(OverlayItemCount()) - visible_rows);
+  const auto layout = ComputeOverlayListLayout(overlay);
   const int selected = static_cast<int>(std::min(OverlaySelectedIndex(), OverlayItemCount() - 1));
-  if (selected < surface_.overlay_scroll_row) {
-    surface_.overlay_scroll_row = selected;
-  } else if (selected >= surface_.overlay_scroll_row + visible_rows) {
-    surface_.overlay_scroll_row = selected - visible_rows + 1;
-  }
-  surface_.overlay_scroll_row = std::clamp(surface_.overlay_scroll_row, 0, max_scroll);
+  surface_.overlay_scroll_row = RevealScrollableListIndex(layout, selected);
 }
 
 bool WorkspaceShell::ActivateOverlaySelection() {

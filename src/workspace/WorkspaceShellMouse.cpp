@@ -14,8 +14,6 @@ namespace {
 
 constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
-constexpr float kSidebarInset = 10.0f;
-constexpr float kSidebarRowHeight = 20.0f;
 constexpr float kScrollbarThickness = 10.0f;
 constexpr float kScrollbarInset = 2.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
@@ -284,40 +282,32 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
 
     ClampOverlayScrollRow(overlay);
-    constexpr float kOverlayRowHeight = 22.0f;
-    const float list_y = overlay.y + OverlayListStartOffset();
-    const int visible_rows = OverlayVisibleRows(overlay);
-    const int max_scroll =
-        std::max(0, static_cast<int>(OverlayItemCount()) - visible_rows);
-    const auto scrollbar = MakeVerticalScrollbarGeometry(
-        MakeRect(overlay.x, list_y, overlay.w,
-                 std::max(0.0f, overlay.y + overlay.h - list_y - 8.0f)),
-        static_cast<float>(OverlayItemCount()), static_cast<float>(visible_rows),
-        static_cast<float>(surface_.overlay_scroll_row));
-    if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+    const auto list_layout = ComputeOverlayListLayout(overlay);
+    if (list_layout.scrollbar.has_value() &&
+        Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
       surface_.drag_target = DragTarget::OverlayScrollbar;
       surface_.drag_scrollbar_offset =
-          Contains(scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - scrollbar->thumb.y
-              : scrollbar->thumb.h * 0.5f;
+          Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
+              ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
+              : list_layout.scrollbar->thumb.h * 0.5f;
       surface_.overlay_scroll_row =
           std::clamp(static_cast<int>(std::lround(
-                         ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
+                         ScrollUnitsForPointer(*list_layout.scrollbar,
+                                              static_cast<float>(event.button.y),
                                               surface_.drag_scrollbar_offset))),
-                     0, max_scroll);
+                     0, list_layout.max_scroll);
       surface_.focus = FocusTarget::Overlay;
       return true;
     }
 
-    const int row = static_cast<int>((event.button.y - list_y) / kOverlayRowHeight);
-    if (row >= 0 && row < visible_rows) {
-      const int item_index = surface_.overlay_scroll_row + row;
-      if (item_index >= 0 && item_index < static_cast<int>(OverlayItemCount())) {
-        SetOverlaySelectedIndex(static_cast<std::size_t>(item_index));
-        RevealOverlaySelection(overlay);
-        if (surface_.overlay_mode == OverlayMode::CommitPicker) {
-          ActivateOverlaySelection();
-        }
+    if (const auto item_index =
+            ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+        item_index.has_value() && *item_index >= 0 &&
+        *item_index < static_cast<int>(OverlayItemCount())) {
+      SetOverlaySelectedIndex(static_cast<std::size_t>(*item_index));
+      RevealOverlaySelection(overlay);
+      if (surface_.overlay_mode == OverlayMode::CommitPicker) {
+        ActivateOverlaySelection();
       }
     }
     surface_.focus = FocusTarget::Overlay;
@@ -326,80 +316,61 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (event.button.button == SDL_BUTTON_LEFT && surface_.sidebar_visible) {
     if (surface_.sidebar_mode == SidebarMode::Search) {
-      const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
       const auto line_map = BuildProjectSearchLineMap();
-      const int visible_rows = std::max(
-          1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
-      const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      const auto scrollbar = MakeVerticalScrollbarGeometry(
-          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
-                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(line_map.size()), static_cast<float>(visible_rows),
-          static_cast<float>(scroll_row));
-      if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+      const auto list_layout =
+          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
+      if (list_layout.scrollbar.has_value() &&
+          Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
         surface_.drag_target = DragTarget::SidebarScrollbar;
         surface_.drag_scrollbar_offset =
-            Contains(scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - scrollbar->thumb.y
-                : scrollbar->thumb.h * 0.5f;
+            Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
+                ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
+                : list_layout.scrollbar->thumb.h * 0.5f;
         surface_.sidebar_scroll_row =
             std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
+                           ScrollUnitsForPointer(*list_layout.scrollbar,
+                                                static_cast<float>(event.button.y),
                                                 surface_.drag_scrollbar_offset))),
-                       0, max_scroll);
+                       0, list_layout.max_scroll);
         surface_.focus = FocusTarget::Sidebar;
         return true;
       }
     } else if (surface_.sidebar_mode == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
-      const float list_y = GitSidebarListTop(layout.sidebar);
-      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
-      const int max_scroll = std::max(
-          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
-      const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      const auto scrollbar = MakeVerticalScrollbarGeometry(
-          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
-                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(lines.size()), visible_units,
-          static_cast<float>(scroll_row));
-      if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      if (list_layout.scrollbar.has_value() &&
+          Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
         surface_.drag_target = DragTarget::SidebarScrollbar;
         surface_.drag_scrollbar_offset =
-            Contains(scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - scrollbar->thumb.y
-                : scrollbar->thumb.h * 0.5f;
+            Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
+                ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
+                : list_layout.scrollbar->thumb.h * 0.5f;
         surface_.sidebar_scroll_row =
             std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
+                           ScrollUnitsForPointer(*list_layout.scrollbar,
+                                                static_cast<float>(event.button.y),
                                                 surface_.drag_scrollbar_offset))),
-                       0, max_scroll);
+                       0, list_layout.max_scroll);
         surface_.focus = FocusTarget::Sidebar;
         return true;
       }
     } else {
       const auto& entries = directory_tree_.entries();
-      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
-      const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      const auto scrollbar = MakeVerticalScrollbarGeometry(
-          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
-                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(entries.size()), static_cast<float>(visible_rows),
-          static_cast<float>(scroll_row));
-      if (scrollbar.has_value() && Contains(scrollbar->track, event.button.x, event.button.y)) {
+      const auto list_layout =
+          ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
+      if (list_layout.scrollbar.has_value() &&
+          Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
         surface_.drag_target = DragTarget::SidebarScrollbar;
         surface_.drag_scrollbar_offset =
-            Contains(scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - scrollbar->thumb.y
-                : scrollbar->thumb.h * 0.5f;
+            Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
+                ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
+                : list_layout.scrollbar->thumb.h * 0.5f;
         surface_.sidebar_scroll_row =
             std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.button.y),
+                           ScrollUnitsForPointer(*list_layout.scrollbar,
+                                                static_cast<float>(event.button.y),
                                                 surface_.drag_scrollbar_offset))),
-                       0, max_scroll);
+                       0, list_layout.max_scroll);
         surface_.focus = FocusTarget::Sidebar;
         return true;
       }
@@ -504,11 +475,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (surface_.sidebar_visible && Contains(layout.sidebar, event.button.x, event.button.y)) {
     surface_.focus = FocusTarget::Sidebar;
-    const float header_height = kSidebarHeaderHeight + 6.0f;
-    const float inset = kSidebarInset;
-    const float row_height = kSidebarRowHeight;
-    const float list_top = layout.sidebar.y + header_height;
-    const float local_y = event.button.y - list_top;
+    const float local_y =
+        event.button.y - (layout.sidebar.y + kSidebarHeaderHeight + 6.0f);
 
     if (surface_.sidebar_mode == SidebarMode::Search) {
       if (event.button.button != SDL_BUTTON_LEFT) {
@@ -548,26 +516,24 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
 
       const auto line_map = BuildProjectSearchLineMap();
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / row_height));
-      const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
-      const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      const int clicked_row =
-          static_cast<int>((local_y - (kProjectSearchResultsTop - header_height)) / row_height);
-      if (clicked_row >= 0) {
-        const int line_index = scroll_row + clicked_row;
-        if (line_index >= 0 && line_index < static_cast<int>(line_map.size()) &&
-            line_map[static_cast<std::size_t>(line_index)] >= 0) {
-          overlay_workflow_.project_search.selected_index =
-              static_cast<std::size_t>(line_map[static_cast<std::size_t>(line_index)]);
-          const auto& result = overlay_workflow_.project_search.results[overlay_workflow_.project_search.selected_index];
-          OpenFile(project_root_ / result.relative_path);
-          text_viewport_.MoveCursorTo(result.line, result.column);
-          if (surface_.sidebar_temporary) {
-            RestorePreviousSidebar();
-          }
-          surface_.focus = FocusTarget::Editor;
+      const auto list_layout =
+          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
+      if (const auto line_index =
+              ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+          line_index.has_value() && *line_index >= 0 &&
+          *line_index < static_cast<int>(line_map.size()) &&
+          line_map[static_cast<std::size_t>(*line_index)] >= 0) {
+        overlay_workflow_.project_search.selected_index =
+            static_cast<std::size_t>(line_map[static_cast<std::size_t>(*line_index)]);
+        const auto& result =
+            overlay_workflow_.project_search
+                .results[overlay_workflow_.project_search.selected_index];
+        OpenFile(project_root_ / result.relative_path);
+        text_viewport_.MoveCursorTo(result.line, result.column);
+        if (surface_.sidebar_temporary) {
+          RestorePreviousSidebar();
         }
+        surface_.focus = FocusTarget::Editor;
       }
       return true;
     }
@@ -588,36 +554,28 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), event.button.x, event.button.y)) {
         return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
       }
-      const float git_list_top = GitSidebarListTop(layout.sidebar);
-      const float local_git_y = event.button.y - git_list_top;
-      if (local_git_y < 0.0f) {
+      if (event.button.y < GitSidebarListTop(layout.sidebar)) {
         return true;
       }
 
       const auto lines = BuildGitSidebarLines();
-      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
-      const int max_scroll = std::max(
-          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
-      const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      const float row_width =
-          std::max(0.0f, layout.sidebar.w - inset * 2.0f -
-                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      const int clicked_row = static_cast<int>(local_git_y / row_height);
-      const int line_index = scroll_row + clicked_row;
-      if (line_index < 0 || line_index >= static_cast<int>(lines.size())) {
+      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      const auto line_index =
+          ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(lines.size())) {
         return true;
       }
 
-      const auto& line = lines[static_cast<std::size_t>(line_index)];
+      const auto& line = lines[static_cast<std::size_t>(*line_index)];
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return true;
       }
 
       git_sidebar_.selected_index = static_cast<std::size_t>(line.entry_index);
       const auto& entry = git_sidebar_.entries[git_sidebar_.selected_index];
-      const SDL_FRect row_rect = MakeRect(layout.sidebar.x + inset,
-                                          list_top + static_cast<float>(clicked_row) * row_height,
-                                          row_width, row_height - 2.0f);
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       float right_edge = row_rect.x + row_rect.w - 8.0f;
       if (entry.section == GitSidebarEntry::Section::Modified) {
         const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
@@ -662,25 +620,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
 
     const auto& entries = directory_tree_.entries();
-    const int visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / row_height));
-    const int max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
-    const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-    const float row_width =
-        std::max(0.0f, layout.sidebar.w - inset * 2.0f -
-                           (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-
-    const int clicked_row = static_cast<int>(local_y / row_height);
-    const int entry_index = scroll_row + clicked_row;
-    if (entry_index >= 0 && entry_index < static_cast<int>(entries.size())) {
-      directory_tree_.SetSelectedIndex(static_cast<std::size_t>(entry_index));
-      const SDL_FRect row_rect = MakeRect(
-          layout.sidebar.x + inset,
-          list_top + static_cast<float>(clicked_row) * row_height,
-          row_width,
-          row_height - 2.0f);
+    const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
+    const auto entry_index =
+        ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+    if (entry_index.has_value() && *entry_index >= 0 &&
+        *entry_index < static_cast<int>(entries.size())) {
+      directory_tree_.SetSelectedIndex(static_cast<std::size_t>(*entry_index));
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *entry_index - list_layout.scroll_row);
       if (Contains(row_rect, event.button.x, event.button.y) &&
           event.button.button == SDL_BUTTON_RIGHT) {
-        const auto& entry = entries[static_cast<std::size_t>(entry_index)];
+        const auto& entry = entries[static_cast<std::size_t>(*entry_index)];
         const TreeContextTargetKind target =
             !entry.is_directory ? TreeContextTargetKind::File
             : entry.path == project_root_ ? TreeContextTargetKind::Root
@@ -1606,71 +1556,49 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (surface_.drag_target == DragTarget::SidebarScrollbar && surface_.sidebar_visible) {
       if (surface_.sidebar_mode == SidebarMode::Search) {
-        const float list_y = drag_layout.sidebar.y + kProjectSearchResultsTop;
         const auto line_map = BuildProjectSearchLineMap();
-        const int visible_rows = std::max(
-            1, static_cast<int>((drag_layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
-        const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
-        const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-        const auto scrollbar = MakeVerticalScrollbarGeometry(
-            MakeRect(drag_layout.sidebar.x, list_y, drag_layout.sidebar.w,
-                     std::max(0.0f, drag_layout.sidebar.y + drag_layout.sidebar.h - list_y)),
-            static_cast<float>(line_map.size()), static_cast<float>(visible_rows),
-            static_cast<float>(scroll_row));
-        if (!scrollbar.has_value()) {
+        const auto list_layout =
+            ComputeProjectSearchSidebarListLayout(drag_layout.sidebar, line_map.size());
+        if (!list_layout.scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         surface_.sidebar_scroll_row =
             std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+                           ScrollUnitsForPointer(*list_layout.scrollbar,
+                                                static_cast<float>(event.motion.y),
                                                 surface_.drag_scrollbar_offset))),
-                       0, max_scroll);
+                       0, list_layout.max_scroll);
       } else if (surface_.sidebar_mode == SidebarMode::Git) {
         const auto lines = BuildGitSidebarLines();
-        const float list_y = GitSidebarListTop(drag_layout.sidebar);
-        const float visible_units = GitSidebarVisibleUnits(drag_layout.sidebar);
-        const int max_scroll = std::max(
-            0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
-        const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-        const auto scrollbar = MakeVerticalScrollbarGeometry(
-            MakeRect(drag_layout.sidebar.x, list_y, drag_layout.sidebar.w,
-                     std::max(0.0f, drag_layout.sidebar.y + drag_layout.sidebar.h - list_y)),
-            static_cast<float>(lines.size()), visible_units,
-            static_cast<float>(scroll_row));
-        if (!scrollbar.has_value()) {
+        const auto list_layout = ComputeGitSidebarListLayout(drag_layout.sidebar, lines.size());
+        if (!list_layout.scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         surface_.sidebar_scroll_row =
             std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+                           ScrollUnitsForPointer(*list_layout.scrollbar,
+                                                static_cast<float>(event.motion.y),
                                                 surface_.drag_scrollbar_offset))),
-                       0, max_scroll);
+                       0, list_layout.max_scroll);
       } else {
         const auto& entries = directory_tree_.entries();
-        const float list_y = drag_layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-        const int visible_rows =
-            std::max(1, static_cast<int>((drag_layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-        const int max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
-        const int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-        const auto scrollbar = MakeVerticalScrollbarGeometry(
-            MakeRect(drag_layout.sidebar.x, list_y, drag_layout.sidebar.w,
-                     std::max(0.0f, drag_layout.sidebar.y + drag_layout.sidebar.h - list_y)),
-            static_cast<float>(entries.size()), static_cast<float>(visible_rows),
-            static_cast<float>(scroll_row));
-        if (!scrollbar.has_value()) {
+        const auto list_layout =
+            ComputeTreeSidebarListLayout(drag_layout.sidebar, entries.size());
+        if (!list_layout.scrollbar.has_value()) {
           surface_.drag_target = DragTarget::None;
           surface_.drag_scrollbar_offset = 0.0f;
           return false;
         }
         surface_.sidebar_scroll_row =
             std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+                           ScrollUnitsForPointer(*list_layout.scrollbar,
+                                                static_cast<float>(event.motion.y),
                                                 surface_.drag_scrollbar_offset))),
-                       0, max_scroll);
+                       0, list_layout.max_scroll);
       }
       surface_.focus = FocusTarget::Sidebar;
       return true;
@@ -1706,25 +1634,18 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (surface_.drag_target == DragTarget::OverlayScrollbar && surface_.overlay_visible) {
       const SDL_FRect overlay = ComputeOverlayRect(drag_layout.editor_area);
-      const float list_y = overlay.y + OverlayListStartOffset();
-      const int visible_rows = OverlayVisibleRows(overlay);
-      const int max_scroll =
-          std::max(0, static_cast<int>(OverlayItemCount()) - visible_rows);
-      const auto scrollbar = MakeVerticalScrollbarGeometry(
-          MakeRect(overlay.x, list_y, overlay.w,
-                   std::max(0.0f, overlay.y + overlay.h - list_y - 8.0f)),
-          static_cast<float>(OverlayItemCount()), static_cast<float>(visible_rows),
-          static_cast<float>(surface_.overlay_scroll_row));
-      if (!scrollbar.has_value()) {
+      const auto list_layout = ComputeOverlayListLayout(overlay);
+      if (!list_layout.scrollbar.has_value()) {
         surface_.drag_target = DragTarget::None;
         surface_.drag_scrollbar_offset = 0.0f;
         return false;
       }
       surface_.overlay_scroll_row =
           std::clamp(static_cast<int>(std::lround(
-                         ScrollUnitsForPointer(*scrollbar, static_cast<float>(event.motion.y),
+                         ScrollUnitsForPointer(*list_layout.scrollbar,
+                                              static_cast<float>(event.motion.y),
                                               surface_.drag_scrollbar_offset))),
-                     0, max_scroll);
+                     0, list_layout.max_scroll);
       surface_.focus = FocusTarget::Overlay;
       return true;
     }
@@ -2326,23 +2247,17 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   }
 
   if (surface_.sidebar_visible && Contains(layout.sidebar, event.wheel.mouse_x, event.wheel.mouse_y)) {
-    int visible_rows = 1;
     int max_scroll = 0;
     if (surface_.sidebar_mode == SidebarMode::Search) {
       const auto line_map = BuildProjectSearchLineMap();
-      visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / 20.0f));
-      max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
+      max_scroll =
+          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size()).max_scroll;
     } else if (surface_.sidebar_mode == SidebarMode::Git) {
       const auto lines = BuildGitSidebarLines();
-      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
-      visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
-      max_scroll = std::max(
-          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
+      max_scroll = ComputeGitSidebarListLayout(layout.sidebar, lines.size()).max_scroll;
     } else {
       const auto& entries = directory_tree_.entries();
-      visible_rows = std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / 20.0f));
-      max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
+      max_scroll = ComputeTreeSidebarListLayout(layout.sidebar, entries.size()).max_scroll;
     }
     surface_.sidebar_scroll_row = std::clamp(surface_.sidebar_scroll_row - vertical_ticks, 0, max_scroll);
     surface_.focus = FocusTarget::Sidebar;

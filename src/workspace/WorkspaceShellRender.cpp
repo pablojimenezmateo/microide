@@ -1220,34 +1220,21 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    theme_.surface_background,
                    TruncateLabel(status_text, layout.sidebar.w - kSidebarInset * 2.0f));
 
-      const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
       const auto line_map = BuildProjectSearchLineMap();
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
-      const float row_width =
-          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
-                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
+      const auto list_layout =
+          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
+      int scroll_row = list_layout.scroll_row;
       const int selected_line = ProjectSearchLineForResult(overlay_workflow_.project_search.selected_index);
-      if (selected_line < scroll_row) {
-        scroll_row = selected_line;
-      } else if (selected_line >= scroll_row + visible_rows) {
-        scroll_row = selected_line - visible_rows + 1;
-      }
+      scroll_row = RevealScrollableListIndex(list_layout, selected_line);
       surface_.sidebar_scroll_row = scroll_row;
 
-      for (int row = 0; row < visible_rows; ++row) {
+      for (int row = 0; row < list_layout.visible_rows; ++row) {
         const int line_index = scroll_row + row;
         if (line_index >= static_cast<int>(line_map.size())) {
           break;
         }
 
-        SDL_FRect row_rect = MakeRect(
-            layout.sidebar.x + kSidebarInset,
-            list_y + static_cast<float>(row) * kSidebarRowHeight,
-            row_width,
-            kSidebarRowHeight - 2.0f);
+        SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
 
         const int result_index = line_map[static_cast<std::size_t>(line_index)];
         if (result_index < 0) {
@@ -1282,15 +1269,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                             ? "Searching..."
                                         : overlay_workflow_.project_search.query.empty() ? "Project search is idle"
                                                                         : "No matches";
-        draw_text_on(layout.sidebar.x + kSidebarInset, list_y + 4.0f, theme_.text_muted,
+        draw_text_on(layout.sidebar.x + kSidebarInset, list_layout.row_y + 4.0f, theme_.text_muted,
                      theme_.surface_background,
                      TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
       }
 
       draw_vertical_scrollbar(
-          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
-                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(line_map.size()), static_cast<float>(visible_rows),
+          list_layout.list_rect, static_cast<float>(line_map.size()), list_layout.visible_units,
           static_cast<float>(scroll_row), surface_.drag_target == DragTarget::SidebarScrollbar);
     } else if (surface_.sidebar_mode == SidebarMode::Git) {
       const auto draw_action_button = [&](const SDL_FRect& button_rect,
@@ -1318,27 +1303,18 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
       draw_action_button(refresh_rect, "Refresh", true);
       const auto lines = BuildGitSidebarLines();
-      const float list_y = GitSidebarListTop(layout.sidebar);
-      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
-      const int visible_rows = std::max(1, static_cast<int>(std::floor(visible_units)));
-      const int max_scroll = std::max(
-          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
-      const float row_width =
-          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
-                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
+      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      int scroll_row = list_layout.scroll_row;
       surface_.sidebar_scroll_row = scroll_row;
 
-      for (int row = 0; row < visible_rows; ++row) {
+      for (int row = 0; row < list_layout.visible_rows; ++row) {
         const int line_index = scroll_row + row;
         if (line_index >= static_cast<int>(lines.size())) {
           break;
         }
 
         const auto& line = lines[static_cast<std::size_t>(line_index)];
-        SDL_FRect row_rect = MakeRect(layout.sidebar.x + kSidebarInset,
-                                      list_y + static_cast<float>(row) * kSidebarRowHeight, row_width,
-                                      kSidebarRowHeight - 2.0f);
+        SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
 
         if (line.kind == GitSidebarLine::Kind::Header) {
           draw_vcentered_text_on(row_rect, 4.0f, theme_.text_muted, theme_.surface_background,
@@ -1407,9 +1383,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       }
 
       draw_vertical_scrollbar(
-          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
-                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(lines.size()), visible_units,
+          list_layout.list_rect, static_cast<float>(lines.size()), list_layout.visible_units,
           static_cast<float>(scroll_row), surface_.drag_target == DragTarget::SidebarScrollbar);
     } else {
       const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
@@ -1435,34 +1409,19 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       }
 
       const auto& entries = directory_tree_.entries();
-      const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-      const int visible_rows =
-          std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
-      const float row_width =
-          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
-                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      int scroll_row = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll);
-      if (directory_tree_.selected_index() < static_cast<std::size_t>(scroll_row)) {
-        scroll_row = static_cast<int>(directory_tree_.selected_index());
-      } else if (directory_tree_.selected_index() >=
-                 static_cast<std::size_t>(scroll_row + visible_rows)) {
-        scroll_row = static_cast<int>(directory_tree_.selected_index()) - visible_rows + 1;
-      }
+      const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
+      int scroll_row =
+          RevealScrollableListIndex(list_layout, static_cast<int>(directory_tree_.selected_index()));
       surface_.sidebar_scroll_row = scroll_row;
 
-      for (int row = 0; row < visible_rows; ++row) {
+      for (int row = 0; row < list_layout.visible_rows; ++row) {
         const int entry_index = scroll_row + row;
         if (entry_index >= static_cast<int>(entries.size())) {
           break;
         }
 
         const auto& entry = entries[entry_index];
-        SDL_FRect row_rect = MakeRect(
-            layout.sidebar.x + kSidebarInset,
-            list_y + static_cast<float>(row) * kSidebarRowHeight,
-            row_width,
-            kSidebarRowHeight - 2.0f);
+        SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
 
         const bool selected = static_cast<std::size_t>(entry_index) == directory_tree_.selected_index();
         if (selected) {
@@ -1506,9 +1465,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       }
 
       draw_vertical_scrollbar(
-          MakeRect(layout.sidebar.x, list_y, layout.sidebar.w,
-                   std::max(0.0f, layout.sidebar.y + layout.sidebar.h - list_y)),
-          static_cast<float>(entries.size()), static_cast<float>(visible_rows),
+          list_layout.list_rect, static_cast<float>(entries.size()), list_layout.visible_units,
           static_cast<float>(scroll_row), surface_.drag_target == DragTarget::SidebarScrollbar);
     }
   }
@@ -1517,6 +1474,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
     const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
     const SDL_FRect overlay_header = MakeRect(overlay.x, overlay.y, overlay.w, 30.0f);
+    constexpr float kOverlayInset = 18.0f;
     DrawFilledRect(renderer, overlay, theme_.overlay_background);
     DrawRect(renderer, overlay, theme_.border);
     DrawFilledRect(renderer, overlay_header, theme_.chrome_background);
@@ -1525,43 +1483,32 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                             overlay_header.w, kDivider),
                    theme_.border);
 
-    const float overlay_inset = 18.0f;
-    const float overlay_row_height = 22.0f;
     ClampOverlayScrollRow(overlay);
-    const float overlay_list_y = overlay.y + OverlayListStartOffset();
-    const int overlay_visible_rows = OverlayVisibleRows(overlay);
-    const int overlay_max_scroll =
-        std::max(0, static_cast<int>(OverlayItemCount()) - overlay_visible_rows);
-    const float overlay_row_width =
-        overlay.w - overlay_inset * 2.0f -
-        (overlay_max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f);
-      const auto draw_overlay_row =
-          [&](int row_index, int selected_index, std::string_view label) {
-            const bool selected = row_index == selected_index;
-            SDL_FRect row = MakeRect(overlay.x + overlay_inset,
-                                     overlay_list_y +
-                                         static_cast<float>(row_index) * overlay_row_height,
-                                     overlay_row_width, 18.0f);
-            DrawFilledRect(renderer, row, selected ? theme_.row_highlight : theme_.surface_raised);
-            draw_vcentered_text_on(row, 6.0f,
-                                   selected ? theme_.text_primary : theme_.text_secondary,
-                                   selected ? theme_.row_highlight : theme_.surface_raised,
-                                   TruncateLabel(label, row.w - 12.0f));
-          };
+    const auto overlay_list_layout = ComputeOverlayListLayout(overlay);
+    const auto draw_overlay_row = [&](int row_index, int selected_index,
+                                      std::string_view label) {
+      const bool selected = row_index == selected_index;
+      SDL_FRect row = ScrollableListRowRect(overlay_list_layout, row_index);
+      DrawFilledRect(renderer, row, selected ? theme_.row_highlight : theme_.surface_raised);
+      draw_vcentered_text_on(row, 6.0f,
+                             selected ? theme_.text_primary : theme_.text_secondary,
+                             selected ? theme_.row_highlight : theme_.surface_raised,
+                             TruncateLabel(label, row.w - 12.0f));
+    };
 
     if (surface_.overlay_mode == OverlayMode::BufferSearch) {
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Search Buffer");
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_secondary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 44.0f, theme_.text_secondary,
                    theme_.overlay_background, "> " + overlay_workflow_.buffer_search.query);
       const std::string summary =
           overlay_workflow_.buffer_search.matches.empty()
               ? "No matches"
               : std::to_string(overlay_workflow_.buffer_search.selected_index + 1) + " / " +
                     std::to_string(overlay_workflow_.buffer_search.matches.size()) + " matches";
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_muted,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 62.0f, theme_.text_muted,
                    theme_.overlay_background, summary);
-      for (int row = 0; row < overlay_visible_rows; ++row) {
+      for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
         if (item_index >= static_cast<int>(overlay_workflow_.buffer_search.matches.size())) {
           break;
@@ -1575,13 +1522,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                          label);
       }
     } else if (surface_.overlay_mode == OverlayMode::BufferReplace) {
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Replace Buffer");
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 44.0f,
                    surface_.buffer_search_field == BufferSearchField::Search ? theme_.text_primary
                                                                      : theme_.text_secondary,
                    theme_.overlay_background, "find: " + overlay_workflow_.buffer_search.query);
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 62.0f,
                    surface_.buffer_search_field == BufferSearchField::Replace ? theme_.text_primary
                                                                       : theme_.text_secondary,
                    theme_.overlay_background, "replace: " + overlay_workflow_.buffer_search.replace_text);
@@ -1591,9 +1538,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
               : std::to_string(overlay_workflow_.buffer_search.selected_index + 1) + " / " +
                     std::to_string(overlay_workflow_.buffer_search.matches.size()) +
                     " matches  |  Enter replace  Ctrl+Enter replace all";
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 82.0f, theme_.text_muted,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 82.0f, theme_.text_muted,
                    theme_.overlay_background, TruncateLabel(summary, overlay.w - 36.0f));
-      for (int row = 0; row < overlay_visible_rows; ++row) {
+      for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
         if (item_index >= static_cast<int>(overlay_workflow_.buffer_search.matches.size())) {
           break;
@@ -1607,9 +1554,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                          label);
       }
     } else if (surface_.overlay_mode == OverlayMode::ProjectSearch) {
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Project Search");
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_secondary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 44.0f, theme_.text_secondary,
                    theme_.overlay_background, "> " + overlay_workflow_.project_search.query);
       const std::string summary =
           overlay_workflow_.project_search.results.empty()
@@ -1619,9 +1566,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                     std::to_string(overlay_workflow_.project_search.results.size()) + " shown (capped)"
               : std::to_string(overlay_workflow_.project_search.selected_index + 1) + " / " +
                     std::to_string(overlay_workflow_.project_search.results.size()) + " results";
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_muted,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 62.0f, theme_.text_muted,
                    theme_.overlay_background, summary);
-      for (int row = 0; row < overlay_visible_rows; ++row) {
+      for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
         if (item_index >= static_cast<int>(overlay_workflow_.project_search.results.size())) {
           break;
@@ -1635,13 +1582,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                          label);
       }
     } else if (surface_.overlay_mode == OverlayMode::CommitPicker) {
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Compare against commit");
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_muted,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 44.0f, theme_.text_muted,
                    theme_.overlay_background, overlay_workflow_.compare_picker.path.filename().string());
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 62.0f, theme_.text_secondary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 62.0f, theme_.text_secondary,
                    theme_.overlay_background, "> " + overlay_workflow_.compare_picker.query);
-      for (int row = 0; row < overlay_visible_rows; ++row) {
+      for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
         if (item_index >= static_cast<int>(overlay_workflow_.compare_picker.matches.size())) {
           break;
@@ -1651,17 +1598,17 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                          commit.short_hash + "  " + commit.subject);
       }
       if (overlay_workflow_.compare_picker.matches.empty()) {
-        draw_text_on(overlay.x + overlay_inset, overlay.y + 92.0f, theme_.text_muted,
+        draw_text_on(overlay.x + kOverlayInset, overlay.y + 92.0f, theme_.text_muted,
                      theme_.overlay_background, "No matching commits");
       }
     } else {
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 8.0f, theme_.text_primary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 8.0f, theme_.text_primary,
                    theme_.chrome_background, "Find File");
-      draw_text_on(overlay.x + overlay_inset, overlay.y + 44.0f, theme_.text_secondary,
+      draw_text_on(overlay.x + kOverlayInset, overlay.y + 44.0f, theme_.text_secondary,
                    theme_.overlay_background, "> " + file_finder_.query());
 
       const auto& results = file_finder_.results();
-      for (int row = 0; row < overlay_visible_rows; ++row) {
+      for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
         const int item_index = surface_.overlay_scroll_row + row;
         if (item_index >= static_cast<int>(results.size())) {
           break;
@@ -1670,15 +1617,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                          results[static_cast<std::size_t>(item_index)].relative_path.string());
       }
       if (results.empty()) {
-        draw_text_on(overlay.x + overlay_inset, overlay.y + 80.0f, theme_.text_muted,
+        draw_text_on(overlay.x + kOverlayInset, overlay.y + 80.0f, theme_.text_muted,
                      theme_.overlay_background, "No matching files");
       }
     }
 
     draw_vertical_scrollbar(
-        MakeRect(overlay.x, overlay_list_y, overlay.w,
-                 std::max(0.0f, overlay.y + overlay.h - overlay_list_y - 8.0f)),
-        static_cast<float>(OverlayItemCount()), static_cast<float>(overlay_visible_rows),
+        overlay_list_layout.list_rect, static_cast<float>(OverlayItemCount()),
+        overlay_list_layout.visible_units,
         static_cast<float>(surface_.overlay_scroll_row), surface_.drag_target == DragTarget::OverlayScrollbar);
   }
 

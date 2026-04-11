@@ -34,10 +34,7 @@ constexpr float kTabStripHeight = 34.0f;
 constexpr float kHeaderHeight = 26.0f;
 constexpr float kDivider = 1.0f;
 constexpr float kResizeHandleThickness = 6.0f;
-constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kBottomPanelHeaderHeight = 28.0f;
-constexpr float kSidebarInset = 10.0f;
-constexpr float kSidebarRowHeight = 20.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 constexpr float kOverlayMinWidth = 520.0f;
@@ -2036,19 +2033,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
 
-    const float overlay_list_y = overlay.y + OverlayListStartOffset();
-    const int overlay_visible_rows = OverlayVisibleRows(overlay);
-    const int overlay_max_scroll =
-        std::max(0, static_cast<int>(OverlayItemCount()) - overlay_visible_rows);
-    const auto overlay_scrollbar = MakeVerticalScrollbarGeometry(
-        MakeRect(overlay.x, overlay_list_y, overlay.w,
-                 std::max(0.0f, overlay.y + overlay.h - overlay_list_y - 8.0f)),
-        static_cast<float>(OverlayItemCount()), static_cast<float>(overlay_visible_rows),
-        static_cast<float>(std::clamp(surface_.overlay_scroll_row, 0, overlay_max_scroll)));
-    if (overlay_scrollbar.has_value() && Contains(overlay_scrollbar->track, x, y)) {
+    const auto overlay_list_layout = ComputeOverlayListLayout(overlay);
+    if (overlay_list_layout.scrollbar.has_value() &&
+        Contains(overlay_list_layout.scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
-    if (y >= overlay_list_y && y < overlay.y + overlay.h) {
+    if (const auto item_index = ScrollableListIndexAtY(overlay_list_layout, y);
+        item_index.has_value() && *item_index >= 0 &&
+        *item_index < static_cast<int>(OverlayItemCount())) {
       return CursorKind::Pointer;
     }
 
@@ -2115,21 +2107,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
 
       const auto line_map = BuildProjectSearchLineMap();
-      const int visible_rows = std::max(
-          1, static_cast<int>((layout.sidebar.h - kProjectSearchResultsTop) / kSidebarRowHeight));
-      const int max_scroll = std::max(0, static_cast<int>(line_map.size()) - visible_rows);
-      const float row_width =
-          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
-                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      const float list_y = layout.sidebar.y + kProjectSearchResultsTop;
-      const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
-      const int line_index = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll) + clicked_row;
-      if (clicked_row >= 0 && line_index >= 0 && line_index < static_cast<int>(line_map.size()) &&
-          line_map[static_cast<std::size_t>(line_index)] >= 0) {
-        const SDL_FRect row_rect = MakeRect(
-            layout.sidebar.x + kSidebarInset,
-            list_y + static_cast<float>(clicked_row) * kSidebarRowHeight, row_width,
-            kSidebarRowHeight - 2.0f);
+      const auto list_layout =
+          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
+      if (const auto line_index = ScrollableListIndexAtY(list_layout, y);
+          line_index.has_value() && *line_index >= 0 &&
+          *line_index < static_cast<int>(line_map.size()) &&
+          line_map[static_cast<std::size_t>(*line_index)] >= 0) {
+        const SDL_FRect row_rect =
+            ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
         return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
       }
       return CursorKind::Default;
@@ -2147,25 +2132,18 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Pointer;
       }
       const auto lines = BuildGitSidebarLines();
-      const float list_y = GitSidebarListTop(layout.sidebar);
-      const float visible_units = GitSidebarVisibleUnits(layout.sidebar);
-      const int max_scroll = std::max(
-          0, static_cast<int>(std::ceil(static_cast<float>(lines.size()) - visible_units)));
-      const float row_width =
-          std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
-                             (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-      const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
-      const int line_index = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll) + clicked_row;
-      if (clicked_row < 0 || line_index < 0 || line_index >= static_cast<int>(lines.size())) {
+      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      const auto line_index = ScrollableListIndexAtY(list_layout, y);
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(lines.size())) {
         return CursorKind::Default;
       }
-      const SDL_FRect row_rect = MakeRect(layout.sidebar.x + kSidebarInset,
-                                          list_y + static_cast<float>(clicked_row) * kSidebarRowHeight,
-                                          row_width, kSidebarRowHeight - 2.0f);
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       if (!Contains(row_rect, x, y)) {
         return CursorKind::Default;
       }
-      const auto& line = lines[static_cast<std::size_t>(line_index)];
+      const auto& line = lines[static_cast<std::size_t>(*line_index)];
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return CursorKind::Default;
       }
@@ -2197,19 +2175,12 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
 
     const auto& entries = directory_tree_.entries();
-    const float list_y = layout.sidebar.y + kSidebarHeaderHeight + 6.0f;
-    const int visible_rows =
-        std::max(1, static_cast<int>((layout.sidebar.h - 36.0f) / kSidebarRowHeight));
-    const int max_scroll = std::max(0, static_cast<int>(entries.size()) - visible_rows);
-    const float row_width =
-        std::max(0.0f, layout.sidebar.w - kSidebarInset * 2.0f -
-                           (max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
-    const int clicked_row = static_cast<int>((y - list_y) / kSidebarRowHeight);
-    const int entry_index = std::clamp(surface_.sidebar_scroll_row, 0, max_scroll) + clicked_row;
-    if (clicked_row >= 0 && entry_index >= 0 && entry_index < static_cast<int>(entries.size())) {
-      const SDL_FRect row_rect = MakeRect(layout.sidebar.x + kSidebarInset,
-                                          list_y + static_cast<float>(clicked_row) * kSidebarRowHeight,
-                                          row_width, kSidebarRowHeight - 2.0f);
+    const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
+    const auto entry_index = ScrollableListIndexAtY(list_layout, y);
+    if (entry_index.has_value() && *entry_index >= 0 &&
+        *entry_index < static_cast<int>(entries.size())) {
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *entry_index - list_layout.scroll_row);
       return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
     }
     return CursorKind::Default;

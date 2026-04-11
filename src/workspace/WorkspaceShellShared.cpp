@@ -1411,6 +1411,77 @@ SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
                   kPromptSurfaceInputHeight);
 }
 
+ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
+                                                 float list_y,
+                                                 std::size_t item_count,
+                                                 int requested_scroll_row,
+                                                 float horizontal_inset,
+                                                 float row_step,
+                                                 float row_height,
+                                                 float list_bottom_padding,
+                                                 float scrollbar_bottom_padding,
+                                                 bool fractional_visible_units) {
+  ScrollableListLayout layout;
+  layout.row_x = container.x + horizontal_inset;
+  layout.row_y = list_y;
+  layout.row_step = row_step;
+  layout.row_height = row_height;
+
+  const float available_height =
+      std::max(0.0f, container.y + container.h - list_y - list_bottom_padding);
+  const float raw_visible_units =
+      row_step > 0.0f ? available_height / row_step : 0.0f;
+  layout.visible_units =
+      fractional_visible_units
+          ? std::max(1.0f, raw_visible_units)
+          : static_cast<float>(
+                std::max(1, static_cast<int>(std::floor(std::max(0.0f, raw_visible_units)))));
+  layout.visible_rows =
+      std::max(1, static_cast<int>(std::floor(std::max(1.0f, layout.visible_units))));
+  layout.max_scroll =
+      std::max(0, static_cast<int>(std::ceil(static_cast<float>(item_count) - layout.visible_units)));
+  layout.scroll_row = std::clamp(requested_scroll_row, 0, layout.max_scroll);
+  layout.row_width =
+      std::max(0.0f, container.w - horizontal_inset * 2.0f -
+                         (layout.max_scroll > 0 ? kScrollbarThickness + 6.0f : 0.0f));
+  layout.list_rect =
+      MakeRect(container.x, list_y, container.w,
+               std::max(0.0f, container.y + container.h - list_y - scrollbar_bottom_padding));
+  layout.scrollbar =
+      MakeVerticalScrollbarGeometry(layout.list_rect, static_cast<float>(item_count),
+                                    layout.visible_units, static_cast<float>(layout.scroll_row));
+  return layout;
+}
+
+int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index) {
+  if (selected_index < 0) {
+    return layout.scroll_row;
+  }
+
+  int scroll_row = layout.scroll_row;
+  if (selected_index < scroll_row) {
+    scroll_row = selected_index;
+  } else if (selected_index >= scroll_row + layout.visible_rows) {
+    scroll_row = selected_index - layout.visible_rows + 1;
+  }
+  return std::clamp(scroll_row, 0, layout.max_scroll);
+}
+
+std::optional<int> ScrollableListIndexAtY(const ScrollableListLayout& layout, float y) {
+  if (layout.row_step <= 0.0f || y < layout.row_y ||
+      y >= layout.row_y + static_cast<float>(layout.visible_rows) * layout.row_step) {
+    return std::nullopt;
+  }
+
+  const int row = static_cast<int>(std::floor((y - layout.row_y) / layout.row_step));
+  return layout.scroll_row + row;
+}
+
+SDL_FRect ScrollableListRowRect(const ScrollableListLayout& layout, int visible_row) {
+  return MakeRect(layout.row_x, layout.row_y + static_cast<float>(visible_row) * layout.row_step,
+                  layout.row_width, layout.row_height);
+}
+
 std::optional<TerminalSelectionBounds> NormalizeTerminalSelection(
     std::optional<TerminalSelectionPoint> anchor,
     std::optional<TerminalSelectionPoint> head) {

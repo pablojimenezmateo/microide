@@ -175,6 +175,20 @@ struct VisibleLineRangeLayout {
   std::size_t visible_rows = 0;
 };
 
+struct ScrollableListLayout {
+  SDL_FRect list_rect{};
+  std::optional<ScrollbarGeometry> scrollbar;
+  float row_x = 0.0f;
+  float row_y = 0.0f;
+  float row_width = 0.0f;
+  float row_step = 0.0f;
+  float row_height = 0.0f;
+  float visible_units = 0.0f;
+  int visible_rows = 0;
+  int max_scroll = 0;
+  int scroll_row = 0;
+};
+
 struct EditorSplitAxisLayout {
   bool vertical = true;
   float total_extent = 0.0f;
@@ -319,6 +333,19 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
 std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog);
+ScrollableListLayout ComputeScrollableListLayout(const SDL_FRect& container,
+                                                 float list_y,
+                                                 std::size_t item_count,
+                                                 int requested_scroll_row,
+                                                 float horizontal_inset,
+                                                 float row_step,
+                                                 float row_height,
+                                                 float list_bottom_padding = 0.0f,
+                                                 float scrollbar_bottom_padding = 0.0f,
+                                                 bool fractional_visible_units = false);
+int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index);
+std::optional<int> ScrollableListIndexAtY(const ScrollableListLayout& layout, float y);
+SDL_FRect ScrollableListRowRect(const ScrollableListLayout& layout, int visible_row);
 std::optional<TerminalSelectionBounds> NormalizeTerminalSelection(
     std::optional<TerminalSelectionPoint> anchor,
     std::optional<TerminalSelectionPoint> head);

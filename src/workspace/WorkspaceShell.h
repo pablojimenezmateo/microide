@@ -28,6 +28,7 @@
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
+#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 
@@ -1121,6 +1122,12 @@ class WorkspaceShell {
   SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
   float GitSidebarListTop(const SDL_FRect& sidebar_rect) const;
   float GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const;
+  ScrollableListLayout ComputeProjectSearchSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                             std::size_t line_count) const;
+  ScrollableListLayout ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                   std::size_t line_count) const;
+  ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                    std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
@@ -1203,6 +1210,7 @@ class WorkspaceShell {
   int OverlayVisibleRows(const SDL_FRect& overlay) const;
   std::size_t OverlayItemCount() const;
   std::size_t OverlaySelectedIndex() const;
+  ScrollableListLayout ComputeOverlayListLayout(const SDL_FRect& overlay) const;
   void SetOverlaySelectedIndex(std::size_t index);
   void ClampOverlayScrollRow(const SDL_FRect& overlay);
   void RevealOverlaySelection(const SDL_FRect& overlay);
