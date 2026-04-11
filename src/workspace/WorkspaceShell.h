@@ -687,17 +687,7 @@ class WorkspaceShell {
     int overlay_scroll_row = 0;
   };
 
-  struct ProjectWorkspaceState {
-    std::filesystem::path root;
-    bool initialized = false;
-    bool restore_persistence_on_activate = false;
-    project::DirectoryTree directory_tree;
-    project::FileIndex file_index;
-    project::FileFinder file_finder;
-    editor::TextViewport text_viewport;
-    std::vector<TabEntry> open_tabs;
-    std::size_t active_tab_index = 0;
-    int tab_scroll_index = 0;
+  struct ProjectSurfaceState {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
     SidebarMode sidebar_prev_mode = SidebarMode::None;
@@ -711,6 +701,37 @@ class WorkspaceShell {
     float bottom_panel_height = 184.0f;
     int sidebar_scroll_row = 0;
     int overlay_scroll_row = 0;
+  };
+
+  struct CommandState {
+    std::string input;
+    std::vector<std::string> history;
+    std::optional<std::size_t> history_index;
+    std::string history_pending_input;
+    std::string feedback_text;
+  };
+
+  struct PromptState {
+    bool dirty_visible = false;
+    FocusTarget dirty_previous_focus = FocusTarget::Editor;
+    DirtyPromptState dirty;
+    bool surface_visible = false;
+    FocusTarget surface_previous_focus = FocusTarget::Editor;
+    PromptSurfaceState surface;
+  };
+
+  struct ProjectWorkspaceState {
+    std::filesystem::path root;
+    bool initialized = false;
+    bool restore_persistence_on_activate = false;
+    project::DirectoryTree directory_tree;
+    project::FileIndex file_index;
+    project::FileFinder file_finder;
+    editor::TextViewport text_viewport;
+    std::vector<TabEntry> open_tabs;
+    std::size_t active_tab_index = 0;
+    int tab_scroll_index = 0;
+    ProjectSurfaceState surface;
     std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
     std::size_t active_terminal_tab_index = 0;
     std::string buffer_search_query;
@@ -738,11 +759,7 @@ class WorkspaceShell {
     std::vector<project::GitCommitEntry> compare_picker_commits;
     std::vector<project::GitCommitEntry> compare_picker_matches;
     std::size_t compare_picker_selected_index = 0;
-    std::string command_input;
-    std::vector<std::string> command_history;
-    std::optional<std::size_t> command_history_index;
-    std::string command_history_pending_input;
-    std::string command_feedback_text;
+    CommandState command;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
@@ -817,6 +834,8 @@ class WorkspaceShell {
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
   void RebindProjectState(ProjectWorkspaceState& state);
+  static ProjectSurfaceState CaptureProjectSurfaceState(const SurfaceState& state);
+  void ApplyProjectSurfaceState(const ProjectSurfaceState& state);
   void ResetProjectScopedState(bool show_welcome);
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
@@ -1307,18 +1326,9 @@ class WorkspaceShell {
   std::vector<project::GitCommitEntry> compare_picker_commits_;
   std::vector<project::GitCommitEntry> compare_picker_matches_;
   std::size_t compare_picker_selected_index_ = 0;
-  bool dirty_prompt_visible_ = false;
-  FocusTarget dirty_prompt_previous_focus_ = FocusTarget::Editor;
-  DirtyPromptState dirty_prompt_state_;
-  bool prompt_surface_visible_ = false;
-  FocusTarget prompt_surface_previous_focus_ = FocusTarget::Editor;
-  PromptSurfaceState prompt_surface_state_;
+  PromptState prompts_;
   bool quit_requested_ = false;
-  std::string command_input_;
-  std::vector<std::string> command_history_;
-  std::optional<std::size_t> command_history_index_;
-  std::string command_history_pending_input_;
-  std::string command_feedback_text_;
+  CommandState command_;
   std::vector<std::string> available_colorscheme_names_;
   std::string active_colorscheme_name_ = "default";
   std::optional<SDL_Color> project_base_color_;

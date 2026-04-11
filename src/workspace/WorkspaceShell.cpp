@@ -583,7 +583,7 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
   cursor_kind_ = CursorKind::Default;
   last_mouse_position_valid_ = false;
   quit_requested_ = false;
-  dirty_prompt_visible_ = false;
+  prompts_.dirty_visible = false;
   projects_.clear();
   active_project_index_ = 0;
   project_tab_scroll_index_ = 0;
@@ -691,7 +691,7 @@ void WorkspaceShell::Shutdown() {
 }
 
 void WorkspaceShell::RequestQuit() {
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     surface_.focus = FocusTarget::Overlay;
     return;
   }
@@ -807,7 +807,7 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  return surface_.focus == FocusTarget::Editor && !surface_.command_mode && !dirty_prompt_visible_ &&
+  return surface_.focus == FocusTarget::Editor && !surface_.command_mode && !prompts_.dirty_visible &&
          !surface_.overlay_visible && !surface_.menu_bar_open && !surface_.tree_context_menu.open &&
          ActiveTabIsEditor() && !text_viewport_.is_placeholder();
 }
@@ -1796,12 +1796,12 @@ void WorkspaceShell::OpenFile(const std::filesystem::path& path) {
 }
 
 WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const {
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     return TextInputSurface::None;
   }
 
-  if (prompt_surface_visible_) {
-    return prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput
+  if (prompts_.surface_visible) {
+    return prompts_.surface.kind == PromptSurfaceState::Kind::TextInput
                ? TextInputSurface::PromptInput
                : TextInputSurface::None;
   }
@@ -1935,7 +1935,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
             if (source == ActionSource::Menu) {
               surface_.command_mode = true;
               surface_.focus = FocusTarget::Panel;
-              command_input_ = "project-open ";
+              command_.input = "project-open ";
               ResetCommandSessionState();
               return true;
             }
@@ -2565,7 +2565,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::OpenCommandPrompt:
       surface_.command_mode = true;
       surface_.focus = FocusTarget::Panel;
-      command_input_.clear();
+      command_.input.clear();
       ResetCommandSessionState();
       return true;
     case ActionId::SelectAll:
@@ -2832,7 +2832,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
                                     static_cast<float>(last_window_height_));
     const auto buttons = ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(full));
@@ -2844,7 +2844,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (prompt_surface_visible_) {
+  if (prompts_.surface_visible) {
     const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
                                     static_cast<float>(last_window_height_));
     const SDL_FRect dialog = ComputePromptSurfaceRect(full);
@@ -2853,7 +2853,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Pointer;
       }
     }
-    if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput &&
+    if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput &&
         Contains(ComputePromptSurfaceInputRect(dialog), x, y)) {
       return CursorKind::Text;
     }

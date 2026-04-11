@@ -547,7 +547,7 @@ struct WorkspaceShellTestAccess {
   static void SaveWorkspaceSession(WorkspaceShell& shell) { shell.SaveWorkspaceSession(); }
 
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
-    shell.dirty_prompt_state_.selected_action = selected_action;
+    shell.prompts_.dirty.selected_action = selected_action;
     shell.ConfirmDirtyPrompt();
   }
   static bool StageAllGitSidebarEntries(WorkspaceShell& shell) {
@@ -557,12 +557,12 @@ struct WorkspaceShellTestAccess {
     return shell.DiscardAllGitSidebarEntries();
   }
 
-  static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.dirty_prompt_visible_; }
+  static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.prompts_.dirty_visible; }
   static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
     return shell.DirtyPromptMessage();
   }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
-    return shell.prompt_surface_visible_;
+    return shell.prompts_.surface_visible;
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
     return shell.PromptSurfaceTitle();
@@ -643,7 +643,7 @@ struct WorkspaceShellTestAccess {
     return shell.project_open_dialog_active_;
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.surface_.command_mode; }
-  static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_input_; }
+  static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
     return shell.CommandPromptStatusText();
   }

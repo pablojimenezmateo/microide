@@ -579,7 +579,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
         const float text_x = prompt_rect.x + 6.0f;
         const float text_y = prompt_rect.y + 4.0f;
-        const float cursor_x = text_x + text_renderer_.MeasureWidth("> " + command_input_);
+        const float cursor_x = text_x + text_renderer_.MeasureWidth("> " + command_.input);
         return TextInputVisual{
             .surface = surface,
             .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f), line_height),
@@ -595,7 +595,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
         const float text_x = input_rect.x + 6.0f;
         const float text_y = input_rect.y + 4.0f;
-        const float cursor_x = text_x + text_renderer_.MeasureWidth(prompt_surface_state_.input);
+        const float cursor_x = text_x + text_renderer_.MeasureWidth(prompts_.surface.input);
         return TextInputVisual{
             .surface = surface,
             .area = MakeRect(text_x, text_y, std::max(1.0f, input_rect.w - 12.0f), line_height),
@@ -1829,7 +1829,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
       draw_vcentered_text_on(prompt_rect, 6.0f, theme_.text_primary, theme_.chrome_active,
-                             "> " + command_input_);
+                             "> " + command_.input);
     }
 
     draw_vertical_scrollbar(
@@ -1943,7 +1943,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
   }
 
-  if (prompt_surface_visible_) {
+  if (prompts_.surface_visible) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     DrawFilledRect(renderer, layout.full, SDL_Color{0x05, 0x07, 0x0b, 0xcc});
 
@@ -1960,18 +1960,18 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     draw_text_on(message_rect.x, message_rect.y, theme_.text_muted, theme_.overlay_background,
                  TruncateLabel(PromptSurfaceMessage(), message_rect.w));
 
-    if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
+    if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       DrawFilledRect(renderer, input_rect, theme_.surface_background);
       DrawRect(renderer, input_rect, theme_.border);
       draw_vcentered_text_on(input_rect, 6.0f, theme_.text_primary, theme_.surface_background,
-                             TruncateLabel(prompt_surface_state_.input, input_rect.w - 12.0f));
+                             TruncateLabel(prompts_.surface.input, input_rect.w - 12.0f));
     }
 
     const auto buttons = ComputePromptSurfaceButtonRects(dialog);
     const auto labels = PromptSurfaceActionLabels();
     for (std::size_t i = 0; i < buttons.size(); ++i) {
-      const bool selected = prompt_surface_state_.selected_button == static_cast<int>(i);
+      const bool selected = prompts_.surface.selected_button == static_cast<int>(i);
       const SDL_Color background = selected ? theme_.chrome_active : theme_.surface_raised;
       DrawFilledRect(renderer, buttons[i], background);
       DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
@@ -1982,7 +1982,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   render_text_composition(active_text_input_visual);
   update_text_input_area(active_text_input_visual);
 
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     DrawFilledRect(renderer, layout.full, SDL_Color{0x05, 0x07, 0x0b, 0xcc});
 
@@ -2006,7 +2006,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     const auto buttons = ComputeDirtyPromptButtonRects(dialog);
     const auto labels = DirtyPromptActionLabels();
     for (std::size_t i = 0; i < buttons.size(); ++i) {
-      const bool selected = dirty_prompt_state_.selected_action == static_cast<int>(i);
+      const bool selected = prompts_.dirty.selected_action == static_cast<int>(i);
       DrawFilledRect(renderer, buttons[i],
                      selected ? theme_.chrome_active : theme_.surface_raised);
       DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);

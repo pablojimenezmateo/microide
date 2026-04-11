@@ -144,14 +144,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
 
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
                                     static_cast<float>(last_window_height_));
     const SDL_FRect dialog = ComputeDirtyPromptRect(full);
     const auto buttons = ComputeDirtyPromptButtonRects(dialog);
     for (std::size_t i = 0; i < buttons.size(); ++i) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
-        dirty_prompt_state_.selected_action = static_cast<int>(i);
+        prompts_.dirty.selected_action = static_cast<int>(i);
         ConfirmDirtyPrompt();
         return true;
       }
@@ -159,14 +159,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (prompt_surface_visible_) {
+  if (prompts_.surface_visible) {
     const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
                                     static_cast<float>(last_window_height_));
     const SDL_FRect dialog = ComputePromptSurfaceRect(full);
     const auto buttons = ComputePromptSurfaceButtonRects(dialog);
     for (std::size_t i = 0; i < buttons.size(); ++i) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
-        prompt_surface_state_.selected_button = static_cast<int>(i);
+        prompts_.surface.selected_button = static_cast<int>(i);
         if (event.button.button == SDL_BUTTON_LEFT) {
           ConfirmPromptSurface();
         }
@@ -1291,10 +1291,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
 
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     return true;
   }
-  if (prompt_surface_visible_) {
+  if (prompts_.surface_visible) {
     return true;
   }
 
@@ -1364,10 +1364,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                            previous_copy_hovered != current_copy_hovered;
   }
 
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     return true;
   }
-  if (prompt_surface_visible_) {
+  if (prompts_.surface_visible) {
     return true;
   }
 
@@ -2343,10 +2343,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 }
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     return true;
   }
-  if (prompt_surface_visible_) {
+  if (prompts_.surface_visible) {
     return true;
   }
 

@@ -34,6 +34,41 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   state.file_finder.SetIndex(&state.file_index);
 }
 
+WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
+    const SurfaceState& state) {
+  return ProjectSurfaceState{
+      .sidebar_visible = state.sidebar_visible,
+      .sidebar_mode = state.sidebar_mode,
+      .sidebar_prev_mode = state.sidebar_prev_mode,
+      .sidebar_temporary = state.sidebar_temporary,
+      .overlay_visible = state.overlay_visible,
+      .overlay_mode = state.overlay_mode,
+      .buffer_search_field = state.buffer_search_field,
+      .command_mode = state.command_mode,
+      .focus = state.focus,
+      .sidebar_width = state.sidebar_width,
+      .bottom_panel_height = state.bottom_panel_height,
+      .sidebar_scroll_row = state.sidebar_scroll_row,
+      .overlay_scroll_row = state.overlay_scroll_row,
+  };
+}
+
+void WorkspaceShell::ApplyProjectSurfaceState(const ProjectSurfaceState& state) {
+  surface_.sidebar_visible = state.sidebar_visible;
+  surface_.sidebar_mode = state.sidebar_mode;
+  surface_.sidebar_prev_mode = state.sidebar_prev_mode;
+  surface_.sidebar_temporary = state.sidebar_temporary;
+  surface_.overlay_visible = state.overlay_visible;
+  surface_.overlay_mode = state.overlay_mode;
+  surface_.buffer_search_field = state.buffer_search_field;
+  surface_.command_mode = state.command_mode;
+  surface_.focus = state.focus;
+  surface_.sidebar_width = state.sidebar_width;
+  surface_.bottom_panel_height = state.bottom_panel_height;
+  surface_.sidebar_scroll_row = state.sidebar_scroll_row;
+  surface_.overlay_scroll_row = state.overlay_scroll_row;
+}
+
 std::filesystem::path WorkspaceShell::ResolveProjectRootInput(
     const std::filesystem::path& project_root) const {
   if (project_root.empty()) {
@@ -219,11 +254,11 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   compare_picker_commits_.clear();
   compare_picker_matches_.clear();
   compare_picker_selected_index_ = 0;
-  command_input_.clear();
-  command_history_.clear();
-  command_history_index_.reset();
-  command_history_pending_input_.clear();
-  command_feedback_text_.clear();
+  command_.input.clear();
+  command_.history.clear();
+  command_.history_index.reset();
+  command_.history_pending_input.clear();
+  command_.feedback_text.clear();
   active_colorscheme_name_ = "default";
   project_base_color_ = std::nullopt;
   editor_preferences_ = EditorPreferences{};
@@ -340,19 +375,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.open_tabs = std::move(open_tabs_);
   state.active_tab_index = active_tab_index_;
   state.tab_scroll_index = tab_scroll_index_;
-  state.sidebar_visible = surface_.sidebar_visible;
-  state.sidebar_mode = surface_.sidebar_mode;
-  state.sidebar_prev_mode = surface_.sidebar_prev_mode;
-  state.sidebar_temporary = surface_.sidebar_temporary;
-  state.overlay_visible = surface_.overlay_visible;
-  state.overlay_mode = surface_.overlay_mode;
-  state.buffer_search_field = surface_.buffer_search_field;
-  state.command_mode = surface_.command_mode;
-  state.focus = surface_.focus;
-  state.sidebar_width = surface_.sidebar_width;
-  state.bottom_panel_height = surface_.bottom_panel_height;
-  state.sidebar_scroll_row = surface_.sidebar_scroll_row;
-  state.overlay_scroll_row = surface_.overlay_scroll_row;
+  state.surface = CaptureProjectSurfaceState(surface_);
   state.terminal_tabs = std::move(terminal_tabs_);
   state.active_terminal_tab_index = active_terminal_tab_index_;
   state.buffer_search_query = std::move(buffer_search_query_);
@@ -380,11 +403,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.compare_picker_commits = std::move(compare_picker_commits_);
   state.compare_picker_matches = std::move(compare_picker_matches_);
   state.compare_picker_selected_index = compare_picker_selected_index_;
-  state.command_input = std::move(command_input_);
-  state.command_history = std::move(command_history_);
-  state.command_history_index = command_history_index_;
-  state.command_history_pending_input = std::move(command_history_pending_input_);
-  state.command_feedback_text = std::move(command_feedback_text_);
+  state.command = std::move(command_);
   state.active_colorscheme_name = active_colorscheme_name_;
   state.project_base_color = project_base_color_;
   state.editor_preferences = editor_preferences_;
@@ -404,19 +423,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   open_tabs_ = std::move(state.open_tabs);
   active_tab_index_ = state.active_tab_index;
   tab_scroll_index_ = state.tab_scroll_index;
-  surface_.sidebar_visible = state.sidebar_visible;
-  surface_.sidebar_mode = state.sidebar_mode;
-  surface_.sidebar_prev_mode = state.sidebar_prev_mode;
-  surface_.sidebar_temporary = state.sidebar_temporary;
-  surface_.overlay_visible = state.overlay_visible;
-  surface_.overlay_mode = state.overlay_mode;
-  surface_.buffer_search_field = state.buffer_search_field;
-  surface_.command_mode = state.command_mode;
-  surface_.focus = state.focus;
-  surface_.sidebar_width = state.sidebar_width;
-  surface_.bottom_panel_height = state.bottom_panel_height;
-  surface_.sidebar_scroll_row = state.sidebar_scroll_row;
-  surface_.overlay_scroll_row = state.overlay_scroll_row;
+  ApplyProjectSurfaceState(state.surface);
   terminal_tabs_ = std::move(state.terminal_tabs);
   active_terminal_tab_index_ = state.active_terminal_tab_index;
   buffer_search_query_ = std::move(state.buffer_search_query);
@@ -445,11 +452,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   compare_picker_commits_ = std::move(state.compare_picker_commits);
   compare_picker_matches_ = std::move(state.compare_picker_matches);
   compare_picker_selected_index_ = state.compare_picker_selected_index;
-  command_input_ = std::move(state.command_input);
-  command_history_ = std::move(state.command_history);
-  command_history_index_ = state.command_history_index;
-  command_history_pending_input_ = std::move(state.command_history_pending_input);
-  command_feedback_text_ = std::move(state.command_feedback_text);
+  command_ = std::move(state.command);
   active_colorscheme_name_ = state.active_colorscheme_name;
   project_base_color_ = state.project_base_color;
   editor_preferences_ = state.editor_preferences;

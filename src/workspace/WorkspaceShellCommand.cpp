@@ -37,20 +37,20 @@ constexpr std::array<std::string_view, 3> kUiScaleCommands = {
 }  // namespace
 
 void WorkspaceShell::ResetCommandSessionState() {
-  command_history_index_.reset();
-  command_history_pending_input_.clear();
+  command_.history_index.reset();
+  command_.history_pending_input.clear();
   ClearCommandFeedback();
 }
 
 void WorkspaceShell::ClearCommandFeedback() {
-  command_feedback_text_.clear();
+  command_.feedback_text.clear();
 }
 
 bool WorkspaceShell::RejectCommandAction(ActionSource source, std::string feedback) {
   if (source != ActionSource::Command) {
     return true;
   }
-  command_feedback_text_ = std::move(feedback);
+  command_.feedback_text = std::move(feedback);
   return false;
 }
 
@@ -58,49 +58,49 @@ void WorkspaceShell::PushCommandHistory(std::string command_line) {
   if (command_line.empty()) {
     return;
   }
-  if (!command_history_.empty() && command_history_.back() == command_line) {
+  if (!command_.history.empty() && command_.history.back() == command_line) {
     return;
   }
 
-  command_history_.push_back(std::move(command_line));
-  if (command_history_.size() > 64) {
-    command_history_.erase(command_history_.begin());
+  command_.history.push_back(std::move(command_line));
+  if (command_.history.size() > 64) {
+    command_.history.erase(command_.history.begin());
   }
 }
 
 void WorkspaceShell::StepCommandHistory(int delta) {
-  if (delta == 0 || command_history_.empty()) {
+  if (delta == 0 || command_.history.empty()) {
     return;
   }
 
-  if (!command_history_index_.has_value()) {
+  if (!command_.history_index.has_value()) {
     if (delta > 0) {
       return;
     }
-    command_history_pending_input_ = command_input_;
-    command_history_index_ = command_history_.size() - 1;
+    command_.history_pending_input = command_.input;
+    command_.history_index = command_.history.size() - 1;
   } else if (delta < 0) {
-    if (*command_history_index_ > 0) {
-      --(*command_history_index_);
+    if (*command_.history_index > 0) {
+      --(*command_.history_index);
     }
-  } else if (*command_history_index_ + 1 < command_history_.size()) {
-    ++(*command_history_index_);
+  } else if (*command_.history_index + 1 < command_.history.size()) {
+    ++(*command_.history_index);
   } else {
-    command_history_index_.reset();
-    command_input_ = command_history_pending_input_;
-    command_history_pending_input_.clear();
+    command_.history_index.reset();
+    command_.input = command_.history_pending_input;
+    command_.history_pending_input.clear();
     ClearCommandFeedback();
     return;
   }
 
-  command_input_ = command_history_[*command_history_index_];
+  command_.input = command_.history[*command_.history_index];
   ClearCommandFeedback();
 }
 
 void WorkspaceShell::CompleteCommandInput() {
-  const ParsedCommandLine parsed = ParseCommandLine(command_input_);
+  const ParsedCommandLine parsed = ParseCommandLine(command_.input);
   if (parsed.dangling_escape) {
-    command_feedback_text_ = "Command completion stopped at a trailing escape";
+    command_.feedback_text = "Command completion stopped at a trailing escape";
     return;
   }
 
@@ -113,7 +113,7 @@ void WorkspaceShell::CompleteCommandInput() {
       starts_new_token || parsed.tokens.empty() ? std::string{}
                                                 : parsed.tokens.back().text;
   const std::size_t replace_start =
-      starts_new_token || parsed.tokens.empty() ? command_input_.size() : parsed.tokens.back().start;
+      starts_new_token || parsed.tokens.empty() ? command_.input.size() : parsed.tokens.back().start;
   const std::filesystem::path completion_root =
       project_root_.empty() ? std::filesystem::current_path() : project_root_;
   const std::vector<std::string>& command_names = CommandNames();
@@ -171,7 +171,7 @@ void WorkspaceShell::CompleteCommandInput() {
   }
 
   if (candidates.empty()) {
-    command_feedback_text_ = "No completion matches";
+    command_.feedback_text = "No completion matches";
     return;
   }
 
@@ -182,12 +182,12 @@ void WorkspaceShell::CompleteCommandInput() {
         candidates.size() == 1 ? candidates.front()
                                : CommandCompletionCandidate{common_prefix, false};
     std::string replacement = FormatCommandCompletionToken(candidate);
-    command_input_.erase(replace_start);
-    command_input_ += replacement;
+    command_.input.erase(replace_start);
+    command_.input += replacement;
   }
 
   if (candidates.size() == 1) {
-    command_feedback_text_ = "Completed " + candidates.front().value;
+    command_.feedback_text = "Completed " + candidates.front().value;
     return;
   }
 
@@ -200,16 +200,16 @@ void WorkspaceShell::CompleteCommandInput() {
   if (candidates.size() > visible_count) {
     matches += "  ...";
   }
-  command_feedback_text_ = std::move(matches);
+  command_.feedback_text = std::move(matches);
 }
 
 std::string WorkspaceShell::CommandPromptStatusText() const {
-  if (!command_feedback_text_.empty()) {
-    return command_feedback_text_;
+  if (!command_.feedback_text.empty()) {
+    return command_.feedback_text;
   }
-  if (command_history_index_.has_value()) {
-    return "History " + std::to_string(*command_history_index_ + 1) + " / " +
-           std::to_string(command_history_.size()) + "  |  Enter run  Esc cancel  Tab complete";
+  if (command_.history_index.has_value()) {
+    return "History " + std::to_string(*command_.history_index + 1) + " / " +
+           std::to_string(command_.history.size()) + "  |  Enter run  Esc cancel  Tab complete";
   }
   return "Enter run  Esc cancel  Up/Down history  Tab complete";
 }
@@ -217,11 +217,11 @@ std::string WorkspaceShell::CommandPromptStatusText() const {
 bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   const ParsedCommandLine parsed = ParseCommandLine(command_line);
   if (parsed.dangling_escape) {
-    command_feedback_text_ = "Command parse error: trailing escape";
+    command_.feedback_text = "Command parse error: trailing escape";
     return false;
   }
   if (parsed.open_quote != '\0') {
-    command_feedback_text_ = std::string("Command parse error: unterminated ") +
+    command_.feedback_text = std::string("Command parse error: unterminated ") +
                              (parsed.open_quote == '\'' ? "single" : "double") + " quote";
     return false;
   }
@@ -234,7 +234,7 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   const std::string& command = parsed.tokens.front().text;
   const ActionSpec* action = FindActionByCommand(command);
   if (action == nullptr) {
-    command_feedback_text_ = "Unknown command: " + command;
+    command_.feedback_text = "Unknown command: " + command;
     return false;
   }
 

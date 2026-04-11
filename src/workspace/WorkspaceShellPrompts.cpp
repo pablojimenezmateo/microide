@@ -13,14 +13,14 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
     return;
   }
 
-  dirty_prompt_visible_ = true;
-  dirty_prompt_previous_focus_ = surface_.focus;
-  dirty_prompt_state_.kind = DirtyPromptState::Kind::CloseTab;
-  dirty_prompt_state_.tab_index = index;
-  dirty_prompt_state_.dirty_tabs = {index};
-  dirty_prompt_state_.dirty_count = 1;
-  dirty_prompt_state_.path.clear();
-  dirty_prompt_state_.selected_action = 0;
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = surface_.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::CloseTab;
+  prompts_.dirty.tab_index = index;
+  prompts_.dirty.dirty_tabs = {index};
+  prompts_.dirty.dirty_count = 1;
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
 }
 
@@ -35,14 +35,14 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
     return;
   }
 
-  dirty_prompt_visible_ = true;
-  dirty_prompt_previous_focus_ = surface_.focus;
-  dirty_prompt_state_.kind = DirtyPromptState::Kind::CloseProject;
-  dirty_prompt_state_.project_index = index;
-  dirty_prompt_state_.dirty_tabs = dirty_tabs;
-  dirty_prompt_state_.dirty_count = dirty_tabs.size();
-  dirty_prompt_state_.path.clear();
-  dirty_prompt_state_.selected_action = 0;
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = surface_.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::CloseProject;
+  prompts_.dirty.project_index = index;
+  prompts_.dirty.dirty_tabs = dirty_tabs;
+  prompts_.dirty.dirty_count = dirty_tabs.size();
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
 }
 
@@ -55,32 +55,32 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
     dirty_count += DirtyEditorTabIndicesForProject(i).size();
   }
 
-  dirty_prompt_visible_ = true;
-  dirty_prompt_previous_focus_ = surface_.focus;
-  dirty_prompt_state_.kind = DirtyPromptState::Kind::Quit;
-  dirty_prompt_state_.tab_index = active_tab_index_;
-  dirty_prompt_state_.project_index = active_project_index_;
-  dirty_prompt_state_.dirty_tabs = DirtyEditorTabIndices();
-  dirty_prompt_state_.dirty_count = dirty_count;
-  dirty_prompt_state_.path.clear();
-  dirty_prompt_state_.selected_action = 0;
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = surface_.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::Quit;
+  prompts_.dirty.tab_index = active_tab_index_;
+  prompts_.dirty.project_index = active_project_index_;
+  prompts_.dirty.dirty_tabs = DirtyEditorTabIndices();
+  prompts_.dirty.dirty_count = dirty_count;
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
 }
 
 void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
-  dirty_prompt_visible_ = false;
-  dirty_prompt_state_ = DirtyPromptState{};
+  prompts_.dirty_visible = false;
+  prompts_.dirty = DirtyPromptState{};
   if (restore_focus) {
-    surface_.focus = dirty_prompt_previous_focus_;
+    surface_.focus = prompts_.dirty_previous_focus;
   }
 }
 
 void WorkspaceShell::ConfirmDirtyPrompt() {
-  if (!dirty_prompt_visible_) {
+  if (!prompts_.dirty_visible) {
     return;
   }
 
-  const DirtyPromptState prompt = dirty_prompt_state_;
+  const DirtyPromptState prompt = prompts_.dirty;
   if (prompt.selected_action == 2) {
     if (prompt.kind == DirtyPromptState::Kind::RenamePath ||
         prompt.kind == DirtyPromptState::Kind::DeletePath) {
@@ -163,13 +163,13 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::Quit ||
-      dirty_prompt_state_.kind == DirtyPromptState::Kind::CloseProject ||
-      dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ||
-      dirty_prompt_state_.kind == DirtyPromptState::Kind::DeletePath) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::Quit ||
+      prompts_.dirty.kind == DirtyPromptState::Kind::CloseProject ||
+      prompts_.dirty.kind == DirtyPromptState::Kind::RenamePath ||
+      prompts_.dirty.kind == DirtyPromptState::Kind::DeletePath) {
     return {
-        dirty_prompt_state_.dirty_count > 1 ? "Save all" : "Save",
-        dirty_prompt_state_.dirty_count > 1 ? "Discard all" : "Discard",
+        prompts_.dirty.dirty_count > 1 ? "Save all" : "Save",
+        prompts_.dirty.dirty_count > 1 ? "Discard all" : "Discard",
         "Cancel",
     };
   }
@@ -178,57 +178,57 @@ std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
 }
 
 std::string WorkspaceShell::DirtyPromptTitle() const {
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::Quit) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::Quit) {
     return "Unsaved changes before quit";
   }
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::CloseProject) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::CloseProject) {
     return "Unsaved changes before closing project";
   }
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::RenamePath) {
     return "Unsaved changes before rename";
   }
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::DeletePath) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::DeletePath) {
     return "Unsaved changes before delete";
   }
   return "Unsaved changes";
 }
 
 std::string WorkspaceShell::DirtyPromptMessage() const {
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::Quit) {
-    const std::size_t dirty_count = dirty_prompt_state_.dirty_count;
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::Quit) {
+    const std::size_t dirty_count = prompts_.dirty.dirty_count;
     return dirty_count == 1 ? "Save the dirty tab before quitting microide?"
                             : "Save the " + std::to_string(dirty_count) +
                                   " dirty tabs before quitting microide?";
   }
 
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::CloseProject) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::CloseProject) {
     const std::filesystem::path project_root =
-        dirty_prompt_state_.project_index < projects_.size() &&
-                projects_[dirty_prompt_state_.project_index] != nullptr
-            ? projects_[dirty_prompt_state_.project_index]->root
+        prompts_.dirty.project_index < projects_.size() &&
+                projects_[prompts_.dirty.project_index] != nullptr
+            ? projects_[prompts_.dirty.project_index]->root
             : project_root_;
     const std::string label = ProjectLabelForRoot(project_root);
-    return dirty_prompt_state_.dirty_count == 1
+    return prompts_.dirty.dirty_count == 1
                ? "Save the dirty tab before closing " + label + "?"
-               : "Save the " + std::to_string(dirty_prompt_state_.dirty_count) +
+               : "Save the " + std::to_string(prompts_.dirty.dirty_count) +
                      " dirty tabs before closing " + label + "?";
   }
 
-  if (dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ||
-      dirty_prompt_state_.kind == DirtyPromptState::Kind::DeletePath) {
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::RenamePath ||
+      prompts_.dirty.kind == DirtyPromptState::Kind::DeletePath) {
     const std::filesystem::path path =
-        dirty_prompt_state_.path.empty() ? prompt_surface_state_.path : dirty_prompt_state_.path;
+        prompts_.dirty.path.empty() ? prompts_.surface.path : prompts_.dirty.path;
     const std::string label =
         path == project_root_ ? ProjectLabel() : RelativePathLabel(project_root_, path);
     const std::string action =
-        dirty_prompt_state_.kind == DirtyPromptState::Kind::RenamePath ? "renaming " : "deleting ";
-    return dirty_prompt_state_.dirty_count == 1
+        prompts_.dirty.kind == DirtyPromptState::Kind::RenamePath ? "renaming " : "deleting ";
+    return prompts_.dirty.dirty_count == 1
                ? "Save the affected dirty editor before " + action + label + "?"
-               : "Save the " + std::to_string(dirty_prompt_state_.dirty_count) +
+               : "Save the " + std::to_string(prompts_.dirty.dirty_count) +
                      " affected dirty editors before " + action + label + "?";
   }
 
-  const std::size_t index = dirty_prompt_state_.tab_index;
+  const std::size_t index = prompts_.dirty.tab_index;
   const std::string label = index < open_tabs_.size() ? open_tabs_[index].title : "this tab";
   return "Save changes to " + label + " before closing it?";
 }
@@ -237,26 +237,26 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
                                        PromptSurfaceState::Kind kind,
                                        const std::filesystem::path& path,
                                        std::string input) {
-  prompt_surface_visible_ = true;
-  prompt_surface_previous_focus_ = surface_.focus;
-  prompt_surface_state_.kind = kind;
-  prompt_surface_state_.action = action;
-  prompt_surface_state_.path = path.lexically_normal();
-  prompt_surface_state_.input = std::move(input);
-  prompt_surface_state_.selected_button = 0;
+  prompts_.surface_visible = true;
+  prompts_.surface_previous_focus = surface_.focus;
+  prompts_.surface.kind = kind;
+  prompts_.surface.action = action;
+  prompts_.surface.path = path.lexically_normal();
+  prompts_.surface.input = std::move(input);
+  prompts_.surface.selected_button = 0;
   surface_.focus = FocusTarget::Overlay;
 }
 
 void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
-  prompt_surface_visible_ = false;
-  prompt_surface_state_ = PromptSurfaceState{};
+  prompts_.surface_visible = false;
+  prompts_.surface = PromptSurfaceState{};
   if (restore_focus) {
-    surface_.focus = prompt_surface_previous_focus_;
+    surface_.focus = prompts_.surface_previous_focus;
   }
 }
 
 std::string WorkspaceShell::PromptSurfaceTitle() const {
-  switch (prompt_surface_state_.action) {
+  switch (prompts_.surface.action) {
     case PromptSurfaceState::Action::CreateFile:
       return "New File";
     case PromptSurfaceState::Action::CreateDirectory:
@@ -273,10 +273,10 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
 
 std::string WorkspaceShell::PromptSurfaceMessage() const {
   const std::string label =
-      prompt_surface_state_.path == project_root_
+      prompts_.surface.path == project_root_
           ? ProjectLabel()
-          : RelativePathLabel(project_root_, prompt_surface_state_.path);
-  switch (prompt_surface_state_.action) {
+          : RelativePathLabel(project_root_, prompts_.surface.path);
+  switch (prompts_.surface.action) {
     case PromptSurfaceState::Action::CreateFile:
       return "Create inside " + (label.empty() ? ProjectLabel() : label) + ".";
     case PromptSurfaceState::Action::CreateDirectory:
@@ -292,7 +292,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
 }
 
 std::array<std::string, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
-  switch (prompt_surface_state_.action) {
+  switch (prompts_.surface.action) {
     case PromptSurfaceState::Action::CreateFile:
       return {"Create File", "Cancel"};
     case PromptSurfaceState::Action::CreateDirectory:
@@ -505,13 +505,13 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
   }
 
   if (resolution == DirtyPathResolution::RequirePrompt) {
-    dirty_prompt_visible_ = true;
-    dirty_prompt_previous_focus_ = surface_.focus;
-    dirty_prompt_state_.kind = prompt_kind;
-    dirty_prompt_state_.dirty_tabs = DirtyTabIndicesForPath(path);
-    dirty_prompt_state_.dirty_count = dirty_targets.size();
-    dirty_prompt_state_.path = path.lexically_normal();
-    dirty_prompt_state_.selected_action = 0;
+    prompts_.dirty_visible = true;
+    prompts_.dirty_previous_focus = surface_.focus;
+    prompts_.dirty.kind = prompt_kind;
+    prompts_.dirty.dirty_tabs = DirtyTabIndicesForPath(path);
+    prompts_.dirty.dirty_count = dirty_targets.size();
+    prompts_.dirty.path = path.lexically_normal();
+    prompts_.dirty.selected_action = 0;
     surface_.focus = FocusTarget::Overlay;
     return false;
   }
@@ -926,11 +926,11 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
-  if (!prompt_surface_visible_) {
+  if (!prompts_.surface_visible) {
     return;
   }
 
-  const PromptSurfaceState state = prompt_surface_state_;
+  const PromptSurfaceState state = prompts_.surface;
   if (state.selected_button == 1) {
     DismissPromptSurface(true);
     return;
@@ -973,7 +973,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       return;
     }
 
-    if (dirty_prompt_visible_) {
+    if (prompts_.dirty_visible) {
       DismissDirtyPrompt(false);
     }
     DismissPromptSurface(false);
@@ -1015,7 +1015,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   }
 
   const std::filesystem::path parent = state.path.parent_path();
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     DismissDirtyPrompt(false);
   }
   DismissPromptSurface(false);

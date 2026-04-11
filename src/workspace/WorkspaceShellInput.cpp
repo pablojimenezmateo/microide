@@ -66,20 +66,20 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       return false;
   }
 
-  if (dirty_prompt_visible_) {
+  if (prompts_.dirty_visible) {
     switch (event.key.key) {
       case SDLK_ESCAPE:
-        dirty_prompt_state_.selected_action = 2;
+        prompts_.dirty.selected_action = 2;
         ConfirmDirtyPrompt();
         return true;
       case SDLK_LEFT:
-        dirty_prompt_state_.selected_action =
-            std::max(0, dirty_prompt_state_.selected_action - 1);
+        prompts_.dirty.selected_action =
+            std::max(0, prompts_.dirty.selected_action - 1);
         return true;
       case SDLK_RIGHT:
       case SDLK_TAB:
-        dirty_prompt_state_.selected_action =
-            std::min(2, dirty_prompt_state_.selected_action + 1);
+        prompts_.dirty.selected_action =
+            std::min(2, prompts_.dirty.selected_action + 1);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -88,17 +88,17 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       default: {
         const char input_character = KeycodeToAscii(event.key.key, SDL_GetModState());
         if (input_character == 's') {
-          dirty_prompt_state_.selected_action = 0;
+          prompts_.dirty.selected_action = 0;
           ConfirmDirtyPrompt();
           return true;
         }
         if (input_character == 'd') {
-          dirty_prompt_state_.selected_action = 1;
+          prompts_.dirty.selected_action = 1;
           ConfirmDirtyPrompt();
           return true;
         }
         if (input_character == 'c') {
-          dirty_prompt_state_.selected_action = 2;
+          prompts_.dirty.selected_action = 2;
           ConfirmDirtyPrompt();
           return true;
         }
@@ -162,8 +162,8 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
   if (CompositionConsumesKey(event.key.key, modifiers)) {
     return true;
   }
-  if (prompt_surface_visible_) {
-    if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
+  if (prompts_.surface_visible) {
+    if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
       switch (event.key.key) {
         case SDLK_ESCAPE: {
           DismissPromptSurface(true);
@@ -171,11 +171,11 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         }
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
-          prompt_surface_state_.selected_button = 0;
+          prompts_.surface.selected_button = 0;
           ConfirmPromptSurface();
           return true;
         case SDLK_BACKSPACE:
-          RemoveLastUtf8Codepoint(&prompt_surface_state_.input);
+          RemoveLastUtf8Codepoint(&prompts_.surface.input);
           return true;
         default:
           return true;
@@ -188,13 +188,13 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         return true;
       }
       case SDLK_LEFT:
-        prompt_surface_state_.selected_button =
-            std::max(0, prompt_surface_state_.selected_button - 1);
+        prompts_.surface.selected_button =
+            std::max(0, prompts_.surface.selected_button - 1);
         return true;
       case SDLK_RIGHT:
       case SDLK_TAB:
-        prompt_surface_state_.selected_button =
-            std::min(1, prompt_surface_state_.selected_button + 1);
+        prompts_.surface.selected_button =
+            std::min(1, prompts_.surface.selected_button + 1);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -284,21 +284,21 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     switch (event.key.key) {
       case SDLK_ESCAPE:
         surface_.command_mode = false;
-        command_input_.clear();
+        command_.input.clear();
         ResetCommandSessionState();
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        if (command_input_.empty() || ExecuteCommand(command_input_)) {
+        if (command_.input.empty() || ExecuteCommand(command_.input)) {
           surface_.command_mode = false;
-          command_input_.clear();
+          command_.input.clear();
           ResetCommandSessionState();
         }
         return true;
       case SDLK_BACKSPACE:
-        RemoveLastUtf8Codepoint(&command_input_);
-        command_history_index_.reset();
-        command_history_pending_input_.clear();
+        RemoveLastUtf8Codepoint(&command_.input);
+        command_.history_index.reset();
+        command_.history_pending_input.clear();
         ClearCommandFeedback();
         return true;
       case SDLK_UP:
@@ -1112,22 +1112,22 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
     return true;
   }
-  if (event.text == nullptr || event.text[0] == '\0' || dirty_prompt_visible_) {
+  if (event.text == nullptr || event.text[0] == '\0' || prompts_.dirty_visible) {
     return false;
   }
 
   SyncTextInputSurface(nullptr);
   text_composition_ = TextCompositionState{};
   const std::string_view input(event.text);
-  if (prompt_surface_visible_ &&
-      prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
-    prompt_surface_state_.input.append(input);
+  if (prompts_.surface_visible &&
+      prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
+    prompts_.surface.input.append(input);
     return true;
   }
   if (surface_.command_mode) {
-    command_input_.append(input);
-    command_history_index_.reset();
-    command_history_pending_input_.clear();
+    command_.input.append(input);
+    command_.history_index.reset();
+    command_.history_pending_input.clear();
     ClearCommandFeedback();
     return true;
   }
