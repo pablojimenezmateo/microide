@@ -144,15 +144,12 @@ void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
 
   project_open_dialog_active_ = false;
   if (!pending.error_message.empty()) {
-    LogMessage("Project picker failed: " + pending.error_message);
     return;
   }
   if (pending.cancelled) {
-    LogMessage("Open project cancelled");
     return;
   }
   if (pending.selected_path.empty()) {
-    LogMessage("Project picker returned no folder");
     return;
   }
 
@@ -242,6 +239,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
                                               bool restore_persistence,
                                               bool log_feedback,
                                               bool activate_restored_tab) {
+  (void) log_feedback;
   util::StartupTrace::Scope trace_scope("WorkspaceShell::InitializeCurrentProject");
   ResetProjectScopedState(false);
   {
@@ -255,11 +253,8 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
 
   ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferences(text_viewport_);
-  if (log_feedback) {
-    LogMessage("Project loaded: " + project_root_.lexically_normal().string());
-  }
-  if (restore_persistence && RestoreConfigState() && log_feedback) {
-    LogMessage("Restored editor preferences and colorscheme");
+  if (restore_persistence) {
+    RestoreConfigState();
   }
 
   if (restore_persistence && RestoreSessionState()) {
@@ -269,9 +264,6 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     ApplyEditorPreferencesToAllTabs();
     if (activate_restored_tab) {
       ActivateCurrentTabAfterStateLoad();
-    }
-    if (log_feedback) {
-      LogMessage("Restored workspace session");
     }
     return true;
   }
@@ -298,9 +290,6 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       active_tab_index_ = 0;
       if (terminal_tabs_.empty()) {
         OpenTerminal({}, false, false);
-      }
-      if (log_feedback) {
-        LogMessage("Opened startup file: " + candidate.filename().string());
       }
       return true;
     }
@@ -513,9 +502,6 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
                                     bool log_feedback) {
   const std::filesystem::path normalized_root = ResolveProjectRootInput(project_root);
   if (normalized_root.empty()) {
-    if (log_feedback) {
-      LogMessage("Failed to open project: " + project_root.lexically_normal().string());
-    }
     return false;
   }
 
@@ -557,9 +543,6 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
       active_project_index_ = 0;
       ResetProjectScopedState(true);
     }
-    if (log_feedback) {
-      LogMessage("Failed to open project: " + normalized_root.string());
-    }
     return false;
   }
 
@@ -569,6 +552,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 }
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
+  (void) log_feedback;
   if (index >= projects_.size()) {
     return false;
   }
@@ -598,9 +582,6 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   }
   EnsureActiveProjectVisible();
   SaveWorkspaceSession();
-  if (log_feedback) {
-    LogMessage("Project switched: " + ProjectLabel());
-  }
   return true;
 }
 
@@ -642,7 +623,6 @@ void WorkspaceShell::CloseProject(std::size_t index) {
       closing_active ? project_root_
                      : (projects_[index] != nullptr ? projects_[index]->root
                                                     : std::filesystem::path{});
-  const std::string closed_label = ProjectLabelForRoot(project_root);
 
   if (closing_active) {
     SaveConfigState();
@@ -656,7 +636,6 @@ void WorkspaceShell::CloseProject(std::size_t index) {
     project_tab_scroll_index_ = 0;
     ResetProjectScopedState(true);
     SaveWorkspaceSession();
-    LogMessage("Closed project: " + closed_label);
     return;
   }
 
@@ -669,7 +648,6 @@ void WorkspaceShell::CloseProject(std::size_t index) {
         project_tab_scroll_index_ = 0;
         ResetProjectScopedState(true);
         SaveWorkspaceSession();
-        LogMessage("Closed project: " + closed_label);
         return;
       }
       active_project_index_ = std::min(active_project_index_, projects_.size() - 1);
@@ -681,7 +659,6 @@ void WorkspaceShell::CloseProject(std::size_t index) {
 
   EnsureActiveProjectVisible();
   SaveWorkspaceSession();
-  LogMessage("Closed project: " + closed_label);
 }
 
 std::filesystem::path WorkspaceShell::ConfigStatePath() const {

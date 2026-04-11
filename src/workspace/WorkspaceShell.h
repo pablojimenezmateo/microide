@@ -46,6 +46,7 @@ class WorkspaceShell {
 
   WorkspaceShell() = default;
 
+  static std::vector<std::string> DocumentedCommandUsages();
   bool Initialize(const std::filesystem::path& project_root);
   void Shutdown();
   bool HandleEvent(const SDL_Event& event);
@@ -1169,7 +1170,6 @@ class WorkspaceShell {
   std::string SelectedTerminalText(const std::vector<terminal::TerminalLine>& lines) const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
-  void LogMessage(std::string message);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool MoveActiveTabTo(std::size_t index);

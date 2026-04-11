@@ -166,9 +166,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
     if (prompt_surface_state_.kind == PromptSurfaceState::Kind::TextInput) {
       switch (event.key.key) {
         case SDLK_ESCAPE: {
-          const std::string title = PromptSurfaceTitle();
           DismissPromptSurface(true);
-          LogMessage(title + " cancelled");
           return true;
         }
         case SDLK_RETURN:
@@ -186,9 +184,7 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
 
     switch (event.key.key) {
       case SDLK_ESCAPE: {
-        const std::string title = PromptSurfaceTitle();
         DismissPromptSurface(true);
-        LogMessage(title + " cancelled");
         return true;
       }
       case SDLK_LEFT:
@@ -290,7 +286,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         command_mode_ = false;
         command_input_.clear();
         ResetCommandSessionState();
-        LogMessage("Command mode closed");
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -364,7 +359,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
       if (overlay_visible_) {
         overlay_visible_ = false;
         focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
-        LogMessage("Finder overlay closed");
         return true;
       }
       if (focus_ == FocusTarget::Sidebar && sidebar_visible_ &&
@@ -383,7 +377,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         case SDLK_ESCAPE:
           overlay_visible_ = false;
           focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
-          LogMessage("Compare picker closed");
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
@@ -463,7 +456,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         case SDLK_ESCAPE:
           overlay_visible_ = false;
           focus_ = FocusTarget::Editor;
-          LogMessage("Buffer replace closed");
           return true;
         case SDLK_TAB:
           buffer_search_field_ = buffer_search_field_ == BufferSearchField::Search
@@ -509,7 +501,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         case SDLK_ESCAPE:
           overlay_visible_ = false;
           focus_ = FocusTarget::Editor;
-          LogMessage("Project search closed");
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
@@ -600,7 +591,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
               RestorePreviousSidebar();
             }
             focus_ = FocusTarget::Editor;
-            LogMessage("Project search result opened");
           }
           return true;
         case SDLK_UP:
@@ -630,7 +620,6 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
             ReplaceAllProjectSearchMatches();
           } else {
             RefreshProjectSearch();
-            LogMessage("Project search refreshed");
           }
           return true;
         case SDLK_EQUALS:
@@ -717,14 +706,11 @@ bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
         const auto opened = directory_tree_.ActivateSelection();
         if (opened.has_value()) {
           OpenFile(*opened);
-        } else {
-          LogMessage("Tree selection toggled");
         }
         return true;
       }
       case SDLK_R:
         RefreshProjectFiles();
-        LogMessage("Project tree refreshed");
         return true;
       case SDLK_D:
         OpenComparePicker();
@@ -1225,14 +1211,12 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && TerminalHasSelection()) {
     const std::string text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
     if (!text.empty() && WriteClipboardText(text)) {
-      LogMessage("Terminal selection copied");
     }
     return true;
   }
 
   if (event.key == SDLK_ESCAPE && TerminalHasSelection()) {
     ClearTerminalSelection();
-    LogMessage("Terminal selection cleared");
     return true;
   }
 
@@ -1348,7 +1332,6 @@ bool WorkspaceShell::PasteClipboardIntoTerminal() {
     AppendTerminalPendingInput(*clipboard_text);
   }
   terminal_tab->session.PasteText(*clipboard_text);
-  LogMessage("Terminal clipboard pasted");
   return true;
 }
 

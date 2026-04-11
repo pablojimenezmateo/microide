@@ -69,14 +69,12 @@ void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
   project_search_selected_index_ = 0;
   RefreshProjectSearch();
   ShowSidebarMode(SidebarMode::Search, temporary);
-  LogMessage(temporary ? "Temporary project search opened" : "Project search sidebar opened");
 }
 
 void WorkspaceShell::ShowGitSidebar() {
   RefreshGitSidebar();
   ShowSidebarMode(SidebarMode::Git, false);
   RevealSelectedGitSidebarLine();
-  LogMessage("Git sidebar opened");
 }
 
 void WorkspaceShell::CloseSidebar() {
@@ -87,7 +85,6 @@ void WorkspaceShell::CloseSidebar() {
 
   if (sidebar_temporary_ && sidebar_prev_mode_ != SidebarMode::None) {
     RestorePreviousSidebar();
-    LogMessage("Previous sidebar restored");
     return;
   }
 
@@ -97,7 +94,6 @@ void WorkspaceShell::CloseSidebar() {
   if (focus_ == FocusTarget::Sidebar) {
     focus_ = FocusTarget::Editor;
   }
-  LogMessage("Sidebar closed");
 }
 
 void WorkspaceShell::ToggleSidebar() {
@@ -112,7 +108,6 @@ void WorkspaceShell::ToggleSidebar() {
   sidebar_visible_ = true;
   sidebar_temporary_ = false;
   focus_ = FocusTarget::Sidebar;
-  LogMessage("Sidebar shown");
 }
 
 void WorkspaceShell::RestorePreviousSidebar() {
@@ -394,7 +389,6 @@ bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
     return OpenWorkingTreeComparison(entry.path, "HEAD", "HEAD");
   }
   if (git_base_ref_.empty()) {
-    LogMessage("Base branch is unavailable");
     return false;
   }
   return OpenBranchHeadComparison(entry.path, git_base_ref_,
@@ -416,7 +410,6 @@ bool WorkspaceShell::CanDiscardAllGitSidebarEntries() const {
 
 bool WorkspaceShell::StageAllGitSidebarEntries() {
   if (!CanStageAllGitSidebarEntries()) {
-    LogMessage("No unstaged git changes");
     return false;
   }
   std::vector<std::filesystem::path> affected_paths;
@@ -431,20 +424,17 @@ bool WorkspaceShell::StageAllGitSidebarEntries() {
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
   if (!project::GitStageAll(project_root_)) {
-    LogMessage("Git stage all failed");
     return false;
   }
   for (const auto& path : affected_paths) {
     InvalidateEditorBlamePath(path);
   }
   RefreshProjectFiles();
-  LogMessage("Staged all git changes");
   return true;
 }
 
 void WorkspaceShell::OpenDiscardAllGitSidebarPrompt() {
   if (!CanDiscardAllGitSidebarEntries()) {
-    LogMessage("Git working tree is clean");
     return;
   }
   OpenPromptSurface(PromptSurfaceState::Action::DiscardGitChanges,
@@ -453,13 +443,11 @@ void WorkspaceShell::OpenDiscardAllGitSidebarPrompt() {
 
 bool WorkspaceShell::DiscardAllGitSidebarEntries() {
   if (!CanDiscardAllGitSidebarEntries()) {
-    LogMessage("Git working tree is clean");
     return false;
   }
 
   std::string blocking_label;
   if (HasDirtyEditorTabsForPath(project_root_, &blocking_label)) {
-    LogMessage("Discard all blocked by dirty tab: " + blocking_label);
     return false;
   }
 
@@ -476,7 +464,6 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
                        affected_paths.end());
 
   if (!project::GitDiscardAll(project_root_)) {
-    LogMessage("Git discard all failed");
     return false;
   }
 
@@ -485,7 +472,6 @@ bool WorkspaceShell::DiscardAllGitSidebarEntries() {
     ReconcileOpenTabsAfterPathDiscard(path);
   }
   RefreshProjectFiles();
-  LogMessage("Discarded all git changes");
   return true;
 }
 
@@ -498,12 +484,10 @@ bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
     return false;
   }
   if (!project::GitStagePath(project_root_, entry.path)) {
-    LogMessage("Git stage failed: " + entry.relative_path.string());
     return false;
   }
   InvalidateEditorBlamePath(entry.path);
   RefreshProjectFiles();
-  LogMessage("Staged: " + entry.relative_path.string());
   return true;
 }
 
@@ -516,12 +500,10 @@ bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
     return false;
   }
   if (!project::GitUnstagePath(project_root_, entry.path)) {
-    LogMessage("Git unstage failed: " + entry.relative_path.string());
     return false;
   }
   InvalidateEditorBlamePath(entry.path);
   RefreshProjectFiles();
-  LogMessage("Unstaged: " + entry.relative_path.string());
   return true;
 }
 
@@ -536,17 +518,14 @@ bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
 
   std::string blocking_label;
   if (HasDirtyEditorTabsForPath(entry.path, &blocking_label)) {
-    LogMessage("Discard blocked by dirty tab: " + blocking_label);
     return false;
   }
   if (!project::GitDiscardPath(project_root_, entry.path)) {
-    LogMessage("Git discard failed: " + entry.relative_path.string());
     return false;
   }
   InvalidateEditorBlamePath(entry.path);
   ReconcileOpenTabsAfterPathDiscard(entry.path);
   RefreshProjectFiles();
-  LogMessage("Discarded: " + entry.relative_path.string());
   return true;
 }
 

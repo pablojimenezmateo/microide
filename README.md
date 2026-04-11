@@ -138,47 +138,51 @@ Current controls:
 
 Current commands:
 
-- `help`
-- `open <path>`
-- `tab [path]`
-- `tabswitch <tab>`
-- `tabmove <n>`
+- `colorscheme [name|list]`
 - `compare [path] [commit-prefix]`
 - `merge <base> <incoming> <current> [output]`
+- `files [root]`
+- `find <query>`
+- `focus <editor|sidebar|panel>`
+- `goto <line[:col]>`
+- `git-refresh`
+- `indent-width [n]`
+- `jump <line[:col]>`
+- `open <path>`
+- `project-close`
+- `project-next`
+- `project-open [path]`
+- `project-prev`
+- `project-search [query]`
+- `quit`
 - `reopen`
 - `save`
-- `quit`
-- `term [command]`
-- `find <query>`
-- `files [root]`
-- `tree [root]`
 - `search <query>`
-- `project-search [query]`
-- `goto <line[:col]>`
-- `jump <line[:col]>`
-- `tab-size [n]`
-- `indent-width [n]`
+- `sidebar-close`
+- `sidebar-hide`
+- `sidebar-show [tool]`
+- `sidebar-toggle [tool]`
+- `sidebar-width <n>`
 - `soft-tabs [on|off]`
-- `vsplit [path]`
-- `unsplit`
-- `split-next`
-- `split-prev`
 - `split-first`
 - `split-last`
+- `split-next`
+- `split-prev`
+- `tab [path]`
+- `tab-size [n]`
+- `tabmove <n>`
+- `tabswitch <tab>`
+- `term [command]`
+- `tree [root]`
 - `tree-refresh`
-- `sidebar-toggle`
-- `sidebar-show`
-- `sidebar-show git`
-- `sidebar-toggle git`
-- `sidebar-hide`
-- `sidebar-close`
-- `sidebar-width <n>`
-- `focus <editor|sidebar|panel>`
+- `ui-scale [n|up|down|reset]`
+- `unsplit`
+- `vsplit [path]`
 
 Merge example:
 
-- `merge docs/examples/merge-multiline/base.txt docs/examples/merge-multiline/incoming.txt docs/examples/merge-multiline/current.txt docs/examples/merge-multiline/result.txt`
-- the files live under [`docs/examples/merge-multiline/`](/home/pablo/Documents/projects/microide/docs/examples/merge-multiline/README.md) and produce a single multi-line conflict for preview and accept testing
+- `merge /path/to/base.txt /path/to/incoming.txt /path/to/current.txt /path/to/result.txt`
+- use any four plain-text files; the output path can point at the current-side file if you want to resolve in place
 
 Project state:
 
@@ -189,14 +193,14 @@ Diff benchmark:
 
 - build `microide_diff_bench` and run `./build/microide/microide_diff_bench /path/to/repo path/to/file`
 - example repro:
-  `./build/microide/microide_diff_bench /home/pablo/Documents/projects/dolfin-app translations/locales/de/messages.po`
+  `./build/microide/microide_diff_bench /path/to/repo src/main.cpp`
 - the benchmark reports read, diff-build, and syntax-highlight timings separately and uses the same large-file syntax-highlight cutoff as compare tabs
 
 Project search benchmark:
 
 - build `microide_search_bench` and run `./build/microide/microide_search_bench /path/to/repo query [--regex] [--case=smart|sensitive|insensitive] [--hidden] [--runs=5]`
 - example repro:
-  `./build/microide/microide_search_bench /home/pablo/Documents/projects/microide search --runs=5`
+  `./build/microide/microide_search_bench /path/to/repo search --runs=5`
 - the benchmark reports result count, truncation, per-run timings, and min/max/avg search time using the same built-in backend as the sidebar
 
 ## Build

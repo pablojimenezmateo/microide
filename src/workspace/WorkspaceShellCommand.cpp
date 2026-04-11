@@ -160,8 +160,6 @@ void WorkspaceShell::CompleteCommandInput() {
     candidates = CompleteFromList(active_prefix, kToggleValues);
   } else if (command == "ui-scale" && active_index == 1) {
     candidates = CompleteFromList(active_prefix, kUiScaleCommands);
-  } else if (command == "help") {
-    candidates = CompleteFromValues(active_prefix, command_names);
   }
 
   if (candidates.empty()) {
@@ -212,13 +210,11 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   const ParsedCommandLine parsed = ParseCommandLine(command_line);
   if (parsed.dangling_escape) {
     command_completion_feedback_ = "Command parse error: trailing escape";
-    LogMessage(command_completion_feedback_);
     return false;
   }
   if (parsed.open_quote != '\0') {
     command_completion_feedback_ = std::string("Command parse error: unterminated ") +
                                    (parsed.open_quote == '\'' ? "single" : "double") + " quote";
-    LogMessage(command_completion_feedback_);
     return false;
   }
   if (parsed.tokens.empty()) {
@@ -230,7 +226,6 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   const std::string& command = parsed.tokens.front().text;
   const ActionSpec* action = FindActionByCommand(command);
   if (action == nullptr) {
-    LogMessage("Unknown command: " + command);
     return true;
   }
 
@@ -240,10 +235,6 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
     args.push_back(parsed.tokens[i].text);
   }
   return ExecuteAction(action->id, args, ActionSource::Command);
-}
-
-void WorkspaceShell::LogMessage(std::string message) {
-  (void) message;
 }
 
 }  // namespace microide::workspace

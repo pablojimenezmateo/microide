@@ -27,7 +27,6 @@ void WorkspaceShell::OpenBufferSearch() {
   buffer_search_matches_.clear();
   buffer_search_selected_index_ = 0;
   ResetOverlayScroll();
-  LogMessage("Buffer search opened");
 }
 
 void WorkspaceShell::OpenBufferReplace() {
@@ -40,12 +39,10 @@ void WorkspaceShell::OpenBufferReplace() {
   buffer_search_matches_.clear();
   buffer_search_selected_index_ = 0;
   ResetOverlayScroll();
-  LogMessage("Buffer replace opened");
 }
 
 void WorkspaceShell::OpenProjectSearch() {
   if (project_root_.empty()) {
-    LogMessage("No project is loaded");
     return;
   }
   project_search_query_.clear();
@@ -241,7 +238,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       }
       overlay_visible_ = false;
       focus_ = FocusTarget::Editor;
-      LogMessage("Buffer search closed");
       return true;
     case OverlayMode::BufferReplace:
       ReplaceCurrentBufferSearchMatch();
@@ -254,7 +250,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
         text_viewport_.MoveCursorTo(result.line, result.column);
         overlay_visible_ = false;
         focus_ = FocusTarget::Editor;
-        LogMessage("Project search result opened");
       }
       return true;
     case OverlayMode::FileFinder:
@@ -264,7 +259,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       }
       overlay_visible_ = false;
       focus_ = FocusTarget::Editor;
-      LogMessage("Finder selection opened");
       return true;
   }
 }
@@ -281,12 +275,10 @@ void WorkspaceShell::CommitProjectSearchEdit() {
   if (project_search_edit_field_ == ProjectSearchEditField::Query) {
     project_search_query_ = project_search_edit_buffer_;
     RefreshProjectSearch();
-    LogMessage("Project search updated");
     return;
   }
 
   project_replace_text_ = project_search_edit_buffer_;
-  LogMessage("Project replacement text updated");
 }
 
 void WorkspaceShell::CancelProjectSearchEdit() {
@@ -294,7 +286,6 @@ void WorkspaceShell::CancelProjectSearchEdit() {
       project_search_edit_field_ == ProjectSearchEditField::Query ? project_search_query_
                                                                   : project_replace_text_;
   project_search_editing_ = false;
-  LogMessage("Project search edit cancelled");
 }
 
 SDL_FRect WorkspaceShell::ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const {
@@ -407,12 +398,10 @@ void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
 
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   if (project_search_query_.empty()) {
-    LogMessage("Project replace needs a search query");
     return;
   }
 
   if (!ProjectSearchCanReplaceAll()) {
-    LogMessage("Project replace currently supports literal search mode only");
     return;
   }
 
@@ -425,7 +414,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   };
 
   std::vector<PendingProjectReplace> pending;
-  std::size_t replaced_total = 0;
 
   const std::vector<std::filesystem::path> files = project::CollectProjectFiles(
       project_root_, project_search_options_.show_hidden ? project::ProjectFileScanMode::IncludeHidden
@@ -457,11 +445,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       if (open_tabs_[i].kind == TabEntry::Kind::Editor &&
           open_tabs_[i].path.lexically_normal() == normalized_absolute &&
           TabIsDirty(i)) {
-        LogMessage("Project replace blocked by dirty tab: " + relative_path.string());
         return;
       }
     }
-    replaced_total += replacements;
     pending.push_back(PendingProjectReplace{
         .relative_path = relative_path,
         .absolute_path = normalized_absolute,
@@ -471,19 +457,16 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   }
 
   if (pending.empty()) {
-    LogMessage("Project replace found no literal matches");
     return;
   }
 
   for (const auto& change : pending) {
     std::ofstream output(change.absolute_path, std::ios::binary | std::ios::trunc);
     if (!output) {
-      LogMessage("Project replace failed to write: " + change.relative_path.string());
       return;
     }
     output.write(change.content.data(), static_cast<std::streamsize>(change.content.size()));
     if (!output.good()) {
-      LogMessage("Project replace failed to write: " + change.relative_path.string());
       return;
     }
 
@@ -530,8 +513,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
   RefreshProjectFiles();
   RefreshProjectSearch();
-  LogMessage("Replaced " + std::to_string(replaced_total) + " matches in " +
-             std::to_string(pending.size()) + " files");
 }
 
 std::vector<int> WorkspaceShell::BuildProjectSearchLineMap() const {
@@ -596,7 +577,6 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     const auto& next_match = buffer_search_matches_[buffer_search_selected_index_];
     text_viewport_.MoveCursorTo(next_match.start.line, next_match.start.column);
   }
-  LogMessage("Replaced current match");
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
@@ -604,10 +584,8 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
     return;
   }
 
-  const std::size_t replaced =
-      text_viewport_.ReplaceAll(buffer_search_query_, buffer_replace_text_);
+  text_viewport_.ReplaceAll(buffer_search_query_, buffer_replace_text_);
   RefreshBufferSearch();
-  LogMessage("Replaced " + std::to_string(replaced) + " matches");
 }
 
 std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() const {

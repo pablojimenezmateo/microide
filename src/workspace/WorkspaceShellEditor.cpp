@@ -38,7 +38,6 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
   if (tab.kind == TabEntry::Kind::Editor) {
     if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
       if (!EnsureEditorTabLoaded(tab)) {
-        LogMessage("Failed to restore tab: " + tab.title);
         return;
       }
       NormalizeEditorSplitTree(*tab.editor_state);
@@ -55,7 +54,6 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
     } else {
       editor::TextViewport loaded_view;
       if (!loaded_view.OpenFile(tab.path)) {
-        LogMessage("Failed to open file: " + tab.path.lexically_normal().string());
         return;
       }
       ApplyEditorPreferences(loaded_view);
@@ -820,7 +818,6 @@ void WorkspaceShell::CloseTab(std::size_t index) {
     SyncActiveEditorTab();
   }
 
-  const std::string closed_title = open_tabs_[index].title;
   open_tabs_.erase(open_tabs_.begin() + static_cast<std::ptrdiff_t>(index));
 
   if (open_tabs_.empty()) {
@@ -831,7 +828,6 @@ void WorkspaceShell::CloseTab(std::size_t index) {
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
     focus_ = FocusTarget::Editor;
-    LogMessage("Closed tab: " + closed_title);
     return;
   }
 
@@ -843,7 +839,6 @@ void WorkspaceShell::CloseTab(std::size_t index) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
         !tab.editor_state->views.empty()) {
       if (!EnsureEditorTabLoaded(tab)) {
-        LogMessage("Failed to restore tab: " + tab.title);
       } else {
         NormalizeEditorSplitTree(*tab.editor_state);
         if (auto* active_view = FindEditorView(*tab.editor_state, tab.editor_state->active_leaf_id);
@@ -855,7 +850,6 @@ void WorkspaceShell::CloseTab(std::size_t index) {
     } else if (tab.kind == TabEntry::Kind::Editor) {
       editor::TextViewport loaded_view;
       if (!loaded_view.OpenFile(tab.path)) {
-        LogMessage("Failed to open file: " + tab.path.lexically_normal().string());
       } else {
         ApplyEditorPreferences(loaded_view);
         text_viewport_ = loaded_view;
@@ -871,7 +865,6 @@ void WorkspaceShell::CloseTab(std::size_t index) {
   tab_scroll_index_ =
       std::clamp(tab_scroll_index_, 0, std::max(0, static_cast<int>(open_tabs_.size()) - 1));
   EnsureActiveTabVisible();
-  LogMessage("Closed tab: " + closed_title);
 }
 
 }  // namespace microide::workspace

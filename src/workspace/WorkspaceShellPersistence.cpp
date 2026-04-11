@@ -16,14 +16,12 @@ void WorkspaceShell::RefreshAvailableColorschemeNames() {
 }
 
 bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool log_feedback) {
+  (void) log_feedback;
   render::Theme loaded_theme;
   std::string resolved_name;
   std::string error;
   const std::string requested_name = name.empty() ? "default" : std::string(name);
   if (!render::LoadThemeByName(requested_name, loaded_theme, &resolved_name, &error)) {
-    if (log_feedback) {
-      LogMessage(error.empty() ? "Failed to load colorscheme" : error);
-    }
     return false;
   }
 
@@ -44,13 +42,11 @@ bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool 
   if (persist) {
     SaveConfigState();
   }
-  if (log_feedback) {
-    LogMessage("Colorscheme set to " + active_colorscheme_name_);
-  }
   return true;
 }
 
 bool WorkspaceShell::ApplyUiScale(float scale, bool persist, bool log_feedback) {
+  (void) log_feedback;
   if (!std::isfinite(scale)) {
     return false;
   }
@@ -58,9 +54,6 @@ bool WorkspaceShell::ApplyUiScale(float scale, bool persist, bool log_feedback) 
   ui_scale_ = std::clamp(scale, kMinUiScale, kMaxUiScale);
   if (persist) {
     SaveUserConfig();
-  }
-  if (log_feedback) {
-    LogMessage("UI scale set to " + UiScaleLabel(ui_scale_));
   }
   return true;
 }
@@ -71,41 +64,17 @@ bool WorkspaceShell::RestoreUserConfig() {
     return false;
   }
 
-  std::ifstream file(config_path);
-  if (!file) {
+  const auto text = ReadFileText(config_path);
+  if (!text.has_value()) {
     return false;
   }
 
-  bool version_ok = false;
-  float restored_scale = ui_scale_;
-  std::string line;
-  while (std::getline(file, line)) {
-    const ParsedCommandLine parsed = ParseCommandLine(line);
-    if (parsed.tokens.empty()) {
-      continue;
-    }
-
-    const auto& tokens = parsed.tokens;
-    const std::string& command = tokens.front().text;
-    if (command == "version") {
-      version_ok = tokens.size() == 2 && tokens[1].text == "1";
-      continue;
-    }
-    if (!version_ok) {
-      return false;
-    }
-    if (command == "ui-scale" && tokens.size() == 2) {
-      if (const auto scale = ParseUiScaleValue(tokens[1].text); scale.has_value()) {
-        restored_scale = *scale;
-      }
-    }
-  }
-
-  if (!version_ok) {
+  PersistedUserConfigState state{.ui_scale = ui_scale_};
+  if (!ParseUserConfigText(*text, &state)) {
     return false;
   }
 
-  return ApplyUiScale(restored_scale, false, false);
+  return ApplyUiScale(state.ui_scale, false, false);
 }
 
 void WorkspaceShell::SaveUserConfig() const {
@@ -122,8 +91,7 @@ void WorkspaceShell::SaveUserConfig() const {
     return;
   }
 
-  file << "version 1\n";
-  file << "ui-scale " << ui_scale_ << '\n';
+  file << SerializeUserConfig(PersistedUserConfigState{.ui_scale = ui_scale_});
 }
 
 bool WorkspaceShell::RestoreConfigState() {
@@ -131,69 +99,28 @@ bool WorkspaceShell::RestoreConfigState() {
   if (config_path.empty()) {
     return false;
   }
-  std::ifstream file(config_path);
-  if (!file) {
+  const auto text = ReadFileText(config_path);
+  if (!text.has_value()) {
     return false;
   }
 
-  bool version_ok = false;
-  EditorPreferences restored = editor_preferences_;
-  std::string restored_colorscheme = active_colorscheme_name_;
-  std::optional<SDL_Color> restored_project_base_color = project_base_color_;
-  std::string line;
-  while (std::getline(file, line)) {
-    const ParsedCommandLine parsed = ParseCommandLine(line);
-    if (parsed.tokens.empty()) {
-      continue;
-    }
-
-    const auto& tokens = parsed.tokens;
-    const std::string& command = tokens.front().text;
-    if (command == "version") {
-      version_ok = tokens.size() == 2 && tokens[1].text == "1";
-      continue;
-    }
-    if (!version_ok) {
-      return false;
-    }
-    if (command == "editor-tab-size" && tokens.size() == 2) {
-      try {
-        restored.tab_size =
-            std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(tokens[1].text)), 1, 16);
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "editor-indent-width" && tokens.size() == 2) {
-      try {
-        restored.indent_width =
-            std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(tokens[1].text)), 1, 16);
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "editor-soft-tabs" && tokens.size() == 2) {
-      restored.soft_tabs = tokens[1].text == "1" || tokens[1].text == "on" ||
-                           tokens[1].text == "true";
-      continue;
-    }
-    if (command == "colorscheme" && tokens.size() == 2) {
-      restored_colorscheme = tokens[1].text;
-      continue;
-    }
-    if (command == "project-base-color" && tokens.size() == 2) {
-      restored_project_base_color = ParseProjectColor(tokens[1].text);
-    }
-  }
-
-  if (!version_ok) {
+  PersistedProjectConfigState state{
+      .editor_tab_size = editor_preferences_.tab_size,
+      .editor_indent_width = editor_preferences_.indent_width,
+      .editor_soft_tabs = editor_preferences_.soft_tabs,
+      .colorscheme_name = active_colorscheme_name_,
+      .project_base_color = project_base_color_,
+  };
+  if (!ParseProjectConfigText(*text, &state)) {
     return false;
   }
 
-  editor_preferences_ = restored;
-  project_base_color_ = restored_project_base_color;
+  editor_preferences_.tab_size = state.editor_tab_size;
+  editor_preferences_.indent_width = state.editor_indent_width;
+  editor_preferences_.soft_tabs = state.editor_soft_tabs;
+  project_base_color_ = state.project_base_color;
   ApplyEditorPreferencesToAllTabs();
-  ApplyColorscheme(restored_colorscheme, false, false);
+  ApplyColorscheme(state.colorscheme_name, false, false);
   return true;
 }
 
@@ -214,15 +141,14 @@ void WorkspaceShell::SaveConfigState() const {
     return;
   }
 
-  file << "version 1\n";
-  file << "editor-tab-size " << editor_preferences_.tab_size << '\n';
-  file << "editor-indent-width " << editor_preferences_.indent_width << '\n';
-  file << "editor-soft-tabs " << (editor_preferences_.soft_tabs ? 1 : 0) << '\n';
-  file << "colorscheme " << QuoteCommandArg(active_colorscheme_name_) << '\n';
-  file << "project-base-color "
-       << QuoteCommandArg(
-              FormatProjectColor(project_base_color_.value_or(DefaultProjectBaseColor(project_root_))))
-       << '\n';
+  file << SerializeProjectConfig(PersistedProjectConfigState{
+      .editor_tab_size = editor_preferences_.tab_size,
+      .editor_indent_width = editor_preferences_.indent_width,
+      .editor_soft_tabs = editor_preferences_.soft_tabs,
+      .colorscheme_name = active_colorscheme_name_,
+      .project_base_color =
+          project_base_color_.value_or(DefaultProjectBaseColor(project_root_)),
+  });
 }
 
 std::filesystem::path WorkspaceShell::SessionStatePath() const {
@@ -253,226 +179,17 @@ bool WorkspaceShell::RestoreSessionState() {
   if (session_path.empty()) {
     return false;
   }
-  std::ifstream file(session_path);
-  if (!file) {
+  const auto text = ReadFileText(session_path);
+  if (!text.has_value()) {
     return false;
   }
 
-  bool version_ok = false;
-  bool restored_sidebar_visible = sidebar_visible_;
-  float restored_sidebar_width = sidebar_width_;
-  float restored_bottom_panel_height = bottom_panel_height_;
-  std::optional<std::size_t> restored_active_tab_index;
-  std::vector<PersistedEditorTabState> persisted_tabs;
-  std::optional<PersistedEditorTabState> current_tab;
-
-  std::string line;
-  while (std::getline(file, line)) {
-    const ParsedCommandLine parsed = ParseCommandLine(line);
-    if (parsed.tokens.empty()) {
-      continue;
-    }
-
-    const std::vector<ParsedCommandToken>& tokens = parsed.tokens;
-    const std::string& command = tokens.front().text;
-    if (command == "version") {
-      version_ok = tokens.size() == 2 && tokens[1].text == "1";
-      continue;
-    }
-    if (!version_ok) {
-      return false;
-    }
-    if (command == "sidebar-visible" && tokens.size() == 2) {
-      restored_sidebar_visible = tokens[1].text == "1";
-      continue;
-    }
-    if (command == "sidebar-width" && tokens.size() == 2) {
-      try {
-        restored_sidebar_width = std::stof(tokens[1].text);
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "bottom-panel-height" && tokens.size() == 2) {
-      try {
-        restored_bottom_panel_height = std::stof(tokens[1].text);
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "active-tab" && tokens.size() == 2) {
-      try {
-        restored_active_tab_index = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "tab-begin") {
-      current_tab = PersistedEditorTabState{};
-      continue;
-    }
-    if (!current_tab.has_value()) {
-      continue;
-    }
-    if (command == "tab-end") {
-      persisted_tabs.push_back(*current_tab);
-      current_tab.reset();
-      continue;
-    }
-    if (command == "active-leaf" && tokens.size() == 2) {
-      try {
-        current_tab->active_leaf_id = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "kind" && tokens.size() == 2) {
-      current_tab->kind = tokens[1].text;
-      continue;
-    }
-    if (command == "view" && tokens.size() == 7) {
-      try {
-        current_tab->views.push_back(PersistedEditorViewState{
-            .leaf_id = static_cast<std::size_t>(std::stoull(tokens[1].text)),
-            .path = std::filesystem::path(tokens[2].text),
-            .cursor_line = static_cast<std::size_t>(std::stoull(tokens[3].text)),
-            .cursor_column = static_cast<std::size_t>(std::stoull(tokens[4].text)),
-            .scroll_line = static_cast<std::size_t>(std::stoull(tokens[5].text)),
-            .horizontal_scroll = static_cast<std::size_t>(std::stoull(tokens[6].text)),
-        });
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "compare-path" && tokens.size() == 2) {
-      current_tab->compare_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "compare-left-path" && tokens.size() == 2) {
-      current_tab->compare_left_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "compare-right-path" && tokens.size() == 2) {
-      current_tab->compare_right_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "compare-commit" && tokens.size() == 3) {
-      current_tab->compare_commit_hash = tokens[1].text;
-      current_tab->compare_commit_short_hash = tokens[2].text;
-      continue;
-    }
-    if (command == "compare-right-ref" && tokens.size() == 2) {
-      current_tab->compare_right_ref = tokens[1].text;
-      continue;
-    }
-    if (command == "compare-right-label" && tokens.size() == 2) {
-      current_tab->compare_right_label = tokens[1].text;
-      continue;
-    }
-    if (command == "compare-selected-row" && tokens.size() == 2) {
-      try {
-        current_tab->compare_selected_row = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "compare-scroll-row" && tokens.size() == 2) {
-      try {
-        current_tab->compare_scroll_row = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "compare-horizontal-scroll" && tokens.size() == 2) {
-      try {
-        current_tab->compare_horizontal_scroll =
-            static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "merge-base" && tokens.size() == 2) {
-      current_tab->merge_base_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "merge-incoming" && tokens.size() == 2) {
-      current_tab->merge_incoming_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "merge-current" && tokens.size() == 2) {
-      current_tab->merge_current_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "merge-output" && tokens.size() == 2) {
-      current_tab->merge_output_path = std::filesystem::path(tokens[1].text);
-      continue;
-    }
-    if (command == "merge-selected-hunk" && tokens.size() == 2) {
-      try {
-        current_tab->merge_selected_hunk = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "merge-scroll-row" && tokens.size() == 2) {
-      try {
-        current_tab->merge_scroll_row = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "merge-horizontal-scroll" && tokens.size() == 2) {
-      try {
-        current_tab->merge_horizontal_scroll =
-            static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "merge-left-divider" && tokens.size() == 2) {
-      try {
-        current_tab->merge_left_divider_fraction = std::stof(tokens[1].text);
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "merge-right-divider" && tokens.size() == 2) {
-      try {
-        current_tab->merge_right_divider_fraction = std::stof(tokens[1].text);
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "merge-choice" && tokens.size() == 3) {
-      try {
-        const std::size_t hunk_index = static_cast<std::size_t>(std::stoull(tokens[1].text));
-        if (current_tab->merge_hunk_choices.size() <= hunk_index) {
-          current_tab->merge_hunk_choices.resize(hunk_index + 1);
-        }
-        current_tab->merge_hunk_choices[hunk_index] = tokens[2].text;
-      } catch (...) {
-      }
-      continue;
-    }
-    if (command == "split-node" && tokens.size() == 5) {
-      const auto path = DecodeSessionNodePath(tokens[1].text);
-      if (!path.has_value()) {
-        continue;
-      }
-      try {
-        current_tab->split_nodes.push_back(PersistedSplitNodeState{
-            .path = *path,
-            .orientation = tokens[2].text,
-            .size_fraction = std::stof(tokens[3].text),
-            .leaf_id = static_cast<std::size_t>(std::stoull(tokens[4].text)),
-        });
-      } catch (...) {
-      }
-      continue;
-    }
-  }
-
-  if (!version_ok) {
+  PersistedProjectSessionState persisted_session;
+  persisted_session.sidebar_visible = sidebar_visible_;
+  persisted_session.sidebar_width = sidebar_width_;
+  persisted_session.bottom_panel_height = bottom_panel_height_;
+  persisted_session.active_tab_index = active_tab_index_;
+  if (!ParseProjectSessionText(*text, &persisted_session)) {
     return false;
   }
 
@@ -484,7 +201,7 @@ bool WorkspaceShell::RestoreSessionState() {
   compare_picker_commits_.clear();
   compare_picker_selected_index_ = 0;
 
-  for (const PersistedEditorTabState& persisted_tab : persisted_tabs) {
+  for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
     if (persisted_tab.kind == "compare") {
       std::filesystem::path compare_path = persisted_tab.compare_path;
       if (compare_path.is_relative()) {
@@ -530,7 +247,7 @@ bool WorkspaceShell::RestoreSessionState() {
             persisted_tab.compare_scroll_row,
             static_cast<std::size_t>(std::numeric_limits<int>::max())));
         compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
-        compare_state.persistable = persisted_tab.compare_persistable;
+        compare_state.persistable = true;
         compare_tab = BuildCompareTabEntry(compare_path, compare_state);
       } else {
         compare_tab = BuildCompareTabEntry(compare_path, commit, persisted_tab.compare_selected_row);
@@ -698,9 +415,9 @@ bool WorkspaceShell::RestoreSessionState() {
     });
   }
 
-  sidebar_visible_ = restored_sidebar_visible;
-  sidebar_width_ = restored_sidebar_width;
-  bottom_panel_height_ = restored_bottom_panel_height;
+  sidebar_visible_ = persisted_session.sidebar_visible;
+  sidebar_width_ = persisted_session.sidebar_width;
+  bottom_panel_height_ = persisted_session.bottom_panel_height;
 
   if (open_tabs_.empty()) {
     text_viewport_.SetPlaceholderText(
@@ -712,7 +429,7 @@ bool WorkspaceShell::RestoreSessionState() {
   }
 
   const std::size_t active_index =
-      std::min(restored_active_tab_index.value_or(0), open_tabs_.size() - 1);
+      std::min(persisted_session.active_tab_index, open_tabs_.size() - 1);
   active_tab_index_ = active_index;
   focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
   return true;
@@ -737,67 +454,58 @@ void WorkspaceShell::SaveSessionState() {
     return;
   }
 
-  file << "version 1\n";
-  file << "sidebar-visible " << (sidebar_visible_ ? 1 : 0) << '\n';
-  file << "sidebar-width " << sidebar_width_ << '\n';
-  file << "bottom-panel-height " << bottom_panel_height_ << '\n';
+  PersistedProjectSessionState persisted_session;
+  persisted_session.sidebar_visible = sidebar_visible_;
+  persisted_session.sidebar_width = sidebar_width_;
+  persisted_session.bottom_panel_height = bottom_panel_height_;
+  persisted_session.active_tab_index = 0;
 
-  std::size_t persisted_active_tab = 0;
-  std::size_t persisted_tab_count = 0;
   for (std::size_t tab_index = 0; tab_index < open_tabs_.size(); ++tab_index) {
     auto& tab = open_tabs_[tab_index];
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         tab.compare->persistable) {
       if (tab_index == active_tab_index_) {
-        persisted_active_tab = persisted_tab_count;
+        persisted_session.active_tab_index = persisted_session.tabs.size();
       }
 
-      file << "tab-begin\n";
-      file << "kind compare\n";
-      file << "compare-path " << QuoteCommandArg(tab.compare->path.lexically_normal().string())
-           << '\n';
-      file << "compare-left-path "
-           << QuoteCommandArg(tab.compare->left_path.lexically_normal().string()) << '\n';
-      file << "compare-right-path "
-           << QuoteCommandArg(tab.compare->right_path.lexically_normal().string()) << '\n';
-      file << "compare-commit " << QuoteCommandArg(tab.compare->commit_hash) << ' '
-           << QuoteCommandArg(tab.compare->left_label) << '\n';
-      file << "compare-right-ref " << QuoteCommandArg(tab.compare->right_ref) << '\n';
-      file << "compare-right-label " << QuoteCommandArg(tab.compare->right_label) << '\n';
-      file << "compare-selected-row " << tab.compare->selected_row << '\n';
-      file << "compare-scroll-row " << tab.compare->scroll_row << '\n';
-      file << "compare-horizontal-scroll " << tab.compare->horizontal_scroll << '\n';
-      file << "tab-end\n";
-      ++persisted_tab_count;
+      PersistedEditorTabState persisted_tab;
+      persisted_tab.kind = "compare";
+      persisted_tab.compare_path = tab.compare->path.lexically_normal();
+      persisted_tab.compare_left_path = tab.compare->left_path.lexically_normal();
+      persisted_tab.compare_right_path = tab.compare->right_path.lexically_normal();
+      persisted_tab.compare_commit_hash = tab.compare->commit_hash;
+      persisted_tab.compare_commit_short_hash = tab.compare->left_label;
+      persisted_tab.compare_right_ref = tab.compare->right_ref;
+      persisted_tab.compare_right_label = tab.compare->right_label;
+      persisted_tab.compare_selected_row = tab.compare->selected_row;
+      persisted_tab.compare_scroll_row =
+          static_cast<std::size_t>(std::max(0, tab.compare->scroll_row));
+      persisted_tab.compare_horizontal_scroll = tab.compare->horizontal_scroll;
+      persisted_session.tabs.push_back(std::move(persisted_tab));
       continue;
     }
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() && tab.merge->persistable) {
       if (tab_index == active_tab_index_) {
-        persisted_active_tab = persisted_tab_count;
+        persisted_session.active_tab_index = persisted_session.tabs.size();
       }
 
-      file << "tab-begin\n";
-      file << "kind merge\n";
-      file << "merge-base " << QuoteCommandArg(tab.merge->base_path.lexically_normal().string())
-           << '\n';
-      file << "merge-incoming "
-           << QuoteCommandArg(tab.merge->incoming_path.lexically_normal().string()) << '\n';
-      file << "merge-current "
-           << QuoteCommandArg(tab.merge->current_path.lexically_normal().string()) << '\n';
-      file << "merge-output "
-           << QuoteCommandArg(tab.merge->output_path.lexically_normal().string()) << '\n';
-      file << "merge-selected-hunk " << tab.merge->selected_hunk << '\n';
-      file << "merge-scroll-row " << tab.merge->scroll_row << '\n';
-      file << "merge-horizontal-scroll " << tab.merge->horizontal_scroll << '\n';
-      file << "merge-left-divider " << tab.merge->left_divider_fraction << '\n';
-      file << "merge-right-divider " << tab.merge->right_divider_fraction << '\n';
-      for (std::size_t i = 0; i < tab.merge->model.hunks.size(); ++i) {
-        file << "merge-choice " << i << ' '
-             << QuoteCommandArg(compare::MergeChoiceLabel(tab.merge->model.hunks[i].choice))
-             << '\n';
+      PersistedEditorTabState persisted_tab;
+      persisted_tab.kind = "merge";
+      persisted_tab.merge_base_path = tab.merge->base_path.lexically_normal();
+      persisted_tab.merge_incoming_path = tab.merge->incoming_path.lexically_normal();
+      persisted_tab.merge_current_path = tab.merge->current_path.lexically_normal();
+      persisted_tab.merge_output_path = tab.merge->output_path.lexically_normal();
+      persisted_tab.merge_selected_hunk = tab.merge->selected_hunk;
+      persisted_tab.merge_scroll_row =
+          static_cast<std::size_t>(std::max(0, tab.merge->scroll_row));
+      persisted_tab.merge_horizontal_scroll = tab.merge->horizontal_scroll;
+      persisted_tab.merge_left_divider_fraction = tab.merge->left_divider_fraction;
+      persisted_tab.merge_right_divider_fraction = tab.merge->right_divider_fraction;
+      persisted_tab.merge_hunk_choices.reserve(tab.merge->model.hunks.size());
+      for (const auto& hunk : tab.merge->model.hunks) {
+        persisted_tab.merge_hunk_choices.push_back(compare::MergeChoiceLabel(hunk.choice));
       }
-      file << "tab-end\n";
-      ++persisted_tab_count;
+      persisted_session.tabs.push_back(std::move(persisted_tab));
       continue;
     }
 
@@ -809,12 +517,12 @@ void WorkspaceShell::SaveSessionState() {
     auto& editor_state = tab.editor_state.value();
     NormalizeEditorSplitTree(editor_state);
     if (tab_index == active_tab_index_) {
-      persisted_active_tab = persisted_tab_count;
+      persisted_session.active_tab_index = persisted_session.tabs.size();
     }
 
-    file << "tab-begin\n";
-    file << "kind editor\n";
-    file << "active-leaf " << editor_state.active_leaf_id << '\n';
+    PersistedEditorTabState persisted_tab;
+    persisted_tab.kind = "editor";
+    persisted_tab.active_leaf_id = editor_state.active_leaf_id;
     for (const auto& view : editor_state.views) {
       const bool active_live_view =
           tab_index == active_tab_index_ && view.leaf_id == editor_state.active_leaf_id &&
@@ -836,13 +544,18 @@ void WorkspaceShell::SaveSessionState() {
       const std::size_t horizontal_scroll =
           view.needs_restore ? view.restored_horizontal_scroll
                              : persisted_viewport->horizontal_scroll();
-      file << "view " << view.leaf_id << ' ' << QuoteCommandArg(normalized_path.string()) << ' '
-           << cursor_line << ' ' << cursor_column << ' ' << scroll_line << ' '
-           << horizontal_scroll << '\n';
+      persisted_tab.views.push_back(PersistedEditorViewState{
+          .leaf_id = view.leaf_id,
+          .path = normalized_path,
+          .cursor_line = cursor_line,
+          .cursor_column = cursor_column,
+          .scroll_line = scroll_line,
+          .horizontal_scroll = horizontal_scroll,
+      });
     }
 
     std::vector<std::size_t> node_path;
-    const auto write_split_node =
+    const auto collect_split_node =
         [&](auto&& self, const TabEntry::EditorTabState::EditorSplitNode* node) -> void {
       if (node == nullptr) {
         return;
@@ -853,20 +566,23 @@ void WorkspaceShell::SaveSessionState() {
         orientation = node->orientation == EditorSplitOrientation::Horizontal ? "horizontal"
                                                                               : "vertical";
       }
-      file << "split-node " << EncodeSessionNodePath(node_path) << ' ' << orientation << ' '
-           << node->size_fraction << ' ' << node->leaf_id << '\n';
+      persisted_tab.split_nodes.push_back(PersistedSplitNodeState{
+          .path = node_path,
+          .orientation = orientation,
+          .size_fraction = node->size_fraction,
+          .leaf_id = node->leaf_id,
+      });
       for (std::size_t child_index = 0; child_index < node->children.size(); ++child_index) {
         node_path.push_back(child_index);
         self(self, node->children[child_index].get());
         node_path.pop_back();
       }
     };
-    write_split_node(write_split_node, editor_state.split_root.get());
-    file << "tab-end\n";
-    ++persisted_tab_count;
+    collect_split_node(collect_split_node, editor_state.split_root.get());
+    persisted_session.tabs.push_back(std::move(persisted_tab));
   }
 
-  file << "active-tab " << persisted_active_tab << '\n';
+  file << SerializeProjectSession(persisted_session);
 }
 
 std::filesystem::path WorkspaceShell::WorkspaceSessionStatePath() const {
@@ -886,44 +602,13 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
   if (session_path.empty()) {
     return false;
   }
-
-  std::ifstream file(session_path);
-  if (!file) {
+  const auto text = ReadFileText(session_path);
+  if (!text.has_value()) {
     return false;
   }
 
-  bool version_ok = false;
-  std::vector<std::filesystem::path> project_roots;
-  std::optional<std::size_t> restored_active_project;
-  std::string line;
-  while (std::getline(file, line)) {
-    const ParsedCommandLine parsed = ParseCommandLine(line);
-    if (parsed.tokens.empty()) {
-      continue;
-    }
-
-    const auto& tokens = parsed.tokens;
-    const std::string& command = tokens.front().text;
-    if (command == "version") {
-      version_ok = tokens.size() == 2 && tokens[1].text == "1";
-      continue;
-    }
-    if (!version_ok) {
-      return false;
-    }
-    if (command == "project" && tokens.size() == 2) {
-      project_roots.push_back(std::filesystem::path(tokens[1].text));
-      continue;
-    }
-    if (command == "active-project" && tokens.size() == 2) {
-      try {
-        restored_active_project = static_cast<std::size_t>(std::stoull(tokens[1].text));
-      } catch (...) {
-      }
-    }
-  }
-
-  if (!version_ok) {
+  PersistedWorkspaceSessionState persisted_session;
+  if (!ParseWorkspaceSessionText(*text, &persisted_session)) {
     return false;
   }
 
@@ -931,12 +616,12 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
   active_project_index_ = 0;
   project_tab_scroll_index_ = 0;
 
-  if (project_roots.empty()) {
+  if (persisted_session.project_roots.empty()) {
     ResetProjectScopedState(true);
     return true;
   }
 
-  for (const auto& root : project_roots) {
+  for (const auto& root : persisted_session.project_roots) {
     const std::filesystem::path normalized_root = ResolveProjectRootInput(root);
     std::error_code error;
     if (normalized_root.empty() || !std::filesystem::exists(normalized_root, error) || error ||
@@ -954,7 +639,7 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     return true;
   }
 
-  active_project_index_ = std::min(restored_active_project.value_or(0), projects_.size() - 1);
+  active_project_index_ = std::min(persisted_session.active_project_index, projects_.size() - 1);
   if (!ActivateProjectState(*projects_[active_project_index_], true)) {
     projects_.erase(projects_.begin() + static_cast<std::ptrdiff_t>(active_project_index_));
     if (projects_.empty()) {
@@ -965,7 +650,6 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     ActivateProjectState(*projects_[active_project_index_], true);
   }
   EnsureActiveProjectVisible();
-  LogMessage("Restored workspace session");
   return true;
 }
 
@@ -983,17 +667,19 @@ void WorkspaceShell::SaveWorkspaceSession() {
     return;
   }
 
-  file << "version 1\n";
+  PersistedWorkspaceSessionState persisted_session;
+  persisted_session.active_project_index =
+      projects_.empty() ? 0 : std::min(active_project_index_, projects_.size() - 1);
+  persisted_session.project_roots.reserve(projects_.size());
   for (std::size_t i = 0; i < projects_.size(); ++i) {
     const std::filesystem::path project_root =
         projects_[i] != nullptr ? projects_[i]->root : std::filesystem::path{};
     if (project_root.empty()) {
       continue;
     }
-    file << "project " << QuoteCommandArg(project_root.lexically_normal().string()) << '\n';
+    persisted_session.project_roots.push_back(project_root.lexically_normal());
   }
-  file << "active-project "
-       << (projects_.empty() ? 0 : std::min(active_project_index_, projects_.size() - 1)) << '\n';
+  file << SerializeWorkspaceSession(persisted_session);
 }
 
 }  // namespace microide::workspace

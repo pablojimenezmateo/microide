@@ -137,7 +137,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
               VisibleEditorBlameLine(visible_blame_popup->line_index);
           blame_line != nullptr && !blame_line->commit_id.empty() &&
           WriteClipboardText(blame_line->commit_id)) {
-        LogMessage("Blame commit SHA copied");
       }
     }
     focus_ = FocusTarget::Editor;
@@ -334,7 +333,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     if (!Contains(overlay, event.button.x, event.button.y)) {
       overlay_visible_ = false;
       focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
-      LogMessage("Overlay closed");
       return true;
     }
 
@@ -622,7 +620,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
             RestorePreviousSidebar();
           }
           focus_ = FocusTarget::Editor;
-          LogMessage("Project search result opened");
         }
       }
       return true;
@@ -751,8 +748,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         const auto opened = directory_tree_.ActivateSelection();
         if (opened.has_value()) {
           OpenFile(*opened);
-        } else {
-          LogMessage("Tree selection toggled");
         }
       }
       return true;

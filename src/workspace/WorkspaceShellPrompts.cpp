@@ -88,7 +88,6 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
       return;
     }
     DismissDirtyPrompt(true);
-    LogMessage(prompt.kind == DirtyPromptState::Kind::Quit ? "Quit cancelled" : "Close cancelled");
     return;
   }
 
@@ -106,7 +105,6 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 
   if (prompt.kind == DirtyPromptState::Kind::CloseTab) {
     if (prompt.selected_action == 0 && !SaveTab(prompt.tab_index)) {
-      LogMessage("Save failed");
       return;
     }
     DismissDirtyPrompt(false);
@@ -123,14 +121,12 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
         (prompt.project_index != active_project_index_ || project_root_.empty())) {
       if (!SwitchProject(prompt.project_index, false)) {
         DismissDirtyPrompt(true);
-        LogMessage("Failed to switch project");
         return;
       }
     }
     if (prompt.selected_action == 0) {
       for (std::size_t index : prompt.dirty_tabs) {
         if (!SaveTab(index)) {
-          LogMessage("Save failed");
           return;
         }
       }
@@ -153,7 +149,6 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
       }
       for (std::size_t index : DirtyEditorTabIndices()) {
         if (!SaveTab(index)) {
-          LogMessage("Save failed");
           return;
         }
       }
@@ -165,7 +160,6 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 
   DismissDirtyPrompt(false);
   quit_requested_ = true;
-  LogMessage(prompt.selected_action == 0 ? "Quit confirmed" : "Quit without saving");
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
@@ -536,7 +530,6 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
           continue;
         }
         if (!SaveTab(target.tab_index)) {
-          LogMessage("Save failed");
           return false;
         }
         saved_any = true;
@@ -550,7 +543,6 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
           continue;
         }
         if (!SaveTab(target.tab_index)) {
-          LogMessage("Save failed");
           return false;
         }
         saved_any = true;
@@ -582,7 +574,6 @@ bool WorkspaceShell::ResolveDirtyTabsForPath(const std::filesystem::path& path,
       }
 
       if (!viewport->Save()) {
-        LogMessage("Save failed");
         return false;
       }
       saved_any = true;
@@ -813,7 +804,6 @@ void WorkspaceShell::RetargetOpenTabsForRename(const std::filesystem::path& old_
     compare_picker_path_ = ReplacePathPrefix(compare_picker_path_, old_path, new_path);
     if (overlay_visible_ && overlay_mode_ == OverlayMode::CommitPicker) {
       overlay_visible_ = false;
-      LogMessage("Compare picker closed after rename");
     }
   }
 }
@@ -931,7 +921,6 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
     compare_picker_matches_.clear();
     if (overlay_visible_ && overlay_mode_ == OverlayMode::CommitPicker) {
       overlay_visible_ = false;
-      LogMessage("Compare picker closed after delete");
     }
   }
 }
@@ -943,21 +932,17 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
 
   const PromptSurfaceState state = prompt_surface_state_;
   if (state.selected_button == 1) {
-    const std::string title = PromptSurfaceTitle();
     DismissPromptSurface(true);
-    LogMessage(title + " cancelled");
     return;
   }
 
   if (state.kind == PromptSurfaceState::Kind::TextInput) {
     if (state.input.empty()) {
-      LogMessage("A path is required");
       return;
     }
 
     std::filesystem::path typed_path(state.input);
     if (typed_path.is_absolute()) {
-      LogMessage("Enter a project-relative path");
       return;
     }
 
@@ -972,7 +957,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     }
 
     if (!PathEqualsOrWithin(destination, project_root_)) {
-      LogMessage("Path must stay inside the current project");
       return;
     }
 
@@ -986,7 +970,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     }
 
     if (!result.ok) {
-      LogMessage(result.error_message);
       return;
     }
 
@@ -997,13 +980,11 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     if (state.action == PromptSurfaceState::Action::CreateFile) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
       OpenFile(result.resulting_path);
-      LogMessage("Created file: " + RelativePathLabel(project_root_, result.resulting_path));
       return;
     }
     if (state.action == PromptSurfaceState::Action::CreateDirectory) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
       focus_ = FocusTarget::Sidebar;
-      LogMessage("Created folder: " + RelativePathLabel(project_root_, result.resulting_path));
       return;
     }
 
@@ -1012,7 +993,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     ClearEditorBlame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
     focus_ = FocusTarget::Sidebar;
-    LogMessage("Renamed: " + RelativePathLabel(project_root_, result.resulting_path));
     return;
   }
 
@@ -1031,7 +1011,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
 
   const project::FileOperationResult result = project::FileOperationService::TrashPath(state.path);
   if (!result.ok) {
-    LogMessage(result.error_message);
     return;
   }
 
@@ -1044,7 +1023,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   ClearEditorBlame();
   RefreshProjectViewsAfterMutation(parent);
   focus_ = FocusTarget::Sidebar;
-  LogMessage("Moved to trash: " + RelativePathLabel(project_root_, state.path));
 }
 
 }  // namespace microide::workspace

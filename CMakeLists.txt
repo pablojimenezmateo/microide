@@ -11,6 +11,8 @@ enable_testing()
 option(MICROIDE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(MICROIDE_ENABLE_SDL3_TTF "Enable SDL3_ttf text backend when available" ON)
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/microide")
+
 find_package(PkgConfig QUIET)
 find_package(SDL3 CONFIG QUIET)
 
@@ -63,9 +65,14 @@ endif()
 
 pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
 
+add_library(microide_runtime_syntax_generated OBJECT
+  src/editor/RuntimeSyntaxGenerated.cpp
+)
+
+target_include_directories(microide_runtime_syntax_generated PRIVATE src)
+
 set(MICROIDE_CORE_SOURCES
   src/editor/EditorViewRenderer.cpp
-  src/editor/RuntimeSyntaxGenerated.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
@@ -113,6 +120,7 @@ set(MICROIDE_CORE_SOURCES
 add_executable(microide
   src/app/main.cpp
   src/app/Application.cpp
+  $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
 )
 
@@ -149,6 +157,7 @@ elseif(MSVC)
 endif()
 
 add_executable(microide_tests
+  $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
   tests/CompareModelTests.cpp
   tests/FileOperationServiceTests.cpp
@@ -194,7 +203,7 @@ endif()
 add_test(NAME microide_tests COMMAND microide_tests)
 
 add_executable(microide_diff_bench
-  src/editor/RuntimeSyntaxGenerated.cpp
+  $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/compare/CompareModel.cpp

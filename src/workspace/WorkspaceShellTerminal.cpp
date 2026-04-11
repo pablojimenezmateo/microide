@@ -92,10 +92,8 @@ CapturedTerminalInvocation CaptureVisibleTerminalInvocation(
 }  // namespace
 
 void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
+  (void) log_feedback;
   if (project_root_.empty()) {
-    if (log_feedback) {
-      LogMessage("No project is loaded");
-    }
     return;
   }
   const std::filesystem::path working_directory = project_root_;
@@ -104,9 +102,6 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
     terminal_tab->session.SetWakeEventType(terminal_event_type_);
   }
   if (!terminal_tab->session.Start(working_directory, command)) {
-    if (log_feedback) {
-      LogMessage("Failed to start terminal");
-    }
     return;
   }
 
@@ -114,11 +109,6 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   active_terminal_tab_index_ = terminal_tabs_.size() - 1;
   if (focus_terminal) {
     focus_ = FocusTarget::Panel;
-  }
-  if (log_feedback) {
-    if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
-      LogMessage("Terminal started: " + active_terminal->session.LaunchLabel());
-    }
   }
 }
 

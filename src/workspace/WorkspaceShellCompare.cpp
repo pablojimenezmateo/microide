@@ -499,11 +499,9 @@ void WorkspaceShell::OpenComparePicker() {
 bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
                                               std::string_view commit_spec) {
   if (project_root_.empty()) {
-    LogMessage("No project is loaded");
     return false;
   }
   if (path.empty()) {
-    LogMessage("No file is available for compare");
     return false;
   }
 
@@ -512,7 +510,6 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
   compare_picker_commits_ = project::CollectGitFileHistory(project_root_, compare_picker_path_);
   RefreshComparePicker();
   if (compare_picker_matches_.empty()) {
-    LogMessage("No git history available for file");
     return false;
   }
 
@@ -530,11 +527,9 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
     }
 
     if (matching_indices.empty()) {
-      LogMessage("No compare commit matches: " + std::string(commit_spec));
       return false;
     }
     if (matching_indices.size() > 1) {
-      LogMessage("Compare commit is ambiguous: " + std::string(commit_spec));
       return false;
     }
 
@@ -547,7 +542,6 @@ bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
   overlay_mode_ = OverlayMode::CommitPicker;
   focus_ = FocusTarget::Overlay;
   ResetOverlayScroll();
-  LogMessage("Compare picker opened");
   return true;
 }
 
@@ -1100,7 +1094,6 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
   }
   auto compare_tab = BuildCompareTabEntry(compare_picker_path_, commit);
   if (!compare_tab.has_value()) {
-    LogMessage("Failed to read file content at selected commit");
     return;
   }
 
@@ -1111,7 +1104,6 @@ void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
   EnsureActiveTabVisible();
   overlay_visible_ = false;
   focus_ = FocusTarget::Editor;
-  LogMessage("Comparison opened");
 }
 
 bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
@@ -1160,7 +1152,6 @@ bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
   auto merge_tab =
       BuildMergeTabEntry(normalized_base, normalized_incoming, normalized_current, normalized_output);
   if (!merge_tab.has_value()) {
-    LogMessage("Failed to open merge inputs");
     return false;
   }
 
@@ -1170,7 +1161,6 @@ bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
   RevealActiveMergeSelection();
   EnsureActiveTabVisible();
   focus_ = FocusTarget::Editor;
-  LogMessage("Merge editor opened");
   return true;
 }
 
@@ -1323,7 +1313,6 @@ void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
   const std::size_t selected_hunk = std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
   auto& conflict = merge_tab->conflicts[selected_hunk];
   if (!conflict.valid || conflict.hunk_index >= merge_tab->model.hunks.size()) {
-    LogMessage("Conflict span was edited manually");
     return;
   }
 

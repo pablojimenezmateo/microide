@@ -66,7 +66,6 @@ struct PersistedEditorTabState {
   std::size_t compare_selected_row = 0;
   std::size_t compare_scroll_row = 0;
   std::size_t compare_horizontal_scroll = 0;
-  bool compare_persistable = true;
   std::filesystem::path merge_base_path;
   std::filesystem::path merge_incoming_path;
   std::filesystem::path merge_current_path;
@@ -77,7 +76,36 @@ struct PersistedEditorTabState {
   float merge_left_divider_fraction = 1.0f / 3.0f;
   float merge_right_divider_fraction = 2.0f / 3.0f;
   std::vector<std::string> merge_hunk_choices;
-  bool merge_persistable = true;
+};
+
+struct WorkspaceTabTextModel {
+  std::string display_title;
+  std::string tooltip_label;
+};
+
+struct PersistedUserConfigState {
+  float ui_scale = 1.0f;
+};
+
+struct PersistedProjectConfigState {
+  std::size_t editor_tab_size = 4;
+  std::size_t editor_indent_width = 4;
+  bool editor_soft_tabs = false;
+  std::string colorscheme_name = "default";
+  std::optional<SDL_Color> project_base_color;
+};
+
+struct PersistedProjectSessionState {
+  bool sidebar_visible = true;
+  float sidebar_width = 288.0f;
+  float bottom_panel_height = 184.0f;
+  std::size_t active_tab_index = 0;
+  std::vector<PersistedEditorTabState> tabs;
+};
+
+struct PersistedWorkspaceSessionState {
+  std::vector<std::filesystem::path> project_roots;
+  std::size_t active_project_index = 0;
 };
 
 struct WorkspaceLayout {
@@ -314,6 +342,30 @@ std::vector<int> BuildProjectSearchResultLineMap(
 int FindProjectSearchResultLine(const std::vector<int>& line_map, std::size_t result_index);
 
 std::string ProjectStateDirectoryName(const std::filesystem::path& project_root);
+WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
+                                                 const std::filesystem::path& path,
+                                                 std::string_view fallback_title,
+                                                 bool dirty);
+std::string BuildEditorBreadcrumbLabel(const std::filesystem::path& project_root,
+                                       const std::filesystem::path& path,
+                                       bool placeholder,
+                                       bool large_file_mode);
+std::string BuildCompareBreadcrumbLabel(const std::filesystem::path& project_root,
+                                        const std::filesystem::path& path,
+                                        std::string_view left_label,
+                                        std::string_view right_label);
+std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
+                                      const std::filesystem::path& output_path,
+                                      std::string_view incoming_label,
+                                      std::string_view current_label);
+bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state);
+std::string SerializeUserConfig(const PersistedUserConfigState& state);
+bool ParseProjectConfigText(std::string_view text, PersistedProjectConfigState* state);
+std::string SerializeProjectConfig(const PersistedProjectConfigState& state);
+bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState* state);
+std::string SerializeProjectSession(const PersistedProjectSessionState& state);
+bool ParseWorkspaceSessionText(std::string_view text, PersistedWorkspaceSessionState* state);
+std::string SerializeWorkspaceSession(const PersistedWorkspaceSessionState& state);
 std::optional<SDL_Color> ParseProjectColor(std::string_view text);
 std::string FormatProjectColor(SDL_Color color);
 SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root);

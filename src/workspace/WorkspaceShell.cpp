@@ -342,6 +342,18 @@ const std::vector<std::string>& WorkspaceShell::CommandNames() {
   return kNames;
 }
 
+std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
+  std::vector<std::string> usages;
+  for (const ActionSpec& spec : ActionSpecs()) {
+    if (spec.command_name.empty()) {
+      continue;
+    }
+    usages.push_back(spec.command_usage.empty() ? std::string(spec.command_name)
+                                                : std::string(spec.command_usage));
+  }
+  return usages;
+}
+
 bool WorkspaceShell::IsActionEnabled(ActionId id) const {
   switch (id) {
     case ActionId::Colorscheme:
@@ -1285,18 +1297,13 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
   }
 
   const TabEntry& tab = open_tabs_[index];
-  std::string title;
+  std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    title = tab.compare->path.filename().string();
+    path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    title = tab.merge->output_path.filename().string();
-  } else {
-    title = tab.path.filename().string();
+    path = tab.merge->output_path;
   }
-  if (title.empty()) {
-    title = tab.title.empty() ? "untitled" : tab.title;
-  }
-  return TabIsDirty(index) ? "*" + title : title;
+  return BuildWorkspaceTabTextModel(project_root_, path, tab.title, TabIsDirty(index)).display_title;
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
@@ -1311,10 +1318,7 @@ std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  if (path.empty()) {
-    return tab.title.empty() ? "untitled" : tab.title;
-  }
-  return RelativePathLabel(project_root_, path);
+  return BuildWorkspaceTabTextModel(project_root_, path, tab.title, TabIsDirty(index)).tooltip_label;
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
@@ -1473,7 +1477,6 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   }
   const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
   if (!left_content.has_value()) {
-    LogMessage("Failed to read git content for comparison");
     return false;
   }
   const std::optional<std::string> working_content = ReadFileText(normalized_path);
@@ -1481,7 +1484,6 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
       normalized_path, left_content->exists ? left_content->content : "", working_content.value_or(""),
       left_label, "Working tree", 0, true);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
-    LogMessage("Failed to build comparison");
     return false;
   }
   compare_tab->compare->commit_hash = left_ref;
@@ -1496,7 +1498,6 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   RevealActiveCompareSelection();
   EnsureActiveTabVisible();
   focus_ = FocusTarget::Editor;
-  LogMessage("Comparison opened");
   return true;
 }
 
@@ -1525,14 +1526,12 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   const auto left_content = project::ReadGitFileAtCommit(project_root_, normalized_path, left_ref);
   const auto right_content = project::ReadGitFileAtCommit(project_root_, normalized_path, right_ref);
   if (!left_content.has_value() || !right_content.has_value()) {
-    LogMessage("Failed to read branch content for comparison");
     return false;
   }
   auto compare_tab = BuildCompareTabFromBuffers(
       normalized_path, left_content->exists ? left_content->content : "",
       right_content->exists ? right_content->content : "", left_label, right_label, 0, true);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
-    LogMessage("Failed to build comparison");
     return false;
   }
   compare_tab->compare->commit_hash = left_ref;
@@ -1545,7 +1544,6 @@ bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
   RevealActiveCompareSelection();
   EnsureActiveTabVisible();
   focus_ = FocusTarget::Editor;
-  LogMessage("Comparison opened");
   return true;
 }
 
@@ -1565,7 +1563,6 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   const auto current_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":2");
   const auto incoming_content = project::ReadGitFileAtCommit(project_root_, normalized_path, ":3");
   if (!current_content.has_value() || !incoming_content.has_value()) {
-    LogMessage("Failed to read merge conflict stages");
     return false;
   }
 
@@ -1575,7 +1572,6 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
       current_content->exists ? current_content->content : "", "Incoming", "Result", "Current", 0,
       false);
   if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
-    LogMessage("Failed to build merge editor");
     return false;
   }
   merge_tab->merge->base_path = normalized_path;
@@ -1608,7 +1604,6 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
     RevealActiveMergeSelection();
     EnsureActiveTabVisible();
     focus_ = FocusTarget::Editor;
-    LogMessage("Merge editor opened");
     return true;
   }
   open_tabs_.push_back(std::move(*merge_tab));
@@ -1616,7 +1611,6 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   RevealActiveMergeSelection();
   EnsureActiveTabVisible();
   focus_ = FocusTarget::Editor;
-  LogMessage("Merge editor opened");
   return true;
 }
 
@@ -1633,7 +1627,6 @@ void WorkspaceShell::MoveFileFinderSelection(int delta) {
 
 bool WorkspaceShell::OpenUntitledTab() {
   if (project_root_.empty()) {
-    LogMessage("No project is loaded");
     return false;
   }
   SyncActiveEditorTab();
@@ -1799,10 +1792,8 @@ std::optional<std::size_t> WorkspaceShell::FindTabIndexBySpecifier(
 
 void WorkspaceShell::OpenFile(const std::filesystem::path& path) {
   if (!OpenFileInNewTab(path)) {
-    LogMessage("Failed to open file: " + path.lexically_normal().string());
     return;
   }
-  LogMessage("Opened file: " + path.lexically_normal().string());
 }
 
 WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const {
@@ -1862,30 +1853,25 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
 
 bool WorkspaceShell::ReopenActiveTab() {
   if (active_tab_index_ >= open_tabs_.size()) {
-    LogMessage("No editor tab is active");
     return false;
   }
 
   auto& tab = open_tabs_[active_tab_index_];
   if (tab.kind != TabEntry::Kind::Editor) {
-    LogMessage("Reopen only works for editor tabs");
     return false;
   }
   const std::filesystem::path reopen_path = text_viewport_.path().empty()
                                                 ? tab.path.lexically_normal()
                                                 : text_viewport_.path().lexically_normal();
   if (reopen_path.empty()) {
-    LogMessage("No file is open");
     return false;
   }
   if (text_viewport_.dirty()) {
-    LogMessage("Reopen blocked by unsaved changes");
     return false;
   }
 
   editor::TextViewport reopened_view;
   if (!reopened_view.OpenFile(reopen_path)) {
-    LogMessage("Failed to reopen file: " + reopen_path.string());
     return false;
   }
   ApplyEditorPreferences(reopened_view);
@@ -1913,7 +1899,6 @@ bool WorkspaceShell::ReopenActiveTab() {
   InvalidateEditorBlamePath(reopen_path);
   focus_ = FocusTarget::Editor;
   ResetCaretBlink();
-  LogMessage("Reopened file from disk: " + reopen_path.string());
   return true;
 }
 
@@ -1925,26 +1910,16 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
   }
 
   const auto require_project = [&]() {
-    if (!project_root_.empty()) {
-      return false;
-    }
-    LogMessage("No project is loaded");
-    return true;
+    return project_root_.empty();
   };
 
   switch (id) {
     case ActionId::Colorscheme:
       if (args.empty()) {
-        LogMessage("Colorscheme: " + active_colorscheme_name_);
         return true;
       }
       if (args[0] == "list") {
         RefreshAvailableColorschemeNames();
-        if (available_colorscheme_names_.empty()) {
-          LogMessage("No bundled colorschemes found");
-        } else {
-          LogMessage("Colorschemes: " + JoinCommandArguments(available_colorscheme_names_, 0));
-        }
         return true;
       }
       RefreshAvailableColorschemeNames();
@@ -1952,13 +1927,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::ProjectOpen:
       if (args.empty()) {
-        std::string picker_error;
-        switch (OpenNativeProjectPicker(&picker_error)) {
+        switch (OpenNativeProjectPicker(nullptr)) {
           case ProjectOpenDialogLaunchResult::Launched:
-            LogMessage("Project picker opened");
             return true;
           case ProjectOpenDialogLaunchResult::AlreadyOpen:
-            LogMessage("Project picker already open");
             return true;
           case ProjectOpenDialogLaunchResult::Unavailable:
             if (source == ActionSource::Menu) {
@@ -1966,12 +1938,8 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
               focus_ = FocusTarget::Panel;
               command_input_ = "project-open ";
               ResetCommandSessionState();
-              LogMessage(picker_error.empty() ? "Enter a project path"
-                                              : "Project picker unavailable. Enter a project path");
               return true;
             }
-            LogMessage(picker_error.empty() ? "usage: project-open [path]"
-                                            : "Project picker unavailable: " + picker_error);
             return true;
         }
         return true;
@@ -1980,19 +1948,13 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::ProjectClose:
       if (projects_.empty() || project_root_.empty()) {
-        LogMessage("No project is loaded");
         return true;
       }
       RequestCloseProject(active_project_index_);
       return true;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev: {
-      if (projects_.empty() || project_root_.empty()) {
-        LogMessage("No project is loaded");
-        return true;
-      }
-      if (projects_.size() == 1) {
-        LogMessage("Only one project is open");
+      if (projects_.empty() || project_root_.empty() || projects_.size() == 1) {
         return true;
       }
       const int delta = id == ActionId::ProjectNext ? 1 : -1;
@@ -2052,7 +2014,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       sidebar_visible_ = true;
       focus_ = FocusTarget::Sidebar;
-      LogMessage("Sidebar shown");
       return true;
     }
     case ActionId::SidebarHide:
@@ -2061,21 +2022,17 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       return true;
     case ActionId::SidebarWidth:
       if (args.empty()) {
-        LogMessage("usage: sidebar-width <n>");
         return true;
       }
       try {
         const float width = std::stof(args[0]);
         sidebar_width_ =
             ClampSidebarWidth(width, static_cast<float>(std::max(1, last_window_width_)));
-        LogMessage("Sidebar width updated");
       } catch (...) {
-        LogMessage("Invalid sidebar width");
       }
       return true;
     case ActionId::TabSize:
       if (args.empty()) {
-        LogMessage("Tab size: " + std::to_string(editor_preferences_.tab_size));
         return true;
       }
       try {
@@ -2083,14 +2040,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
             std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(args[0])), 1, 16);
         ApplyEditorPreferencesToAllTabs();
         SaveConfigState();
-        LogMessage("Tab size set to " + std::to_string(editor_preferences_.tab_size));
       } catch (...) {
-        LogMessage("Invalid tab size");
       }
       return true;
     case ActionId::IndentWidth:
       if (args.empty()) {
-        LogMessage("Indent width: " + std::to_string(editor_preferences_.indent_width));
         return true;
       }
       try {
@@ -2098,14 +2052,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
             std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(args[0])), 1, 16);
         ApplyEditorPreferencesToAllTabs();
         SaveConfigState();
-        LogMessage("Indent width set to " + std::to_string(editor_preferences_.indent_width));
       } catch (...) {
-        LogMessage("Invalid indent width");
       }
       return true;
     case ActionId::UiScale:
       if (args.empty()) {
-        LogMessage("UI scale: " + UiScaleLabel(ui_scale_));
         return true;
       }
       if (args[0] == "up") {
@@ -2122,19 +2073,15 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       if (const auto scale = ParseUiScaleValue(args[0]); scale.has_value()) {
         ApplyUiScale(*scale, true, true);
-      } else {
-        LogMessage("usage: ui-scale <n|up|down|reset>");
       }
       return true;
     case ActionId::SoftTabs:
       if (args.empty()) {
-        LogMessage(std::string("Soft tabs: ") + (editor_preferences_.soft_tabs ? "on" : "off"));
         return true;
       }
       if (const std::string value = ToLower(args[0]);
           value != "on" && value != "off" && value != "true" && value != "false" &&
           value != "1" && value != "0") {
-        LogMessage("usage: soft-tabs <on|off>");
         return true;
       } else {
         editor_preferences_.soft_tabs =
@@ -2142,22 +2089,18 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       ApplyEditorPreferencesToAllTabs();
       SaveConfigState();
-      LogMessage(std::string("Soft tabs ") + (editor_preferences_.soft_tabs ? "enabled"
-                                                                            : "disabled"));
       return true;
     case ActionId::TreeRefresh:
       if (require_project()) {
         return true;
       }
       RefreshProjectFiles();
-      LogMessage("Project tree refreshed");
       return true;
     case ActionId::GitRefresh:
       if (require_project()) {
         return true;
       }
       RefreshProjectFiles();
-      LogMessage("Git view refreshed");
       return true;
     case ActionId::CreateFile:
     case ActionId::CreateDirectory: {
@@ -2166,7 +2109,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       const std::filesystem::path base_path = TreeMutationBasePath(source);
       if (base_path.empty()) {
-        LogMessage("No tree directory is selected");
         return true;
       }
       OpenPromptSurface(id == ActionId::CreateFile ? PromptSurfaceState::Action::CreateFile
@@ -2180,7 +2122,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        LogMessage("No tree path is selected");
         return true;
       }
       OpenPromptSurface(PromptSurfaceState::Action::RenamePath,
@@ -2193,7 +2134,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        LogMessage("No tree path is selected");
         return true;
       }
       OpenPromptSurface(PromptSurfaceState::Action::DeletePath,
@@ -2207,7 +2147,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        LogMessage("No tree path is selected");
         return true;
       }
 
@@ -2216,7 +2155,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         std::error_code error;
         const std::filesystem::path relative = std::filesystem::relative(path, project_root_, error);
         if (error || relative.empty()) {
-          LogMessage("Failed to compute relative path");
           return true;
         }
         clipboard_text = relative.generic_string();
@@ -2224,33 +2162,23 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         clipboard_text = path.lexically_normal().string();
       }
 
-      if (WriteClipboardText(clipboard_text)) {
-        LogMessage(std::string(id == ActionId::CopyRelativePath ? "Relative" : "Absolute") +
-                   " path copied");
-      } else {
-        LogMessage("Failed to copy path");
-      }
+      WriteClipboardText(clipboard_text);
       return true;
     }
     case ActionId::Focus: {
       const std::string target = args.empty() ? std::string{} : args[0];
       if (target == "sidebar" && sidebar_visible_) {
         focus_ = FocusTarget::Sidebar;
-        LogMessage("Focus moved to sidebar");
         return true;
       }
       if (target == "editor") {
         focus_ = FocusTarget::Editor;
-        LogMessage("Focus moved to editor");
         return true;
       }
       if (target == "panel" && (command_mode_ || ActiveTerminalTab() != nullptr)) {
         focus_ = FocusTarget::Panel;
-        LogMessage(ActiveTerminalTab() != nullptr ? "Focus moved to terminal panel"
-                                                  : "Focus moved to command panel");
         return true;
       }
-      LogMessage("Unknown focus target");
       return true;
     }
     case ActionId::Term:
@@ -2270,7 +2198,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       overlay_mode_ = OverlayMode::FileFinder;
       focus_ = FocusTarget::Overlay;
       ResetOverlayScroll();
-      LogMessage("Finder opened from command");
       return true;
     case ActionId::Files: {
       const std::string root_arg = args.empty() ? std::string{} : args[0];
@@ -2280,7 +2207,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       if (source == ActionSource::Shortcut && overlay_visible_) {
         overlay_visible_ = false;
         focus_ = sidebar_visible_ ? FocusTarget::Sidebar : FocusTarget::Editor;
-        LogMessage("Finder overlay closed");
         return true;
       }
       if (source != ActionSource::Shortcut && require_project()) {
@@ -2293,7 +2219,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       file_finder_.SetQuery("");
       focus_ = FocusTarget::Overlay;
       ResetOverlayScroll();
-      LogMessage(source == ActionSource::Shortcut ? "Finder overlay opened" : "Finder opened");
       return true;
     }
     case ActionId::Tree: {
@@ -2316,13 +2241,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
-        LogMessage("search only works in editor tabs");
         return true;
       }
       OpenBufferSearch();
       buffer_search_query_ = JoinCommandArguments(args, 0);
       RefreshBufferSearch();
-      LogMessage("Buffer search opened");
       return true;
     case ActionId::ReplaceInBuffer:
       OpenBufferReplace();
@@ -2332,7 +2255,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       if (args.empty()) {
-        LogMessage("usage: open <path>");
         return true;
       }
       {
@@ -2346,14 +2268,11 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         if (editor_tab != nullptr && editor_tab->views.size() > 1) {
           editor::TextViewport opened_view;
           if (!opened_view.OpenFile(path)) {
-            LogMessage("Failed to open file: " + path.string());
             return true;
           }
           if (!ReplaceActiveEditorView(opened_view)) {
-            LogMessage("Failed to open file in active split: " + path.string());
             return true;
           }
-          LogMessage("Opened file in active split: " + path.string());
           return true;
         }
 
@@ -2367,15 +2286,12 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        LogMessage("No tree file is selected");
         return true;
       }
       if (id == ActionId::OpenSelectedTreeItemInNewTab) {
         if (!OpenFileInNewTab(path)) {
-          LogMessage("Failed to open file: " + path.string());
           return true;
         }
-        LogMessage("Opened tab: " + open_tabs_[active_tab_index_].title);
       } else {
         OpenFile(path);
       }
@@ -2405,12 +2321,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
 
       if (path.empty()) {
-        LogMessage("usage: compare [path] [commit-prefix]");
         return true;
       }
 
       if (!std::filesystem::exists(path)) {
-        LogMessage("File does not exist: " + path.string());
         return true;
       }
 
@@ -2424,11 +2338,9 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       const std::filesystem::path path = ResolveTreeActionPath(source);
       if (path.empty()) {
-        LogMessage("No tree file is selected");
         return true;
       }
       if (!std::filesystem::exists(path)) {
-        LogMessage("File does not exist: " + path.string());
         return true;
       }
       compare_picker_path_ = path.lexically_normal();
@@ -2444,7 +2356,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       if (args.size() < 3 || args.size() > 4) {
-        LogMessage("usage: merge <base> <incoming> <current> [output]");
         return true;
       }
 
@@ -2463,7 +2374,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
           args.size() > 3 ? resolve_path(args[3]) : current_path;
       if (!std::filesystem::exists(base_path) || !std::filesystem::exists(incoming_path) ||
           !std::filesystem::exists(current_path)) {
-        LogMessage("merge expects existing base, incoming, and current files");
         return true;
       }
 
@@ -2476,7 +2386,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       }
       if (args.empty()) {
         OpenUntitledTab();
-        LogMessage("Opened untitled tab");
         return true;
       }
 
@@ -2488,12 +2397,10 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         path = path.lexically_normal();
 
         if (!OpenFileInNewTab(path)) {
-          LogMessage("Failed to open file: " + path.string());
           return true;
         }
       }
 
-      LogMessage("Opened tab: " + open_tabs_[active_tab_index_].title);
       return true;
     case ActionId::TabSwitch: {
       if (require_project()) {
@@ -2503,11 +2410,9 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       const std::optional<std::size_t> tab_index =
           FindTabIndexBySpecifier(JoinCommandArguments(args, 0), &error_message);
       if (!tab_index.has_value()) {
-        LogMessage(error_message);
         return true;
       }
       ActivateTab(*tab_index);
-      LogMessage("Switched to tab: " + open_tabs_[*tab_index].title);
       return true;
     }
     case ActionId::TabMove:
@@ -2515,11 +2420,9 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       if (args.empty()) {
-        LogMessage("usage: tabmove <n>");
         return true;
       }
       if (open_tabs_.empty()) {
-        LogMessage("No tabs are open");
         return true;
       }
       {
@@ -2528,11 +2431,9 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         try {
           slot = std::stoi(args[0], &parsed_length);
         } catch (...) {
-          LogMessage("Invalid tab slot");
           return true;
         }
         if (parsed_length != args[0].size()) {
-          LogMessage("Invalid tab slot");
           return true;
         }
 
@@ -2542,7 +2443,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         const int clamped_slot =
             std::clamp(requested_slot, 1, static_cast<int>(open_tabs_.size()));
         MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
-        LogMessage("Moved tab to slot " + std::to_string(clamped_slot));
         return true;
       }
     case ActionId::Reopen:
@@ -2559,15 +2459,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         if (source == ActionSource::Shortcut) {
           ResetCaretBlink();
         }
-        const std::filesystem::path saved_path =
-            ActiveTabIsMerge() && ActiveMergeTab() != nullptr
-                ? ActiveMergeTab()->output_path.lexically_normal()
-            : ActiveTabIsCompare() && ActiveCompareTab() != nullptr
-                ? ActiveCompareTab()->right_path.lexically_normal()
-                : text_viewport_.path().lexically_normal();
-        LogMessage("Saved file: " + saved_path.string());
-      } else {
-        LogMessage("Save failed");
       }
       return true;
     case ActionId::Vsplit: {
@@ -2575,15 +2466,9 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
         return true;
       }
       const EditorSplitOrientation orientation = EditorSplitOrientation::Vertical;
-      const std::string command = "vsplit";
-      const std::string split_label = "Vertical";
 
       if (args.empty()) {
-        if (!SplitActiveEditor(orientation)) {
-          LogMessage(command + " only works in editor tabs");
-        } else {
-          LogMessage(split_label + " split opened");
-        }
+        SplitActiveEditor(orientation);
         return true;
       }
 
@@ -2596,59 +2481,35 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
 
         editor::TextViewport opened_view;
         if (!opened_view.OpenFile(path)) {
-          LogMessage("Failed to open file: " + path.string());
           return true;
         }
         if (!SplitActiveEditor(orientation)) {
-          LogMessage(command + " only works in editor tabs");
           return true;
         }
         if (!ReplaceActiveEditorView(opened_view)) {
-          LogMessage("Failed to load file into split: " + path.string());
           return true;
         }
       }
 
-      LogMessage(split_label + " split opened");
       return true;
     }
     case ActionId::Unsplit:
-      if (!UnsplitActiveEditor()) {
-        LogMessage("No editor split is active");
-      } else {
-        LogMessage("Editor split closed");
-      }
+      UnsplitActiveEditor();
       return true;
     case ActionId::SplitNext:
-      if (!CycleEditorSplit(1)) {
-        LogMessage("No other split is available");
-      } else {
-        LogMessage("Focus moved to the next split");
-      }
+      CycleEditorSplit(1);
       return true;
     case ActionId::SplitPrev:
-      if (!CycleEditorSplit(-1)) {
-        LogMessage("No other split is available");
-      } else {
-        LogMessage("Focus moved to the previous split");
-      }
+      CycleEditorSplit(-1);
       return true;
     case ActionId::SplitFirst:
-      if (!ActivateOrderedEditorSplit(0)) {
-        LogMessage("No other split is available");
-      } else {
-        LogMessage("Focus moved to the first split");
-      }
+      ActivateOrderedEditorSplit(0);
       return true;
     case ActionId::SplitLast: {
       auto* editor_tab = ActiveEditorTab();
       const std::size_t last_index =
           editor_tab == nullptr || editor_tab->views.empty() ? 0 : editor_tab->views.size() - 1;
-      if (!ActivateOrderedEditorSplit(last_index)) {
-        LogMessage("No other split is available");
-      } else {
-        LogMessage("Focus moved to the last split");
-      }
+      ActivateOrderedEditorSplit(last_index);
       return true;
     }
     case ActionId::Quit:
@@ -2658,23 +2519,19 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::Jump: {
       const std::string command = id == ActionId::Goto ? "goto" : "jump";
       if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
-        LogMessage(command + " only works in editor tabs");
         return true;
       }
       if (args.empty()) {
-        LogMessage("usage: " + command + " <line[:col]>");
         return true;
       }
 
       long long requested_line = 0;
       std::size_t column = 0;
       if (!ParseLineColumnSpec(args[0], &requested_line, &column, id == ActionId::Jump)) {
-        LogMessage("Invalid " + command + " target");
         return true;
       }
 
       if (id == ActionId::Goto && requested_line == 0) {
-        LogMessage("goto expects 1-based positions");
         return true;
       }
 
@@ -2694,7 +2551,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
 
       text_viewport_.MoveCursorTo(line, column > 0 ? column - 1 : 0);
       focus_ = FocusTarget::Editor;
-      LogMessage("Cursor moved to requested location");
       return true;
     }
     case ActionId::CloseActiveTab:
@@ -2707,7 +2563,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
       focus_ = FocusTarget::Panel;
       command_input_.clear();
       ResetCommandSessionState();
-      LogMessage("Command mode opened");
       return true;
     case ActionId::SelectAll:
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
@@ -2730,7 +2585,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
           if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
-          LogMessage("Undo");
           ResetCaretBlink();
         }
       }
@@ -2749,7 +2603,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
           if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
-          LogMessage("Redo");
           ResetCaretBlink();
         }
       }
@@ -2757,24 +2610,22 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
     case ActionId::CopySelection: {
       const std::string text =
           ActiveEditableViewport() != nullptr ? ActiveEditableViewport()->SelectedText() : std::string{};
-      if (!text.empty() && WriteClipboardText(text)) {
-        LogMessage("Selection copied");
+      if (!text.empty()) {
+        WriteClipboardText(text);
       }
       return true;
     }
     case ActionId::CopyLastTerminalCommand: {
       const std::optional<std::string> text = LastTerminalCommandText();
-      if (text.has_value() && WriteClipboardText(*text)) {
-        LogMessage("Last terminal command copied");
-      } else {
-        LogMessage("No terminal command transcript available");
+      if (text.has_value()) {
+        WriteClipboardText(*text);
       }
       return true;
     }
     case ActionId::CopySelectionWithContext: {
       const std::optional<std::string> text = SelectionTextWithContext();
-      if (text.has_value() && WriteClipboardText(*text)) {
-        LogMessage("Selection copied with context");
+      if (text.has_value()) {
+        WriteClipboardText(*text);
       }
       return true;
     }
@@ -2795,7 +2646,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
           ResetCaretBlink();
-          LogMessage("Selection cut");
         }
       }
       return true;
@@ -2817,7 +2667,6 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
             UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
           }
           ResetCaretBlink();
-          LogMessage("Clipboard pasted");
         }
       }
       return true;
@@ -2902,25 +2751,20 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
     if (compare_tab == nullptr) {
       return "compare";
     }
-    return RelativePathLabel(project_root_, compare_tab->path) + "  |  " + compare_tab->left_label +
-           " -> " + compare_tab->right_label;
+    return BuildCompareBreadcrumbLabel(project_root_, compare_tab->path, compare_tab->left_label,
+                                       compare_tab->right_label);
   }
   if (ActiveTabIsMerge()) {
     const MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr) {
       return "merge";
     }
-    return RelativePathLabel(project_root_, merge_tab->output_path) + "  |  " +
-           merge_tab->incoming_label + " -> " + merge_tab->current_label;
+    return BuildMergeBreadcrumbLabel(project_root_, merge_tab->output_path,
+                                     merge_tab->incoming_label, merge_tab->current_label);
   }
-  if (text_viewport_.path().empty()) {
-    return text_viewport_.is_placeholder() ? "welcome" : "untitled";
-  }
-  std::string label = RelativePathLabel(project_root_, text_viewport_.path());
-  if (text_viewport_.large_file_mode()) {
-    label += "  |  large file mode";
-  }
-  return label;
+  return BuildEditorBreadcrumbLabel(project_root_, text_viewport_.path(),
+                                    text_viewport_.is_placeholder(),
+                                    text_viewport_.large_file_mode());
 }
 
 std::string WorkspaceShell::ProjectLabel() const {
