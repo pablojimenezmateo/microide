@@ -610,16 +610,7 @@ void WorkspaceShell::Shutdown() {
   if (HasActiveProjectCatalogEntry()) {
     PersistActiveProjectCatalogEntry();
   }
-
-  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
-    if (project_catalog_.entries[i] == nullptr || !project_catalog_.entries[i]->initialized || i == project_catalog_.active_index) {
-      continue;
-    }
-    LoadProjectState(*project_catalog_.entries[i]);
-    SaveConfigState();
-    SaveSessionState();
-    StoreCurrentProjectState(*project_catalog_.entries[i]);
-  }
+  PersistInactiveProjectCatalogEntriesForShutdown();
   SaveWorkspaceSession();
 
   project_search_runtime_.Shutdown();

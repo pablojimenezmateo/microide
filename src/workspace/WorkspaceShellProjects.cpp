@@ -58,6 +58,37 @@ std::filesystem::path WorkspaceShell::ProjectCatalogRoot(std::size_t index) cons
   return state != nullptr ? state->root : std::filesystem::path{};
 }
 
+void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
+  project_catalog_.active_index = 0;
+  project_catalog_.tab_scroll_index = 0;
+  ResetProjectScopedState(true);
+}
+
+bool WorkspaceShell::ActivateProjectCatalogEntry(std::size_t index, bool activate_restored_tab) {
+  auto* entry = ProjectCatalogEntry(index);
+  if (entry == nullptr) {
+    return false;
+  }
+  project_catalog_.active_index = index;
+  return ActivateProjectState(*entry, activate_restored_tab);
+}
+
+bool WorkspaceShell::RestoreProjectCatalogAfterRemoval(std::size_t preferred_index,
+                                                       bool activate_restored_tab) {
+  while (!project_catalog_.entries.empty()) {
+    const std::size_t index = std::min(preferred_index, project_catalog_.entries.size() - 1);
+    if (ActivateProjectCatalogEntry(index, activate_restored_tab)) {
+      return true;
+    }
+    project_catalog_.entries.erase(project_catalog_.entries.begin() +
+                                   static_cast<std::ptrdiff_t>(index));
+    preferred_index = index;
+  }
+
+  ResetProjectCatalogToWelcomeState();
+  return false;
+}
+
 void WorkspaceShell::PersistActiveProjectCatalogEntry() {
   if (!HasActiveProjectCatalogEntry()) {
     return;
@@ -65,6 +96,20 @@ void WorkspaceShell::PersistActiveProjectCatalogEntry() {
   SaveConfigState();
   SaveSessionState();
   StoreCurrentProjectState(*project_catalog_.entries[project_catalog_.active_index]);
+}
+
+void WorkspaceShell::PersistInactiveProjectCatalogEntriesForShutdown() {
+  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+    auto* entry = ProjectCatalogEntry(i);
+    if (entry == nullptr || !entry->initialized ||
+        (HasActiveProjectCatalogEntry() && i == project_catalog_.active_index)) {
+      continue;
+    }
+    LoadProjectState(*entry);
+    SaveConfigState();
+    SaveSessionState();
+    StoreCurrentProjectState(*entry);
+  }
 }
 
 WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
@@ -520,12 +565,9 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
   if (!InitializeCurrentProject(normalized_root, restore_persistence, log_feedback)) {
     project_catalog_.entries.pop_back();
-    if (had_active_project && previous_active_index < project_catalog_.entries.size()) {
-      project_catalog_.active_index = previous_active_index;
-      ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
-    } else {
-      project_catalog_.active_index = 0;
-      ResetProjectScopedState(true);
+    if (!(had_active_project && previous_active_index < project_catalog_.entries.size() &&
+          ActivateProjectCatalogEntry(previous_active_index, true))) {
+      ResetProjectCatalogToWelcomeState();
     }
     return false;
   }
@@ -551,14 +593,10 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   }
 
   const std::size_t previous_active_index = project_catalog_.active_index;
-  project_catalog_.active_index = index;
-  if (!ActivateProjectState(*project_catalog_.entries[index], true)) {
-    if (!project_root_.empty() && previous_active_index < project_catalog_.entries.size()) {
-      project_catalog_.active_index = previous_active_index;
-      ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
-    } else {
-      project_catalog_.active_index = 0;
-      ResetProjectScopedState(true);
+  if (!ActivateProjectCatalogEntry(index, true)) {
+    if (!(previous_active_index < project_catalog_.entries.size() &&
+          ActivateProjectCatalogEntry(previous_active_index, true))) {
+      ResetProjectCatalogToWelcomeState();
     }
     return false;
   }
@@ -609,26 +647,15 @@ void WorkspaceShell::CloseProject(std::size_t index) {
 
   project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index));
   if (project_catalog_.entries.empty()) {
-    project_catalog_.active_index = 0;
-    project_catalog_.tab_scroll_index = 0;
-    ResetProjectScopedState(true);
+    ResetProjectCatalogToWelcomeState();
     SaveWorkspaceSession();
     return;
   }
 
   if (closing_active) {
-    project_catalog_.active_index = std::min(index, project_catalog_.entries.size() - 1);
-    if (!ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true)) {
-      project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(project_catalog_.active_index));
-      if (project_catalog_.entries.empty()) {
-        project_catalog_.active_index = 0;
-        project_catalog_.tab_scroll_index = 0;
-        ResetProjectScopedState(true);
-        SaveWorkspaceSession();
-        return;
-      }
-      project_catalog_.active_index = std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
-      ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
+    if (!RestoreProjectCatalogAfterRemoval(index, true)) {
+      SaveWorkspaceSession();
+      return;
     }
   } else if (project_catalog_.active_index > index) {
     --project_catalog_.active_index;

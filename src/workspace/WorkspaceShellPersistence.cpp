@@ -617,7 +617,7 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
   project_catalog_.tab_scroll_index = 0;
 
   if (persisted_session.project_roots.empty()) {
-    ResetProjectScopedState(true);
+    ResetProjectCatalogToWelcomeState();
     return true;
   }
 
@@ -635,19 +635,14 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
   }
 
   if (project_catalog_.entries.empty()) {
-    ResetProjectScopedState(true);
+    ResetProjectCatalogToWelcomeState();
     return true;
   }
 
-  project_catalog_.active_index = std::min(persisted_session.active_project_index, project_catalog_.entries.size() - 1);
-  if (!ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true)) {
-    project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(project_catalog_.active_index));
-    if (project_catalog_.entries.empty()) {
-      ResetProjectScopedState(true);
-      return true;
-    }
-    project_catalog_.active_index = std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
-    ActivateProjectState(*project_catalog_.entries[project_catalog_.active_index], true);
+  if (!RestoreProjectCatalogAfterRemoval(
+          std::min(persisted_session.active_project_index, project_catalog_.entries.size() - 1),
+          true)) {
+    return true;
   }
   EnsureActiveProjectVisible();
   return true;
