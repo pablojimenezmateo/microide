@@ -139,6 +139,28 @@ Recommendation:
 
 - Extract a compare/merge interaction model that owns visible-row metrics, result-viewport rects, and row/column translation helpers the same way scroll surfaces now own scrollbar geometry.
 
+Resolution:
+
+- Addressed in this cleanup pass by introducing shared `TextGridInteractionLayout` helpers plus shell-level compare/merge interaction builders so render, mouse hit-testing, cursor routing, and active text-input caret placement now share the same row/column translation and merge action-button geometry.
+
+### 14. Merge hover-state classification still lives inline in `WorkspaceShellMouse.cpp`
+
+Priority: Medium
+
+Evidence:
+
+- `WorkspaceShellMouse.cpp` still owns the precedence rules that turn a pointer position into `MergeHoverState`, even though merge source/result geometry now comes from shared interaction builders.
+- The same mouse-motion branch still combines action-button hit testing, source-pane conflict hover, and result-pane conflict hover sequencing in one event handler.
+
+Impact:
+
+- Geometry drift is much lower now, but hover preview behavior is still harder to test or evolve independently from SDL event plumbing.
+- Future merge UX changes still need edits inside `WorkspaceShellMouse.cpp` instead of a narrow interaction classifier.
+
+Recommendation:
+
+- Extract a pure merge hover hit-test/classifier helper that consumes the shared merge interaction model and returns the next `MergeHoverState`.
+
 ## Executive Summary
 
 The project is functional and has materially better test coverage than a typical SDL rewrite at this stage, but most of the debt has concentrated into the workspace shell. The main risk is not one isolated bug; it is the amount of behavior routed through one mutable object with many overlapping UI modes and many file-format or action contracts expressed as strings.

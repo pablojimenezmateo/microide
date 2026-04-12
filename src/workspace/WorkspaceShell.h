@@ -302,6 +302,21 @@ class WorkspaceShell {
     SDL_FRect save_rect{};
   };
 
+  struct MergeResultInteractionLayout {
+    SDL_FRect rect{};
+    editor::EditorViewMetrics metrics{};
+    VisibleLineRangeLayout lines{};
+    TextGridInteractionLayout text{};
+  };
+
+  struct MergeInteractionLayout {
+    float content_bottom = 0.0f;
+    MergeResultInteractionLayout result{};
+    float incoming_accept_button_width = 0.0f;
+    float current_accept_button_width = 0.0f;
+    std::array<float, 4> result_action_widths{};
+  };
+
   struct BottomPanelLogLayout {
     SDL_FRect content_rect{};
     float text_x = 0.0f;
@@ -1036,6 +1051,8 @@ class WorkspaceShell {
   ScrollSurfaceLayout ComputeCompareScrollLayout(const SDL_FRect& rect,
                                                  const CompareSurfaceLayout& surface,
                                                  const CompareTabState& compare_tab) const;
+  TextGridInteractionLayout BuildCompareRightInteractionLayout(const CompareSurfaceLayout& surface,
+                                                               CompareTabState& compare_tab) const;
   int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const;
   void ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows) const;
   std::size_t CompareMaxScrollColumn(const CompareTabState& compare_tab,
@@ -1051,6 +1068,26 @@ class WorkspaceShell {
   ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect,
                                                const MergeSurfaceLayout& surface,
                                                const MergeTabState& merge_tab) const;
+  MergeResultInteractionLayout BuildMergeResultInteractionLayout(
+      const SDL_FRect& rect,
+      const MergeSurfaceLayout& surface,
+      MergeTabState& merge_tab) const;
+  MergeInteractionLayout BuildMergeInteractionLayout(const SDL_FRect& rect,
+                                                     const MergeSurfaceLayout& surface,
+                                                     MergeTabState& merge_tab) const;
+  std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(const MergeTabState& merge_tab,
+                                                                  std::size_t line,
+                                                                  bool incoming) const;
+  std::optional<std::size_t> FindMergeTrackedConflictAtResultLine(const MergeTabState& merge_tab,
+                                                                  std::size_t line) const;
+  SDL_FRect BuildMergeSourceActionButtonRect(const MergeSurfaceLayout& surface,
+                                             const MergeInteractionLayout& interaction,
+                                             const MergeTrackedConflict& conflict,
+                                             bool incoming) const;
+  std::array<SDL_FRect, 4> BuildMergeResultActionButtonRects(
+      const MergeSurfaceLayout& surface,
+      const MergeInteractionLayout& interaction,
+      const MergeTrackedConflict& conflict) const;
   MergeToolbarLayout ComputeMergeToolbarLayout(const SDL_FRect& rect,
                                               const MergeSurfaceLayout& surface) const;
   int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;

@@ -175,6 +175,19 @@ struct VisibleLineRangeLayout {
   std::size_t visible_rows = 0;
 };
 
+struct TextGridInteractionLayout {
+  SDL_FRect rect{};
+  float text_x = 0.0f;
+  float first_line_y = 0.0f;
+  float line_height = 14.0f;
+  float char_width = 1.0f;
+  std::size_t scroll_line = 0;
+  std::size_t line_count = 0;
+  std::size_t horizontal_scroll = 0;
+  std::size_t visible_rows = 1;
+  std::size_t visible_columns = 1;
+};
+
 struct ScrollableListLayout {
   SDL_FRect list_rect{};
   std::optional<ScrollbarGeometry> scrollbar;
@@ -347,6 +360,22 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
 std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog);
+TextGridInteractionLayout ComputeTextGridInteractionLayout(
+    const SDL_FRect& rect,
+    float text_x,
+    float first_line_y,
+    float line_height,
+    float char_width,
+    std::size_t scroll_line,
+    std::size_t line_count,
+    std::size_t horizontal_scroll,
+    std::size_t visible_rows,
+    std::size_t visible_columns);
+std::optional<std::size_t> VisibleTextGridLineAtY(const TextGridInteractionLayout& layout, float y);
+std::size_t ClampTextGridLineAtY(const TextGridInteractionLayout& layout, float y);
+std::size_t TextGridVisualColumnAtX(const TextGridInteractionLayout& layout, float x);
+float TextGridCursorX(const TextGridInteractionLayout& layout, std::size_t visual_column);
+float TextGridLineY(const TextGridInteractionLayout& layout, std::size_t line_index);
 ScrollSurfaceLayout ComputeScrollSurfaceLayout(const SDL_FRect& area,
                                                std::size_t total_rows,
                                                int visible_rows,

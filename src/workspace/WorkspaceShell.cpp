@@ -811,6 +811,21 @@ ScrollSurfaceLayout WorkspaceShell::ComputeCompareScrollLayout(
                                     surface.visible_columns, compare_tab.horizontal_scroll);
 }
 
+TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
+    const CompareSurfaceLayout& surface,
+    CompareTabState& compare_tab) const {
+  compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface.visible_rows),
+                                             surface.visible_columns);
+  compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
+  return ComputeTextGridInteractionLayout(
+      MakeRect(surface.right_x, surface.rows_y, surface.gutter_width + surface.right_width,
+               static_cast<float>(surface.visible_rows) * surface.line_height),
+      surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
+      text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
+      compare_tab.model.rows.size(), compare_tab.horizontal_scroll,
+      static_cast<std::size_t>(surface.visible_rows), surface.visible_columns);
+}
+
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
   return std::max(0, static_cast<int>(compare_tab.model.rows.size()) - std::max(1, visible_rows));
 }
@@ -1025,6 +1040,108 @@ ScrollSurfaceLayout WorkspaceShell::ComputeMergeScrollLayout(
   return ComputeScrollSurfaceLayout(rect, line_count, surface.visible_rows, merge_tab.scroll_row,
                                     merge_tab.max_visual_columns, surface.visible_columns,
                                     merge_tab.horizontal_scroll);
+}
+
+WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteractionLayout(
+    const SDL_FRect& rect,
+    const MergeSurfaceLayout& surface,
+    MergeTabState& merge_tab) const {
+  const SDL_FRect result_rect = ComputeMergeResultViewportRect(
+      rect, surface.center_x, surface.rows_y, surface.gutter_width, surface.center_width,
+      surface.show_horizontal);
+  const editor::EditorViewMetrics metrics =
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab.result_viewport, result_rect);
+  merge_tab.result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const VisibleLineRangeLayout lines = {
+      .first_line_y = metrics.first_line_y,
+      .line_height = metrics.line_height,
+      .scroll_line = merge_tab.result_viewport.scroll_line(),
+      .visible_rows = metrics.visible_rows,
+  };
+  return MergeResultInteractionLayout{
+      .rect = result_rect,
+      .metrics = metrics,
+      .lines = lines,
+      .text = ComputeTextGridInteractionLayout(
+          result_rect, metrics.text_x, metrics.first_line_y, metrics.line_height,
+          text_renderer_.CharWidth(), merge_tab.result_viewport.scroll_line(),
+          merge_tab.result_viewport.line_count(), merge_tab.result_viewport.horizontal_scroll(),
+          metrics.visible_rows, metrics.visible_columns),
+  };
+}
+
+WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayout(
+    const SDL_FRect& rect,
+    const MergeSurfaceLayout& surface,
+    MergeTabState& merge_tab) const {
+  const float bottom_reserved =
+      surface.show_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+  return MergeInteractionLayout{
+      .content_bottom = rect.y + std::max(0.0f, rect.h - bottom_reserved),
+      .result = BuildMergeResultInteractionLayout(rect, surface, merge_tab),
+      .incoming_accept_button_width =
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Incoming")),
+      .current_accept_button_width =
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Current")),
+      .result_action_widths = {
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Incoming")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Current")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
+      },
+  };
+}
+
+std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtSourceLine(
+    const MergeTabState& merge_tab,
+    std::size_t line,
+    bool incoming) const {
+  for (std::size_t i = 0; i < merge_tab.conflicts.size(); ++i) {
+    const auto& conflict = merge_tab.conflicts[i];
+    const std::size_t start = incoming ? conflict.incoming_start_line : conflict.current_start_line;
+    const std::size_t end = incoming ? conflict.incoming_end_line : conflict.current_end_line;
+    if (line >= start && line < end) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtResultLine(
+    const MergeTabState& merge_tab,
+    std::size_t line) const {
+  for (std::size_t i = 0; i < merge_tab.conflicts.size(); ++i) {
+    const auto& conflict = merge_tab.conflicts[i];
+    const std::size_t end = std::max(conflict.end_line, conflict.start_line + std::size_t{1});
+    if (line >= conflict.start_line && line < end) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
+    const MergeSurfaceLayout& surface,
+    const MergeInteractionLayout& interaction,
+    const MergeTrackedConflict& conflict,
+    bool incoming) const {
+  return ComputeMergeSourceActionButtonRect(
+      incoming ? surface.left_x : surface.right_x, surface.gutter_width, surface.rows_y,
+      surface.line_height, static_cast<int>(interaction.result.text.scroll_line),
+      incoming ? conflict.incoming_end_line : conflict.current_end_line, interaction.content_bottom,
+      incoming ? interaction.incoming_accept_button_width : interaction.current_accept_button_width,
+      kMergeToolbarButtonHeight);
+}
+
+std::array<SDL_FRect, 4> WorkspaceShell::BuildMergeResultActionButtonRects(
+    const MergeSurfaceLayout& surface,
+    const MergeInteractionLayout& interaction,
+    const MergeTrackedConflict& conflict) const {
+  return ComputeMergeResultActionButtonRects(
+      surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
+      ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, conflict.start_line,
+                                  std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
+      interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap);
 }
 
 int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
@@ -2315,37 +2432,55 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
-    const float content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h;
     const SDL_FRect result_rect = ComputeMergeResultViewportRect(
         layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
         surface_layout.gutter_width, surface_layout.center_width, surface_layout.show_horizontal);
-    if (Contains(result_rect, x, y)) {
+    const editor::EditorViewMetrics result_metrics =
+        editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport, result_rect);
+    const MergeInteractionLayout interaction = {
+        .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
+        .result =
+            MergeResultInteractionLayout{
+                .rect = result_rect,
+                .metrics = result_metrics,
+                .lines =
+                    VisibleLineRangeLayout{
+                        .first_line_y = result_metrics.first_line_y,
+                        .line_height = result_metrics.line_height,
+                        .scroll_line = merge_tab->result_viewport.scroll_line(),
+                        .visible_rows = result_metrics.visible_rows,
+                    },
+                .text = ComputeTextGridInteractionLayout(
+                    result_rect, result_metrics.text_x, result_metrics.first_line_y,
+                    result_metrics.line_height, text_renderer_.CharWidth(),
+                    merge_tab->result_viewport.scroll_line(), merge_tab->result_viewport.line_count(),
+                    merge_tab->result_viewport.horizontal_scroll(), result_metrics.visible_rows,
+                    result_metrics.visible_columns),
+            },
+        .incoming_accept_button_width =
+            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Incoming")),
+        .current_accept_button_width =
+            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Current")),
+        .result_action_widths =
+            {
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Incoming")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Current")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
+            },
+    };
+    if (Contains(interaction.result.rect, x, y)) {
       if (merge_tab->hover_state.has_value() &&
           merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
           merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
         const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
         if (conflict.valid) {
-          const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-              text_renderer_, merge_tab->result_viewport, result_rect);
-          const VisibleLineRangeLayout result_line_layout = {
-              .first_line_y = metrics.first_line_y,
-              .line_height = metrics.line_height,
-              .scroll_line = merge_tab->result_viewport.scroll_line(),
-              .visible_rows = metrics.visible_rows,
-          };
-          const std::optional<SDL_FRect> conflict_rect = ComputeVisibleLineRangeRect(
-              result_rect, result_line_layout, conflict.start_line,
-              std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
-          if (conflict_rect.has_value()) {
-            const std::array<float, 4> action_widths = {
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Incoming")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Current")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
-            };
-            const std::array<SDL_FRect, 4> action_rects = ComputeMergeResultActionButtonRects(
-                surface_layout.center_x + surface_layout.gutter_width, surface_layout.rows_y,
-                content_bottom, conflict_rect, action_widths, 22.0f, 8.0f);
+          const std::array<SDL_FRect, 4> action_rects =
+              BuildMergeResultActionButtonRects(surface_layout, interaction, conflict);
+          if (const std::optional<SDL_FRect> conflict_rect = ComputeVisibleLineRangeRect(
+                  interaction.result.rect, interaction.result.lines, conflict.start_line,
+                  std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
+              conflict_rect.has_value()) {
             const SDL_FRect& base_rect = action_rects[0];
             const SDL_FRect& incoming_rect = action_rects[1];
             const SDL_FRect& current_rect = action_rects[2];

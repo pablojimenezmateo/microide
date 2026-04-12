@@ -32,6 +32,7 @@ using microide::workspace::ComputePromptSurfaceRect;
 using microide::workspace::ComputeScrollSurfaceLayout;
 using microide::workspace::ComputeScrollableListLayout;
 using microide::workspace::ComputeScrollbarThumb;
+using microide::workspace::ComputeTextGridInteractionLayout;
 using microide::workspace::ComputeVisibleLineRangeRect;
 using microide::workspace::ComputeVisibleStripLayouts;
 using microide::workspace::EnsureVisibleStripIndex;
@@ -43,6 +44,11 @@ using microide::workspace::RevealScrollableListIndex;
 using microide::workspace::ScrollUnitsForPointer;
 using microide::workspace::ScrollableListIndexAtY;
 using microide::workspace::ScrollableListRowRect;
+using microide::workspace::ClampTextGridLineAtY;
+using microide::workspace::TextGridCursorX;
+using microide::workspace::TextGridLineY;
+using microide::workspace::TextGridVisualColumnAtX;
+using microide::workspace::VisibleTextGridLineAtY;
 using microide::workspace::VisibleLineRangeLayout;
 
 void TestWorkspaceSharedLayoutHelpers() {
@@ -248,6 +254,37 @@ void TestWorkspaceSharedScrollSurfaceLayout() {
          "scroll surface layout should clamp both scroll positions back to zero when content fits");
   Expect(vertical_only.content_rect.x == 10.0f && vertical_only.content_rect.w == 120.0f,
          "scroll surface layout should preserve the full content rect when no scrollbars are needed");
+}
+
+void TestWorkspaceSharedTextGridInteractionLayout() {
+  const auto layout = ComputeTextGridInteractionLayout(
+      MakeRect(10.0f, 20.0f, 180.0f, 90.0f), 42.0f, 32.0f, 16.0f, 8.0f, 4, 12, 6, 5, 14);
+  Expect(layout.scroll_line == 4 && layout.visible_rows == 5 && layout.visible_columns == 14,
+         "text-grid interaction layout should preserve the requested visible window");
+  Expect(!VisibleTextGridLineAtY(layout, 31.0f).has_value(),
+         "text-grid interaction layout should reject points above the first visible line");
+  const auto first_row_line = VisibleTextGridLineAtY(layout, 32.0f);
+  Expect(first_row_line.has_value() && *first_row_line == 4,
+         "text-grid interaction layout should map the first visible row back to the scroll line");
+  const auto mid_row_line = VisibleTextGridLineAtY(layout, 96.0f);
+  Expect(mid_row_line.has_value() && *mid_row_line == 8,
+         "text-grid interaction layout should translate visible row offsets into line indices");
+  Expect(!VisibleTextGridLineAtY(layout, 112.0f).has_value(),
+         "text-grid interaction layout should reject points past the visible row window");
+  Expect(ClampTextGridLineAtY(layout, 120.0f) == 9,
+         "text-grid interaction layout should clamp result-surface hits below the window to the last visible line");
+  Expect(TextGridVisualColumnAtX(layout, 42.0f) == 6 &&
+             TextGridVisualColumnAtX(layout, 66.0f) == 9,
+         "text-grid interaction layout should translate x positions into visual columns from the text origin");
+  Expect(TextGridCursorX(layout, 11) == 82.0f && TextGridLineY(layout, 7) == 80.0f,
+         "text-grid interaction layout should round-trip caret positions through the shared geometry");
+
+  const auto clamped_scroll = ComputeTextGridInteractionLayout(
+      MakeRect(0.0f, 0.0f, 120.0f, 80.0f), 8.0f, 12.0f, 14.0f, 0.0f, 9, 3, 2, 5, 12);
+  Expect(clamped_scroll.scroll_line == 0,
+         "text-grid interaction layout should clamp scroll line when content is shorter than the visible rows");
+  Expect(ClampTextGridLineAtY(clamped_scroll, 200.0f) == 2,
+         "text-grid interaction layout should clamp below-content hits to the last model line");
 }
 
 void TestWorkspaceSharedScrollableListLayout() {
@@ -457,6 +494,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/PromptGeometry", TestWorkspaceSharedPromptGeometry);
   AddTest(tests, "WorkspaceShared/ScrollbarEdgeCases", TestWorkspaceSharedScrollbarEdgeCases);
   AddTest(tests, "WorkspaceShared/ScrollSurfaceLayout", TestWorkspaceSharedScrollSurfaceLayout);
+  AddTest(tests, "WorkspaceShared/TextGridInteractionLayout",
+          TestWorkspaceSharedTextGridInteractionLayout);
   AddTest(tests, "WorkspaceShared/ScrollableListLayout",
           TestWorkspaceSharedScrollableListLayout);
   AddTest(tests, "WorkspaceShared/StripLayoutHelpers", TestWorkspaceSharedStripLayoutHelpers);

@@ -430,22 +430,16 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           }
           const CompareSurfaceLayout surface_layout =
               ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+          const TextGridInteractionLayout interaction =
+              BuildCompareRightInteractionLayout(surface_layout, *compare_tab);
           const std::size_t model_row =
               CompareRowIndexForRightLine(*compare_tab, compare_tab->right_viewport.cursor_line());
           const float cursor_x =
-              surface_layout.right_x + surface_layout.gutter_width +
-              static_cast<float>(compare_tab->right_viewport.cursor_visual_column() -
-                                 compare_tab->horizontal_scroll) *
-                  char_width;
-          const float cursor_y =
-              surface_layout.rows_y +
-              static_cast<float>(model_row > static_cast<std::size_t>(std::max(0, compare_tab->scroll_row))
-                                     ? model_row - static_cast<std::size_t>(std::max(0, compare_tab->scroll_row))
-                                     : 0) *
-                  surface_layout.line_height;
+              TextGridCursorX(interaction, compare_tab->right_viewport.cursor_visual_column());
+          const float cursor_y = TextGridLineY(interaction, model_row);
           return TextInputVisual{
               .surface = surface,
-              .area = MakeRect(cursor_x, cursor_y - 1.0f, char_width, surface_layout.line_height),
+              .area = MakeRect(cursor_x, cursor_y - 1.0f, interaction.char_width, interaction.line_height),
               .text_x = cursor_x,
               .text_y = cursor_y,
               .cursor_x = cursor_x,
@@ -460,25 +454,15 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           }
           const MergeSurfaceLayout surface_layout =
               ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-          const SDL_FRect result_rect = ComputeMergeResultViewportRect(
-              layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
-              surface_layout.gutter_width, surface_layout.center_width,
-              surface_layout.show_horizontal);
-          const editor::EditorViewMetrics metrics =
-              editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport,
-                                                         result_rect);
+          const MergeResultInteractionLayout interaction =
+              BuildMergeResultInteractionLayout(layout.editor_surface, surface_layout, *merge_tab);
           const float cursor_x =
-              metrics.text_x + static_cast<float>(merge_tab->result_viewport.cursor_visual_column() -
-                                                  merge_tab->result_viewport.horizontal_scroll()) *
-                                   char_width;
-          const float cursor_y =
-              metrics.first_line_y +
-              static_cast<float>(merge_tab->result_viewport.cursor_line() -
-                                 merge_tab->result_viewport.scroll_line()) *
-                  metrics.line_height;
+              TextGridCursorX(interaction.text, merge_tab->result_viewport.cursor_visual_column());
+          const float cursor_y = TextGridLineY(interaction.text, merge_tab->result_viewport.cursor_line());
           return TextInputVisual{
               .surface = surface,
-              .area = MakeRect(cursor_x, cursor_y - 1.0f, char_width, metrics.line_height),
+              .area = MakeRect(cursor_x, cursor_y - 1.0f, interaction.text.char_width,
+                               interaction.text.line_height),
               .text_x = cursor_x,
               .text_y = cursor_y,
               .cursor_x = cursor_x,

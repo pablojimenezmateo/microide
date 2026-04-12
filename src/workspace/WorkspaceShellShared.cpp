@@ -1411,6 +1411,81 @@ SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {
                   kPromptSurfaceInputHeight);
 }
 
+TextGridInteractionLayout ComputeTextGridInteractionLayout(const SDL_FRect& rect,
+                                                           float text_x,
+                                                           float first_line_y,
+                                                           float line_height,
+                                                           float char_width,
+                                                           std::size_t scroll_line,
+                                                           std::size_t line_count,
+                                                           std::size_t horizontal_scroll,
+                                                           std::size_t visible_rows,
+                                                           std::size_t visible_columns) {
+  TextGridInteractionLayout layout;
+  layout.rect = rect;
+  layout.text_x = text_x;
+  layout.first_line_y = first_line_y;
+  layout.line_height = std::max(1.0f, line_height);
+  layout.char_width = std::max(1.0f, char_width);
+  layout.line_count = line_count;
+  layout.visible_rows = std::max<std::size_t>(1, visible_rows);
+  layout.visible_columns = std::max<std::size_t>(1, visible_columns);
+  const std::size_t max_scroll_line =
+      line_count > layout.visible_rows ? line_count - layout.visible_rows : 0;
+  layout.scroll_line = std::min(scroll_line, max_scroll_line);
+  layout.horizontal_scroll = horizontal_scroll;
+  return layout;
+}
+
+std::optional<std::size_t> VisibleTextGridLineAtY(const TextGridInteractionLayout& layout,
+                                                  float y) {
+  if (layout.line_count == 0 || layout.line_height <= 0.0f || y < layout.first_line_y) {
+    return std::nullopt;
+  }
+
+  const std::size_t row = static_cast<std::size_t>(
+      std::floor((y - layout.first_line_y) / layout.line_height));
+  if (row >= layout.visible_rows) {
+    return std::nullopt;
+  }
+
+  const std::size_t line = layout.scroll_line + row;
+  if (line >= layout.line_count) {
+    return std::nullopt;
+  }
+  return line;
+}
+
+std::size_t ClampTextGridLineAtY(const TextGridInteractionLayout& layout, float y) {
+  if (layout.line_count == 0) {
+    return 0;
+  }
+
+  const float local_y = std::max(0.0f, y - layout.first_line_y);
+  const std::size_t row =
+      static_cast<std::size_t>(std::floor(local_y / std::max(1.0f, layout.line_height)));
+  return std::min(layout.scroll_line + row, layout.line_count - 1);
+}
+
+std::size_t TextGridVisualColumnAtX(const TextGridInteractionLayout& layout, float x) {
+  const float local_x = std::max(0.0f, x - layout.text_x);
+  return layout.horizontal_scroll +
+         static_cast<std::size_t>(
+             std::max(0L, std::lround(local_x / std::max(1.0f, layout.char_width))));
+}
+
+float TextGridCursorX(const TextGridInteractionLayout& layout, std::size_t visual_column) {
+  const std::size_t visible_column =
+      visual_column > layout.horizontal_scroll ? visual_column - layout.horizontal_scroll : 0;
+  return layout.text_x + static_cast<float>(visible_column) * layout.char_width;
+}
+
+float TextGridLineY(const TextGridInteractionLayout& layout, std::size_t line_index) {
+  const long long relative_line = static_cast<long long>(line_index) -
+                                  static_cast<long long>(layout.scroll_line);
+  return layout.first_line_y + static_cast<float>(relative_line) * layout.line_height;
+}
+
 ScrollSurfaceLayout ComputeScrollSurfaceLayout(const SDL_FRect& area,
                                                std::size_t total_rows,
                                                int visible_rows,
