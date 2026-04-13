@@ -88,6 +88,12 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveMergeBlameOverl
   return WorkspaceShellTestAccess::ActiveMergeBlameOverlay(shell);
 }
 
+bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
+  return WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL) &&
+         WorkspaceShellTestAccess::HandleTextInput(shell, command) &&
+         WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE);
+}
+
 void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "picked-project";
@@ -264,6 +270,128 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
          "Enter should execute the project-next command");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
          "project-next should activate the next project tab");
+}
+
+void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(ExecuteCommand(shell, "sidebar-width 420"),
+         "sidebar-width command should execute with a numeric width");
+  Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 420.0f) < 0.001f,
+         "sidebar-width command should apply the parsed width");
+
+  Expect(ExecuteCommand(shell, "sidebar-width wide"),
+         "sidebar-width command should still route through the command prompt");
+  Expect(WorkspaceShellTestAccess::CommandMode(shell),
+         "invalid sidebar-width input should keep the command prompt open");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) ==
+             "sidebar-width requires a numeric width",
+         "invalid sidebar-width input should report the parser failure");
+}
+
+void TestWorkspaceShellMergeCommandResolvesRelativePaths() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.cpp";
+  const std::filesystem::path incoming = root / "incoming.cpp";
+  const std::filesystem::path current = root / "current.cpp";
+  WriteFile(base, "int value() { return 0; }\n");
+  WriteFile(incoming, "int value() { return 1; }\n");
+  WriteFile(current, "int value() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  Expect(ExecuteCommand(shell, "merge base.cpp incoming.cpp current.cpp"),
+         "merge command should execute for project-relative paths");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "merge command should open a merge tab");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.base_path == base.lexically_normal(),
+         "merge command should resolve the base path relative to the active project");
+  Expect(merge.incoming_path == incoming.lexically_normal(),
+         "merge command should resolve the incoming path relative to the active project");
+  Expect(merge.current_path == current.lexically_normal(),
+         "merge command should resolve the current path relative to the active project");
+  Expect(merge.output_path == current.lexically_normal(),
+         "merge command should default the output path to the current file");
+}
+
+void TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.cpp";
+  const std::filesystem::path beta = root / "beta.cpp";
+  const std::filesystem::path gamma = root / "gamma.cpp";
+  WriteFile(alpha, "int alpha() { return 1; }\n");
+  WriteFile(beta, "int beta() { return 2; }\n");
+  WriteFile(gamma, "int gamma() { return 3; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "first tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta), "second tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, gamma), "third tab should open");
+
+  Expect(ExecuteCommand(shell, "tabmove -2"),
+         "tabmove should execute with a relative offset");
+
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.size() == 3, "tabmove should keep the same tab count");
+  Expect(tabs[0].path == gamma.lexically_normal() && tabs[1].path == alpha.lexically_normal() &&
+             tabs[2].path == beta.lexically_normal(),
+         "relative tabmove should reorder the active tab into the requested slot");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "relative tabmove should keep the moved tab active");
+}
+
+void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "line1\nline2\nline3\nline4\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(ExecuteCommand(shell, "goto 3:2"), "goto should execute with an explicit line and column");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 2 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 1,
+         "goto should move the cursor to the parsed absolute location");
+
+  Expect(ExecuteCommand(shell, "jump -1:1"),
+         "jump should execute with a relative line delta and column");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
+         "jump should move the cursor relative to the current line");
+}
+
+void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+
+  Expect(ExecuteCommand(shell, "ui-scale 125%"),
+         "ui-scale should execute with a parsed numeric scale");
+  Expect(std::fabs(WorkspaceShellTestAccess::UiScale(shell) - 1.25f) < 0.001f,
+         "ui-scale should apply the parsed scale");
+
+  Expect(ExecuteCommand(shell, "soft-tabs on"),
+         "soft-tabs should execute with a typed boolean request");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "soft-tabs should enable soft tabs for editor preferences");
+
+  Expect(ExecuteCommand(shell, "focus panel"),
+         "focus should execute with a typed focus target");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "focus panel should move focus to the bottom panel when available");
 }
 
 void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
@@ -998,6 +1126,16 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpenCommandRequiresPath);
   AddTest(tests, "WorkspaceShell/ProjectNextAndPrevCommandsCycleProjects",
           TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects);
+  AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
+          TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
+  AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",
+          TestWorkspaceShellMergeCommandResolvesRelativePaths);
+  AddTest(tests, "WorkspaceShell/TabMoveCommandSupportsRelativeOffsets",
+          TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
+  AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
+          TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
+  AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
+          TestWorkspaceShellGlobalCommandsApplyTypedRequests);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",

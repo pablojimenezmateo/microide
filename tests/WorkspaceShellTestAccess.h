@@ -629,11 +629,20 @@ struct WorkspaceShellTestAccess {
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
     return shell.surface_.overlay_mode == WorkspaceShell::OverlayMode::FileFinder;
   }
+  static bool SidebarVisible(const WorkspaceShell& shell) { return shell.surface_.sidebar_visible; }
+  static float SidebarWidth(const WorkspaceShell& shell) { return shell.surface_.sidebar_width; }
+  static float UiScale(const WorkspaceShell& shell) { return shell.UiScale(); }
+  static bool SoftTabsEnabled(const WorkspaceShell& shell) {
+    return shell.editor_preferences_.soft_tabs;
+  }
   static bool FocusIsEditor(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Editor;
   }
   static bool FocusIsSidebar(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Sidebar;
+  }
+  static bool FocusIsPanel(const WorkspaceShell& shell) {
+    return shell.surface_.focus == WorkspaceShell::FocusTarget::Panel;
   }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Overlay;
