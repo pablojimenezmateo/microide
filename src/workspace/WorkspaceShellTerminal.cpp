@@ -43,8 +43,12 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
   std::string text;
   text.reserve(clamped_end - clamped_start);
   for (std::size_t column = clamped_start; column < clamped_end; ++column) {
-    const char character = line.cells[column].character;
-    text.push_back(character == '\0' ? ' ' : character);
+    const auto display_text = line.cells[column].DisplayText();
+    if (!display_text.empty()) {
+      text.append(display_text);
+      continue;
+    }
+    text.push_back(' ');
   }
   return trim_trailing ? TrimTrailingTerminalBlanks(std::move(text)) : text;
 }

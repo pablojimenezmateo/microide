@@ -162,6 +162,21 @@ void TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking() {
          "focused terminal panels should show the caret immediately after a blink reset");
 }
 
+void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"),
+         "terminal text input should be handled while scrolled away from the tail");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalFollowTail(shell),
+         "typing into the terminal should resume tail-follow mode");
+}
+
 void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -366,6 +381,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalFocusModeTracksWindowFocus);
   AddTest(tests, "WorkspaceShell/FocusedTerminalParticipatesInCaretBlinking",
           TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking);
+  AddTest(tests, "WorkspaceShell/TypingReenablesTerminalTailFollow",
+          TestWorkspaceShellTypingReenablesTerminalTailFollow);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",

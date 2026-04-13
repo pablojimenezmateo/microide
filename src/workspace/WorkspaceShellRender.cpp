@@ -755,7 +755,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                left->a == right->a));
     };
     return colors_equal(lhs.foreground, rhs.foreground) &&
-           colors_equal(lhs.background, rhs.background) && lhs.bold == rhs.bold;
+           colors_equal(lhs.background, rhs.background) && lhs.bold == rhs.bold &&
+           lhs.inverse == rhs.inverse;
+  };
+  const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {
+    SDL_Color foreground = style.foreground.value_or(theme_.text_muted);
+    SDL_Color background = style.background.value_or(theme_.surface_background);
+    if (style.inverse) {
+      std::swap(foreground, background);
+    }
+    if (selected) {
+      foreground = theme_.text_primary;
+      background = theme_.row_highlight;
+    }
+    return std::pair{foreground, background};
   };
   const auto draw_terminal_line =
       [&](float x, float y, float width, const terminal::TerminalLine& line, std::size_t row_index) {
@@ -769,27 +782,27 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     std::size_t drawn_chars = 0;
     std::size_t segment_start = 0;
     std::string segment;
+    std::size_t segment_cells = 0;
     terminal::TerminalStyle segment_style;
     bool has_segment = false;
     bool segment_selected = false;
 
     const auto flush_segment = [&]() {
-      if (!has_segment || segment.empty()) {
+      if (!has_segment || segment_cells == 0) {
         return;
       }
-      const SDL_Color foreground =
-          segment_selected ? theme_.text_primary
-                           : segment_style.foreground.value_or(theme_.text_muted);
-      const SDL_Color background =
-          segment_selected ? theme_.row_highlight
-                           : segment_style.background.value_or(theme_.surface_background);
+      const auto [foreground, background] =
+          resolve_terminal_colors(segment_style, segment_selected);
       const float segment_x = x + static_cast<float>(segment_start) * char_width;
       DrawFilledRect(renderer,
-                     MakeRect(segment_x, y - 1.0f, char_width * static_cast<float>(segment.size()),
+                     MakeRect(segment_x, y - 1.0f, char_width * static_cast<float>(segment_cells),
                               text_renderer_.LineHeight()),
                      background);
-      text_renderer_.DrawString(renderer, segment_x, y, foreground, segment);
+      if (!segment.empty()) {
+        text_renderer_.DrawString(renderer, segment_x, y, foreground, segment);
+      }
       segment.clear();
+      segment_cells = 0;
       has_segment = false;
     };
 
@@ -812,7 +825,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         segment_selected = selected;
         has_segment = true;
       }
-      segment.push_back(cell.character);
+      segment.append(cell.DisplayText());
+      ++segment_cells;
       ++drawn_chars;
     }
     flush_segment();
@@ -1695,12 +1709,15 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                            theme_.cursor);
             if (cursor_row < terminal_lines.size()) {
               const auto& line = terminal_lines[cursor_row];
-              if (cursor_column < line.cells.size() && line.cells[cursor_column].character != '\0') {
+              if (cursor_column < line.cells.size()) {
                 const auto& cell = line.cells[cursor_column];
-                text_renderer_.DrawString(
-                    renderer, cursor_x, cursor_y,
-                    cell.style.background.value_or(theme_.surface_background),
-                    std::string(1, cell.character));
+                const auto display_text = cell.DisplayText();
+                if (!display_text.empty()) {
+                  const SDL_Color cursor_foreground =
+                      resolve_terminal_colors(cell.style, false).second;
+                  text_renderer_.DrawString(renderer, cursor_x, cursor_y, cursor_foreground,
+                                            std::string(display_text));
+                }
               }
             }
           }

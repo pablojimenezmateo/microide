@@ -22,6 +22,7 @@ struct TerminalSessionTestAccess {
     session.launch_label_.clear();
     session.current_style_ = microide::terminal::TerminalStyle{};
     session.escape_sequence_buffer_.clear();
+    session.pending_utf8_sequence_.clear();
     session.wake_event_type_ = 0;
     session.master_fd_ = -1;
     session.child_pid_ = -1;

@@ -1700,7 +1700,7 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
     const std::size_t end_column =
         row == end_row ? std::min(selection.end.column, line_size) : line_size;
     for (std::size_t column = start_column; column < end_column; ++column) {
-      text.push_back(line.cells[column].character);
+      text.append(line.cells[column].DisplayText());
     }
     if (row != end_row) {
       text.push_back('\n');

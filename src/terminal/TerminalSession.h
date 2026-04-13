@@ -20,11 +20,20 @@ struct TerminalStyle {
   std::optional<SDL_Color> foreground;
   std::optional<SDL_Color> background;
   bool bold = false;
+  bool inverse = false;
 };
 
 struct TerminalCell {
   char character = '\0';
+  std::string text;
   TerminalStyle style;
+
+  std::string_view DisplayText() const {
+    if (!text.empty()) {
+      return text;
+    }
+    return character == '\0' ? std::string_view{} : std::string_view(&character, 1);
+  }
 };
 
 struct TerminalLine {
@@ -144,6 +153,7 @@ class TerminalSession {
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
   void MoveCursorLocked(std::size_t row, std::size_t column);
   void PutCharacterLocked(char character);
+  void PutGlyphLocked(std::string_view glyph);
   void ResizeLineLocked(TerminalLine& line, std::size_t size);
   void ClearLineRangeLocked(TerminalLine& line, std::size_t start, std::size_t end);
   void EraseInLineLocked(int mode);
@@ -192,6 +202,7 @@ class TerminalSession {
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;
   std::optional<std::string> pending_clipboard_text_;
+  std::string pending_utf8_sequence_;
   std::size_t rows_ = 24;
   std::size_t columns_ = 80;
   std::size_t cursor_row_ = 0;

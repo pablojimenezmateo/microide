@@ -262,6 +262,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     ClearTerminalSelection();
     if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+      terminal_tab->follow_tail = true;
       AppendTerminalPendingInput(input);
       terminal_tab->session.SendBytes(input);
     }
@@ -276,6 +277,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
   if (terminal_tab == nullptr) {
     return false;
   }
+  const auto follow_terminal_tail = [&]() { terminal_tab->follow_tail = true; };
 
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && TerminalHasSelection()) {
     const std::string text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
@@ -301,20 +303,25 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
     if (event.key >= SDLK_A && event.key <= SDLK_Z) {
       const char control =
           static_cast<char>(1 + (event.key - SDLK_A));
+      follow_terminal_tail();
       terminal_tab->session.SendBytes(std::string(1, control));
       return true;
     }
     switch (event.key) {
       case SDLK_LEFTBRACKET:
+        follow_terminal_tail();
         terminal_tab->session.SendBytes("\x1b");
         return true;
       case SDLK_BACKSLASH:
+        follow_terminal_tail();
         terminal_tab->session.SendBytes("\x1c");
         return true;
       case SDLK_RIGHTBRACKET:
+        follow_terminal_tail();
         terminal_tab->session.SendBytes("\x1d");
         return true;
       case SDLK_SPACE:
+        follow_terminal_tail();
         terminal_tab->session.SendBytes(std::string(1, '\0'));
         return true;
       default:
@@ -327,6 +334,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
     if (input_character != '\0') {
       std::string bytes(1, '\x1b');
       bytes.push_back(input_character);
+      follow_terminal_tail();
       terminal_tab->session.SendBytes(bytes);
       return true;
     }
@@ -334,48 +342,62 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
 
   switch (event.key) {
     case SDLK_ESCAPE:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Escape);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       SubmitTerminalPendingInput();
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Enter);
       return true;
     case SDLK_BACKSPACE:
       EraseLastTerminalPendingInputCodepoint();
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Backspace);
       return true;
     case SDLK_TAB:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Tab);
       return true;
     case SDLK_UP:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Up);
       return true;
     case SDLK_DOWN:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Down);
       return true;
     case SDLK_RIGHT:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Right);
       return true;
     case SDLK_LEFT:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Left);
       return true;
     case SDLK_HOME:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Home);
       return true;
     case SDLK_END:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::End);
       return true;
     case SDLK_PAGEUP:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::PageUp);
       return true;
     case SDLK_PAGEDOWN:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::PageDown);
       return true;
     case SDLK_INSERT:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Insert);
       return true;
     case SDLK_DELETE:
+      follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Delete);
       return true;
     default:
@@ -400,6 +422,7 @@ bool WorkspaceShell::PasteClipboardIntoTerminal() {
   if (clipboard_text->find_first_of("\r\n") == std::string::npos) {
     AppendTerminalPendingInput(*clipboard_text);
   }
+  terminal_tab->follow_tail = true;
   terminal_tab->session.PasteText(*clipboard_text);
   return true;
 }

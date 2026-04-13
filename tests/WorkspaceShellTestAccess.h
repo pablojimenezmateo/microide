@@ -324,6 +324,18 @@ struct WorkspaceShellTestAccess {
   static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
     return shell.terminal_tabs_[shell.active_terminal_tab_index_]->session;
   }
+  static void SetActiveTerminalFollowTail(WorkspaceShell& shell, bool follow_tail) {
+    shell.terminal_tabs_[shell.active_terminal_tab_index_]->follow_tail = follow_tail;
+  }
+  static bool ActiveTerminalFollowTail(const WorkspaceShell& shell) {
+    return shell.terminal_tabs_[shell.active_terminal_tab_index_]->follow_tail;
+  }
+  static void SetActiveTerminalScrollRow(WorkspaceShell& shell, int scroll_row) {
+    shell.terminal_tabs_[shell.active_terminal_tab_index_]->scroll_row = scroll_row;
+  }
+  static int ActiveTerminalScrollRow(const WorkspaceShell& shell) {
+    return shell.terminal_tabs_[shell.active_terminal_tab_index_]->scroll_row;
+  }
   static bool HandleTerminalKeyDown(WorkspaceShell& shell,
                                     SDL_Keycode key,
                                     SDL_Keymod modifiers) {

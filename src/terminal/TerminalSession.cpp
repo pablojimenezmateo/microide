@@ -228,6 +228,45 @@ bool ClipboardPayloadIsText(std::string_view text) {
   return true;
 }
 
+std::size_t Utf8SequenceLength(unsigned char lead_byte) {
+  if (lead_byte < 0x80) {
+    return 1;
+  }
+  if (lead_byte >= 0xC2 && lead_byte <= 0xDF) {
+    return 2;
+  }
+  if (lead_byte >= 0xE0 && lead_byte <= 0xEF) {
+    return 3;
+  }
+  if (lead_byte >= 0xF0 && lead_byte <= 0xF4) {
+    return 4;
+  }
+  return 0;
+}
+
+bool IsUtf8ContinuationByte(unsigned char byte) {
+  return (byte & 0b1100'0000U) == 0b1000'0000U;
+}
+
+TerminalCell MakeAsciiTerminalCell(char character, const TerminalStyle& style) {
+  return TerminalCell{
+      .character = character,
+      .text = {},
+      .style = style,
+  };
+}
+
+TerminalCell MakeUtf8TerminalCell(std::string_view glyph, const TerminalStyle& style) {
+  if (glyph.size() == 1 && static_cast<unsigned char>(glyph.front()) < 0x80) {
+    return MakeAsciiTerminalCell(glyph.front(), style);
+  }
+  return TerminalCell{
+      .character = '\0',
+      .text = std::string(glyph),
+      .style = style,
+  };
+}
+
 }  // namespace
 
 TerminalSession::~TerminalSession() {
@@ -253,6 +292,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     stop_requested_ = false;
     current_style_ = TerminalStyle{};
     escape_sequence_buffer_.clear();
+    pending_utf8_sequence_.clear();
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
     pending_clipboard_text_.reset();
@@ -332,6 +372,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     lines_ = {TerminalLine{}};
     current_style_ = TerminalStyle{};
     escape_sequence_buffer_.clear();
+    pending_utf8_sequence_.clear();
     master_fd_ = master_fd;
     child_pid_ = child_pid;
     running_ = true;
@@ -398,6 +439,7 @@ void TerminalSession::Stop() {
     stop_requested_ = false;
     current_style_ = TerminalStyle{};
     escape_sequence_buffer_.clear();
+    pending_utf8_sequence_.clear();
     default_launch_label_.clear();
     launch_label_.clear();
     escape_mode_ = EscapeMode::None;
@@ -435,6 +477,7 @@ void TerminalSession::Stop() {
   stop_requested_ = false;
   current_style_ = TerminalStyle{};
   escape_sequence_buffer_.clear();
+  pending_utf8_sequence_.clear();
   default_launch_label_.clear();
   launch_label_.clear();
   escape_mode_ = EscapeMode::None;
@@ -849,10 +892,19 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     }
 
     if (byte == '\x1b') {
+      if (!pending_utf8_sequence_.empty()) {
+        PutGlyphLocked("\xEF\xBF\xBD");
+        pending_utf8_sequence_.clear();
+      }
       escape_mode_ = EscapeMode::AfterEscape;
       escape_sequence_buffer_.clear();
       osc_escape_pending_ = false;
       continue;
+    }
+
+    if (!pending_utf8_sequence_.empty() && byte < 0x80) {
+      PutGlyphLocked("\xEF\xBF\xBD");
+      pending_utf8_sequence_.clear();
     }
 
     switch (byte) {
@@ -891,7 +943,41 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
       }
       default:
         if (byte >= 32 || byte >= 0x80) {
-          PutCharacterLocked(static_cast<char>(byte));
+          if (byte < 0x80) {
+            PutCharacterLocked(static_cast<char>(byte));
+            break;
+          }
+
+          while (true) {
+            if (pending_utf8_sequence_.empty()) {
+              const std::size_t sequence_length = Utf8SequenceLength(byte);
+              if (sequence_length == 0) {
+                PutGlyphLocked("\xEF\xBF\xBD");
+                break;
+              }
+              pending_utf8_sequence_.assign(1, static_cast<char>(byte));
+              if (sequence_length == 1) {
+                PutGlyphLocked(pending_utf8_sequence_);
+                pending_utf8_sequence_.clear();
+              }
+              break;
+            }
+
+            if (!IsUtf8ContinuationByte(byte)) {
+              PutGlyphLocked("\xEF\xBF\xBD");
+              pending_utf8_sequence_.clear();
+              continue;
+            }
+
+            pending_utf8_sequence_.push_back(static_cast<char>(byte));
+            const std::size_t sequence_length =
+                Utf8SequenceLength(static_cast<unsigned char>(pending_utf8_sequence_.front()));
+            if (sequence_length != 0 && pending_utf8_sequence_.size() >= sequence_length) {
+              PutGlyphLocked(pending_utf8_sequence_);
+              pending_utf8_sequence_.clear();
+            }
+            break;
+          }
         }
         break;
     }
@@ -959,6 +1045,14 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         }
         if (code == 22) {
           current_style_.bold = false;
+          continue;
+        }
+        if (code == 7) {
+          current_style_.inverse = true;
+          continue;
+        }
+        if (code == 27) {
+          current_style_.inverse = false;
           continue;
         }
         if (code == 39) {
@@ -1117,7 +1211,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       auto& line = lines_[cursor_row_];
       ResizeLineLocked(line, cursor_column_);
       line.cells.insert(line.cells.begin() + static_cast<std::ptrdiff_t>(cursor_column_), count,
-                        TerminalCell{' ', current_style_});
+                        MakeAsciiTerminalCell(' ', current_style_));
       if (columns_ > 0 && line.cells.size() > columns_) {
         line.cells.resize(columns_);
       }
@@ -1494,6 +1588,7 @@ void TerminalSession::SaveActiveScreenLocked() {
 void TerminalSession::RestoreSavedScreenLocked() {
   const ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
   lines_ = screen.lines.empty() ? std::vector<TerminalLine>{TerminalLine{}} : screen.lines;
+  pending_utf8_sequence_.clear();
   if (use_alternate_screen_) {
     lines_.resize(std::max<std::size_t>(1, rows_));
   }
@@ -1513,6 +1608,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
 
 void TerminalSession::ResetScreenLocked(bool fill_rows) {
   lines_.assign(fill_rows ? std::max<std::size_t>(1, rows_) : 1, TerminalLine{});
+  pending_utf8_sequence_.clear();
   cursor_row_ = 0;
   cursor_column_ = 0;
   saved_cursor_row_ = 0;
@@ -1596,6 +1692,10 @@ void TerminalSession::MoveCursorLocked(std::size_t row, std::size_t column) {
 }
 
 void TerminalSession::PutCharacterLocked(char character) {
+  PutGlyphLocked(std::string_view(&character, 1));
+}
+
+void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   if (columns_ > 0 && cursor_column_ >= columns_) {
     if (auto_wrap_mode_) {
       AdvanceCursorRowLocked(true);
@@ -1608,16 +1708,16 @@ void TerminalSession::PutCharacterLocked(char character) {
   auto& line = lines_[cursor_row_];
   ResizeLineLocked(line, cursor_column_);
   if (cursor_column_ == line.cells.size()) {
-    line.cells.push_back(TerminalCell{character, current_style_});
+    line.cells.push_back(MakeUtf8TerminalCell(glyph, current_style_));
   } else {
-    line.cells[cursor_column_] = TerminalCell{character, current_style_};
+    line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
   }
   ++cursor_column_;
 }
 
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
   if (line.cells.size() < size) {
-    line.cells.resize(size, TerminalCell{' ', TerminalStyle{}});
+    line.cells.resize(size, MakeAsciiTerminalCell(' ', TerminalStyle{}));
   }
 }
 
@@ -1628,7 +1728,7 @@ void TerminalSession::ClearLineRangeLocked(TerminalLine& line, std::size_t start
 
   ResizeLineLocked(line, end);
   for (std::size_t i = start; i < end; ++i) {
-    line.cells[i] = TerminalCell{' ', current_style_};
+    line.cells[i] = MakeAsciiTerminalCell(' ', current_style_);
   }
 }
 

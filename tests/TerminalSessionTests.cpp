@@ -13,7 +13,7 @@ std::string LineText(const microide::terminal::TerminalLine& line) {
   std::string text;
   text.reserve(line.cells.size());
   for (const auto& cell : line.cells) {
-    text.push_back(cell.character);
+    text.append(cell.DisplayText());
   }
   return text;
 }
@@ -348,6 +348,35 @@ void TestTerminalSessionTracksCellForegroundAndBackgroundStyles() {
          "terminal style reset should stop coloring subsequent cells");
 }
 
+void TestTerminalSessionGroupsUtf8GlyphsIntoSingleCells() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  const std::string utf8_glyphs = "\xE2\x9C\x93\xE2\x9A\xA0";
+
+  TerminalSessionTestAccess::AppendOutput(session, utf8_glyphs);
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && lines[0].cells.size() == 2,
+         "utf-8 terminal glyphs should consume a single terminal cell each");
+  Expect(LineText(lines[0]) == utf8_glyphs,
+         "terminal lines should preserve utf-8 glyph text instead of splitting raw bytes");
+}
+
+void TestTerminalSessionTracksInverseVideoStyle() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[7mA\x1b[27mB");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && lines[0].cells.size() >= 2,
+         "inverse-video fixture should preserve the rendered cells");
+  Expect(lines[0].cells[0].character == 'A' && lines[0].cells[0].style.inverse,
+         "SGR 7 should mark terminal cells as inverse video");
+  Expect(lines[0].cells[1].character == 'B' && !lines[0].cells[1].style.inverse,
+         "SGR 27 should clear inverse video for later cells");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -403,6 +432,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOsc52RejectsInvalidClipboardPayloads);
   AddTest(tests, "TerminalSession/TracksCellForegroundAndBackgroundStyles",
           TestTerminalSessionTracksCellForegroundAndBackgroundStyles);
+  AddTest(tests, "TerminalSession/GroupsUtf8GlyphsIntoSingleCells",
+          TestTerminalSessionGroupsUtf8GlyphsIntoSingleCells);
+  AddTest(tests, "TerminalSession/TracksInverseVideoStyle",
+          TestTerminalSessionTracksInverseVideoStyle);
 }
 
 }  // namespace microide::tests
