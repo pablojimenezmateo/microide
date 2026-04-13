@@ -105,6 +105,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellCommand.cpp
   src/workspace/WorkspaceShellBlame.cpp
+  src/workspace/WorkspaceDirtyPromptCoordinator.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellInput.cpp
   src/workspace/WorkspaceShellKeyInput.cpp
