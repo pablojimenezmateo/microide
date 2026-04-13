@@ -97,6 +97,11 @@ Recommendation:
 
 - Extract a dedicated project catalog or activation coordinator that owns tab-list mutation, persistence checkpoints, and rollback behavior.
 
+Resolution:
+
+- Addressed by introducing a dedicated project-catalog coordinator in `WorkspaceShellProjects.cpp` that now owns open, switch, and close transactions around persistence checkpoints, catalog mutation, activation, and rollback.
+- Project workflow coverage now checks reopening an existing root without duplicating the catalog, rollback after a failed project open, and adjacent-project restoration when closing the active project tab.
+
 ### 12. Bottom-panel and compare/merge scroll surfaces still duplicate viewport math
 
 Priority: Medium

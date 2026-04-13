@@ -823,6 +823,83 @@ void TestWorkspaceShellProjectTabsDragReorderToEnd() {
          "dragged project should remain the active workspace");
 }
 
+void TestWorkspaceShellProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "reopening an existing project root should succeed");
+
+  Expect(WorkspaceShellTestAccess::ProjectCount(shell) == 2,
+         "reopening an existing project should not duplicate the project catalog");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 0,
+         "reopening an existing project should activate its existing project tab");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_a.lexically_normal(),
+         "reopening an existing project should restore that project as active");
+}
+
+void TestWorkspaceShellProjectOpenFailureRestoresPreviousActiveProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path readme = root / "README.md";
+  WriteFile(readme, "alpha\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "baseline project should open");
+  Expect(!WorkspaceShellTestAccess::OpenProjectTab(shell, readme, false, false),
+         "opening a file path as a project should fail");
+
+  Expect(WorkspaceShellTestAccess::ProjectCount(shell) == 1,
+         "failed project opens should roll back their catalog insertion");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 0,
+         "failed project opens should preserve the previous active project index");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root.lexically_normal(),
+         "failed project opens should restore the previous active workspace");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1 &&
+             WorkspaceShellTestAccess::OpenTabs(shell).front().path == readme.lexically_normal(),
+         "failed project opens should keep the previous project's tab state intact");
+}
+
+void TestWorkspaceShellCloseActiveProjectRestoresAdjacentProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path root_c = temp_dir.path() / "gamma-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+  WriteFile(root_c / "README.md", "gamma\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
+         "third project should open");
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
+         "middle project should become active before the close test");
+
+  WorkspaceShellTestAccess::CloseProject(shell, 1);
+
+  Expect(WorkspaceShellTestAccess::ProjectRoots(shell) ==
+             std::vector<std::filesystem::path>{root_a.lexically_normal(),
+                                                root_c.lexically_normal()},
+         "closing the active project should remove only that project from the catalog");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1,
+         "closing the active middle project should restore the adjacent project at that slot");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
+         "closing the active middle project should activate the adjacent surviving workspace");
+}
+
 void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -921,6 +998,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/MenuBarOmitsDuplicateTerminalAndHelpMenus",
           TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus);
+  AddTest(tests, "WorkspaceShell/ProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog",
+          TestWorkspaceShellProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog);
+  AddTest(tests, "WorkspaceShell/ProjectOpenFailureRestoresPreviousActiveProject",
+          TestWorkspaceShellProjectOpenFailureRestoresPreviousActiveProject);
+  AddTest(tests, "WorkspaceShell/CloseActiveProjectRestoresAdjacentProject",
+          TestWorkspaceShellCloseActiveProjectRestoresAdjacentProject);
   AddTest(tests, "WorkspaceShell/ProjectTabsDragReorderToEnd",
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",

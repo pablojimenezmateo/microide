@@ -798,6 +798,8 @@ class WorkspaceShell {
     int tab_scroll_index = 0;
   };
 
+  class ProjectCatalogCoordinator;
+
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
   static constexpr float kProjectSearchButtonTop = 72.0f;

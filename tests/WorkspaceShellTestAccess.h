@@ -258,6 +258,7 @@ struct WorkspaceShellTestAccess {
                             bool log_feedback = false) {
     return shell.SwitchProject(index, log_feedback);
   }
+  static void CloseProject(WorkspaceShell& shell, std::size_t index) { shell.CloseProject(index); }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
   }

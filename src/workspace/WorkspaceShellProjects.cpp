@@ -11,6 +11,107 @@
 
 namespace microide::workspace {
 
+class WorkspaceShell::ProjectCatalogCoordinator {
+ public:
+  explicit ProjectCatalogCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+
+  bool Open(const std::filesystem::path& normalized_root,
+            bool restore_persistence,
+            bool log_feedback) {
+    const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
+
+    auto project_state = std::make_unique<ProjectWorkspaceState>();
+    project_state->root = normalized_root;
+    project_state->initialized = true;
+    shell_.project_catalog_.entries.push_back(std::move(project_state));
+    shell_.project_catalog_.active_index = shell_.project_catalog_.entries.size() - 1;
+
+    if (!shell_.InitializeCurrentProject(normalized_root, restore_persistence, log_feedback)) {
+      shell_.project_catalog_.entries.pop_back();
+      RestoreActivationCheckpoint(checkpoint);
+      return false;
+    }
+
+    FinalizeMutation();
+    return true;
+  }
+
+  bool Switch(std::size_t index, bool activate_restored_tab = true) {
+    const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
+    if (!shell_.ActivateProjectCatalogEntry(index, activate_restored_tab)) {
+      RestoreActivationCheckpoint(checkpoint);
+      return false;
+    }
+
+    FinalizeMutation();
+    return true;
+  }
+
+  void Close(std::size_t index, bool activate_restored_tab = true) {
+    if (index >= shell_.project_catalog_.entries.size()) {
+      return;
+    }
+
+    const bool closing_active =
+        shell_.HasActiveProjectCatalogEntry() && index == shell_.project_catalog_.active_index;
+    if (closing_active) {
+      shell_.PersistActiveProjectCatalogEntry();
+    }
+
+    shell_.project_catalog_.entries.erase(
+        shell_.project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index));
+    if (shell_.project_catalog_.entries.empty()) {
+      shell_.ResetProjectCatalogToWelcomeState();
+      shell_.SaveWorkspaceSession();
+      return;
+    }
+
+    if (closing_active) {
+      if (!shell_.RestoreProjectCatalogAfterRemoval(index, activate_restored_tab)) {
+        shell_.SaveWorkspaceSession();
+        return;
+      }
+    } else if (shell_.project_catalog_.active_index > index) {
+      --shell_.project_catalog_.active_index;
+    }
+
+    FinalizeMutation();
+  }
+
+ private:
+  struct ActivationCheckpoint {
+    bool had_active_project = false;
+    std::size_t previous_active_index = 0;
+  };
+
+  ActivationCheckpoint CaptureActivationCheckpoint() {
+    ActivationCheckpoint checkpoint = {
+        .had_active_project = shell_.HasActiveProjectCatalogEntry(),
+        .previous_active_index = shell_.project_catalog_.active_index,
+    };
+    if (checkpoint.had_active_project) {
+      shell_.PersistActiveProjectCatalogEntry();
+    }
+    return checkpoint;
+  }
+
+  void RestoreActivationCheckpoint(const ActivationCheckpoint& checkpoint) {
+    if (checkpoint.had_active_project &&
+        checkpoint.previous_active_index < shell_.project_catalog_.entries.size() &&
+        shell_.ActivateProjectCatalogEntry(checkpoint.previous_active_index, true)) {
+      return;
+    }
+    shell_.ResetProjectCatalogToWelcomeState();
+  }
+
+  void FinalizeMutation() {
+    shell_.EnsureActiveProjectVisible();
+    shell_.SaveWorkspaceSession();
+  }
+
+  WorkspaceShell& shell_;
+};
+
 bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
                                            const std::filesystem::path& project_root) {
   std::error_code error;
@@ -551,30 +652,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     }
   }
 
-  const bool had_active_project = HasActiveProjectCatalogEntry();
-  const std::size_t previous_active_index = project_catalog_.active_index;
-  if (had_active_project) {
-    PersistActiveProjectCatalogEntry();
-  }
-
-  auto project_state = std::make_unique<ProjectWorkspaceState>();
-  project_state->root = normalized_root;
-  project_state->initialized = true;
-  project_catalog_.entries.push_back(std::move(project_state));
-  project_catalog_.active_index = project_catalog_.entries.size() - 1;
-
-  if (!InitializeCurrentProject(normalized_root, restore_persistence, log_feedback)) {
-    project_catalog_.entries.pop_back();
-    if (!(had_active_project && previous_active_index < project_catalog_.entries.size() &&
-          ActivateProjectCatalogEntry(previous_active_index, true))) {
-      ResetProjectCatalogToWelcomeState();
-    }
-    return false;
-  }
-
-  EnsureActiveProjectVisible();
-  SaveWorkspaceSession();
-  return true;
+  return ProjectCatalogCoordinator(*this).Open(normalized_root, restore_persistence, log_feedback);
 }
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
@@ -588,21 +666,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
     return true;
   }
 
-  if (HasActiveProjectCatalogEntry()) {
-    PersistActiveProjectCatalogEntry();
-  }
-
-  const std::size_t previous_active_index = project_catalog_.active_index;
-  if (!ActivateProjectCatalogEntry(index, true)) {
-    if (!(previous_active_index < project_catalog_.entries.size() &&
-          ActivateProjectCatalogEntry(previous_active_index, true))) {
-      ResetProjectCatalogToWelcomeState();
-    }
-    return false;
-  }
-  EnsureActiveProjectVisible();
-  SaveWorkspaceSession();
-  return true;
+  return ProjectCatalogCoordinator(*this).Switch(index);
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
@@ -634,35 +698,7 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
-  if (index >= project_catalog_.entries.size()) {
-    return;
-  }
-
-  const bool closing_active = HasActiveProjectCatalogEntry() && index == project_catalog_.active_index;
-  const std::filesystem::path project_root = ProjectCatalogRoot(index);
-
-  if (closing_active) {
-    PersistActiveProjectCatalogEntry();
-  }
-
-  project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index));
-  if (project_catalog_.entries.empty()) {
-    ResetProjectCatalogToWelcomeState();
-    SaveWorkspaceSession();
-    return;
-  }
-
-  if (closing_active) {
-    if (!RestoreProjectCatalogAfterRemoval(index, true)) {
-      SaveWorkspaceSession();
-      return;
-    }
-  } else if (project_catalog_.active_index > index) {
-    --project_catalog_.active_index;
-  }
-
-  EnsureActiveProjectVisible();
-  SaveWorkspaceSession();
+  ProjectCatalogCoordinator(*this).Close(index);
 }
 
 std::filesystem::path WorkspaceShell::ConfigStatePath() const {
