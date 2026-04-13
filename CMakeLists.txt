@@ -85,6 +85,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
   src/project/GitBlameService.cpp
+  src/project/GitPorcelainParser.cpp
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
@@ -211,6 +212,7 @@ add_executable(microide_diff_bench
   src/editor/SyntaxHighlighter.cpp
   src/compare/CompareModel.cpp
   src/project/GitCompareService.cpp
+  src/project/GitPorcelainParser.cpp
   tools/CompareBench.cpp
 )
 

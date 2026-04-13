@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "project/GitCommandUtil.h"
+#include "project/GitPorcelainParser.h"
 
 namespace microide::project {
 
@@ -41,22 +42,6 @@ std::string ShortRefLabel(std::string_view ref) {
   return std::string(ref);
 }
 
-GitFileStatus StatusFromDiffCode(char code) {
-  switch (code) {
-    case 'A':
-      return GitFileStatus::Added;
-    case 'D':
-      return GitFileStatus::Deleted;
-    case 'M':
-    case 'R':
-    case 'C':
-    case 'T':
-      return GitFileStatus::Modified;
-    default:
-      return GitFileStatus::Clean;
-  }
-}
-
 }  // namespace
 
 std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& root,
@@ -78,26 +63,7 @@ std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& r
     return {};
   }
 
-  std::vector<GitCommitEntry> commits;
-  std::istringstream stream(result.output);
-  std::string line;
-  while (std::getline(stream, line)) {
-    if (line.empty()) {
-      continue;
-    }
-    std::size_t first_tab = line.find('\t');
-    std::size_t second_tab = first_tab == std::string::npos ? std::string::npos
-                                                            : line.find('\t', first_tab + 1);
-    if (first_tab == std::string::npos || second_tab == std::string::npos) {
-      continue;
-    }
-    commits.push_back(GitCommitEntry{
-        .hash = line.substr(0, first_tab),
-        .short_hash = line.substr(first_tab + 1, second_tab - first_tab - 1),
-        .subject = line.substr(second_tab + 1),
-    });
-  }
-  return commits;
+  return GitPorcelainParser::ParseLog(result.output);
 }
 
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
@@ -212,7 +178,7 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
 
     entries.push_back(GitBranchFileEntry{
         .relative_path = std::filesystem::path(path).lexically_normal(),
-        .status = StatusFromDiffCode(status_code[0]),
+        .status = GitPorcelainParser::StatusFromDiffCode(status_code[0]),
     });
   }
 

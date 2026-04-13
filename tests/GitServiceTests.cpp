@@ -2,6 +2,7 @@
 
 #include "compare/CompareModel.h"
 #include "project/GitCompareService.h"
+#include "project/GitPorcelainParser.h"
 #include "project/GitStatusService.h"
 
 #include <algorithm>
@@ -21,6 +22,7 @@ using microide::project::CollectGitWorkingTreeEntries;
 using microide::project::GitDiscardAll;
 using microide::project::GitDiscardPath;
 using microide::project::GitFileStatus;
+using microide::project::GitPorcelainParser;
 using microide::project::GitStageAll;
 using microide::project::GitStagePath;
 using microide::project::GitUnstagePath;
@@ -288,6 +290,91 @@ void TestGitBulkStageAndDiscard() {
          "git discard all should remove untracked files");
 }
 
+void TestGitPorcelainParserStatusV1() {
+  std::string output;
+  output += "R  old/name.cpp";
+  output.push_back('\0');
+  output += "src/renamed.cpp";
+  output.push_back('\0');
+  output += " M src/nested/file.cpp";
+  output.push_back('\0');
+  output += "A  include/new_header.h";
+  output.push_back('\0');
+  output += "UU src/conflict.cpp";
+  output.push_back('\0');
+  output += "?? scratch.txt";
+  output.push_back('\0');
+
+  const auto statuses = GitPorcelainParser::ParseStatusV1(output);
+  Expect(!statuses.contains("old/name.cpp"),
+         "status parser should report rename targets instead of source paths");
+  Expect(statuses.at("src/renamed.cpp") == GitFileStatus::Modified,
+         "status parser should classify renamed files as modified");
+  Expect(statuses.at("src/nested/file.cpp") == GitFileStatus::Modified,
+         "status parser should classify unstaged edits as modified");
+  Expect(statuses.at("include/new_header.h") == GitFileStatus::Added,
+         "status parser should classify added files");
+  Expect(statuses.at("scratch.txt") == GitFileStatus::Untracked,
+         "status parser should classify untracked files");
+  Expect(statuses.at("src/conflict.cpp") == GitFileStatus::Conflicted,
+         "status parser should classify conflicted files");
+  Expect(statuses.at("src") == GitFileStatus::Conflicted,
+         "directory statuses should preserve the strongest child status");
+  Expect(statuses.at("src/nested") == GitFileStatus::Modified,
+         "directory statuses should include nested parents");
+}
+
+void TestGitPorcelainParserWorkingTreeEntries() {
+  std::string output;
+  output += "?? z-last.txt";
+  output.push_back('\0');
+  output += "M  src/staged.cpp";
+  output.push_back('\0');
+  output += "UU src/conflict.cpp";
+  output.push_back('\0');
+  output += "R  old/path.cpp";
+  output.push_back('\0');
+  output += "src/renamed.cpp";
+  output.push_back('\0');
+
+  const auto entries = GitPorcelainParser::ParseWorkingTreeEntries(output);
+  Expect(entries.size() == 4, "working-tree parser should return every parsed entry");
+  Expect(entries[0].relative_path == std::filesystem::path("src/renamed.cpp"),
+         "staged rename should sort first by target path");
+  Expect(entries[0].staged, "staged rename should remain staged");
+  Expect(!entries[0].conflicted, "staged rename should not be conflicted");
+
+  Expect(entries[1].relative_path == std::filesystem::path("src/staged.cpp"),
+         "staged paths should sort ahead of unstaged ones");
+  Expect(entries[1].staged, "staged modification should report staged");
+
+  Expect(entries[2].relative_path == std::filesystem::path("src/conflict.cpp"),
+         "unstaged conflicted entries should sort by path after staged items");
+  Expect(entries[2].conflicted, "conflicted entry should report conflicted");
+  Expect(!entries[2].staged, "conflicted entry should not report staged");
+
+  Expect(entries[3].relative_path == std::filesystem::path("z-last.txt"),
+         "untracked entries should remain in alphabetical order");
+  Expect(entries[3].status == GitFileStatus::Untracked,
+         "untracked entry should keep its status");
+}
+
+void TestGitPorcelainParserLog() {
+  const std::string output =
+      "0123456789abcdef\t0123456\tfirst subject\n"
+      "malformed line\n"
+      "\n"
+      "fedcba9876543210\tfedcba9\tsecond subject\n";
+
+  const auto commits = GitPorcelainParser::ParseLog(output);
+  Expect(commits.size() == 2, "log parser should skip malformed lines");
+  Expect(commits[0].hash == "0123456789abcdef", "first parsed commit hash mismatch");
+  Expect(commits[0].short_hash == "0123456", "first parsed short hash mismatch");
+  Expect(commits[0].subject == "first subject", "first parsed subject mismatch");
+  Expect(commits[1].hash == "fedcba9876543210", "second parsed commit hash mismatch");
+  Expect(commits[1].subject == "second subject", "second parsed subject mismatch");
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
@@ -295,6 +382,9 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
+  AddTest(tests, "Git/PorcelainParserStatusV1", TestGitPorcelainParserStatusV1);
+  AddTest(tests, "Git/PorcelainParserWorkingTreeEntries", TestGitPorcelainParserWorkingTreeEntries);
+  AddTest(tests, "Git/PorcelainParserLog", TestGitPorcelainParserLog);
 }
 
 }  // namespace microide::tests
