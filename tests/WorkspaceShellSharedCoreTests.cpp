@@ -51,6 +51,7 @@ using microide::workspace::SplitSyntaxLines;
 using microide::workspace::ToLower;
 using microide::workspace::Utf8ByteOffsetForCodepointCount;
 using microide::workspace::Utf8CodepointCount;
+using microide::workspace::WriteTextFileAtomically;
 using microide::workspace::WorkspaceShell;
 
 void TestWorkspaceSharedParseCommandLine() {
@@ -134,6 +135,27 @@ void TestWorkspaceSharedReadFileText() {
 
   const auto missing = ReadFileText(temp_root / "missing.txt");
   Expect(!missing.has_value(), "read file text should fail for missing file");
+
+  std::filesystem::remove_all(temp_root);
+}
+
+void TestWorkspaceSharedAtomicTextWrite() {
+  const std::filesystem::path temp_root =
+      std::filesystem::temp_directory_path() / "microide-workspace-atomic-write-test";
+  std::filesystem::remove_all(temp_root);
+
+  const std::filesystem::path nested = temp_root / "state" / "config.txt";
+  Expect(WriteTextFileAtomically(nested, "first\n"),
+         "atomic text writer should create missing parent directories");
+  Expect(ReadFile(nested) == "first\n",
+         "atomic text writer should persist the initial payload");
+
+  Expect(WriteTextFileAtomically(nested, "second\n"),
+         "atomic text writer should overwrite existing files");
+  Expect(ReadFile(nested) == "second\n",
+         "atomic text writer should replace prior content");
+  Expect(!std::filesystem::exists(nested.string() + ".tmp"),
+         "atomic text writer should not leave a sibling temp file behind");
 
   std::filesystem::remove_all(temp_root);
 }
@@ -398,6 +420,7 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/QuoteAndLineEndings", TestWorkspaceSharedQuoteAndLineEndings);
   AddTest(tests, "WorkspaceShared/SplitSyntaxLines", TestWorkspaceSharedSplitSyntaxLines);
   AddTest(tests, "WorkspaceShared/ReadFileText", TestWorkspaceSharedReadFileText);
+  AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "WorkspaceShared/PathAndCaseHelpers", TestWorkspaceSharedPathAndCaseHelpers);

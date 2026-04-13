@@ -258,6 +258,9 @@ struct WorkspaceShellTestAccess {
                             bool log_feedback = false) {
     return shell.SwitchProject(index, log_feedback);
   }
+  static void RequestCloseProject(WorkspaceShell& shell, std::size_t index) {
+    shell.RequestCloseProject(index);
+  }
   static void CloseProject(WorkspaceShell& shell, std::size_t index) { shell.CloseProject(index); }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
@@ -524,6 +527,8 @@ struct WorkspaceShellTestAccess {
     return shell.RestoreWorkspaceSession();
   }
   static void SaveWorkspaceSession(WorkspaceShell& shell) { shell.SaveWorkspaceSession(); }
+  static void RequestQuit(WorkspaceShell& shell) { shell.RequestQuit(); }
+  static bool ConsumeQuitRequested(WorkspaceShell& shell) { return shell.ConsumeQuitRequested(); }
 
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
     shell.prompts_.dirty.selected_action = selected_action;

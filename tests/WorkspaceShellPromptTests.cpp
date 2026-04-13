@@ -611,6 +611,78 @@ void TestWorkspaceShellRenamePreservesMergeTabState() {
          "merge tab should preserve the live result buffer across rename");
 }
 
+void TestWorkspaceShellQuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActiveProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path file_a = root_a / "alpha.txt";
+  const std::filesystem::path file_b = root_b / "beta.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
+
+  WorkspaceShellTestAccess::RequestQuit(shell);
+
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "quit with dirty tabs across projects should show the dirty prompt");
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
+         "save-all quit should restore the originally active project before quitting");
+  Expect(ReadFile(file_a) == "saved alpha\n",
+         "save-all quit should persist dirty tabs from the first project");
+  Expect(ReadFile(file_b) == "saved beta\n",
+         "save-all quit should persist dirty tabs from the active project");
+  Expect(WorkspaceShellTestAccess::ConsumeQuitRequested(shell),
+         "save-all quit should set the pending quit request after saving");
+}
+
+void TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path root_c = temp_dir.path() / "gamma-project";
+  const std::filesystem::path file_a = root_a / "alpha.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(root_b / "beta.txt", "beta\n");
+  WriteFile(root_c / "gamma.txt", "gamma\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
+         "third project should open");
+
+  WorkspaceShellTestAccess::RequestCloseProject(shell, 0);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing an inactive dirty project should show the dirty prompt");
+
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(WorkspaceShellTestAccess::ProjectRoots(shell) ==
+             std::vector<std::filesystem::path>{root_b.lexically_normal(),
+                                                root_c.lexically_normal()},
+         "closing an inactive dirty project should remove only the requested project");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
+         "closing an inactive dirty project should restore the original active project");
+  Expect(ReadFile(file_a) == "saved alpha\n",
+         "closing an inactive dirty project should save that project's dirty tabs first");
+}
+
 void TestWorkspaceShellLargeFileBreadcrumbLabel() {
   WorkspaceShell shell;
   const std::filesystem::path project_root = FixturePath("large");
@@ -636,6 +708,10 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenamePreservesBranchCompareSemantics);
   AddTest(tests, "WorkspaceShell/RenamePreservesMergeTabState",
           TestWorkspaceShellRenamePreservesMergeTabState);
+  AddTest(tests, "WorkspaceShell/QuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActiveProject",
+          TestWorkspaceShellQuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActiveProject);
+  AddTest(tests, "WorkspaceShell/CloseInactiveDirtyProjectPreservesOriginalActiveProject",
+          TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject);
   AddTest(tests, "WorkspaceShell/LargeFileBreadcrumbLabel",
           TestWorkspaceShellLargeFileBreadcrumbLabel);
 #if defined(__linux__) || defined(__APPLE__)

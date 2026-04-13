@@ -722,6 +722,48 @@ std::optional<std::string> ReadFileText(const std::filesystem::path& path) {
   return buffer.str();
 }
 
+bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {
+  if (path.empty()) {
+    return false;
+  }
+
+  std::error_code error;
+  std::filesystem::create_directories(path.parent_path(), error);
+  if (error) {
+    return false;
+  }
+
+  const std::filesystem::path temp_path = path.string() + ".tmp";
+  std::filesystem::remove(temp_path, error);
+  error.clear();
+
+  {
+    std::ofstream file(temp_path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+      return false;
+    }
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+    file.flush();
+    if (!file) {
+      file.close();
+      std::filesystem::remove(temp_path, error);
+      return false;
+    }
+  }
+
+  std::filesystem::rename(temp_path, path, error);
+  if (error) {
+    std::filesystem::remove(path, error);
+    error.clear();
+    std::filesystem::rename(temp_path, path, error);
+  }
+  if (error) {
+    std::filesystem::remove(temp_path, error);
+    return false;
+  }
+  return true;
+}
+
 editor::TextViewport::LineEnding DetectLineEnding(std::string_view text) {
   std::size_t crlf_count = 0;
   std::size_t lf_count = 0;

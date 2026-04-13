@@ -799,6 +799,7 @@ class WorkspaceShell {
   };
 
   class ProjectCatalogCoordinator;
+  class DirtyPromptCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -1298,6 +1299,13 @@ class WorkspaceShell {
   std::filesystem::path WorkspaceSessionStatePath() const;
   bool RestoreWorkspaceSession();
   void SaveWorkspaceSession();
+  std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
+      const TabEntry& tab) const;
+  std::optional<PersistedEditorTabState> BuildPersistedMergeTabState(
+      const TabEntry& tab) const;
+  std::optional<PersistedEditorTabState> BuildPersistedEditorTabState(
+      std::size_t tab_index,
+      TabEntry& tab);
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
   void ResetCommandSessionState();

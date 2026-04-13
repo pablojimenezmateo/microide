@@ -26,6 +26,11 @@ Recommendation:
 
 - Extract a dirty-prompt resolution coordinator that consumes `DirtyPromptState` and owns the save, discard, close, and quit transaction rules.
 
+Resolution:
+
+- Addressed by introducing a dedicated dirty-prompt coordinator in `WorkspaceShellPrompts.cpp` that now owns close-tab, close-project, save-all-before-quit, and prompt-cancel flows.
+- Prompt coverage now checks cross-project save-before-quit behavior and preserves the original active project when closing an inactive dirty project tab.
+
 ### 2. Config and session writes still use direct truncate-and-rewrite persistence
 
 Priority: Medium
@@ -42,6 +47,11 @@ Impact:
 Recommendation:
 
 - Move persistence writes behind an atomic file-save helper that writes to a sibling temp file, flushes, and renames into place, with explicit failure reporting hooks.
+
+Resolution:
+
+- Addressed by routing config and session writes through shared `WriteTextFileAtomically(...)` helpers in `WorkspaceShellShared`.
+- Shared-core tests now cover directory creation, overwrite behavior, and temp-file cleanup for atomic text persistence.
 
 ### 3. Session snapshotting still hand-builds per-tab persistence records inline
 
@@ -60,6 +70,11 @@ Impact:
 Recommendation:
 
 - Introduce per-tab persistence adapters or builders so compare, merge, and editor tabs each own their own live-to-persisted translation.
+
+Resolution:
+
+- Addressed by splitting project-session snapshotting into per-kind persistence builders for compare, merge, and editor tabs inside `WorkspaceShellPersistence.cpp`.
+- Existing session restore coverage continues to validate mixed compare, merge, editor, and multi-project persistence against the new builders.
 
 ### 4. Action dispatch is still spread across large switch-based command families with manual string arguments
 

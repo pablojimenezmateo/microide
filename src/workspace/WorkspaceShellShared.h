@@ -334,6 +334,7 @@ std::optional<std::vector<std::size_t>> DecodeSessionNodePath(std::string_view t
 
 std::vector<std::string> SplitSyntaxLines(std::string_view text);
 std::optional<std::string> ReadFileText(const std::filesystem::path& path);
+bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 editor::TextViewport::LineEnding DetectLineEnding(std::string_view text);
 bool RemoveLastUtf8Codepoint(std::string* text);
 std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count);
