@@ -28,25 +28,6 @@ std::size_t MaxVisualColumnsForLines(const std::vector<std::string>& lines) {
   return max_columns;
 }
 
-std::string SerializeLines(const std::vector<std::string>& lines,
-                           editor::TextViewport::LineEnding line_ending) {
-  std::string separator = "\n";
-  if (line_ending == editor::TextViewport::LineEnding::CRLF) {
-    separator = "\r\n";
-  } else if (line_ending == editor::TextViewport::LineEnding::CR) {
-    separator = "\r";
-  }
-
-  std::string text;
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (i > 0) {
-      text += separator;
-    }
-    text += lines[i];
-  }
-  return text;
-}
-
 struct ChangedLineSpan {
   std::size_t old_start = 0;
   std::size_t old_end = 0;

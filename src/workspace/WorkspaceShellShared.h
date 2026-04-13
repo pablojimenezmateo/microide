@@ -338,6 +338,8 @@ std::string EncodeSessionNodePath(const std::vector<std::size_t>& path);
 std::optional<std::vector<std::size_t>> DecodeSessionNodePath(std::string_view text);
 
 std::vector<std::string> SplitSyntaxLines(std::string_view text);
+std::string SerializeLines(const std::vector<std::string>& lines,
+                           editor::TextViewport::LineEnding line_ending);
 std::optional<std::string> ReadFileText(const std::filesystem::path& path);
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 editor::TextViewport::LineEnding DetectLineEnding(std::string_view text);

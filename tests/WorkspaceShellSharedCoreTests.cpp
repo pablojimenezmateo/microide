@@ -43,6 +43,7 @@ using microide::workspace::ReadFileText;
 using microide::workspace::RelativePathLabel;
 using microide::workspace::RemoveLastUtf8Codepoint;
 using microide::workspace::ReplacePathPrefix;
+using microide::workspace::SerializeLines;
 using microide::workspace::SerializeProjectConfig;
 using microide::workspace::SerializeProjectSession;
 using microide::workspace::SerializeUserConfig;
@@ -119,6 +120,21 @@ void TestWorkspaceSharedSplitSyntaxLines() {
   Expect(lines.size() == 3, "split syntax lines should produce three rows");
   Expect(lines[0] == "alpha", "first syntax line mismatch");
   Expect(lines[2] == "gamma", "last syntax line mismatch");
+}
+
+void TestWorkspaceSharedSerializeLines() {
+  const std::vector<std::string> lines = {"alpha", "beta", "gamma"};
+  Expect(SerializeLines(lines, microide::editor::TextViewport::LineEnding::LF) ==
+             "alpha\nbeta\ngamma",
+         "serialize lines should join LF payloads with line feeds");
+  Expect(SerializeLines(lines, microide::editor::TextViewport::LineEnding::CRLF) ==
+             "alpha\r\nbeta\r\ngamma",
+         "serialize lines should join CRLF payloads with CRLF separators");
+  Expect(SerializeLines(lines, microide::editor::TextViewport::LineEnding::CR) ==
+             "alpha\rbeta\rgamma",
+         "serialize lines should join CR payloads with carriage returns");
+  Expect(SerializeLines({}, microide::editor::TextViewport::LineEnding::LF).empty(),
+         "serialize lines should keep empty buffers empty");
 }
 
 void TestWorkspaceSharedReadFileText() {
@@ -419,6 +435,7 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/SessionEncoding", TestWorkspaceSharedSessionEncoding);
   AddTest(tests, "WorkspaceShared/QuoteAndLineEndings", TestWorkspaceSharedQuoteAndLineEndings);
   AddTest(tests, "WorkspaceShared/SplitSyntaxLines", TestWorkspaceSharedSplitSyntaxLines);
+  AddTest(tests, "WorkspaceShared/SerializeLines", TestWorkspaceSharedSerializeLines);
   AddTest(tests, "WorkspaceShared/ReadFileText", TestWorkspaceSharedReadFileText);
   AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",

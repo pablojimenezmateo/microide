@@ -734,6 +734,25 @@ std::vector<std::string> SplitSyntaxLines(std::string_view text) {
   return lines;
 }
 
+std::string SerializeLines(const std::vector<std::string>& lines,
+                           editor::TextViewport::LineEnding line_ending) {
+  std::string separator = "\n";
+  if (line_ending == editor::TextViewport::LineEnding::CRLF) {
+    separator = "\r\n";
+  } else if (line_ending == editor::TextViewport::LineEnding::CR) {
+    separator = "\r";
+  }
+
+  std::string text;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i > 0) {
+      text += separator;
+    }
+    text += lines[i];
+  }
+  return text;
+}
+
 std::optional<std::string> ReadFileText(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {

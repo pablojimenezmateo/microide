@@ -127,25 +127,6 @@ SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bott
   return SDL_HITTEST_NORMAL;
 }
 
-std::string SerializeLines(const std::vector<std::string>& lines,
-                           editor::TextViewport::LineEnding line_ending) {
-  std::string separator = "\n";
-  if (line_ending == editor::TextViewport::LineEnding::CRLF) {
-    separator = "\r\n";
-  } else if (line_ending == editor::TextViewport::LineEnding::CR) {
-    separator = "\r";
-  }
-
-  std::string text;
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (i > 0) {
-      text += separator;
-    }
-    text += lines[i];
-  }
-  return text;
-}
-
 }  // namespace
 
 std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
