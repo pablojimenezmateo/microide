@@ -11,12 +11,11 @@
 
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
+#include "project/GitRepository.h"
 
 namespace microide::project {
 
 namespace {
-
-namespace gitutil = microide::project::internal;
 
 std::string TrimTrailingWhitespace(std::string text) {
   while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
@@ -46,24 +45,16 @@ std::string ShortRefLabel(std::string_view ref) {
 
 std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& root,
                                                   const std::filesystem::path& absolute_path) {
-  if (root.empty() || absolute_path.empty() || !gitutil::HasGitMarker(root)) {
+  const GitRepository repo(root);
+  if (absolute_path.empty() || !repo.IsValid()) {
     return {};
   }
 
-  const auto relative = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  const auto relative = repo.ToRelative(absolute_path);
   if (!relative.has_value()) {
     return {};
   }
-
-  const std::string command = gitutil::BuildGitCommand(
-      root, "log --follow --no-color --pretty=format:%H%x09%h%x09%s -- '" +
-                gitutil::EscapeShellArg(relative->generic_string()) + "'");
-  const gitutil::CommandResult result = gitutil::ReadCommandOutput(command);
-  if (!result.success() || result.output.empty()) {
-    return {};
-  }
-
-  return GitPorcelainParser::ParseLog(result.output);
+  return repo.GetFileHistory(*relative);
 }
 
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
@@ -73,37 +64,30 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     return std::nullopt;
   }
 
-  const auto relative = gitutil::AbsoluteToRelativePath(root, absolute_path);
+  const GitRepository repo(root);
+  const auto relative = repo.ToRelative(absolute_path);
   if (!relative.has_value()) {
     return std::nullopt;
   }
 
-  const std::string spec = hash + ":" + relative->generic_string();
-  const std::string exists_command =
-      gitutil::BuildGitCommand(root, "cat-file -e '" + gitutil::EscapeShellArg(spec) + "'");
-  const gitutil::CommandResult exists_result = gitutil::ReadCommandOutput(exists_command);
-  if (!exists_result.success()) {
+  if (!repo.FileExistsAtRevision(*relative, hash)) {
     return GitFileContentAtCommit{.exists = false, .content = ""};
   }
 
-  const std::string show_command =
-      gitutil::BuildGitCommand(root, "show '" + gitutil::EscapeShellArg(spec) + "'");
-  const gitutil::CommandResult show_result = gitutil::ReadCommandOutput(show_command);
-  if (!show_result.success()) {
+  const auto content = repo.ReadFileAtRevision(*relative, hash);
+  if (!content.has_value()) {
     return std::nullopt;
   }
-
-  return GitFileContentAtCommit{.exists = true, .content = std::move(show_result.output)};
+  return GitFileContentAtCommit{.exists = true, .content = *content};
 }
 
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root) {
-  if (root.empty() || !gitutil::HasGitMarker(root)) {
+  const GitRepository repo(root);
+  if (!repo.IsValid()) {
     return std::nullopt;
   }
 
-  const std::string origin_head_command =
-      gitutil::BuildGitCommand(root, "symbolic-ref --quiet refs/remotes/origin/HEAD");
-  const gitutil::CommandResult origin_head_result = gitutil::ReadCommandOutput(origin_head_command);
+  const auto origin_head_result = repo.Execute("symbolic-ref --quiet refs/remotes/origin/HEAD");
   const std::string origin_head = TrimTrailingWhitespace(origin_head_result.output);
   if (origin_head_result.success() && !origin_head.empty()) {
     return GitBranchReference{
@@ -114,9 +98,8 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
   const std::array<std::string_view, 2> local_defaults = {"main", "master"};
   for (std::string_view candidate : local_defaults) {
-    const std::string exists_command = gitutil::BuildGitCommand(
-        root, "show-ref --verify --quiet 'refs/heads/" + std::string(candidate) + "'");
-    const gitutil::CommandResult exists_result = gitutil::ReadCommandOutput(exists_command);
+    const auto exists_result =
+        repo.Execute("show-ref --verify --quiet 'refs/heads/" + std::string(candidate) + "'");
     if (exists_result.success()) {
       return GitBranchReference{
           .ref = std::string(candidate),
@@ -125,9 +108,8 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
     }
   }
 
-  const std::string upstream_command = gitutil::BuildGitCommand(
-      root, "rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'");
-  const gitutil::CommandResult upstream_result = gitutil::ReadCommandOutput(upstream_command);
+  const auto upstream_result =
+      repo.Execute("rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'");
   const std::string upstream = TrimTrailingWhitespace(upstream_result.output);
   if (upstream_result.success() && !upstream.empty()) {
     return GitBranchReference{
@@ -141,14 +123,14 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
 
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
                                                               std::string_view base_ref) {
-  if (root.empty() || base_ref.empty() || !gitutil::HasGitMarker(root)) {
+  const GitRepository repo(root);
+  if (base_ref.empty() || !repo.IsValid()) {
     return {};
   }
 
-  const std::string command = gitutil::BuildGitCommand(
-      root, "diff --name-status --find-renames '" +
-                gitutil::EscapeShellArg(std::string(base_ref)) + "...HEAD'");
-  const gitutil::CommandResult result = gitutil::ReadCommandOutput(command);
+  const auto result = repo.Execute("diff --name-status --find-renames '" +
+                                   microide::project::internal::EscapeShellArg(
+                                       std::string(base_ref)) + "...HEAD'");
   if (!result.success() || result.output.empty()) {
     return {};
   }

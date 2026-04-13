@@ -3,6 +3,7 @@
 #include "compare/CompareModel.h"
 #include "project/GitCompareService.h"
 #include "project/GitPorcelainParser.h"
+#include "project/GitRepository.h"
 #include "project/GitStatusService.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@ using microide::project::GitDiscardAll;
 using microide::project::GitDiscardPath;
 using microide::project::GitFileStatus;
 using microide::project::GitPorcelainParser;
+using microide::project::GitRepository;
 using microide::project::GitStageAll;
 using microide::project::GitStagePath;
 using microide::project::GitUnstagePath;
@@ -290,6 +292,41 @@ void TestGitBulkStageAndDiscard() {
          "git discard all should remove untracked files");
 }
 
+void TestGitRepositoryDirectApi() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto base_dir = FixturePath("diff/git/base");
+  CopyTree(base_dir, repo_path);
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base fixture", "base fixture");
+
+  GitRepository repo(repo_path);
+  Expect(repo.IsValid(), "git repository wrapper should detect a valid repository");
+  Expect(repo.ToRelative(repo_path / "README.md") == std::filesystem::path("README.md"),
+         "git repository wrapper should convert absolute paths to repo-relative paths");
+  Expect(repo.ToAbsolute("README.md") == repo_path / "README.md",
+         "git repository wrapper should convert relative paths back to absolute ones");
+
+  const auto history = repo.GetFileHistory("README.md");
+  Expect(history.size() == 1, "git repository wrapper should return commit history");
+  Expect(history[0].subject == "base fixture",
+         "git repository wrapper should preserve commit subjects");
+
+  const auto head_content = repo.ReadFileAtRevision("README.md");
+  Expect(head_content.has_value(), "git repository wrapper should read HEAD file contents");
+  Expect(*head_content == ReadFile(base_dir / "README.md"),
+         "git repository wrapper should read the committed file contents");
+
+  WriteFile(repo_path / "README.md", ReadFile(base_dir / "README.md") + "\nwrapper change\n");
+  WriteFile(repo_path / "notes.txt", "wrapper note\n");
+  const auto statuses = repo.GetStatuses();
+  Expect(statuses.at("README.md") == GitFileStatus::Modified,
+         "git repository wrapper should report modified files");
+  Expect(statuses.at("notes.txt") == GitFileStatus::Untracked,
+         "git repository wrapper should report untracked files");
+}
+
 void TestGitPorcelainParserStatusV1() {
   std::string output;
   output += "R  old/name.cpp";
@@ -382,6 +419,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
+  AddTest(tests, "Git/RepositoryDirectApi", TestGitRepositoryDirectApi);
   AddTest(tests, "Git/PorcelainParserStatusV1", TestGitPorcelainParserStatusV1);
   AddTest(tests, "Git/PorcelainParserWorkingTreeEntries", TestGitPorcelainParserWorkingTreeEntries);
   AddTest(tests, "Git/PorcelainParserLog", TestGitPorcelainParserLog);
