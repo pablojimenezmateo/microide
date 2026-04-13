@@ -45,6 +45,32 @@ bool ParseLineColumnSpec(std::string_view location,
   return true;
 }
 
+struct ProjectOpenRequest {
+  bool use_native_picker = false;
+  std::filesystem::path path;
+};
+
+ProjectOpenRequest BuildProjectOpenRequest(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    return ProjectOpenRequest{
+        .use_native_picker = true,
+        .path = {},
+    };
+  }
+  return ProjectOpenRequest{
+      .use_native_picker = false,
+      .path = std::filesystem::path(args[0]),
+  };
+}
+
+struct ProjectCycleRequest {
+  int delta = 0;
+};
+
+ProjectCycleRequest BuildProjectCycleRequest(int delta) {
+  return ProjectCycleRequest{.delta = delta};
+}
+
 }  // namespace
 
 bool WorkspaceShell::ExecuteAction(ActionId id,
@@ -117,8 +143,9 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
   };
 
   switch (id) {
-    case ActionId::ProjectOpen:
-      if (args.empty()) {
+    case ActionId::ProjectOpen: {
+      const ProjectOpenRequest request = BuildProjectOpenRequest(args);
+      if (request.use_native_picker) {
         switch (OpenNativeProjectPicker(nullptr)) {
           case ProjectOpenDialogLaunchResult::Launched:
           case ProjectOpenDialogLaunchResult::AlreadyOpen:
@@ -134,10 +161,11 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
         }
         return ActionDispatchResult::Handled;
       }
-      if (!OpenProjectTab(std::filesystem::path(args[0]), true, true)) {
-        return reject("Failed to open project: " + args[0]);
+      if (!OpenProjectTab(request.path, true, true)) {
+        return reject("Failed to open project: " + request.path.string());
       }
       return ActionDispatchResult::Handled;
+    }
     case ActionId::ProjectClose:
       if (project_catalog_.entries.empty() || project_root_.empty()) {
         return reject("No active project");
@@ -152,10 +180,12 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
       if (project_catalog_.entries.size() == 1) {
         return reject("Only one project tab is open");
       }
-      const int delta = id == ActionId::ProjectNext ? 1 : -1;
+      const ProjectCycleRequest request =
+          BuildProjectCycleRequest(id == ActionId::ProjectNext ? 1 : -1);
       const int project_count = static_cast<int>(project_catalog_.entries.size());
       const int next_index =
-          (static_cast<int>(project_catalog_.active_index) + delta + project_count) % project_count;
+          (static_cast<int>(project_catalog_.active_index) + request.delta + project_count) %
+          project_count;
       SwitchProject(static_cast<std::size_t>(next_index), true);
       return ActionDispatchResult::Handled;
     }

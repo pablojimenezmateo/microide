@@ -230,6 +230,42 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
          "open without a path should report the missing path explicitly");
 }
 
+void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path root_c = temp_dir.path() / "gamma-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+  WriteFile(root_c / "README.md", "gamma\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
+         "third project should open");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt before cycling projects");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-prev"),
+         "text input should populate the project-prev command");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should execute the project-prev command");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
+         "project-prev should activate the previous project tab");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should reopen the command prompt for project-next");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-next"),
+         "text input should populate the project-next command");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should execute the project-next command");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
+         "project-next should activate the next project tab");
+}
+
 void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -960,6 +996,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp);
   AddTest(tests, "WorkspaceShell/OpenCommandRequiresPath",
           TestWorkspaceShellOpenCommandRequiresPath);
+  AddTest(tests, "WorkspaceShell/ProjectNextAndPrevCommandsCycleProjects",
+          TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",

@@ -93,3 +93,8 @@ Impact:
 Recommendation:
 
 - Move action families toward table-driven handlers with typed argument parsing or small request structs so validation, execution, and user feedback stay co-located.
+
+Progress:
+
+- Project actions now use small typed request helpers for open and next/previous project cycling, and project-command coverage now exercises `project-next` and `project-prev`.
+- The broader sidebar, tab, edit, search, and global action families still use the older switch-plus-raw-args pattern, so this finding remains partially open.
