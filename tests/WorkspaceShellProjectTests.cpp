@@ -805,11 +805,23 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
   Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == 1,
          "git sidebar tooltip fixture should expose a single modified entry");
 
+  const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
+  WorkspaceShellTestAccess::HandleMouseMotion(
+      shell, top_action_rects[0].x + top_action_rects[0].w * 0.5f,
+      top_action_rects[0].y + top_action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell).empty(),
+         "hovering the full-width stage-all button should not show a tooltip");
+
   const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
   WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[0].x + action_rects[0].w * 0.5f,
                                               action_rects[0].y + action_rects[0].h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
          "hovering the compact stage button should expose the full action name");
+
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[0].x - 2.0f,
+                                              action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+         "stage button hover should tolerate a small hitbox miss");
 
   WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[1].x + action_rects[1].w * 0.5f,
                                               action_rects[1].y + action_rects[1].h * 0.5f, 0);

@@ -1256,12 +1256,12 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         draw_centered_text_on(button_rect, text, fill, label);
       };
 
-      draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "S",
+      draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
                          CanStageAllGitSidebarEntries());
-      draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "D",
+      draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
                          CanDiscardAllGitSidebarEntries(), true);
       const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
-      draw_action_button(refresh_rect, "R", true);
+      draw_action_button(refresh_rect, "Refresh", true);
       const auto lines = BuildGitSidebarLines();
       const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
       int scroll_row = list_layout.scroll_row;
@@ -1450,9 +1450,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const float tooltip_x =
           std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
                      layout.full.x + layout.full.w - tooltip_width - 8.0f);
-      const float tooltip_y =
-          std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
-                     layout.full.y + layout.full.h - tooltip_height - 8.0f);
+      const float tooltip_y = last_mouse_y_ - tooltip_height - 10.0f >= layout.full.y + 8.0f
+                                  ? last_mouse_y_ - tooltip_height - 10.0f
+                                  : std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
+                                               layout.full.y + layout.full.h - tooltip_height - 8.0f);
       const SDL_FRect tooltip_rect = MakeRect(tooltip_x, tooltip_y, tooltip_width, tooltip_height);
       DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
       DrawRect(renderer, tooltip_rect, theme_.border);

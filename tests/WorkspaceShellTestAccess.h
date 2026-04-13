@@ -419,6 +419,16 @@ struct WorkspaceShellTestAccess {
                       shell.surface_.bottom_panel_height);
     return shell.HoveredGitSidebarTooltipLabel(layout.sidebar);
   }
+  static std::array<SDL_FRect, 3> GitSidebarTopActionRects(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
+                      shell.surface_.bottom_panel_height);
+    return {shell.GitSidebarStageAllButtonRect(layout.sidebar),
+            shell.GitSidebarDiscardAllButtonRect(layout.sidebar),
+            shell.GitSidebarRefreshButtonRect(layout.sidebar)};
+  }
   static std::array<SDL_FRect, 2> GitSidebarEntryActionRects(WorkspaceShell& shell,
                                                              std::size_t entry_index) {
     const WorkspaceLayout layout =

@@ -19,6 +19,15 @@ constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
 constexpr float kGitSidebarListGap = 8.0f;
 constexpr float kGitSidebarEntryButtonGap = 4.0f;
+constexpr float kGitSidebarEntryButtonHoverPadding = 4.0f;
+
+SDL_FRect ExpandRect(const SDL_FRect& rect, float padding) {
+  if (rect.w <= 0.0f || rect.h <= 0.0f) {
+    return rect;
+  }
+  return MakeRect(rect.x - padding, rect.y - padding, rect.w + padding * 2.0f,
+                  rect.h + padding * 2.0f);
+}
 
 }  // namespace
 
@@ -313,44 +322,37 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
     return {};
   }
 
-  if (Contains(GitSidebarStageAllButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
-    return "Stage All";
-  }
-  if (Contains(GitSidebarDiscardAllButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
-    return "Discard All";
-  }
-  if (Contains(GitSidebarRefreshButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
-    return "Refresh";
-  }
   if (last_mouse_y_ < GitSidebarListTop(sidebar_rect)) {
     return {};
   }
 
   const auto lines = BuildGitSidebarLines();
   const auto list_layout = ComputeGitSidebarListLayout(sidebar_rect, lines.size());
-  const auto line_index = ScrollableListIndexAtY(list_layout, last_mouse_y_);
-  if (!line_index.has_value() || *line_index < 0 || *line_index >= static_cast<int>(lines.size())) {
-    return {};
-  }
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    const auto& line = lines[i];
+    if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0 ||
+        static_cast<std::size_t>(line.entry_index) >= git_sidebar_.entries.size()) {
+      continue;
+    }
 
-  const SDL_FRect row_rect = ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-  if (!Contains(row_rect, last_mouse_x_, last_mouse_y_)) {
-    return {};
-  }
+    const int visible_row = static_cast<int>(i) - list_layout.scroll_row;
+    if (visible_row < 0 || visible_row >= list_layout.visible_rows) {
+      continue;
+    }
 
-  const auto& line = lines[static_cast<std::size_t>(*line_index)];
-  if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0 ||
-      static_cast<std::size_t>(line.entry_index) >= git_sidebar_.entries.size()) {
-    return {};
-  }
-
-  const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
-  const GitSidebarEntryActionLayout actions = ComputeGitSidebarEntryActionLayout(row_rect, entry);
-  if (actions.primary_rect.has_value() && Contains(*actions.primary_rect, last_mouse_x_, last_mouse_y_)) {
-    return entry.staged ? "Unstage" : "Stage";
-  }
-  if (actions.discard_rect.has_value() && Contains(*actions.discard_rect, last_mouse_x_, last_mouse_y_)) {
-    return "Discard";
+    const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
+    const SDL_FRect row_rect = ScrollableListRowRect(list_layout, visible_row);
+    const GitSidebarEntryActionLayout actions = ComputeGitSidebarEntryActionLayout(row_rect, entry);
+    if (actions.primary_rect.has_value() &&
+        Contains(ExpandRect(*actions.primary_rect, kGitSidebarEntryButtonHoverPadding),
+                 last_mouse_x_, last_mouse_y_)) {
+      return entry.staged ? "Unstage" : "Stage";
+    }
+    if (actions.discard_rect.has_value() &&
+        Contains(ExpandRect(*actions.discard_rect, kGitSidebarEntryButtonHoverPadding),
+                 last_mouse_x_, last_mouse_y_)) {
+      return "Discard";
+    }
   }
   return {};
 }
