@@ -780,6 +780,7 @@ class WorkspaceShell {
   class TabCoordinator;
   class DiffTabCoordinator;
   class LifecycleCoordinator;
+  class SidebarCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
