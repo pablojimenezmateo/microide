@@ -679,6 +679,9 @@ struct WorkspaceShellTestAccess {
   static bool FocusIsPanel(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Panel;
   }
+  static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
+  static bool CaretVisibleNow(const WorkspaceShell& shell) { return shell.CaretVisibleNow(); }
+  static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Overlay;
   }

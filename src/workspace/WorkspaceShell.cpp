@@ -700,9 +700,21 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  return surface_.focus == FocusTarget::Editor && !surface_.command_mode && !prompts_.dirty_visible &&
-         !surface_.overlay_visible && !surface_.menu_bar_open && !surface_.tree_context_menu.open &&
-         ActiveTabIsEditor() && !text_viewport_.is_placeholder();
+  if (surface_.command_mode || prompts_.dirty_visible || prompts_.surface_visible ||
+      surface_.overlay_visible || surface_.menu_bar_open || surface_.tree_context_menu.open) {
+    return false;
+  }
+
+  if (surface_.focus == FocusTarget::Editor) {
+    const editor::TextViewport* viewport = ActiveEditableViewport();
+    return viewport != nullptr && !viewport->is_placeholder();
+  }
+
+  if (surface_.focus == FocusTarget::Panel) {
+    return ActiveTerminalTab() != nullptr;
+  }
+
+  return false;
 }
 
 bool WorkspaceShell::CaretVisibleNow() const {

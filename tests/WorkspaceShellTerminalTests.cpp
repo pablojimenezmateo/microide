@@ -148,6 +148,20 @@ void TestWorkspaceShellTerminalFocusModeTracksWindowFocus() {
          "terminal focus mode should emit focus notifications when the IDE window focus changes");
 }
 
+void TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "terminal caret fixture should focus the panel");
+  Expect(WorkspaceShellTestAccess::ShouldBlinkCaret(shell),
+         "focused terminal panels should participate in shared caret blinking");
+
+  WorkspaceShellTestAccess::ResetCaretBlink(shell);
+  Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell),
+         "focused terminal panels should show the caret immediately after a blink reset");
+}
+
 void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -350,6 +364,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalFocusModeTracksPanelFocus);
   AddTest(tests, "WorkspaceShell/TerminalFocusModeTracksWindowFocus",
           TestWorkspaceShellTerminalFocusModeTracksWindowFocus);
+  AddTest(tests, "WorkspaceShell/FocusedTerminalParticipatesInCaretBlinking",
+          TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",
           TestWorkspaceShellHandleEventPassesEscapeToTerminal);
   AddTest(tests, "WorkspaceShell/CopyLastTerminalCommandIncludesOutput",

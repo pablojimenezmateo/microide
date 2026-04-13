@@ -1081,25 +1081,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     draw_vcentered_text_on(tooltip_rect, 8.0f, theme_.text_primary, theme_.surface_raised,
                            tooltip_text);
   }
-  if (!hovered_git_sidebar_tooltip.empty()) {
-    const float max_tooltip_width = std::max(120.0f, layout.full.w - 24.0f);
-    const std::string tooltip_text =
-        text_renderer_.TruncateToWidth(hovered_git_sidebar_tooltip, max_tooltip_width - 16.0f);
-    const float tooltip_width =
-        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
-    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
-    const float tooltip_x =
-        std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
-                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
-    const float tooltip_y =
-        std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
-                   layout.full.y + layout.full.h - tooltip_height - 8.0f);
-    const SDL_FRect tooltip_rect = MakeRect(tooltip_x, tooltip_y, tooltip_width, tooltip_height);
-    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
-    DrawRect(renderer, tooltip_rect, theme_.border);
-    draw_vcentered_text_on(tooltip_rect, 8.0f, theme_.text_primary, theme_.surface_raised,
-                           tooltip_text);
-  }
 
   if (surface_.sidebar_visible) {
     const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
@@ -1325,24 +1306,22 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                      std::string_view label,
                                      SDL_Color text_color) {
           DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
-          draw_centered_text_on(button_rect, text_color,
-                                selected ? theme_.row_highlight : theme_.surface_background,
-                                label);
+          draw_centered_text_on(
+              button_rect, text_color,
+              selected ? theme_.row_highlight : theme_.surface_background, label);
         };
 
         if (actions.primary_rect.has_value()) {
-          draw_button(*actions.primary_rect, entry.staged ? "U" : "S",
-                      selected ? theme_.text_primary : theme_.accent);
+          draw_button(*actions.primary_rect, entry.staged ? "U" : "S", theme_.accent);
         }
         if (actions.discard_rect.has_value()) {
-          draw_button(*actions.discard_rect, "D",
-                      selected ? theme_.text_primary : theme_.diff_deleted);
+          draw_button(*actions.discard_rect, "D", theme_.diff_deleted);
         }
 
         if (!marker_text.empty()) {
           draw_vcentered_text_on(
               MakeRect(right_edge - marker_width, row_rect.y, marker_width, row_rect.h), 0.0f,
-              selected ? theme_.text_primary : GitMarkerColor(theme_, entry.status),
+              GitMarkerColor(theme_, entry.status),
               selected ? theme_.row_highlight : theme_.surface_background, marker_text);
           right_edge -= marker_width + 8.0f;
         }
@@ -1459,6 +1438,26 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       draw_vertical_scrollbar(
           list_layout.list_rect, static_cast<float>(entries.size()), list_layout.visible_units,
           static_cast<float>(scroll_row), surface_.drag_target == DragTarget::SidebarScrollbar);
+    }
+
+    if (!hovered_git_sidebar_tooltip.empty()) {
+      const float max_tooltip_width = std::max(120.0f, layout.full.w - 24.0f);
+      const std::string tooltip_text =
+          text_renderer_.TruncateToWidth(hovered_git_sidebar_tooltip, max_tooltip_width - 16.0f);
+      const float tooltip_width =
+          std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+      const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
+      const float tooltip_x =
+          std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                     layout.full.x + layout.full.w - tooltip_width - 8.0f);
+      const float tooltip_y =
+          std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
+                     layout.full.y + layout.full.h - tooltip_height - 8.0f);
+      const SDL_FRect tooltip_rect = MakeRect(tooltip_x, tooltip_y, tooltip_width, tooltip_height);
+      DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
+      DrawRect(renderer, tooltip_rect, theme_.border);
+      draw_vcentered_text_on(tooltip_rect, 8.0f, theme_.text_primary, theme_.surface_raised,
+                             tooltip_text);
     }
   }
 
