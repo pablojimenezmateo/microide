@@ -2028,6 +2028,150 @@ std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
   return rects;
 }
 
+std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(
+    std::span<const MergeTrackedConflict> conflicts,
+    std::size_t line,
+    bool incoming) {
+  for (std::size_t i = 0; i < conflicts.size(); ++i) {
+    const auto& conflict = conflicts[i];
+    const std::size_t start = incoming ? conflict.incoming_start_line : conflict.current_start_line;
+    const std::size_t end = incoming ? conflict.incoming_end_line : conflict.current_end_line;
+    if (line >= start && line < end) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t> FindMergeTrackedConflictAtResultLine(
+    std::span<const MergeTrackedConflict> conflicts,
+    std::size_t line) {
+  for (std::size_t i = 0; i < conflicts.size(); ++i) {
+    const auto& conflict = conflicts[i];
+    const std::size_t end = std::max(conflict.end_line, conflict.start_line + std::size_t{1});
+    if (line >= conflict.start_line && line < end) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<MergeHoverState> ClassifyMergeHoverState(
+    const MergeHoverSurfaceLayout& surface,
+    const MergeHoverInteractionLayout& interaction,
+    std::span<const MergeTrackedConflict> conflicts,
+    float x,
+    float y) {
+  for (std::size_t i = 0; i < conflicts.size(); ++i) {
+    const auto& conflict = conflicts[i];
+    if (!conflict.valid) {
+      continue;
+    }
+
+    if (Contains(ComputeMergeSourceActionButtonRect(surface.left_x, surface.gutter_width,
+                                                    surface.rows_y, surface.line_height,
+                                                    static_cast<int>(interaction.result.text.scroll_line),
+                                                    conflict.incoming_end_line,
+                                                    interaction.content_bottom,
+                                                    interaction.incoming_accept_button_width,
+                                                    interaction.button_height),
+                 x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::IncomingAccept,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Incoming,
+      };
+    }
+    if (Contains(ComputeMergeSourceActionButtonRect(surface.right_x, surface.gutter_width,
+                                                    surface.rows_y, surface.line_height,
+                                                    static_cast<int>(interaction.result.text.scroll_line),
+                                                    conflict.current_end_line,
+                                                    interaction.content_bottom,
+                                                    interaction.current_accept_button_width,
+                                                    interaction.button_height),
+                 x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::CurrentAccept,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Current,
+      };
+    }
+
+    const auto action_rects = ComputeMergeResultActionButtonRects(
+        surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
+        ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines,
+                                    conflict.start_line,
+                                    std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
+        interaction.result_action_widths, interaction.button_height, interaction.button_gap);
+    if (Contains(action_rects[0], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Base,
+      };
+    }
+    if (Contains(action_rects[1], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Incoming,
+      };
+    }
+    if (Contains(action_rects[2], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Current,
+      };
+    }
+    if (Contains(action_rects[3], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Both,
+      };
+    }
+  }
+
+  if (x < surface.center_x) {
+    if (const auto line = VisibleTextGridLineAtY(interaction.incoming, y); line.has_value()) {
+      if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(conflicts, *line, true);
+          conflict_index.has_value()) {
+        return MergeHoverState{
+            .kind = MergeHoverState::Kind::IncomingConflict,
+            .conflict_index = *conflict_index,
+            .preview_choice = compare::MergeChoice::Incoming,
+        };
+      }
+    }
+  } else if (x >= surface.right_x) {
+    if (const auto line = VisibleTextGridLineAtY(interaction.current, y); line.has_value()) {
+      if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(conflicts, *line, false);
+          conflict_index.has_value()) {
+        return MergeHoverState{
+            .kind = MergeHoverState::Kind::CurrentConflict,
+            .conflict_index = *conflict_index,
+            .preview_choice = compare::MergeChoice::Current,
+        };
+      }
+    }
+  }
+
+  if (Contains(interaction.result.rect, x, y)) {
+    const std::size_t line = ClampTextGridLineAtY(interaction.result.text, y);
+    if (const auto conflict_index = FindMergeTrackedConflictAtResultLine(conflicts, line);
+        conflict_index.has_value()) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultConflict,
+          .conflict_index = *conflict_index,
+          .preview_choice = conflicts[*conflict_index].last_choice,
+      };
+    }
+  }
+
+  return std::nullopt;
+}
+
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
   const float overlay_width =
       std::clamp(editor_area.w * 0.58f, kOverlayMinWidth, kOverlayMaxWidth);

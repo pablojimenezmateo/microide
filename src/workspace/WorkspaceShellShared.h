@@ -188,6 +188,61 @@ struct TextGridInteractionLayout {
   std::size_t visible_columns = 1;
 };
 
+struct MergeTrackedConflict {
+  std::size_t hunk_index = 0;
+  std::size_t incoming_start_line = 0;
+  std::size_t incoming_end_line = 0;
+  std::size_t current_start_line = 0;
+  std::size_t current_end_line = 0;
+  std::size_t start_line = 0;
+  std::size_t end_line = 0;
+  compare::MergeChoice last_choice = compare::MergeChoice::Base;
+  bool valid = true;
+};
+
+struct MergeHoverState {
+  enum class Kind {
+    None,
+    IncomingConflict,
+    IncomingAccept,
+    CurrentConflict,
+    CurrentAccept,
+    ResultConflict,
+    ResultAction,
+  };
+
+  Kind kind = Kind::None;
+  std::size_t conflict_index = 0;
+  compare::MergeChoice preview_choice = compare::MergeChoice::Base;
+};
+
+struct MergeHoverSurfaceLayout {
+  float gutter_width = 28.0f;
+  float left_x = 0.0f;
+  float center_x = 0.0f;
+  float right_x = 0.0f;
+  float rows_y = 0.0f;
+  float line_height = 14.0f;
+};
+
+struct MergeHoverResultLayout {
+  SDL_FRect rect{};
+  VisibleLineRangeLayout lines{};
+  TextGridInteractionLayout text{};
+};
+
+struct MergeHoverInteractionLayout {
+  float content_bottom = 0.0f;
+  TextGridInteractionLayout incoming{};
+  TextGridInteractionLayout current{};
+  MergeHoverResultLayout result{};
+  float incoming_accept_button_width = 0.0f;
+  float current_accept_button_width = 0.0f;
+  std::array<float, 4> result_action_widths{};
+  float button_height = 0.0f;
+  float button_gap = 0.0f;
+};
+
 struct ScrollableListLayout {
   SDL_FRect list_rect{};
   std::optional<ScrollbarGeometry> scrollbar;
@@ -495,6 +550,19 @@ std::array<SDL_FRect, 4> ComputeMergeResultActionButtonRects(
     const std::array<float, 4>& widths,
     float button_height,
     float button_gap);
+std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(
+    std::span<const MergeTrackedConflict> conflicts,
+    std::size_t line,
+    bool incoming);
+std::optional<std::size_t> FindMergeTrackedConflictAtResultLine(
+    std::span<const MergeTrackedConflict> conflicts,
+    std::size_t line);
+std::optional<MergeHoverState> ClassifyMergeHoverState(
+    const MergeHoverSurfaceLayout& surface,
+    const MergeHoverInteractionLayout& interaction,
+    std::span<const MergeTrackedConflict> conflicts,
+    float x,
+    float y);
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area);
 std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     const std::vector<GitSidebarSection>& entry_sections,

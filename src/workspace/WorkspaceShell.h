@@ -198,33 +198,8 @@ class WorkspaceShell {
     bool persistable = true;
   };
 
-  struct MergeTrackedConflict {
-    std::size_t hunk_index = 0;
-    std::size_t incoming_start_line = 0;
-    std::size_t incoming_end_line = 0;
-    std::size_t current_start_line = 0;
-    std::size_t current_end_line = 0;
-    std::size_t start_line = 0;
-    std::size_t end_line = 0;
-    compare::MergeChoice last_choice = compare::MergeChoice::Base;
-    bool valid = true;
-  };
-
-  struct MergeHoverState {
-    enum class Kind {
-      None,
-      IncomingConflict,
-      IncomingAccept,
-      CurrentConflict,
-      CurrentAccept,
-      ResultConflict,
-      ResultAction,
-    };
-
-    Kind kind = Kind::None;
-    std::size_t conflict_index = 0;
-    compare::MergeChoice preview_choice = compare::MergeChoice::Base;
-  };
+  using MergeTrackedConflict = microide::workspace::MergeTrackedConflict;
+  using MergeHoverState = microide::workspace::MergeHoverState;
 
   struct MergeTabState {
     std::filesystem::path base_path;

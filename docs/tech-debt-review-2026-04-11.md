@@ -161,6 +161,11 @@ Recommendation:
 
 - Extract a pure merge hover hit-test/classifier helper that consumes the shared merge interaction model and returns the next `MergeHoverState`.
 
+Resolution:
+
+- Addressed by moving merge hover conflict lookup and precedence rules into shared `WorkspaceShellShared` helpers, then having `WorkspaceShell` adapt its merge interaction layout into that pure classifier.
+- Direct shared-layout tests now cover source-pane conflict hover, accept-button precedence, result-action precedence, and result conflict classification without going through SDL mouse-event plumbing.
+
 ## Executive Summary
 
 The project is functional and has materially better test coverage than a typical SDL rewrite at this stage, but most of the debt has concentrated into the workspace shell. The main risk is not one isolated bug; it is the amount of behavior routed through one mutable object with many overlapping UI modes and many file-format or action contracts expressed as strings.

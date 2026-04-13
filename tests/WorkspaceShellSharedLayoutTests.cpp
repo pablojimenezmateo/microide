@@ -14,6 +14,7 @@ using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
 using microide::workspace::BuildChromeTabRenderItems;
 using microide::workspace::BuildCompareScrollbarMarkers;
+using microide::workspace::ClassifyMergeHoverState;
 using microide::workspace::ComputeDirtyPromptButtonRects;
 using microide::workspace::ComputeDirtyPromptRect;
 using microide::workspace::ComputeEditorSplitAxisLayout;
@@ -40,6 +41,11 @@ using microide::workspace::HoveredChromeTabTooltipLabel;
 using microide::workspace::MakeHorizontalScrollbarGeometry;
 using microide::workspace::MakeRect;
 using microide::workspace::MakeVerticalScrollbarGeometry;
+using microide::workspace::MergeHoverInteractionLayout;
+using microide::workspace::MergeHoverResultLayout;
+using microide::workspace::MergeHoverState;
+using microide::workspace::MergeHoverSurfaceLayout;
+using microide::workspace::MergeTrackedConflict;
 using microide::workspace::RevealScrollableListIndex;
 using microide::workspace::ScrollUnitsForPointer;
 using microide::workspace::ScrollableListIndexAtY;
@@ -461,6 +467,113 @@ void TestWorkspaceSharedMergeInteractionGeometry() {
          "merge result action rects should move above the conflict when they would overflow");
 }
 
+void TestWorkspaceSharedMergeHoverClassifier() {
+  const MergeHoverSurfaceLayout surface = {
+      .gutter_width = 32.0f,
+      .left_x = 120.0f,
+      .center_x = 320.0f,
+      .right_x = 560.0f,
+      .rows_y = 260.0f,
+      .line_height = 18.0f,
+  };
+  const SDL_FRect editor_surface = MakeRect(100.0f, 200.0f, 640.0f, 320.0f);
+  const SDL_FRect result_rect = ComputeMergeResultViewportRect(editor_surface, surface.center_x,
+                                                               surface.rows_y, surface.gutter_width,
+                                                               180.0f, true);
+  const MergeHoverInteractionLayout interaction = {
+      .content_bottom = 508.0f,
+      .incoming =
+          ComputeTextGridInteractionLayout(MakeRect(surface.left_x, surface.rows_y, 180.0f, 72.0f),
+                                           surface.left_x + surface.gutter_width, surface.rows_y,
+                                           surface.line_height, 8.0f, 5, 20, 0, 4, 20),
+      .current =
+          ComputeTextGridInteractionLayout(MakeRect(surface.right_x, surface.rows_y, 180.0f, 72.0f),
+                                           surface.right_x + surface.gutter_width, surface.rows_y,
+                                           surface.line_height, 8.0f, 5, 20, 0, 4, 20),
+      .result =
+          MergeHoverResultLayout{
+              .rect = result_rect,
+              .lines =
+                  VisibleLineRangeLayout{
+                      .first_line_y = 300.0f,
+                      .line_height = 18.0f,
+                      .scroll_line = 5,
+                      .visible_rows = 4,
+                  },
+              .text = ComputeTextGridInteractionLayout(result_rect, 352.0f, 300.0f,
+                                                       surface.line_height, 8.0f, 5, 20, 0, 4, 20),
+          },
+      .incoming_accept_button_width = 90.0f,
+      .current_accept_button_width = 92.0f,
+      .result_action_widths = {64.0f, 82.0f, 84.0f, 70.0f},
+      .button_height = 22.0f,
+      .button_gap = 8.0f,
+  };
+  const std::vector<MergeTrackedConflict> conflicts = {
+      MergeTrackedConflict{
+          .hunk_index = 0,
+          .incoming_start_line = 6,
+          .incoming_end_line = 8,
+          .current_start_line = 6,
+          .current_end_line = 8,
+          .start_line = 6,
+          .end_line = 8,
+          .last_choice = microide::compare::MergeChoice::Base,
+          .valid = true,
+      },
+  };
+
+  const SDL_FRect incoming_accept_rect = ComputeMergeSourceActionButtonRect(
+      surface.left_x, surface.gutter_width, surface.rows_y, surface.line_height,
+      static_cast<int>(interaction.result.text.scroll_line), conflicts[0].incoming_end_line,
+      interaction.content_bottom, interaction.incoming_accept_button_width, interaction.button_height);
+  const auto result_action_rects = ComputeMergeResultActionButtonRects(
+      surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
+      ComputeVisibleLineRangeRect(result_rect, interaction.result.lines, conflicts[0].start_line,
+                                  conflicts[0].end_line),
+      interaction.result_action_widths, interaction.button_height, interaction.button_gap);
+
+  const auto incoming_accept_hover =
+      ClassifyMergeHoverState(surface, interaction, conflicts,
+                              incoming_accept_rect.x + incoming_accept_rect.w * 0.5f,
+                              incoming_accept_rect.y + incoming_accept_rect.h * 0.5f);
+  Expect(incoming_accept_hover.has_value(),
+         "merge hover classifier should return a state for the incoming accept button");
+  Expect(incoming_accept_hover->kind == MergeHoverState::Kind::IncomingAccept,
+         "merge hover classifier should prefer the incoming accept button over source content");
+
+  const auto current_conflict_hover = ClassifyMergeHoverState(
+      surface, interaction, conflicts, surface.right_x + surface.gutter_width + 8.0f,
+      surface.rows_y + 27.0f);
+  Expect(current_conflict_hover.has_value(),
+         "merge hover classifier should return a state for current-source conflict content");
+  Expect(current_conflict_hover->kind == MergeHoverState::Kind::CurrentConflict &&
+             current_conflict_hover->preview_choice == microide::compare::MergeChoice::Current,
+         "merge hover classifier should classify current-source conflict content");
+
+  const auto result_action_hover =
+      ClassifyMergeHoverState(surface, interaction, conflicts,
+                              result_action_rects[3].x + result_action_rects[3].w * 0.5f,
+                              result_action_rects[3].y + result_action_rects[3].h * 0.5f);
+  Expect(result_action_hover.has_value(),
+         "merge hover classifier should return a state for result action buttons");
+  Expect(result_action_hover->kind == MergeHoverState::Kind::ResultAction &&
+             result_action_hover->preview_choice == microide::compare::MergeChoice::Both,
+         "merge hover classifier should prefer explicit result actions over result conflict content");
+
+  const auto result_conflict_hover =
+      ClassifyMergeHoverState(surface, interaction, conflicts, interaction.result.text.text_x + 8.0f,
+                              interaction.result.lines.first_line_y + interaction.result.lines.line_height +
+                                  9.0f);
+  Expect(result_conflict_hover.has_value(),
+         "merge hover classifier should return a state for result conflict content");
+  Expect(result_conflict_hover->kind == MergeHoverState::Kind::ResultConflict,
+         "merge hover classifier should classify result conflict content when no action button is hit");
+
+  Expect(!ClassifyMergeHoverState(surface, interaction, conflicts, 20.0f, 20.0f).has_value(),
+         "merge hover classifier should ignore pointers outside the merge panes");
+}
+
 void TestWorkspaceSharedOverlayRectHelpers() {
   const SDL_FRect roomy = ComputeOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
   Expect(roomy.w == 696.0f,
@@ -502,6 +615,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
           TestWorkspaceSharedChromeTabRenderItems);
   AddTest(tests, "WorkspaceShared/EditorSplitLayout", TestWorkspaceSharedEditorSplitLayout);
+  AddTest(tests, "WorkspaceShared/MergeHoverClassifier",
+          TestWorkspaceSharedMergeHoverClassifier);
   AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",
           TestWorkspaceSharedMergeInteractionGeometry);
   AddTest(tests, "WorkspaceShared/OverlayRectHelpers", TestWorkspaceSharedOverlayRectHelpers);

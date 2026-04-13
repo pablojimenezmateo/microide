@@ -731,7 +731,7 @@ void TestWorkspaceShellMergeHoverPrefersIncomingAcceptButton() {
 
   const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
   Expect(hover.has_value(), "incoming accept button hover should produce a hover state");
-  Expect(hover->kind == WorkspaceShell::MergeHoverState::Kind::IncomingAccept,
+  Expect(hover->kind == microide::workspace::MergeHoverState::Kind::IncomingAccept,
          "incoming accept button hover should take precedence over the source conflict hover");
   Expect(hover->preview_choice == MergeChoice::Incoming,
          "incoming accept button hover should advertise the incoming merge choice");
@@ -755,7 +755,7 @@ void TestWorkspaceShellMergeHoverPrefersResultActionButton() {
 
   const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
   Expect(hover.has_value(), "result action button hover should produce a hover state");
-  Expect(hover->kind == WorkspaceShell::MergeHoverState::Kind::ResultAction,
+  Expect(hover->kind == microide::workspace::MergeHoverState::Kind::ResultAction,
          "result action button hover should take precedence over generic result conflict hover");
   Expect(hover->preview_choice == MergeChoice::Both,
          "result action button hover should advertise the hovered merge choice");

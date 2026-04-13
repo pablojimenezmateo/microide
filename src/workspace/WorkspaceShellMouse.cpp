@@ -17,8 +17,8 @@ constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
 constexpr float kTabDragStartDistance = 6.0f;
 
-bool MergeHoverStatesEqual(const std::optional<WorkspaceShell::MergeHoverState>& lhs,
-                           const std::optional<WorkspaceShell::MergeHoverState>& rhs) {
+bool MergeHoverStatesEqual(const std::optional<MergeHoverState>& lhs,
+                           const std::optional<MergeHoverState>& rhs) {
   return lhs.has_value() == rhs.has_value() &&
          (!lhs.has_value() ||
           (lhs->kind == rhs->kind && lhs->conflict_index == rhs->conflict_index &&
