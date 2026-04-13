@@ -778,6 +778,7 @@ class WorkspaceShell {
   class DirtyPromptCoordinator;
   class PathMutationCoordinator;
   class TabCoordinator;
+  class DiffTabCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
