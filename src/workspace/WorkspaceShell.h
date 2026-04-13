@@ -447,18 +447,6 @@ class WorkspaceShell {
     int selected_action = 0;
   };
 
-  struct DirtyPathTarget {
-    enum class Kind {
-      EditorView,
-      CompareTab,
-      MergeTab,
-    };
-
-    Kind kind = Kind::EditorView;
-    std::size_t tab_index = 0;
-    std::size_t leaf_id = 0;
-  };
-
   struct PromptSurfaceState {
     enum class Kind {
       None,
@@ -788,6 +776,7 @@ class WorkspaceShell {
 
   class ProjectCatalogCoordinator;
   class DirtyPromptCoordinator;
+  class PathMutationCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -934,22 +923,8 @@ class WorkspaceShell {
   std::string PromptSurfaceMessage() const;
   std::array<std::string, 2> PromptSurfaceActionLabels() const;
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
-  bool EditorTabReferencesPath(std::size_t tab_index, const std::filesystem::path& path) const;
-  bool EditorTabHasDirtyPath(std::size_t tab_index, const std::filesystem::path& path) const;
-  std::vector<DirtyPathTarget> DirtyPathTargetsForPath(const std::filesystem::path& path) const;
-  std::vector<std::size_t> DirtyTabIndicesForPath(const std::filesystem::path& path) const;
-  std::vector<std::size_t> AffectedEditorTabIndices(const std::filesystem::path& path) const;
-  std::vector<std::size_t> AffectedCompareTabIndices(const std::filesystem::path& path) const;
-  std::vector<std::size_t> AffectedMergeTabIndices(const std::filesystem::path& path) const;
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
-  bool ResolveDirtyTabsForPath(const std::filesystem::path& path,
-                               DirtyPromptState::Kind prompt_kind,
-                               DirtyPathResolution resolution);
-  void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
-  void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
-                                 const std::filesystem::path& new_path,
-                                 bool preserve_unsaved_state = true);
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   std::filesystem::path EditorViewPath(const TabEntry::EditorTabState::EditorViewState& view) const;
   bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
