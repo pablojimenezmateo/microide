@@ -377,7 +377,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (Contains(layout.project_tab_strip, event.button.x, event.button.y)) {
-    for (const VisibleProjectTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+    for (const VisibleStripTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (!Contains(tab.rect, event.button.x, event.button.y)) {
         continue;
       }
@@ -413,7 +413,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       return false;
     }
 
-    for (const VisibleTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
+    for (const VisibleStripTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
       if (Contains(tab.rect, event.button.x, event.button.y)) {
         if (event.button.button == SDL_BUTTON_MIDDLE ||
             (event.button.button == SDL_BUTTON_LEFT &&
@@ -443,7 +443,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return true;
       }
 
-      for (const VisibleTerminalTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
+      for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
         if (!Contains(tab.rect, event.button.x, event.button.y)) {
           continue;
         }

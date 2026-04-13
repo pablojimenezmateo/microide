@@ -343,16 +343,7 @@ class WorkspaceShell {
     std::optional<MergeTabState> merge;
   };
 
-  struct VisibleTab {
-    std::size_t index = 0;
-    SDL_FRect rect{};
-    SDL_FRect close_rect{};
-    bool active = false;
-    std::string display_title;
-    std::string tooltip_label;
-  };
-
-  struct VisibleProjectTab {
+  struct VisibleStripTab {
     std::size_t index = 0;
     SDL_FRect rect{};
     SDL_FRect close_rect{};
@@ -371,15 +362,6 @@ class WorkspaceShell {
     WindowControlButtonId id = WindowControlButtonId::Minimize;
     SDL_FRect rect{};
     bool hovered = false;
-  };
-
-  struct VisibleTerminalTab {
-    std::size_t index = 0;
-    SDL_FRect rect{};
-    SDL_FRect close_rect{};
-    bool active = false;
-    std::string display_title;
-    std::string tooltip_label;
   };
 
   struct GitSidebarEntry {
@@ -1391,15 +1373,27 @@ class WorkspaceShell {
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   float ProjectTabWidthForIndex(std::size_t index) const;
   void EnsureActiveProjectVisible();
-  std::vector<VisibleProjectTab> ComputeVisibleProjectTabs(
+  std::vector<VisibleStripTab> ComputeVisibleProjectTabs(
       const SDL_FRect& project_tab_strip) const;
   float TabWidthForIndex(std::size_t index) const;
   void EnsureActiveTabVisible();
-  std::vector<VisibleTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
+  std::vector<VisibleStripTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
   std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
-  std::vector<VisibleTerminalTab> ComputeVisibleTerminalTabs(
+  std::vector<VisibleStripTab> ComputeVisibleTerminalTabs(
       const SDL_FRect& panel_header) const;
+  static std::vector<VisibleStripTab> BuildVisibleStripTabs(
+      const std::vector<float>& widths,
+      float start_x,
+      float gap,
+      float max_tab_x,
+      std::size_t scroll_index,
+      float tab_y,
+      float tab_height,
+      const std::vector<std::size_t>& model_indices,
+      std::size_t active_index,
+      const std::vector<std::string>& display_titles,
+      const std::vector<std::string>& tooltip_labels);
   void ClearTabDrag();
   SDL_FRect BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const;
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;

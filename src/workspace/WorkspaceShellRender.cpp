@@ -980,7 +980,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
   }
 
-  for (const VisibleProjectTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+  for (const VisibleStripTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
     DrawFilledRect(renderer, tab.rect, tab.active ? theme_.chrome_active : theme_.surface_raised);
     if (tab.active) {
       DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f), theme_.accent);
@@ -1003,7 +1003,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     draw_vcentered_text_on(placeholder_tab, 10.0f, theme_.text_primary, theme_.chrome_active,
                            "welcome");
   } else if (!project_root_.empty()) {
-    for (const VisibleTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
+    for (const VisibleStripTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
       DrawFilledRect(renderer, tab.rect, tab.active ? theme_.chrome_active : theme_.surface_raised);
       if (tab.active) {
         DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
@@ -1590,7 +1590,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                  kBottomPanelHeaderHeight);
     const bool terminal_panel = ActiveTerminalTab() != nullptr;
     if (terminal_panel) {
-      for (const VisibleTerminalTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
+      for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
         const auto* terminal_tab =
             tab.index < terminal_tabs_.size() ? terminal_tabs_[tab.index].get() : nullptr;
         if (terminal_tab == nullptr) {

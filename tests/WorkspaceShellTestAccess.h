@@ -390,7 +390,7 @@ struct WorkspaceShellTestAccess {
         ComputeLayout(static_cast<float>(shell.last_window_width_),
                       static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
                       shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
-    for (const WorkspaceShell::VisibleProjectTab& tab :
+    for (const WorkspaceShell::VisibleStripTab& tab :
          shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (tab.index == index) {
         return tab.rect;
@@ -403,7 +403,7 @@ struct WorkspaceShellTestAccess {
         ComputeLayout(static_cast<float>(shell.last_window_width_),
                       static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
                       shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
-    for (const WorkspaceShell::VisibleTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
+    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
       if (tab.index == index) {
         return tab.rect;
       }
@@ -557,7 +557,7 @@ struct WorkspaceShellTestAccess {
                       shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
-    for (const WorkspaceShell::VisibleTerminalTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
+    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
       if (tab.index == shell.active_terminal_tab_index_) {
         return tab.rect;
       }
@@ -571,7 +571,7 @@ struct WorkspaceShellTestAccess {
                       shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
-    for (const WorkspaceShell::VisibleTerminalTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
+    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
       if (tab.index == index) {
         return tab.rect;
       }

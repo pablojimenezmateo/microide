@@ -2243,7 +2243,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (Contains(layout.project_tab_strip, x, y)) {
-    for (const VisibleProjectTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+    for (const VisibleStripTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (Contains(tab.rect, x, y)) {
         return CursorKind::Pointer;
       }
@@ -2262,7 +2262,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                  ? CursorKind::Pointer
                  : CursorKind::Default;
     }
-    for (const VisibleTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
+    for (const VisibleStripTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
       if (Contains(tab.rect, x, y)) {
         return CursorKind::Pointer;
       }
@@ -2360,7 +2360,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (Contains(BottomPanelTerminalNewTabRect(panel_header), x, y)) {
         return CursorKind::Pointer;
       }
-      for (const VisibleTerminalTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
+      for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
         if (Contains(tab.rect, x, y)) {
           return CursorKind::Pointer;
         }

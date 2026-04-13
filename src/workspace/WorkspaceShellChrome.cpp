@@ -16,6 +16,39 @@ constexpr float kTabCloseButtonRightInset = 6.0f;
 
 }  // namespace
 
+std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::BuildVisibleStripTabs(
+    const std::vector<float>& widths,
+    float start_x,
+    float gap,
+    float max_tab_x,
+    std::size_t scroll_index,
+    float tab_y,
+    float tab_height,
+    const std::vector<std::size_t>& model_indices,
+    std::size_t active_index,
+    const std::vector<std::string>& display_titles,
+    const std::vector<std::string>& tooltip_labels) {
+  const auto visible = ComputeVisibleStripLayouts(widths, start_x, gap, max_tab_x, scroll_index);
+  const auto models =
+      BuildChromeTabRenderItems(visible, tab_y, tab_height, model_indices, active_index,
+                                display_titles, tooltip_labels, kTabCloseButtonSize,
+                                kTabCloseButtonRightInset);
+
+  std::vector<VisibleStripTab> tabs;
+  tabs.reserve(models.size());
+  for (const ChromeTabRenderItem& model : models) {
+    VisibleStripTab tab;
+    tab.index = model.index;
+    tab.rect = model.rect;
+    tab.close_rect = model.close_rect;
+    tab.active = model.active;
+    tab.display_title = model.display_title;
+    tab.tooltip_label = model.tooltip_label;
+    tabs.push_back(std::move(tab));
+  }
+  return tabs;
+}
+
 float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
   if (index >= project_catalog_.entries.size()) {
     return 156.0f;
@@ -47,11 +80,10 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
                                                project_catalog_.active_index));
 }
 
-std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisibleProjectTabs(
+std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProjectTabs(
     const SDL_FRect& project_tab_strip) const {
-  std::vector<VisibleProjectTab> tabs;
   if (project_catalog_.entries.empty()) {
-    return tabs;
+    return {};
   }
 
   std::vector<float> widths;
@@ -74,27 +106,11 @@ std::vector<WorkspaceShell::VisibleProjectTab> WorkspaceShell::ComputeVisiblePro
   const float start_x = project_tab_strip.x + 12.0f;
   const float max_tab_x =
       std::max(start_x + 120.0f, project_tab_strip.x + project_tab_strip.w - 12.0f);
-  const auto visible = ComputeVisibleStripLayouts(
+  return BuildVisibleStripTabs(
       widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(project_catalog_.tab_scroll_index, 0,
-                                          std::max(0, static_cast<int>(project_catalog_.entries.size()) - 1))));
-  const auto models = BuildChromeTabRenderItems(
-      visible, tab_y, tab_height, {}, project_catalog_.active_index, display_titles, tooltip_labels,
-      kTabCloseButtonSize, kTabCloseButtonRightInset);
-
-  tabs.reserve(models.size());
-  for (const ChromeTabRenderItem& model : models) {
-    VisibleProjectTab tab;
-    tab.index = model.index;
-    tab.rect = model.rect;
-    tab.close_rect = model.close_rect;
-    tab.active = model.active;
-    tab.display_title = model.display_title;
-    tab.tooltip_label = model.tooltip_label;
-    tabs.push_back(std::move(tab));
-  }
-
-  return tabs;
+                                          std::max(0, static_cast<int>(project_catalog_.entries.size()) - 1))),
+      tab_y, tab_height, {}, project_catalog_.active_index, display_titles, tooltip_labels);
 }
 
 float WorkspaceShell::TabWidthForIndex(std::size_t index) const {
@@ -128,11 +144,10 @@ void WorkspaceShell::EnsureActiveTabVisible() {
                                                active_tab_index_));
 }
 
-std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
+std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
     const SDL_FRect& tab_strip) const {
-  std::vector<VisibleTab> tabs;
   if (open_tabs_.empty()) {
-    return tabs;
+    return {};
   }
 
   std::vector<float> widths;
@@ -154,34 +169,17 @@ std::vector<WorkspaceShell::VisibleTab> WorkspaceShell::ComputeVisibleTabs(
   const float start_x = tab_strip.x + 12.0f;
   const float right_reserve = std::clamp(tab_strip.w * 0.22f, 160.0f, 240.0f);
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve);
-  const auto visible = ComputeVisibleStripLayouts(
+  return BuildVisibleStripTabs(
       widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(tab_scroll_index_, 0,
-                                          std::max(0, static_cast<int>(open_tabs_.size()) - 1))));
-  const auto models = BuildChromeTabRenderItems(
-      visible, tab_y, tab_height, {}, active_tab_index_, display_titles, tooltip_labels,
-      kTabCloseButtonSize, kTabCloseButtonRightInset);
-
-  tabs.reserve(models.size());
-  for (const ChromeTabRenderItem& model : models) {
-    VisibleTab tab;
-    tab.index = model.index;
-    tab.rect = model.rect;
-    tab.close_rect = model.close_rect;
-    tab.active = model.active;
-    tab.display_title = model.display_title;
-    tab.tooltip_label = model.tooltip_label;
-    tabs.push_back(std::move(tab));
-  }
-
-  return tabs;
+                                          std::max(0, static_cast<int>(open_tabs_.size()) - 1))),
+      tab_y, tab_height, {}, active_tab_index_, display_titles, tooltip_labels);
 }
 
-std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTerminalTabs(
+std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTerminalTabs(
     const SDL_FRect& panel_header) const {
-  std::vector<VisibleTerminalTab> tabs;
   if (terminal_tabs_.empty()) {
-    return tabs;
+    return {};
   }
 
   std::vector<std::size_t> terminal_indices;
@@ -215,24 +213,9 @@ std::vector<WorkspaceShell::VisibleTerminalTab> WorkspaceShell::ComputeVisibleTe
   const float start_x = panel_header.x + 12.0f;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
   const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
-  const auto visible = ComputeVisibleStripLayouts(widths, start_x, gap, max_tab_x, 0);
-  const auto models = BuildChromeTabRenderItems(
-      visible, tab_y, tab_height, terminal_indices, active_terminal_tab_index_, display_titles,
-      tooltip_labels, kTabCloseButtonSize, kTabCloseButtonRightInset);
-
-  tabs.reserve(models.size());
-  for (const ChromeTabRenderItem& model : models) {
-    VisibleTerminalTab tab;
-    tab.index = model.index;
-    tab.rect = model.rect;
-    tab.close_rect = model.close_rect;
-    tab.active = model.active;
-    tab.display_title = model.display_title;
-    tab.tooltip_label = model.tooltip_label;
-    tabs.push_back(std::move(tab));
-  }
-
-  return tabs;
+  return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, 0, tab_y, tab_height,
+                               terminal_indices, active_terminal_tab_index_, display_titles,
+                               tooltip_labels);
 }
 
 void WorkspaceShell::ClearTabDrag() {
