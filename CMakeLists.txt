@@ -117,6 +117,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
+  src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceTabCoordinator.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
