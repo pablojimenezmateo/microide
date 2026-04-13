@@ -1042,6 +1042,23 @@ ScrollSurfaceLayout WorkspaceShell::ComputeMergeScrollLayout(
                                     merge_tab.horizontal_scroll);
 }
 
+TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
+    const MergeSurfaceLayout& surface,
+    const MergeTabState& merge_tab,
+    bool incoming) const {
+  const float pane_x = incoming ? surface.left_x : surface.right_x;
+  const float pane_width = incoming ? surface.left_width : surface.right_width;
+  const std::size_t line_count =
+      incoming ? merge_tab.model.incoming_lines.size() : merge_tab.model.current_lines.size();
+  return ComputeTextGridInteractionLayout(
+      MakeRect(pane_x, surface.rows_y, surface.gutter_width + pane_width,
+               static_cast<float>(surface.visible_rows) * surface.line_height),
+      pane_x + surface.gutter_width, surface.rows_y, surface.line_height,
+      text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)),
+      line_count, merge_tab.horizontal_scroll, static_cast<std::size_t>(surface.visible_rows),
+      surface.visible_columns);
+}
+
 WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteractionLayout(
     const SDL_FRect& rect,
     const MergeSurfaceLayout& surface,
@@ -1142,6 +1159,105 @@ std::array<SDL_FRect, 4> WorkspaceShell::BuildMergeResultActionButtonRects(
       ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, conflict.start_line,
                                   std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
       interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap);
+}
+
+std::optional<WorkspaceShell::MergeHoverState> WorkspaceShell::ClassifyMergeHoverState(
+    const MergeSurfaceLayout& surface,
+    const MergeInteractionLayout& interaction,
+    const MergeTabState& merge_tab,
+    float x,
+    float y) const {
+  for (std::size_t i = 0; i < merge_tab.conflicts.size(); ++i) {
+    const auto& conflict = merge_tab.conflicts[i];
+    if (!conflict.valid) {
+      continue;
+    }
+    if (Contains(BuildMergeSourceActionButtonRect(surface, interaction, conflict, true), x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::IncomingAccept,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Incoming,
+      };
+    }
+    if (Contains(BuildMergeSourceActionButtonRect(surface, interaction, conflict, false), x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::CurrentAccept,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Current,
+      };
+    }
+    const auto action_rects = BuildMergeResultActionButtonRects(surface, interaction, conflict);
+    if (Contains(action_rects[0], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Base,
+      };
+    }
+    if (Contains(action_rects[1], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Incoming,
+      };
+    }
+    if (Contains(action_rects[2], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Current,
+      };
+    }
+    if (Contains(action_rects[3], x, y)) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultAction,
+          .conflict_index = i,
+          .preview_choice = compare::MergeChoice::Both,
+      };
+    }
+  }
+
+  if (x < surface.center_x) {
+    const TextGridInteractionLayout incoming_interaction =
+        BuildMergeSourceInteractionLayout(surface, merge_tab, true);
+    if (const auto line = VisibleTextGridLineAtY(incoming_interaction, y); line.has_value()) {
+      if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(merge_tab, *line, true);
+          conflict_index.has_value()) {
+        return MergeHoverState{
+            .kind = MergeHoverState::Kind::IncomingConflict,
+            .conflict_index = *conflict_index,
+            .preview_choice = compare::MergeChoice::Incoming,
+        };
+      }
+    }
+  } else if (x >= surface.right_x) {
+    const TextGridInteractionLayout current_interaction =
+        BuildMergeSourceInteractionLayout(surface, merge_tab, false);
+    if (const auto line = VisibleTextGridLineAtY(current_interaction, y); line.has_value()) {
+      if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(merge_tab, *line, false);
+          conflict_index.has_value()) {
+        return MergeHoverState{
+            .kind = MergeHoverState::Kind::CurrentConflict,
+            .conflict_index = *conflict_index,
+            .preview_choice = compare::MergeChoice::Current,
+        };
+      }
+    }
+  }
+
+  if (Contains(interaction.result.rect, x, y)) {
+    const std::size_t line = ClampTextGridLineAtY(interaction.result.text, y);
+    if (const auto conflict_index = FindMergeTrackedConflictAtResultLine(merge_tab, line);
+        conflict_index.has_value()) {
+      return MergeHoverState{
+          .kind = MergeHoverState::Kind::ResultConflict,
+          .conflict_index = *conflict_index,
+          .preview_choice = merge_tab.conflicts[*conflict_index].last_choice,
+      };
+    }
+  }
+
+  return std::nullopt;
 }
 
 int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
@@ -2469,29 +2585,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                 ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
             },
     };
+    if (const auto hover = ClassifyMergeHoverState(surface_layout, interaction, *merge_tab, x, y);
+        hover.has_value() && hover->kind == MergeHoverState::Kind::ResultAction) {
+      return CursorKind::Pointer;
+    }
     if (Contains(interaction.result.rect, x, y)) {
-      if (merge_tab->hover_state.has_value() &&
-          merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
-          merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
-        const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
-        if (conflict.valid) {
-          const std::array<SDL_FRect, 4> action_rects =
-              BuildMergeResultActionButtonRects(surface_layout, interaction, conflict);
-          if (const std::optional<SDL_FRect> conflict_rect = ComputeVisibleLineRangeRect(
-                  interaction.result.rect, interaction.result.lines, conflict.start_line,
-                  std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
-              conflict_rect.has_value()) {
-            const SDL_FRect& base_rect = action_rects[0];
-            const SDL_FRect& incoming_rect = action_rects[1];
-            const SDL_FRect& current_rect = action_rects[2];
-            const SDL_FRect& both_rect = action_rects[3];
-            if (Contains(base_rect, x, y) || Contains(incoming_rect, x, y) ||
-                Contains(current_rect, x, y) || Contains(both_rect, x, y)) {
-              return CursorKind::Pointer;
-            }
-          }
-        }
-      }
       return CursorKind::Text;
     }
     return CursorKind::Pointer;

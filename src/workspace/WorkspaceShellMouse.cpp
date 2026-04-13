@@ -17,6 +17,14 @@ constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
 constexpr float kTabDragStartDistance = 6.0f;
 
+bool MergeHoverStatesEqual(const std::optional<WorkspaceShell::MergeHoverState>& lhs,
+                           const std::optional<WorkspaceShell::MergeHoverState>& rhs) {
+  return lhs.has_value() == rhs.has_value() &&
+         (!lhs.has_value() ||
+          (lhs->kind == rhs->kind && lhs->conflict_index == rhs->conflict_index &&
+           lhs->preview_choice == rhs->preview_choice));
+}
+
 template <typename VisibleTabType>
 std::size_t StripInsertionSlot(const SDL_FRect& strip,
                                const std::vector<VisibleTabType>& tabs,
@@ -1736,138 +1744,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
         const MergeInteractionLayout interaction =
             BuildMergeInteractionLayout(layout.editor_surface, surface_layout, *merge_tab);
-        const auto source_button_rect = [&](const MergeTrackedConflict& conflict, bool incoming) {
-          return BuildMergeSourceActionButtonRect(surface_layout, interaction, conflict, incoming);
-        };
-        const auto result_action_rects =
-            [&](const MergeTrackedConflict& conflict) -> std::array<SDL_FRect, 4> {
-          return BuildMergeResultActionButtonRects(surface_layout, interaction, conflict);
-        };
-
-        for (std::size_t i = 0; i < merge_tab->conflicts.size(); ++i) {
-          const auto& conflict = merge_tab->conflicts[i];
-          if (conflict.valid && Contains(source_button_rect(conflict, true), event.motion.x, event.motion.y)) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::IncomingAccept,
-                .conflict_index = i,
-                .preview_choice = compare::MergeChoice::Incoming,
-            };
-            break;
-          }
-          if (conflict.valid &&
-              Contains(source_button_rect(conflict, false), event.motion.x, event.motion.y)) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::CurrentAccept,
-                .conflict_index = i,
-                .preview_choice = compare::MergeChoice::Current,
-            };
-            break;
-          }
-          if (!conflict.valid) {
-            continue;
-          }
-          const auto action_rects = result_action_rects(conflict);
-          if (Contains(action_rects[0], event.motion.x, event.motion.y)) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::ResultAction,
-                .conflict_index = i,
-                .preview_choice = compare::MergeChoice::Base,
-            };
-            break;
-          }
-          if (Contains(action_rects[1], event.motion.x, event.motion.y)) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::ResultAction,
-                .conflict_index = i,
-                .preview_choice = compare::MergeChoice::Incoming,
-            };
-            break;
-          }
-          if (Contains(action_rects[2], event.motion.x, event.motion.y)) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::ResultAction,
-                .conflict_index = i,
-                .preview_choice = compare::MergeChoice::Current,
-            };
-            break;
-          }
-          if (Contains(action_rects[3], event.motion.x, event.motion.y)) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::ResultAction,
-                .conflict_index = i,
-                .preview_choice = compare::MergeChoice::Both,
-            };
-            break;
-          }
-        }
-
-        if (!next_hover.has_value()) {
-          const TextGridInteractionLayout incoming_interaction = ComputeTextGridInteractionLayout(
-              MakeRect(surface_layout.left_x, surface_layout.rows_y,
-                       surface_layout.gutter_width + surface_layout.left_width,
-                       static_cast<float>(surface_layout.visible_rows) * surface_layout.line_height),
-              surface_layout.left_x + surface_layout.gutter_width, surface_layout.rows_y,
-              surface_layout.line_height, text_renderer_.CharWidth(),
-              static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)),
-              merge_tab->model.incoming_lines.size(), merge_tab->horizontal_scroll,
-              static_cast<std::size_t>(surface_layout.visible_rows), surface_layout.visible_columns);
-          const TextGridInteractionLayout current_interaction = ComputeTextGridInteractionLayout(
-              MakeRect(surface_layout.right_x, surface_layout.rows_y,
-                       surface_layout.gutter_width + surface_layout.right_width,
-                       static_cast<float>(surface_layout.visible_rows) * surface_layout.line_height),
-              surface_layout.right_x + surface_layout.gutter_width, surface_layout.rows_y,
-              surface_layout.line_height, text_renderer_.CharWidth(),
-              static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)),
-              merge_tab->model.current_lines.size(), merge_tab->horizontal_scroll,
-              static_cast<std::size_t>(surface_layout.visible_rows), surface_layout.visible_columns);
-          if (event.motion.x < surface_layout.center_x) {
-            if (const auto line = VisibleTextGridLineAtY(incoming_interaction, event.motion.y);
-                line.has_value()) {
-              if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(*merge_tab, *line, true);
-                  conflict_index.has_value()) {
-                next_hover = MergeHoverState{
-                    .kind = MergeHoverState::Kind::IncomingConflict,
-                    .conflict_index = *conflict_index,
-                    .preview_choice = compare::MergeChoice::Incoming,
-                };
-              }
-            }
-          } else if (event.motion.x >= surface_layout.right_x) {
-            if (const auto line = VisibleTextGridLineAtY(current_interaction, event.motion.y);
-                line.has_value()) {
-              if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(*merge_tab, *line, false);
-                  conflict_index.has_value()) {
-                next_hover = MergeHoverState{
-                    .kind = MergeHoverState::Kind::CurrentConflict,
-                    .conflict_index = *conflict_index,
-                    .preview_choice = compare::MergeChoice::Current,
-                };
-              }
-            }
-          }
-        }
-
-        if (!next_hover.has_value() &&
-            Contains(interaction.result.rect, event.motion.x, event.motion.y)) {
-          const std::size_t line = ClampTextGridLineAtY(interaction.result.text, event.motion.y);
-          if (const auto conflict_index = FindMergeTrackedConflictAtResultLine(*merge_tab, line);
-              conflict_index.has_value()) {
-            next_hover = MergeHoverState{
-                .kind = MergeHoverState::Kind::ResultConflict,
-                .conflict_index = *conflict_index,
-                .preview_choice = merge_tab->conflicts[*conflict_index].last_choice,
-            };
-          }
-        }
+        next_hover = ClassifyMergeHoverState(surface_layout, interaction, *merge_tab,
+                                             static_cast<float>(event.motion.x),
+                                             static_cast<float>(event.motion.y));
       }
 
       merge_tab->hover_state = next_hover;
-      const bool hover_changed =
-          previous_hover.has_value() != merge_tab->hover_state.has_value() ||
-          (previous_hover.has_value() &&
-           (previous_hover->kind != merge_tab->hover_state->kind ||
-            previous_hover->conflict_index != merge_tab->hover_state->conflict_index ||
-            previous_hover->preview_choice != merge_tab->hover_state->preview_choice));
+      const bool hover_changed = !MergeHoverStatesEqual(previous_hover, merge_tab->hover_state);
       hover_visual_changed = hover_visual_changed || hover_changed;
     }
   }

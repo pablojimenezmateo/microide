@@ -1068,6 +1068,9 @@ class WorkspaceShell {
   ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect,
                                                const MergeSurfaceLayout& surface,
                                                const MergeTabState& merge_tab) const;
+  TextGridInteractionLayout BuildMergeSourceInteractionLayout(const MergeSurfaceLayout& surface,
+                                                              const MergeTabState& merge_tab,
+                                                              bool incoming) const;
   MergeResultInteractionLayout BuildMergeResultInteractionLayout(
       const SDL_FRect& rect,
       const MergeSurfaceLayout& surface,
@@ -1088,6 +1091,11 @@ class WorkspaceShell {
       const MergeSurfaceLayout& surface,
       const MergeInteractionLayout& interaction,
       const MergeTrackedConflict& conflict) const;
+  std::optional<MergeHoverState> ClassifyMergeHoverState(const MergeSurfaceLayout& surface,
+                                                         const MergeInteractionLayout& interaction,
+                                                         const MergeTabState& merge_tab,
+                                                         float x,
+                                                         float y) const;
   MergeToolbarLayout ComputeMergeToolbarLayout(const SDL_FRect& rect,
                                               const MergeSurfaceLayout& surface) const;
   int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;

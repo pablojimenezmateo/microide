@@ -679,6 +679,88 @@ void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
          "hover preview should not dirty the merge result");
 }
 
+void OpenMergeHoverFixture(WorkspaceShell& shell,
+                           TemporaryDirectory& temp_dir,
+                           std::filesystem::path* base_path,
+                           std::filesystem::path* incoming_path,
+                           std::filesystem::path* current_path,
+                           std::filesystem::path* output_path) {
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "top\nbase change\nbottom\n");
+  WriteFile(incoming, "top\nincoming change\nbottom\n");
+  WriteFile(current, "top\ncurrent change\nbottom\n");
+  WriteFile(output, "top\nbase change\nbottom\n");
+
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 900);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge hover fixture should open a merge editor");
+
+  if (base_path != nullptr) {
+    *base_path = base;
+  }
+  if (incoming_path != nullptr) {
+    *incoming_path = incoming;
+  }
+  if (current_path != nullptr) {
+    *current_path = current;
+  }
+  if (output_path != nullptr) {
+    *output_path = output;
+  }
+}
+
+void TestWorkspaceShellMergeHoverPrefersIncomingAcceptButton() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  OpenMergeHoverFixture(shell, temp_dir, nullptr, nullptr, nullptr, nullptr);
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!merge.conflicts.empty(), "incoming-accept hover fixture should expose a merge conflict");
+
+  const SDL_FRect accept_rect = WorkspaceShellTestAccess::MergeSourceAcceptRect(shell, 0, true);
+  const float hover_x = accept_rect.x + accept_rect.w * 0.5f;
+  const float hover_y = accept_rect.y + accept_rect.h * 0.5f;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering the incoming accept button should request a redraw");
+
+  const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
+  Expect(hover.has_value(), "incoming accept button hover should produce a hover state");
+  Expect(hover->kind == WorkspaceShell::MergeHoverState::Kind::IncomingAccept,
+         "incoming accept button hover should take precedence over the source conflict hover");
+  Expect(hover->preview_choice == MergeChoice::Incoming,
+         "incoming accept button hover should advertise the incoming merge choice");
+}
+
+void TestWorkspaceShellMergeHoverPrefersResultActionButton() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  OpenMergeHoverFixture(shell, temp_dir, nullptr, nullptr, nullptr, nullptr);
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!merge.conflicts.empty(), "result-action hover fixture should expose a merge conflict");
+
+  const std::array<SDL_FRect, 4> action_rects =
+      WorkspaceShellTestAccess::MergeResultActionRects(shell, 0);
+  const float hover_x = action_rects[3].x + action_rects[3].w * 0.5f;
+  const float hover_y = action_rects[3].y + action_rects[3].h * 0.5f;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering a merge result action button should request a redraw");
+
+  const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
+  Expect(hover.has_value(), "result action button hover should produce a hover state");
+  Expect(hover->kind == WorkspaceShell::MergeHoverState::Kind::ResultAction,
+         "result action button hover should take precedence over generic result conflict hover");
+  Expect(hover->preview_choice == MergeChoice::Both,
+         "result action button hover should advertise the hovered merge choice");
+}
+
 void TestWorkspaceShellMergeToolbarButtonsNavigateConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -814,6 +896,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion);
   AddTest(tests, "WorkspaceShell/MergeHoverPreviewDoesNotCommitState",
           TestWorkspaceShellMergeHoverPreviewDoesNotCommitState);
+  AddTest(tests, "WorkspaceShell/MergeHoverPrefersIncomingAcceptButton",
+          TestWorkspaceShellMergeHoverPrefersIncomingAcceptButton);
+  AddTest(tests, "WorkspaceShell/MergeHoverPrefersResultActionButton",
+          TestWorkspaceShellMergeHoverPrefersResultActionButton);
   AddTest(tests, "WorkspaceShell/MergeToolbarButtonsNavigateConflicts",
           TestWorkspaceShellMergeToolbarButtonsNavigateConflicts);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",

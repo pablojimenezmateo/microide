@@ -77,6 +77,24 @@ struct WorkspaceShellTestAccess {
                       shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
     return shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
   }
+  static WorkspaceShell::MergeInteractionLayout ActiveMergeInteractionLayout(WorkspaceShell& shell) {
+    auto& merge = ActiveMerge(shell);
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const auto surface = shell.ComputeMergeSurfaceLayout(layout.editor_surface, merge);
+    const auto scroll =
+        shell.ComputeMergeScrollLayout(layout.editor_surface, surface, merge);
+    merge.scroll_row = scroll.vertical_scroll;
+    merge.horizontal_scroll = scroll.horizontal_scroll;
+    merge.result_viewport.SetScrollLine(
+        static_cast<std::size_t>(std::max(0, merge.scroll_row)));
+    merge.result_viewport.SetHorizontalScroll(merge.horizontal_scroll);
+    merge.scroll_row = static_cast<int>(merge.result_viewport.scroll_line());
+    merge.horizontal_scroll = merge.result_viewport.horizontal_scroll();
+    return shell.BuildMergeInteractionLayout(layout.editor_surface, surface, merge);
+  }
   static WorkspaceShell::CompareSurfaceLayout ActiveCompareSurfaceLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),
@@ -98,58 +116,18 @@ struct WorkspaceShellTestAccess {
                                          std::size_t conflict_index,
                                          bool incoming) {
     auto& merge = ActiveMerge(shell);
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
     const auto surface = ActiveMergeSurfaceLayout(shell);
-    const float bottom_reserved = surface.show_horizontal ? 10.0f + 2.0f : 0.0f;
-    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
+    const auto interaction = ActiveMergeInteractionLayout(shell);
     const auto& conflict = merge.conflicts[conflict_index];
-    return ComputeMergeSourceActionButtonRect(
-        incoming ? surface.left_x : surface.right_x, surface.gutter_width, surface.rows_y,
-        surface.line_height, merge.scroll_row,
-        incoming ? conflict.incoming_end_line : conflict.current_end_line,
-        layout.editor_surface.y + content_height,
-        ComputeChromeButtonWidth(shell.text_renderer_.MeasureWidth(incoming ? "Accept Incoming"
-                                                                            : "Accept Current")),
-        22.0f);
+    return shell.BuildMergeSourceActionButtonRect(surface, interaction, conflict, incoming);
   }
   static std::array<SDL_FRect, 4> MergeResultActionRects(WorkspaceShell& shell,
                                                          std::size_t conflict_index) {
     auto& merge = ActiveMerge(shell);
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
     const auto surface = ActiveMergeSurfaceLayout(shell);
-    const SDL_FRect result_rect = ActiveMergeResultRect(shell);
-    const float bottom_reserved = surface.show_horizontal ? 10.0f + 2.0f : 0.0f;
-    const float content_height = std::max(0.0f, layout.editor_surface.h - bottom_reserved);
-    const editor::EditorViewMetrics metrics =
-        microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,
-                                                             merge.result_viewport, result_rect);
-    merge.result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+    const auto interaction = ActiveMergeInteractionLayout(shell);
     const auto& conflict = merge.conflicts[conflict_index];
-    const VisibleLineRangeLayout result_line_layout = {
-        .first_line_y = metrics.first_line_y,
-        .line_height = metrics.line_height,
-        .scroll_line = merge.result_viewport.scroll_line(),
-        .visible_rows = metrics.visible_rows,
-    };
-    return ComputeMergeResultActionButtonRects(
-        surface.center_x + surface.gutter_width, surface.rows_y,
-        layout.editor_surface.y + content_height,
-        ComputeVisibleLineRangeRect(
-            result_rect, result_line_layout, conflict.start_line,
-            std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
-        {
-            ComputeChromeButtonWidth(shell.text_renderer_.MeasureWidth("Base")),
-            ComputeChromeButtonWidth(shell.text_renderer_.MeasureWidth("Incoming")),
-            ComputeChromeButtonWidth(shell.text_renderer_.MeasureWidth("Current")),
-            ComputeChromeButtonWidth(shell.text_renderer_.MeasureWidth("Both")),
-        },
-        22.0f, 8.0f);
+    return shell.BuildMergeResultActionButtonRects(surface, interaction, conflict);
   }
   static std::array<SDL_FRect, 2> MergeToolbarNavigationRects(WorkspaceShell& shell) {
     const WorkspaceLayout layout =
