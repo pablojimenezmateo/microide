@@ -10,6 +10,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::BuildGitSidebarLineSpecs;
+using microide::workspace::BuildGitSidebarEntryTextModel;
 using microide::workspace::BuildProjectSearchResultLineMap;
 using microide::workspace::FindLiteralSearchMatches;
 using microide::workspace::FindProjectSearchResultLine;
@@ -61,6 +62,20 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
   const auto no_repo_lines = BuildGitSidebarLineSpecs({}, false, "", "");
   Expect(no_repo_lines[1].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
+}
+
+void TestWorkspaceSharedGitSidebarEntryTextModel() {
+  const auto nested = BuildGitSidebarEntryTextModel(std::filesystem::path("src/deep/main.cpp"), false);
+  Expect(nested.primary_label == "main.cpp",
+         "git sidebar text model should prioritize the filename");
+  Expect(nested.secondary_label == "src/deep",
+         "git sidebar text model should move the parent path into the secondary label");
+
+  const auto staged = BuildGitSidebarEntryTextModel(std::filesystem::path("main.cpp"), true);
+  Expect(staged.primary_label == "main.cpp",
+         "git sidebar text model should preserve root-level filenames");
+  Expect(staged.secondary_label == "[staged]",
+         "git sidebar text model should keep staged state in the secondary label");
 }
 
 void TestWorkspaceSharedLiteralSearchHelpers() {
@@ -128,6 +143,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedGitSidebarLineHelpers);
   AddTest(tests, "WorkspaceShared/GitSidebarEmptyStates",
           TestWorkspaceSharedGitSidebarEmptyStates);
+  AddTest(tests, "WorkspaceShared/GitSidebarEntryTextModel",
+          TestWorkspaceSharedGitSidebarEntryTextModel);
   AddTest(tests, "WorkspaceShared/LiteralSearchHelpers",
           TestWorkspaceSharedLiteralSearchHelpers);
   AddTest(tests, "WorkspaceShared/LiteralReplaceModeHelpers",

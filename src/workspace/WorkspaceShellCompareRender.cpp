@@ -743,7 +743,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
     const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
     if (conflict.valid) {
-      draw_button(source_button_rect(conflict, true), "Accept Incoming",
+      draw_button(source_button_rect(conflict, true), "Accept Theirs",
                   merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept, true);
     }
   }
@@ -754,7 +754,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
     const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
     if (conflict.valid) {
-      draw_button(source_button_rect(conflict, false), "Accept Current",
+      draw_button(source_button_rect(conflict, false), "Accept Ours",
                   merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept, true);
     }
   }
@@ -770,11 +770,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
                   merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
                       merge_tab->hover_state->preview_choice == compare::MergeChoice::Base,
                   true);
-      draw_button(action_rects[1], "Incoming",
+      draw_button(action_rects[1], "Theirs",
                   merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
                       merge_tab->hover_state->preview_choice == compare::MergeChoice::Incoming,
                   true);
-      draw_button(action_rects[2], "Current",
+      draw_button(action_rects[2], "Ours",
                   merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction &&
                       merge_tab->hover_state->preview_choice == compare::MergeChoice::Current,
                   true);

@@ -409,6 +409,12 @@ class WorkspaceShell {
     int entry_index = -1;
   };
 
+  struct GitSidebarEntryActionLayout {
+    std::optional<SDL_FRect> primary_rect;
+    std::optional<SDL_FRect> discard_rect;
+    float content_right_edge = 0.0f;
+  };
+
   struct EditorPaneLayout {
     std::size_t leaf_id = 0;
     SDL_FRect rect{};
@@ -1170,6 +1176,8 @@ class WorkspaceShell {
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
+  GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
+                                                                 const GitSidebarEntry& entry) const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
   void RevealSelectedGitSidebarLine();
@@ -1389,6 +1397,7 @@ class WorkspaceShell {
   void EnsureActiveTabVisible();
   std::vector<VisibleTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
   std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
+  std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
   std::vector<VisibleTerminalTab> ComputeVisibleTerminalTabs(
       const SDL_FRect& panel_header) const;
   void ClearTabDrag();

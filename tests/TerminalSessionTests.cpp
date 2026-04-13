@@ -331,6 +331,23 @@ void TestTerminalSessionOsc52RejectsInvalidClipboardPayloads() {
          "invalid or unsupported OSC 52 payloads should not queue clipboard text");
 }
 
+void TestTerminalSessionTracksCellForegroundAndBackgroundStyles() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[31;44mA\x1b[0mB");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && lines[0].cells.size() >= 2,
+         "styled terminal output should preserve at least the written cells");
+  Expect(lines[0].cells[0].character == 'A' && lines[0].cells[0].style.foreground.has_value() &&
+             lines[0].cells[0].style.background.has_value(),
+         "terminal cells should retain parsed foreground and background SGR styles");
+  Expect(lines[0].cells[1].character == 'B' && !lines[0].cells[1].style.foreground.has_value() &&
+             !lines[0].cells[1].style.background.has_value(),
+         "terminal style reset should stop coloring subsequent cells");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -384,6 +401,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionOsc52ClipboardStQueuesClipboardText);
   AddTest(tests, "TerminalSession/Osc52RejectsInvalidClipboardPayloads",
           TestTerminalSessionOsc52RejectsInvalidClipboardPayloads);
+  AddTest(tests, "TerminalSession/TracksCellForegroundAndBackgroundStyles",
+          TestTerminalSessionTracksCellForegroundAndBackgroundStyles);
 }
 
 }  // namespace microide::tests

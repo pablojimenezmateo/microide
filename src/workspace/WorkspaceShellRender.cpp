@@ -784,7 +784,11 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           segment_selected ? theme_.row_highlight
                            : segment_style.background.value_or(theme_.surface_background);
       const float segment_x = x + static_cast<float>(segment_start) * char_width;
-      text_renderer_.DrawStringOn(renderer, segment_x, y, foreground, background, segment);
+      DrawFilledRect(renderer,
+                     MakeRect(segment_x, y - 1.0f, char_width * static_cast<float>(segment.size()),
+                              text_renderer_.LineHeight()),
+                     background);
+      text_renderer_.DrawString(renderer, segment_x, y, foreground, segment);
       segment.clear();
       has_segment = false;
     };
@@ -1051,6 +1055,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   const std::string hovered_tab_tooltip = HoveredTabTooltipLabel(layout.tab_strip);
+  const std::string hovered_git_sidebar_tooltip =
+      surface_.sidebar_visible ? HoveredGitSidebarTooltipLabel(layout.sidebar) : "";
   const float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
   const float breadcrumb_text_width =
       std::max(0.0f, layout.breadcrumb.x + layout.breadcrumb.w - 12.0f - breadcrumb_text_x);
@@ -1070,6 +1076,25 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    layout.full.x + layout.full.w - tooltip_width - 8.0f);
     const SDL_FRect tooltip_rect = MakeRect(tooltip_x, layout.tab_strip.y + layout.tab_strip.h + 6.0f,
                                             tooltip_width, tooltip_height);
+    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
+    DrawRect(renderer, tooltip_rect, theme_.border);
+    draw_vcentered_text_on(tooltip_rect, 8.0f, theme_.text_primary, theme_.surface_raised,
+                           tooltip_text);
+  }
+  if (!hovered_git_sidebar_tooltip.empty()) {
+    const float max_tooltip_width = std::max(120.0f, layout.full.w - 24.0f);
+    const std::string tooltip_text =
+        text_renderer_.TruncateToWidth(hovered_git_sidebar_tooltip, max_tooltip_width - 16.0f);
+    const float tooltip_width =
+        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
+    const float tooltip_x =
+        std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
+    const float tooltip_y =
+        std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
+                   layout.full.y + layout.full.h - tooltip_height - 8.0f);
+    const SDL_FRect tooltip_rect = MakeRect(tooltip_x, tooltip_y, tooltip_width, tooltip_height);
     DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
     DrawRect(renderer, tooltip_rect, theme_.border);
     draw_vcentered_text_on(tooltip_rect, 8.0f, theme_.text_primary, theme_.surface_raised,
@@ -1250,12 +1275,12 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         draw_centered_text_on(button_rect, text, fill, label);
       };
 
-      draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
+      draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "S",
                          CanStageAllGitSidebarEntries());
-      draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
+      draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "D",
                          CanDiscardAllGitSidebarEntries(), true);
       const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
-      draw_action_button(refresh_rect, "Refresh", true);
+      draw_action_button(refresh_rect, "R", true);
       const auto lines = BuildGitSidebarLines();
       const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
       int scroll_row = list_layout.scroll_row;
@@ -1292,7 +1317,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         const char git_marker = GitMarker(entry.status);
         const std::string marker_text = git_marker == ' ' ? "" : std::string(1, git_marker);
         const float marker_width = marker_text.empty() ? 0.0f : text_renderer_.MeasureWidth(marker_text);
-        float right_edge = row_rect.x + row_rect.w - 8.0f;
+        const GitSidebarEntryActionLayout actions =
+            ComputeGitSidebarEntryActionLayout(row_rect, entry);
+        float right_edge = actions.content_right_edge;
 
         const auto draw_button = [&](const SDL_FRect& button_rect,
                                      std::string_view label,
@@ -1303,22 +1330,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                 label);
         };
 
-        if (entry.section == GitSidebarEntry::Section::Modified) {
-          const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
-          const float stage_width =
-              std::max(entry.staged ? 68.0f : 48.0f,
-                       text_renderer_.MeasureWidth(stage_label) + 16.0f);
-          const SDL_FRect stage_rect =
-              MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
-          draw_button(stage_rect, stage_label, selected ? theme_.text_primary : theme_.accent);
-          right_edge = stage_rect.x - 6.0f;
-          const float discard_width =
-              std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
-          const SDL_FRect discard_rect = MakeRect(right_edge - discard_width, row_rect.y + 1.0f,
-                                                  discard_width, row_rect.h - 2.0f);
-          draw_button(discard_rect, "Discard",
+        if (actions.primary_rect.has_value()) {
+          draw_button(*actions.primary_rect, entry.staged ? "U" : "S",
+                      selected ? theme_.text_primary : theme_.accent);
+        }
+        if (actions.discard_rect.has_value()) {
+          draw_button(*actions.discard_rect, "D",
                       selected ? theme_.text_primary : theme_.diff_deleted);
-          right_edge = discard_rect.x - 6.0f;
         }
 
         if (!marker_text.empty()) {
@@ -1329,11 +1347,31 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           right_edge -= marker_width + 8.0f;
         }
 
-        const std::string label = entry.relative_path.string() + (entry.staged ? "  [staged]" : "");
-        draw_vcentered_text_on(
-            row_rect, 6.0f, selected ? theme_.text_primary : theme_.text_secondary,
-            selected ? theme_.row_highlight : theme_.surface_background,
-            TruncateLabel(label, std::max(20.0f, right_edge - row_rect.x - 6.0f)));
+        const GitSidebarEntryTextModel text_model =
+            BuildGitSidebarEntryTextModel(entry.relative_path, entry.staged);
+        const SDL_Color row_background =
+            selected ? theme_.row_highlight : theme_.surface_background;
+        const SDL_Color primary_color =
+            selected ? theme_.text_primary : theme_.text_secondary;
+        const SDL_Color secondary_color =
+            selected ? theme_.text_secondary : theme_.text_muted;
+        const float text_x = row_rect.x + 6.0f;
+        const float text_y =
+            row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
+        const float label_width = std::max(20.0f, right_edge - text_x);
+        const std::string primary_label =
+            text_renderer_.TruncateToWidth(text_model.primary_label, label_width);
+        draw_text_on(text_x, text_y, primary_color, row_background, primary_label);
+
+        if (!primary_label.empty() && !text_model.secondary_label.empty()) {
+          const float secondary_x = text_x + text_renderer_.MeasureWidth(primary_label) + 8.0f;
+          const float secondary_width = std::max(0.0f, right_edge - secondary_x);
+          if (secondary_width > 24.0f) {
+            draw_text_on(
+                secondary_x, text_y, secondary_color, row_background,
+                text_renderer_.TruncateToWidth(text_model.secondary_label, secondary_width));
+          }
+        }
       }
 
       draw_vertical_scrollbar(
@@ -1651,10 +1689,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
               static_cast<float>(cursor_row -
                                  static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
                   panel_layout.line_height;
-          if (cursor_x < panel_layout.content_rect.x + panel_layout.content_rect.w - 2.0f) {
+          if (cursor_x <= panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {
             DrawFilledRect(renderer,
-                           MakeRect(cursor_x, cursor_y - 1.0f, 1.5f, panel_layout.line_height),
+                           MakeRect(cursor_x, cursor_y - 1.0f, char_width, panel_layout.line_height),
                            theme_.cursor);
+            if (cursor_row < terminal_lines.size()) {
+              const auto& line = terminal_lines[cursor_row];
+              if (cursor_column < line.cells.size() && line.cells[cursor_column].character != '\0') {
+                const auto& cell = line.cells[cursor_column];
+                text_renderer_.DrawString(
+                    renderer, cursor_x, cursor_y,
+                    cell.style.background.value_or(theme_.surface_background),
+                    std::string(1, cell.character));
+              }
+            }
           }
         }
       }

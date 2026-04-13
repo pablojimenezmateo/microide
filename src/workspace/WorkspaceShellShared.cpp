@@ -212,6 +212,29 @@ float StepUiScale(float current_scale, int delta) {
   return clamped_current;
 }
 
+GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::path& relative_path,
+                                                       bool staged) {
+  const std::filesystem::path normalized_path = relative_path.lexically_normal();
+
+  GitSidebarEntryTextModel model;
+  model.primary_label = normalized_path.filename().string();
+  if (model.primary_label.empty()) {
+    model.primary_label = normalized_path.empty() ? "." : normalized_path.string();
+  }
+
+  const std::filesystem::path parent = normalized_path.parent_path();
+  if (!parent.empty() && parent != ".") {
+    model.secondary_label = parent.string();
+  }
+  if (staged) {
+    if (!model.secondary_label.empty()) {
+      model.secondary_label += "  ";
+    }
+    model.secondary_label += "[staged]";
+  }
+  return model;
+}
+
 WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
                                                  const std::filesystem::path& path,
                                                  std::string_view fallback_title,

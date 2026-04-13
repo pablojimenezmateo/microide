@@ -144,6 +144,11 @@ bool WorkspaceShell::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                          bool active_compare_tab,
                                          bool active_merge_tab) {
   if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
+      event.key == SDLK_N) {
+    return OpenUntitledTab();
+  }
+
+  if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
       surface_.focus == FocusTarget::Editor && !active_compare_tab &&
       ActiveEditableViewport() != nullptr && event.key == SDLK_A) {
     ExecuteAction(ActionId::SelectAll, {}, ActionSource::Shortcut);

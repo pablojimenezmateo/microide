@@ -299,6 +299,11 @@ struct GitSidebarLineSpec {
   int entry_index = -1;
 };
 
+struct GitSidebarEntryTextModel {
+  std::string primary_label;
+  std::string secondary_label;
+};
+
 struct TerminalSelectionPoint {
   std::size_t row = 0;
   std::size_t column = 0;
@@ -578,6 +583,8 @@ std::vector<int> BuildProjectSearchResultLineMap(
 int FindProjectSearchResultLine(const std::vector<int>& line_map, std::size_t result_index);
 
 std::string ProjectStateDirectoryName(const std::filesystem::path& project_root);
+GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::path& relative_path,
+                                                       bool staged);
 WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
                                                  const std::filesystem::path& path,
                                                  std::string_view fallback_title,

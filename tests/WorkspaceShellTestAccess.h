@@ -4,6 +4,7 @@
 #include "workspace/WorkspaceShellShared.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -289,6 +290,10 @@ struct WorkspaceShellTestAccess {
   }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
+  static const std::vector<WorkspaceShell::GitSidebarEntry>& GitSidebarEntries(
+      const WorkspaceShell& shell) {
+    return shell.git_sidebar_.entries;
+  }
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();
   }
@@ -405,6 +410,36 @@ struct WorkspaceShellTestAccess {
                       static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
                       shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
     return shell.HoveredTabTooltipLabel(layout.tab_strip);
+  }
+  static std::string HoveredGitSidebarTooltipLabel(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
+                      shell.surface_.bottom_panel_height);
+    return shell.HoveredGitSidebarTooltipLabel(layout.sidebar);
+  }
+  static std::array<SDL_FRect, 2> GitSidebarEntryActionRects(WorkspaceShell& shell,
+                                                             std::size_t entry_index) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
+                      shell.surface_.bottom_panel_height);
+    const auto lines = shell.BuildGitSidebarLines();
+    const auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      if (lines[i].entry_index < 0 || static_cast<std::size_t>(lines[i].entry_index) != entry_index) {
+        continue;
+      }
+      const SDL_FRect row_rect = ScrollableListRowRect(
+          list_layout, static_cast<int>(i) - list_layout.scroll_row);
+      const auto actions = shell.ComputeGitSidebarEntryActionLayout(
+          row_rect, shell.git_sidebar_.entries[entry_index]);
+      return {actions.primary_rect.value_or(SDL_FRect{}),
+              actions.discard_rect.value_or(SDL_FRect{})};
+    }
+    return {};
   }
   static SDL_FRect ActiveEditorPaneRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout =

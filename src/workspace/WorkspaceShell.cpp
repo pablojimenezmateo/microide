@@ -60,7 +60,7 @@ constexpr float kTabCloseButtonSize = 14.0f;
 constexpr float kTabCloseButtonRightInset = 6.0f;
 constexpr float kMenuPopupSeparatorHeight = 8.0f;
 constexpr float kMenuPopupItemHeight = 22.0f;
-constexpr float kMergeToolbarHeight = 54.0f;
+constexpr float kMergeToolbarHeight = 36.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
@@ -1097,13 +1097,13 @@ WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayo
       .content_bottom = rect.y + std::max(0.0f, rect.h - bottom_reserved),
       .result = BuildMergeResultInteractionLayout(rect, surface, merge_tab),
       .incoming_accept_button_width =
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Incoming")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Theirs")),
       .current_accept_button_width =
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Current")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Ours")),
       .result_action_widths = {
           ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Incoming")),
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Current")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Theirs")),
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Ours")),
           ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
       },
   };
@@ -1647,7 +1647,7 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   auto merge_tab = BuildMergeTabFromBuffers(
       normalized_path, base_content.has_value() && base_content->exists ? base_content->content : "",
       incoming_content->exists ? incoming_content->content : "",
-      current_content->exists ? current_content->content : "", "Incoming", "Result", "Current", 0,
+      current_content->exists ? current_content->content : "", "Theirs", "Result", "Ours", 0,
       false);
   if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
     return false;
@@ -2334,24 +2334,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Default;
       }
       const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
-      if (entry.section == GitSidebarEntry::Section::Modified) {
-        float right_edge = row_rect.x + row_rect.w - 8.0f;
-        const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
-        const float stage_width =
-            std::max(entry.staged ? 68.0f : 48.0f, text_renderer_.MeasureWidth(stage_label) + 16.0f);
-        const SDL_FRect stage_rect =
-            MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
-        if (Contains(stage_rect, x, y)) {
-          return CursorKind::Pointer;
-        }
-        right_edge = stage_rect.x - 6.0f;
-        const float discard_width =
-            std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
-        const SDL_FRect discard_rect =
-            MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
-        if (Contains(discard_rect, x, y)) {
-          return CursorKind::Pointer;
-        }
+      const GitSidebarEntryActionLayout actions =
+          ComputeGitSidebarEntryActionLayout(row_rect, entry);
+      if ((actions.primary_rect.has_value() && Contains(*actions.primary_rect, x, y)) ||
+          (actions.discard_rect.has_value() && Contains(*actions.discard_rect, x, y))) {
+        return CursorKind::Pointer;
       }
       return CursorKind::Pointer;
     }
@@ -2494,14 +2481,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                     result_metrics.visible_columns),
             },
         .incoming_accept_button_width =
-            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Incoming")),
+            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Theirs")),
         .current_accept_button_width =
-            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Current")),
+            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Ours")),
         .result_action_widths =
             {
                 ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Incoming")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Current")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Theirs")),
+                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Ours")),
                 ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
             },
     };

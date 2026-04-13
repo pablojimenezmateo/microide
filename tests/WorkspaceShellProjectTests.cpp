@@ -394,6 +394,25 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
          "focus panel should move focus to the bottom panel when available");
 }
 
+void TestWorkspaceShellCtrlNOpensUntitledTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_N, SDL_KMOD_CTRL),
+         "Ctrl+N should be handled globally");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "Ctrl+N should open a single untitled editor tab");
+  const auto& tab = WorkspaceShellTestAccess::OpenTabs(shell).front();
+  Expect(tab.path.empty() && tab.title == "untitled",
+         "Ctrl+N should create an untitled editor tab");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "Ctrl+N should activate the newly opened untitled tab");
+}
+
 void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -768,6 +787,45 @@ void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
          "refreshing the git sidebar should preserve blame metadata for the active editor");
 }
 
+void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git sidebar tooltip fixture", "git sidebar tooltip fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+
+  Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == 1,
+         "git sidebar tooltip fixture should expose a single modified entry");
+
+  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[0].x + action_rects[0].w * 0.5f,
+                                              action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+         "hovering the compact stage button should expose the full action name");
+
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[1].x + action_rects[1].w * 0.5f,
+                                              action_rects[1].y + action_rects[1].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Discard",
+         "hovering the compact discard button should expose the full action name");
+
+  Expect(WorkspaceShellTestAccess::StageAllGitSidebarEntries(shell),
+         "staging the tooltip fixture should succeed");
+  const auto staged_action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
+  WorkspaceShellTestAccess::HandleMouseMotion(
+      shell, staged_action_rects[0].x + staged_action_rects[0].w * 0.5f,
+      staged_action_rects[0].y + staged_action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Unstage",
+         "hovering the compact unstage button should expose the full action name");
+}
+
 void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1136,6 +1194,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
+  AddTest(tests, "WorkspaceShell/CtrlNOpensUntitledTab",
+          TestWorkspaceShellCtrlNOpensUntitledTab);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",
@@ -1160,6 +1220,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlamePopupWrapsLongSummary);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
+  AddTest(tests, "WorkspaceShell/GitSidebarCompactButtonsExposeHoverTooltips",
+          TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
   AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",

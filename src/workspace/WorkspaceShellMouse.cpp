@@ -575,30 +575,21 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       const auto& entry = git_sidebar_.entries[git_sidebar_.selected_index];
       const SDL_FRect row_rect =
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      float right_edge = row_rect.x + row_rect.w - 8.0f;
-      if (entry.section == GitSidebarEntry::Section::Modified) {
-        const std::string_view stage_label = entry.staged ? "Unstage" : "Stage";
-        const float stage_width =
-            std::max(entry.staged ? 68.0f : 48.0f, text_renderer_.MeasureWidth(stage_label) + 16.0f);
-        const SDL_FRect stage_rect =
-            MakeRect(right_edge - stage_width, row_rect.y + 1.0f, stage_width, row_rect.h - 2.0f);
-        if (Contains(stage_rect, event.button.x, event.button.y)) {
-          if (entry.staged) {
-            UnstageGitSidebarEntry(git_sidebar_.selected_index);
-          } else {
-            StageGitSidebarEntry(git_sidebar_.selected_index);
-          }
-          return true;
+      const GitSidebarEntryActionLayout actions =
+          ComputeGitSidebarEntryActionLayout(row_rect, entry);
+      if (actions.primary_rect.has_value() &&
+          Contains(*actions.primary_rect, event.button.x, event.button.y)) {
+        if (entry.staged) {
+          UnstageGitSidebarEntry(git_sidebar_.selected_index);
+        } else {
+          StageGitSidebarEntry(git_sidebar_.selected_index);
         }
-        right_edge = stage_rect.x - 6.0f;
-        const float discard_width =
-            std::max(62.0f, text_renderer_.MeasureWidth("Discard") + 16.0f);
-        const SDL_FRect discard_rect =
-            MakeRect(right_edge - discard_width, row_rect.y + 1.0f, discard_width, row_rect.h - 2.0f);
-        if (Contains(discard_rect, event.button.x, event.button.y)) {
-          DiscardGitSidebarEntry(git_sidebar_.selected_index);
-          return true;
-        }
+        return true;
+      }
+      if (actions.discard_rect.has_value() &&
+          Contains(*actions.discard_rect, event.button.x, event.button.y)) {
+        DiscardGitSidebarEntry(git_sidebar_.selected_index);
+        return true;
       }
       OpenGitSidebarEntry(git_sidebar_.selected_index);
       return true;
