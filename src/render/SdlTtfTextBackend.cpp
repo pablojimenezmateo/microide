@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -40,10 +41,7 @@ std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* rende
 
 SdlTtfTextBackend::~SdlTtfTextBackend() {
   ClearCache();
-  if (font_ != nullptr) {
-    TTF_CloseFont(font_);
-    font_ = nullptr;
-  }
+  CloseFonts();
   if (ttf_initialized_) {
     TTF_Quit();
     ttf_initialized_ = false;
@@ -71,7 +69,9 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   if (font_ == nullptr) {
     return false;
   }
+  font_path_ = font_path;
   TTF_SetFontHinting(font_, TTF_HINTING_LIGHT_SUBPIXEL);
+  LoadFallbackFonts();
 
   RefreshMetrics();
   return true;
@@ -94,6 +94,11 @@ void SdlTtfTextBackend::SetPresentationScale(float scale_x, float scale_y) {
                                   72.0f * std::max(kMinPresentationScale, resolved_scale_y))));
   if (!TTF_SetFontSizeDPI(font_, kFontPointSize, hdpi, vdpi)) {
     return;
+  }
+  for (TTF_Font* fallback_font : fallback_fonts_) {
+    if (fallback_font != nullptr) {
+      TTF_SetFontSizeDPI(fallback_font, kFontPointSize, hdpi, vdpi);
+    }
   }
 
   presentation_scale_x_ = resolved_scale_x;
@@ -235,6 +240,94 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
     }
   }
   return {};
+}
+
+std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
+    const std::filesystem::path& primary_font) {
+  static constexpr std::array<const char*, 6> kFallbackCandidates = {
+      "assets/fonts/JetBrainsMono-Regular.ttf",
+      "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
+      "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+      "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+      "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+  };
+
+  std::vector<std::filesystem::path> candidates;
+  std::unordered_set<std::string> seen;
+  std::filesystem::path primary_resolved;
+  if (!primary_font.empty()) {
+    std::error_code primary_error;
+    const std::filesystem::path normalized_primary =
+        std::filesystem::weakly_canonical(primary_font, primary_error);
+    primary_resolved =
+        primary_error ? primary_font.lexically_normal() : normalized_primary;
+  }
+  const auto add_candidate = [&](const std::filesystem::path& candidate) {
+    if (candidate.empty() || !std::filesystem::exists(candidate)) {
+      return;
+    }
+    std::error_code candidate_error;
+    const std::filesystem::path normalized =
+        std::filesystem::weakly_canonical(candidate, candidate_error);
+    const std::filesystem::path resolved =
+        candidate_error ? candidate.lexically_normal() : normalized;
+    if (!primary_resolved.empty() && resolved == primary_resolved) {
+      return;
+    }
+    const std::string key = resolved.string();
+    if (!seen.insert(key).second) {
+      return;
+    }
+    candidates.push_back(resolved);
+  };
+
+  const std::filesystem::path base_path = BasePath();
+  if (!base_path.empty()) {
+    add_candidate(base_path / "assets" / "fonts" / "JetBrainsMono-Regular.ttf");
+    add_candidate(base_path / ".." / "assets" / "fonts" / "JetBrainsMono-Regular.ttf");
+    add_candidate(base_path / ".." / ".." / "assets" / "fonts" / "JetBrainsMono-Regular.ttf");
+  }
+
+  for (const char* candidate : kFallbackCandidates) {
+    add_candidate(candidate);
+  }
+  return candidates;
+}
+
+void SdlTtfTextBackend::CloseFonts() {
+  if (font_ != nullptr) {
+    TTF_ClearFallbackFonts(font_);
+  }
+  for (TTF_Font* fallback_font : fallback_fonts_) {
+    if (fallback_font != nullptr) {
+      TTF_CloseFont(fallback_font);
+    }
+  }
+  fallback_fonts_.clear();
+  if (font_ != nullptr) {
+    TTF_CloseFont(font_);
+    font_ = nullptr;
+  }
+}
+
+void SdlTtfTextBackend::LoadFallbackFonts() {
+  if (font_ == nullptr) {
+    return;
+  }
+
+  for (const auto& fallback_path : LocateFallbackFontFiles(font_path_)) {
+    TTF_Font* fallback_font = TTF_OpenFont(fallback_path.string().c_str(), kFontPointSize);
+    if (fallback_font == nullptr) {
+      continue;
+    }
+    TTF_SetFontHinting(fallback_font, TTF_HINTING_LIGHT_SUBPIXEL);
+    if (!TTF_AddFallbackFont(font_, fallback_font)) {
+      TTF_CloseFont(fallback_font);
+      continue;
+    }
+    fallback_fonts_.push_back(fallback_font);
+  }
 }
 
 SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,

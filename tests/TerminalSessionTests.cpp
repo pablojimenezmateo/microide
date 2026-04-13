@@ -351,15 +351,15 @@ void TestTerminalSessionTracksCellForegroundAndBackgroundStyles() {
 void TestTerminalSessionGroupsUtf8GlyphsIntoSingleCells() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  const std::string utf8_glyphs = "\xE2\x9C\x93\xE2\x9A\xA0";
+  const std::string utf8_glyphs = "\xE2\x97\x8B \xE2\x9C\x93";
 
   TerminalSessionTestAccess::AppendOutput(session, utf8_glyphs);
 
   const auto lines = session.SnapshotLines();
-  Expect(lines.size() == 1 && lines[0].cells.size() == 2,
-         "utf-8 terminal glyphs should consume a single terminal cell each");
+  Expect(lines.size() == 1 && lines[0].cells.size() == 3,
+         "utf-8 terminal symbols should consume one cell per glyph");
   Expect(LineText(lines[0]) == utf8_glyphs,
-         "terminal lines should preserve utf-8 glyph text instead of splitting raw bytes");
+         "terminal lines should preserve pasted utf-8 symbols instead of splitting raw bytes");
 }
 
 void TestTerminalSessionTracksInverseVideoStyle() {

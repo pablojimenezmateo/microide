@@ -745,19 +745,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, active);
         }
       };
-  const auto terminal_styles_equal = [](const terminal::TerminalStyle& lhs,
-                                        const terminal::TerminalStyle& rhs) {
-    const auto colors_equal = [](const std::optional<SDL_Color>& left,
-                                 const std::optional<SDL_Color>& right) {
-      return left.has_value() == right.has_value() &&
-             (!left.has_value() ||
-              (left->r == right->r && left->g == right->g && left->b == right->b &&
-               left->a == right->a));
-    };
-    return colors_equal(lhs.foreground, rhs.foreground) &&
-           colors_equal(lhs.background, rhs.background) && lhs.bold == rhs.bold &&
-           lhs.inverse == rhs.inverse;
-  };
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {
     SDL_Color foreground = style.foreground.value_or(theme_.text_muted);
     SDL_Color background = style.background.value_or(theme_.surface_background);
@@ -779,57 +766,20 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     const float char_width = std::max(1.0f, text_renderer_.CharWidth());
     const std::size_t max_chars =
         std::max<std::size_t>(1, static_cast<std::size_t>(std::floor(width / char_width)));
-    std::size_t drawn_chars = 0;
-    std::size_t segment_start = 0;
-    std::string segment;
-    std::size_t segment_cells = 0;
-    terminal::TerminalStyle segment_style;
-    bool has_segment = false;
-    bool segment_selected = false;
-
-    const auto flush_segment = [&]() {
-      if (!has_segment || segment_cells == 0) {
-        return;
-      }
-      const auto [foreground, background] =
-          resolve_terminal_colors(segment_style, segment_selected);
-      const float segment_x = x + static_cast<float>(segment_start) * char_width;
-      DrawFilledRect(renderer,
-                     MakeRect(segment_x, y - 1.0f, char_width * static_cast<float>(segment_cells),
-                              text_renderer_.LineHeight()),
-                     background);
-      if (!segment.empty()) {
-        text_renderer_.DrawString(renderer, segment_x, y, foreground, segment);
-      }
-      segment.clear();
-      segment_cells = 0;
-      has_segment = false;
-    };
-
-    for (std::size_t column = 0; column < line.cells.size(); ++column) {
-      if (drawn_chars >= max_chars) {
-        break;
-      }
+    for (std::size_t column = 0; column < line.cells.size() && column < max_chars; ++column) {
       const auto& cell = line.cells[column];
       const bool selected = TerminalCellSelected(row_index, column);
-      if (!has_segment) {
-        segment_start = column;
-        segment_style = cell.style;
-        segment_selected = selected;
-        has_segment = true;
-      } else if (!terminal_styles_equal(segment_style, cell.style) ||
-                 segment_selected != selected) {
-        flush_segment();
-        segment_start = column;
-        segment_style = cell.style;
-        segment_selected = selected;
-        has_segment = true;
+      const auto [foreground, background] = resolve_terminal_colors(cell.style, selected);
+      const float cell_x = x + static_cast<float>(column) * char_width;
+      DrawFilledRect(renderer,
+                     MakeRect(cell_x, y - 1.0f, char_width, text_renderer_.LineHeight()),
+                     background);
+      const std::string_view display_text = cell.DisplayText();
+      if (display_text.empty() || display_text == " ") {
+        continue;
       }
-      segment.append(cell.DisplayText());
-      ++segment_cells;
-      ++drawn_chars;
+      text_renderer_.DrawString(renderer, cell_x, y, foreground, display_text);
     }
-    flush_segment();
   };
   const auto draw_vcentered_text_on = [&](const SDL_FRect& rect,
                                           float left_padding,

@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace microide::render {
 
@@ -49,6 +50,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void RefreshMetrics();
   void ClearCache();
   static std::filesystem::path LocateFontFile();
+  static std::vector<std::filesystem::path> LocateFallbackFontFiles(
+      const std::filesystem::path& primary_font);
+  void CloseFonts();
+  void LoadFallbackFonts();
   CacheEntry* ResolveEntry(std::string_view text,
                            SDL_Color color,
                            const SDL_Color* background);
@@ -58,6 +63,8 @@ class SdlTtfTextBackend final : public TextRendererBackend {
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
+  std::vector<TTF_Font*> fallback_fonts_;
+  std::filesystem::path font_path_;
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
   float presentation_scale_x_ = 1.0f;
