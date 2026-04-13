@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "util/StartupTrace.h"
+#include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -512,7 +513,7 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     return true;
   }
 
-  if (!RestoreProjectCatalogAfterRemoval(
+  if (!ProjectCatalogCoordinator(*this).RestoreAfterRemoval(
           std::min(persisted_session.active_project_index, project_catalog_.entries.size() - 1),
           true)) {
     return true;

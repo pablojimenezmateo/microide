@@ -19,6 +19,7 @@
 #include "project/FileOperationService.h"
 #include "project/GitStatusService.h"
 #include "util/StartupTrace.h"
+#include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -531,9 +532,9 @@ void WorkspaceShell::Shutdown() {
   git_blame_service_.Stop();
 
   if (HasActiveProjectCatalogEntry()) {
-    PersistActiveProjectCatalogEntry();
+    ProjectCatalogCoordinator(*this).PersistActiveEntry();
   }
-  PersistInactiveProjectCatalogEntriesForShutdown();
+  ProjectCatalogCoordinator(*this).PersistInactiveEntriesForShutdown();
   SaveWorkspaceSession();
 
   project_search_runtime_.Shutdown();

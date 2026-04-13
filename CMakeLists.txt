@@ -113,6 +113,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellOverlay.cpp
   src/workspace/WorkspaceShellPersistence.cpp
   src/workspace/WorkspaceShellProjects.cpp
+  src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceShellRender.cpp

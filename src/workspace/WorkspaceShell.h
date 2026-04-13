@@ -887,11 +887,6 @@ class WorkspaceShell {
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
-  bool ActivateProjectCatalogEntry(std::size_t index, bool activate_restored_tab = true);
-  bool RestoreProjectCatalogAfterRemoval(std::size_t preferred_index,
-                                         bool activate_restored_tab = true);
-  void PersistActiveProjectCatalogEntry();
-  void PersistInactiveProjectCatalogEntriesForShutdown();
   static ProjectSurfaceState CaptureProjectSurfaceState(const SurfaceState& state);
   void ApplyProjectSurfaceState(const ProjectSurfaceState& state);
   void ResetProjectScopedState(bool show_welcome);
