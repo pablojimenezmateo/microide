@@ -101,6 +101,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
+  src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceShellActions.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellCommand.cpp
