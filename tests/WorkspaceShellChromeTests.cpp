@@ -74,6 +74,27 @@ void TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest() {
          "fullscreen chrome state should not expose resize hit targets");
 }
 
+void TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize() {
+  WorkspaceShell shell;
+  shell.SetWindowPresentationState(WorkspaceShell::WindowPresentationState{
+      .logical_width = 1280,
+      .logical_height = 720,
+      .scale_x = 1.5f,
+      .scale_y = 1.25f,
+      .chrome =
+          WorkspaceShell::WindowChromeState{
+              .custom_enabled = true,
+              .maximized = true,
+              .fullscreen = false,
+          },
+  });
+
+  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 1.0f, 1.0f) == SDL_HITTEST_NORMAL,
+         "maximized presentation state should disable resize hit targets");
+  Expect(WorkspaceShellTestAccess::WindowDragRegionContains(shell, 640.0f, 10.0f),
+         "presentation state should keep the title bar draggable");
+}
+
 void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -110,6 +131,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDoubleClickTitleBarRequestsFullscreenToggle);
   AddTest(tests, "WorkspaceShell/FullscreenStateDisablesResizableFrameHitTest",
           TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest);
+  AddTest(tests, "WorkspaceShell/WindowPresentationStateUpdatesChromeAndSize",
+          TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize);
 }
 
 }  // namespace microide::tests

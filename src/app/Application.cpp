@@ -17,18 +17,44 @@ namespace {
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
 
-workspace::WorkspaceShell::WindowChromeState CaptureWindowChromeState(SDL_Window* window,
-                                                                      bool custom_enabled) {
-  workspace::WorkspaceShell::WindowChromeState state;
-  state.custom_enabled = custom_enabled;
-  if (window == nullptr) {
-    return state;
+bool CustomWindowChromeEnabled(SDL_Window* window) {
+  return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) != 0;
+}
+
+std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
+    SDL_Window* window,
+    SDL_Renderer* renderer,
+    float ui_scale) {
+  if (window == nullptr || renderer == nullptr) {
+    return std::nullopt;
   }
 
+  int pixel_width = 0;
+  int pixel_height = 0;
+  if (!SDL_GetRenderOutputSize(renderer, &pixel_width, &pixel_height)) {
+    SDL_Log("SDL_GetRenderOutputSize failed: %s", SDL_GetError());
+    return std::nullopt;
+  }
+  if (pixel_width <= 0 || pixel_height <= 0) {
+    return std::nullopt;
+  }
+
+  const util::WindowPresentation presentation =
+      util::ComputeWindowPresentation(pixel_width, pixel_height,
+                                      SDL_GetWindowDisplayScale(window), ui_scale);
   const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
-  state.maximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
-  state.fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
-  return state;
+  return workspace::WorkspaceShell::WindowPresentationState{
+      .logical_width = presentation.logical_width,
+      .logical_height = presentation.logical_height,
+      .scale_x = presentation.presentation_scale_x,
+      .scale_y = presentation.presentation_scale_y,
+      .chrome =
+          workspace::WorkspaceShell::WindowChromeState{
+              .custom_enabled = CustomWindowChromeEnabled(window),
+              .maximized = (flags & SDL_WINDOW_MAXIMIZED) != 0,
+              .fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0,
+          },
+  };
 }
 
 }  // namespace
@@ -125,7 +151,6 @@ bool Application::Initialize() {
   }
   workspace_shell_.SetDialogWindow(window_);
 
-  custom_window_chrome_enabled_ = false;
   {
     util::StartupTrace::Scope window_chrome_scope("WindowChromeSetup");
     if (!SDL_SetWindowBordered(window_, false)) {
@@ -133,8 +158,6 @@ bool Application::Initialize() {
     } else if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
       SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
       SDL_SetWindowBordered(window_, true);
-    } else {
-      custom_window_chrome_enabled_ = true;
     }
   }
 
@@ -309,36 +332,25 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     return false;
   }
 
-  int pixel_width = 0;
-  int pixel_height = 0;
-  if (!SDL_GetRenderOutputSize(renderer_, &pixel_width, &pixel_height)) {
-    SDL_Log("SDL_GetRenderOutputSize failed: %s", SDL_GetError());
-    return false;
-  }
-  if (pixel_width <= 0 || pixel_height <= 0) {
+  const auto presentation =
+      CaptureWindowPresentationState(window_, renderer_, workspace_shell_.UiScale());
+  if (!presentation.has_value()) {
     return false;
   }
 
-  const util::WindowPresentation presentation = util::ComputeWindowPresentation(
-      pixel_width, pixel_height, SDL_GetWindowDisplayScale(window_), workspace_shell_.UiScale());
-  workspace_shell_.SetPresentationScale(presentation.presentation_scale_x,
-                                        presentation.presentation_scale_y);
-  workspace_shell_.SetWindowChromeState(
-      presentation.logical_width, presentation.logical_height,
-      CaptureWindowChromeState(window_, custom_window_chrome_enabled_));
-
-  if (!SDL_SetRenderLogicalPresentation(renderer_, presentation.logical_width,
-                                        presentation.logical_height,
+  workspace_shell_.SetWindowPresentationState(*presentation);
+  if (!SDL_SetRenderLogicalPresentation(renderer_, presentation->logical_width,
+                                        presentation->logical_height,
                                         SDL_LOGICAL_PRESENTATION_STRETCH)) {
     SDL_Log("SDL_SetRenderLogicalPresentation failed: %s", SDL_GetError());
     return false;
   }
 
   if (logical_width != nullptr) {
-    *logical_width = presentation.logical_width;
+    *logical_width = presentation->logical_width;
   }
   if (logical_height != nullptr) {
-    *logical_height = presentation.logical_height;
+    *logical_height = presentation->logical_height;
   }
   return true;
 }
@@ -374,7 +386,7 @@ void Application::ConsumeWindowActions() {
 }
 
 SDL_HitTestResult Application::WindowHitTest(const SDL_Point& area) const {
-  if (!custom_window_chrome_enabled_ || renderer_ == nullptr) {
+  if (renderer_ == nullptr) {
     return SDL_HITTEST_NORMAL;
   }
 

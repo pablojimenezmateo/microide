@@ -13,17 +13,20 @@ Status:
 - In progress
 
 Current state:
-- `WorkspaceShell` now uses `WindowChromeState`.
-- `Application` still keeps its own `custom_window_chrome_enabled_` flag and separately derives SDL
-  window mode before pushing a snapshot into the shell.
+- `WorkspaceShell` now receives a single `WindowPresentationState` snapshot that carries logical
+  size, presentation scale, and chrome mode together.
+- `Application` no longer keeps its own `custom_window_chrome_enabled_` flag and instead derives
+  custom chrome state from the live SDL window when capturing that snapshot.
 
 Why this still matters:
-- There are still two caches of overlapping chrome facts across app and shell layers.
-- It is easy for future changes to update one path and forget the other.
+- Internal shell consumers still read cached `last_window_width_`, `last_window_height_`, and
+  `window_chrome_` fields separately after the snapshot is unpacked.
+- Future window-state work can still drift unless more call sites consume a narrower presentation
+  snapshot directly.
 
 Next step:
-- Reduce `Application` to raw SDL/window ownership and pass a single derived presentation/chrome
-  snapshot into `WorkspaceShell`.
+- Keep reducing shell-internal use of loose width/height caches now that app-to-shell presentation
+  state flows through one struct.
 
 ### 2. Window size remains a soft shared source of truth
 
@@ -32,7 +35,8 @@ Status:
 
 Current state:
 - `last_window_width_` and `last_window_height_` are used widely in `WorkspaceShell`.
-- Those values are refreshed from multiple pathways, including render-time updates.
+- App-owned presentation updates now arrive through one snapshot, but render-time refresh still
+  writes the cached dimensions directly.
 
 Why this still matters:
 - Layout-sensitive features depend on mutable cached dimensions instead of one explicit window
@@ -40,8 +44,8 @@ Why this still matters:
 - It makes hit-testing, reveal logic, and text-input positioning easier to regress.
 
 Next step:
-- Introduce a small window snapshot/presentation struct that owns logical size, scale, and chrome
-  state together.
+- Replace more shell-internal width/height reads with narrower helpers built on top of the shared
+  presentation snapshot model.
 
 ### 3. Compare ownership is still split between shell render and compare files
 

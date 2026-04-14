@@ -58,6 +58,14 @@ class WorkspaceShell {
     }
   };
 
+  struct WindowPresentationState {
+    int logical_width = 0;
+    int logical_height = 0;
+    float scale_x = 1.0f;
+    float scale_y = 1.0f;
+    WindowChromeState chrome{};
+  };
+
   WorkspaceShell() = default;
 
   static std::vector<std::string> DocumentedCommandUsages();
@@ -69,8 +77,7 @@ class WorkspaceShell {
   void RequestQuit();
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
-  void SetPresentationScale(float scale_x, float scale_y);
-  void SetWindowChromeState(int width, int height, WindowChromeState state);
+  void SetWindowPresentationState(WindowPresentationState state);
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
   bool WindowDragRegionContains(float x, float y) const;

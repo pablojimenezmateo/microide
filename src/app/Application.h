@@ -35,7 +35,6 @@ class Application {
   SDL_Renderer* renderer_ = nullptr;
   bool initialized_ = false;
   bool running_ = false;
-  bool custom_window_chrome_enabled_ = false;
   bool first_render_complete_ = false;
   bool window_drag_active_ = false;
   int window_drag_origin_x_ = 0;

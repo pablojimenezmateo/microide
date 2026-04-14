@@ -421,23 +421,18 @@ WorkspaceShell::TreeContextTargetKind WorkspaceShell::SelectedTreeTargetKind() c
                                       : TreeContextTargetKind::Directory;
 }
 
-void WorkspaceShell::SetPresentationScale(float scale_x, float scale_y) {
+void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   presentation_scale_x_ =
-      std::isfinite(scale_x) && scale_x > 0.0f ? scale_x : 1.0f;
+      std::isfinite(state.scale_x) && state.scale_x > 0.0f ? state.scale_x : 1.0f;
   presentation_scale_y_ =
-      std::isfinite(scale_y) && scale_y > 0.0f ? scale_y : 1.0f;
-}
-
-void WorkspaceShell::SetWindowChromeState(int width,
-                                          int height,
-                                          WindowChromeState state) {
-  if (width > 0) {
-    last_window_width_ = width;
+      std::isfinite(state.scale_y) && state.scale_y > 0.0f ? state.scale_y : 1.0f;
+  if (state.logical_width > 0) {
+    last_window_width_ = state.logical_width;
   }
-  if (height > 0) {
-    last_window_height_ = height;
+  if (state.logical_height > 0) {
+    last_window_height_ = state.logical_height;
   }
-  window_chrome_ = state;
+  window_chrome_ = state.chrome;
 }
 
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {

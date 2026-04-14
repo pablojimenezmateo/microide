@@ -56,6 +56,9 @@ Recommendation:
 
 Addressed in this pass:
 - Window chrome state now flows through a shared `WindowChromeState` struct instead of separate shell booleans.
+- Application-to-shell window updates now flow through a single `WindowPresentationState`
+  snapshot carrying logical size, presentation scale, and chrome state together.
+- `Application` no longer keeps a separate `custom_window_chrome_enabled_` flag.
 - Compare divider hit-testing, active compare tab access, compare surface layout, compare scroll calculations, and compare selection reveal logic now live in `WorkspaceShellCompare.cpp` instead of `WorkspaceShell.cpp`.
 - Compare editor text-input visual placement now routes through a compare-owned helper instead of being inlined in the main render switch.
 - Compare scrollbar and marker rendering now route through a compare-owned helper instead of being inlined in `WorkspaceShellRender.cpp`.
@@ -129,5 +132,6 @@ Addressed in this pass:
 
 1. Done in this pass: make `Outgoing files` align with configured PR base.
 2. In progress: reduce `WorkspaceShell` blast radius around compare and chrome state.
-3. Next: reduce the remaining app/window presentation duplication around chrome and logical size.
+3. Next: reduce shell-internal reliance on loose cached window width/height now that presentation
+   state enters through one snapshot.
 4. After that: replace shell-string git execution with a safer command layer.
