@@ -103,6 +103,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellCompareRender.cpp
   src/workspace/WorkspaceChromeMouseCoordinator.cpp
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
+  src/workspace/WorkspaceCompareMouseCoordinator.cpp
+  src/workspace/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
   src/workspace/WorkspaceShellActions.cpp
   src/workspace/WorkspaceShellChrome.cpp

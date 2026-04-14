@@ -46,6 +46,12 @@ struct WorkspaceShellTestAccess {
   }
 
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) { return shell.text_viewport_; }
+  static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
+    return shell.text_viewport_.selection_range().has_value();
+  }
+  static std::string ActiveEditorSelectedText(WorkspaceShell& shell) {
+    return shell.text_viewport_.SelectedText();
+  }
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.open_tabs_[shell.active_tab_index_].compare.value();
   }

@@ -5,8 +5,9 @@
 #include <cmath>
 #include <optional>
 
-#include "editor/EditorViewRenderer.h"
+#include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
+#include "workspace/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -145,79 +146,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (ActiveTabIsCompare()) {
-    CompareTabState* compare_tab = ActiveCompareTab();
-    if (compare_tab == nullptr) {
-      return false;
-    }
-
-    const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-    const auto scroll_layout =
-        ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
-    compare_tab->scroll_row = scroll_layout.vertical_scroll;
-    compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-    SyncCompareViewportScroll(*compare_tab);
-
-    if (scroll_layout.vertical_scrollbar.has_value() &&
-        Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
-      surface_.drag_target = DragTarget::CompareVerticalScrollbar;
-      surface_.drag_scrollbar_offset =
-          Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - scroll_layout.vertical_scrollbar->thumb.y
-              : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
-      const int target_scroll = std::clamp(
-          static_cast<int>(std::lround(ScrollUnitsForPointer(
-              *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
-              surface_.drag_scrollbar_offset))),
-          0, scroll_layout.max_vertical_scroll);
-      compare_tab->scroll_row = target_scroll;
-      SyncCompareViewportScroll(*compare_tab);
-      surface_.focus = FocusTarget::Editor;
-      return true;
-    }
-
-    if (scroll_layout.horizontal_scrollbar.has_value() &&
-        Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
-      surface_.drag_target = DragTarget::CompareHorizontalScrollbar;
-      surface_.drag_scrollbar_offset =
-          Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.x) - scroll_layout.horizontal_scrollbar->thumb.x
-              : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
-      compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
-          0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
-                                                static_cast<float>(event.button.x),
-                                                surface_.drag_scrollbar_offset))));
-      SyncCompareViewportScroll(*compare_tab);
-      surface_.focus = FocusTarget::Editor;
-      return true;
-    }
-
-    const int clicked_row =
-        static_cast<int>((event.button.y - surface_layout.rows_y) / surface_layout.line_height);
-    const int model_row = compare_tab->scroll_row + clicked_row;
-    if (clicked_row >= 0 && model_row >= 0 &&
-        model_row < static_cast<int>(compare_tab->model.rows.size())) {
-      compare_tab->selected_row = static_cast<std::size_t>(model_row);
-      if (compare_tab->right_editable && event.button.button == SDL_BUTTON_LEFT &&
-          event.button.x >= surface_layout.right_x) {
-        compare_tab->right_view_active = true;
-        const TextGridInteractionLayout right_interaction =
-            BuildCompareRightInteractionLayout(surface_layout, *compare_tab);
-        const std::size_t line = CompareRightLineForRow(*compare_tab, compare_tab->selected_row);
-        const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, event.button.x);
-        compare_tab->right_viewport.MoveCursorToVisualColumn(
-            line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
-        SyncCompareSelectionFromViewport(*compare_tab, false);
-        ResetCaretBlink();
-        surface_.mouse_selecting = true;
-      } else {
-        compare_tab->right_view_active = false;
-      }
-      surface_.focus = FocusTarget::Editor;
-      return true;
-    }
-    compare_tab->right_view_active = false;
-    return false;
+    return CompareMouseCoordinator(*this).HandleButtonDown(event, layout);
   }
 
   if (ActiveTabIsMerge()) {
@@ -404,80 +333,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return false;
   }
 
-  const auto dividers = ComputeEditorSplitDividerLayouts(layout.editor_surface);
-  const auto divider_it = std::find_if(
-      dividers.begin(), dividers.end(), [&](const EditorSplitDividerLayout& divider) {
-        return Contains(divider.rect, event.button.x, event.button.y);
-      });
-  if (divider_it != dividers.end()) {
-    surface_.drag_target = DragTarget::EditorSplitDivider;
-    surface_.drag_editor_split_path = divider_it->node_path;
-    surface_.drag_editor_split_divider_index = divider_it->divider_index;
-    surface_.focus = FocusTarget::Editor;
-    return true;
-  }
-
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-  const auto pane_it = std::find_if(panes.begin(), panes.end(), [&](const EditorPaneLayout& pane) {
-    return Contains(pane.rect, event.button.x, event.button.y);
-  });
-  if (pane_it == panes.end()) {
-    return false;
-  }
-  if (!pane_it->active) {
-    SetActiveEditorSplit(pane_it->leaf_id);
-  }
-  const SDL_FRect editor_rect = pane_it->rect;
-
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, editor_rect);
-  text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-
-  const auto scroll_layout = ComputeEditorScrollLayout(editor_rect, text_viewport_, metrics);
-  if (scroll_layout.vertical_scrollbar.has_value() &&
-      Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
-    surface_.drag_target = DragTarget::EditorVerticalScrollbar;
-    surface_.drag_scrollbar_offset =
-        Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
-            ? static_cast<float>(event.button.y) - scroll_layout.vertical_scrollbar->thumb.y
-            : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
-    text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
-        0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
-                                              static_cast<float>(event.button.y),
-                                              surface_.drag_scrollbar_offset)))));
-    surface_.focus = FocusTarget::Editor;
-    return true;
-  }
-  if (scroll_layout.horizontal_scrollbar.has_value() &&
-      Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
-    surface_.drag_target = DragTarget::EditorHorizontalScrollbar;
-    surface_.drag_scrollbar_offset =
-        Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
-            ? static_cast<float>(event.button.x) - scroll_layout.horizontal_scrollbar->thumb.x
-            : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
-    text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
-        0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
-                                              static_cast<float>(event.button.x),
-                                              surface_.drag_scrollbar_offset)))));
-    surface_.focus = FocusTarget::Editor;
-    return true;
-  }
-
-  const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
-  const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
-  const std::size_t line = std::min(text_viewport_.scroll_line() + row,
-                                    text_viewport_.line_count() == 0 ? 0 : text_viewport_.line_count() - 1);
-  const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
-  const std::size_t visual_column =
-      text_viewport_.horizontal_scroll() +
-      static_cast<std::size_t>(
-          std::max(0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
-
-  text_viewport_.MoveCursorToVisualColumn(line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
-  ResetCaretBlink();
-  surface_.focus = FocusTarget::Editor;
-  surface_.mouse_selecting = true;
-  return true;
+  return EditorMouseCoordinator(*this).HandleButtonDown(event, layout);
 }
 
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
@@ -615,71 +471,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (surface_.drag_target == DragTarget::EditorSplitDivider) {
-      auto* editor_tab = ActiveEditorTab();
-      if (editor_tab == nullptr || editor_tab->views.size() < 2 || editor_tab->split_root == nullptr) {
-        surface_.drag_target = DragTarget::None;
-        return false;
-      }
-
-      NormalizeEditorSplitTree(*editor_tab);
-      auto* split_node = FindEditorSplitNode(editor_tab->split_root.get(), surface_.drag_editor_split_path);
-      const auto node_rect =
-          ComputeEditorSplitNodeRect(drag_layout.editor_surface, surface_.drag_editor_split_path);
-      if (split_node == nullptr || node_rect == std::nullopt || split_node->IsLeaf() ||
-          split_node->orientation == EditorSplitOrientation::None ||
-          surface_.drag_editor_split_divider_index + 1 >= split_node->children.size()) {
-        surface_.drag_target = DragTarget::None;
-        return false;
-      }
-
-      const bool vertical = split_node->orientation == EditorSplitOrientation::Vertical;
-      std::vector<float> size_fractions(split_node->children.size(), 0.0f);
-      for (std::size_t i = 0; i < split_node->children.size(); ++i) {
-        size_fractions[i] = split_node->children[i]->size_fraction;
-      }
-      const auto split_layout = ComputeEditorSplitAxisLayout(*node_rect, vertical, size_fractions);
-      if (!split_layout.has_value() || split_layout->total_extent <= 0.0f ||
-          split_layout->extents.size() != split_node->children.size()) {
-        return false;
-      }
-
-      float before_extent = 0.0f;
-      for (std::size_t i = 0; i < surface_.drag_editor_split_divider_index; ++i) {
-        before_extent += split_layout->extents[i];
-      }
-      const float pair_extent = split_layout->extents[surface_.drag_editor_split_divider_index] +
-                                split_layout->extents[surface_.drag_editor_split_divider_index +
-                                                      1];
-      const float min_extent =
-          split_layout->total_extent >
-                  split_layout->min_pane_extent *
-                      static_cast<float>(split_layout->extents.size())
-              ? split_layout->min_pane_extent
-              : 0.0f;
-      float leading_extent =
-          vertical ? static_cast<float>(event.motion.x) - node_rect->x - before_extent -
-                         split_layout->divider_thickness *
-                             static_cast<float>(surface_.drag_editor_split_divider_index) -
-                         split_layout->divider_thickness * 0.5f
-                   : static_cast<float>(event.motion.y) - node_rect->y - before_extent -
-                         split_layout->divider_thickness *
-                             static_cast<float>(surface_.drag_editor_split_divider_index) -
-                         split_layout->divider_thickness * 0.5f;
-      leading_extent =
-          pair_extent <= min_extent * 2.0f
-              ? std::clamp(leading_extent, 0.0f, pair_extent)
-              : std::clamp(leading_extent, min_extent, pair_extent - min_extent);
-      const float trailing_extent = std::max(0.0f, pair_extent - leading_extent);
-      split_node->children[surface_.drag_editor_split_divider_index]->size_fraction =
-          leading_extent / split_layout->total_extent;
-      split_node->children[surface_.drag_editor_split_divider_index + 1]->size_fraction =
-          trailing_extent / split_layout->total_extent;
-      NormalizeEditorSplitNode(*split_node);
-      surface_.focus = FocusTarget::Editor;
-      return true;
-    }
-
     if (surface_.drag_target == DragTarget::SidebarScrollbar) {
       return SidebarMouseCoordinator(*this).HandleDrag(event, drag_layout);
     }
@@ -702,52 +493,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
+    if (CompareMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+      return true;
+    }
+
     if ((surface_.drag_target == DragTarget::CompareVerticalScrollbar ||
          surface_.drag_target == DragTarget::CompareHorizontalScrollbar) &&
-        (ActiveTabIsCompare() || ActiveTabIsMerge())) {
-      if (ActiveTabIsCompare()) {
-        CompareTabState* compare_tab = ActiveCompareTab();
-        if (compare_tab == nullptr) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        const CompareSurfaceLayout surface_layout =
-            ComputeCompareSurfaceLayout(drag_layout.editor_surface, *compare_tab);
-        const auto scroll_layout =
-            ComputeCompareScrollLayout(drag_layout.editor_surface, surface_layout, *compare_tab);
-        compare_tab->scroll_row = scroll_layout.vertical_scroll;
-        compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-        if (surface_.drag_target == DragTarget::CompareVerticalScrollbar) {
-          if (!scroll_layout.vertical_scrollbar.has_value()) {
-            surface_.drag_target = DragTarget::None;
-            surface_.drag_scrollbar_offset = 0.0f;
-            return false;
-          }
-          const int target_scroll = std::clamp(
-              static_cast<int>(std::lround(ScrollUnitsForPointer(
-                  *scroll_layout.vertical_scrollbar, static_cast<float>(event.motion.y),
-                  surface_.drag_scrollbar_offset))),
-              0, scroll_layout.max_vertical_scroll);
-          compare_tab->scroll_row = target_scroll;
-          SyncCompareViewportScroll(*compare_tab);
-          surface_.focus = FocusTarget::Editor;
-          return true;
-        }
-        if (!scroll_layout.horizontal_scrollbar.has_value()) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
-                                                  static_cast<float>(event.motion.x),
-                                                  surface_.drag_scrollbar_offset))));
-        SyncCompareViewportScroll(*compare_tab);
-        surface_.focus = FocusTarget::Editor;
-        return true;
-      }
-
+        ActiveTabIsMerge()) {
       MergeTabState* merge_tab = ActiveMergeTab();
       if (merge_tab == nullptr) {
         surface_.drag_target = DragTarget::None;
@@ -793,40 +545,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (surface_.drag_target == DragTarget::EditorVerticalScrollbar ||
-        surface_.drag_target == DragTarget::EditorHorizontalScrollbar) {
-      const auto panes = ComputeEditorPaneLayouts(drag_layout.editor_surface);
-      const auto active_pane = std::find_if(
-          panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
-      const SDL_FRect editor_rect =
-          active_pane != panes.end() ? active_pane->rect : drag_layout.editor_surface;
-      const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          text_renderer_, text_viewport_, editor_rect);
-      text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      const auto scroll_layout = ComputeEditorScrollLayout(editor_rect, text_viewport_, metrics);
-
-      if (surface_.drag_target == DragTarget::EditorVerticalScrollbar) {
-        if (!scroll_layout.vertical_scrollbar.has_value()) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
-                                                  static_cast<float>(event.motion.y),
-                                                  surface_.drag_scrollbar_offset)))));
-      } else {
-        if (!scroll_layout.horizontal_scrollbar.has_value()) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
-            0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
-                                                  static_cast<float>(event.motion.x),
-                                                  surface_.drag_scrollbar_offset)))));
-      }
-      surface_.focus = FocusTarget::Editor;
+    if (EditorMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
       return true;
     }
 
@@ -877,30 +596,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (ActiveTabIsCompare()) {
-    CompareTabState* compare_tab = ActiveCompareTab();
-    if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
-      return false;
-    }
-
-    const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-    if (event.motion.x < surface_layout.right_x) {
-      return false;
-    }
-    const TextGridInteractionLayout right_interaction =
-        BuildCompareRightInteractionLayout(surface_layout, *compare_tab);
-    const auto hovered_row = VisibleTextGridLineAtY(right_interaction, event.motion.y);
-    if (!hovered_row.has_value()) {
-      return false;
-    }
-    const std::size_t line = CompareRightLineForRow(*compare_tab, *hovered_row);
-    const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, event.motion.x);
-
-    compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, true);
-    SyncCompareSelectionFromViewport(*compare_tab, false);
-    ResetCaretBlink();
-    surface_.focus = FocusTarget::Editor;
-    return true;
+    return CompareMouseCoordinator(*this).HandleSelectionMotion(event, layout);
   }
 
   if (ActiveTabIsMerge()) {
@@ -930,33 +626,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return true;
   }
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-  const auto active_pane = std::find_if(
-      panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
-  const SDL_FRect editor_rect =
-      active_pane != panes.end() ? active_pane->rect : layout.editor_surface;
-  if (!Contains(editor_rect, event.motion.x, event.motion.y)) {
-    return false;
-  }
-
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, editor_rect);
-  text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-
-  const float local_y = std::max(0.0f, event.motion.y - metrics.first_line_y);
-  const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
-  const std::size_t line = std::min(text_viewport_.scroll_line() + row,
-                                    text_viewport_.line_count() == 0 ? 0 : text_viewport_.line_count() - 1);
-  const float text_offset_x = std::max(0.0f, event.motion.x - metrics.text_x);
-  const std::size_t visual_column =
-      text_viewport_.horizontal_scroll() +
-      static_cast<std::size_t>(
-          std::max(0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
-
-  text_viewport_.MoveCursorToVisualColumn(line, visual_column, true);
-  ResetCaretBlink();
-  surface_.focus = FocusTarget::Editor;
-  return true;
+  return EditorMouseCoordinator(*this).HandleSelectionMotion(event, layout);
 }
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
@@ -1011,16 +681,8 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   if (Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     if (ActiveTabIsCompare()) {
-      if (horizontal_ticks != 0) {
-        ScrollCompareColumns(-horizontal_ticks * 3);
-      } else {
-        ScrollCompareRows(-vertical_ticks * 3);
-      }
-      if (auto* compare_tab = ActiveCompareTab(); compare_tab != nullptr) {
-        SyncCompareViewportScroll(*compare_tab);
-      }
-      surface_.focus = FocusTarget::Editor;
-      return true;
+      return CompareMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks,
+                                                        horizontal_ticks);
     }
     if (ActiveTabIsMerge()) {
       if (horizontal_ticks != 0) {
@@ -1043,16 +705,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       surface_.focus = FocusTarget::Editor;
       return true;
     }
-    const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-    const auto hovered_pane = std::find_if(panes.begin(), panes.end(), [&](const EditorPaneLayout& pane) {
-      return Contains(pane.rect, event.wheel.mouse_x, event.wheel.mouse_y);
-    });
-    if (hovered_pane != panes.end() && !hovered_pane->active) {
-      SetActiveEditorSplit(hovered_pane->leaf_id);
-    }
-    text_viewport_.ScrollVertical(-vertical_ticks * 3);
-    surface_.focus = FocusTarget::Editor;
-    return true;
+    return EditorMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks);
   }
 
   return false;

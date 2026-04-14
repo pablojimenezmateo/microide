@@ -578,6 +578,109 @@ void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
          "right-clicking the editor should open the edit popup as a context menu");
 }
 
+void OpenSplitEditorMouseFixture(WorkspaceShell& shell,
+                                 TemporaryDirectory& temp_dir,
+                                 std::filesystem::path* left_path,
+                                 std::filesystem::path* right_path) {
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "left.txt";
+  const std::filesystem::path right = root / "right.txt";
+  WriteFile(left, "left line 1\nleft line 2\nleft line 3\n");
+  WriteFile(right, "right line 1\nright line 2\nright line 3\n");
+
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, left);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
+         "editor mouse fixture should open a split pane");
+  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
+         "editor mouse fixture should load the second file into the active pane");
+
+  if (left_path != nullptr) {
+    *left_path = left;
+  }
+  if (right_path != nullptr) {
+    *right_path = right;
+  }
+}
+
+void TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  std::filesystem::path left;
+  std::filesystem::path right;
+  OpenSplitEditorMouseFixture(shell, temp_dir, &left, &right);
+
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
+         "split click fixture should expose the right pane");
+  const SDL_FRect right_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "split click fixture should restore the left pane before the click");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
+         "split click fixture should start from the left editor");
+
+  const float click_x = right_rect.x + right_rect.w * 0.5f;
+  const float click_y = right_rect.y + right_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking an inactive editor pane should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
+         "clicking an inactive editor pane should activate that split");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "clicking an inactive editor pane should keep editor focus");
+}
+
+void TestWorkspaceShellEditorWheelActivatesHoveredSplit() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  std::filesystem::path left;
+  std::filesystem::path right;
+  OpenSplitEditorMouseFixture(shell, temp_dir, &left, &right);
+
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
+         "split wheel fixture should expose the right pane");
+  const SDL_FRect right_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "split wheel fixture should restore the left pane before scrolling");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
+         "split wheel fixture should start from the left editor");
+
+  const float wheel_x = right_rect.x + right_rect.w * 0.5f;
+  const float wheel_y = right_rect.y + right_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -1),
+         "scrolling over an inactive editor pane should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
+         "scrolling over an inactive editor pane should activate that split first");
+}
+
+void TestWorkspaceShellEditorDragSelectionTracksPointer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha beta\nsecond line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float start_x = metrics.text_x + char_width * 0.1f;
+  const float end_x = metrics.text_x + char_width * 5.1f;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start mouse selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
+         "dragging inside the editor should update mouse selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end_x, y, SDL_BUTTON_LEFT),
+         "releasing after an editor drag should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditorHasSelection(shell),
+         "dragging across editor text should create a selection");
+  Expect(WorkspaceShellTestAccess::ActiveEditorSelectedText(shell) == "alpha",
+         "editor drag selection should capture the dragged text range");
+}
+
 void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -870,6 +973,79 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should clear the dirty state");
   Expect(ReadFile(source).rfind("// note ", 0) == 0,
          "saving the compare tab should persist the edited current-state text");
+}
+
+void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare click fixture", "compare click fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare click fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float row_y = surface.rows_y + surface.line_height * 0.5f;
+  const float left_x = surface.left_x + 24.0f;
+  const float right_x = surface.right_x + 24.0f;
+
+  Expect(compare.right_view_active,
+         "compare click fixture should start with the editable pane active");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, left_x, row_y, SDL_BUTTON_LEFT),
+         "clicking the compare left pane should be handled");
+  Expect(!compare.right_view_active,
+         "clicking the compare left pane should leave the editable pane inactive");
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
+         "clicking the compare right pane should be handled");
+  Expect(compare.right_view_active,
+         "clicking the compare right pane should reactivate the editable pane");
+}
+
+void TestWorkspaceShellCompareWheelScrollsRows() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+
+  std::string base_text;
+  std::string working_text;
+  for (int i = 0; i < 120; ++i) {
+    base_text += "base line " + std::to_string(i) + "\n";
+    working_text += (i == 60 ? "changed line 60\n"
+                             : "base line " + std::to_string(i) + "\n");
+  }
+  WriteFile(source, base_text);
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare wheel fixture", "compare wheel fixture");
+  WriteFile(source, working_text);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 420);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare wheel fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(compare.model.rows.size() > static_cast<std::size_t>(surface.visible_rows),
+         "compare wheel fixture should overflow the viewport");
+
+  const int before_scroll = compare.scroll_row;
+  const float wheel_x = surface.right_x + 24.0f;
+  const float wheel_y = surface.rows_y + surface.line_height * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -1),
+         "scrolling the compare surface should be handled");
+  Expect(compare.scroll_row > before_scroll,
+         "scrolling the compare surface should advance the visible row");
 }
 
 void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {
@@ -1326,6 +1502,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",
           TestWorkspaceShellEditorRightClickOpensEditContextMenu);
+  AddTest(tests, "WorkspaceShell/ClickingInactiveEditorPaneActivatesSplit",
+          TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit);
+  AddTest(tests, "WorkspaceShell/EditorWheelActivatesHoveredSplit",
+          TestWorkspaceShellEditorWheelActivatesHoveredSplit);
+  AddTest(tests, "WorkspaceShell/EditorDragSelectionTracksPointer",
+          TestWorkspaceShellEditorDragSelectionTracksPointer);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
   AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndResumesAfterSave",
@@ -1342,6 +1524,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
+          TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
+  AddTest(tests, "WorkspaceShell/CompareWheelScrollsRows",
+          TestWorkspaceShellCompareWheelScrollsRows);
   AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",
