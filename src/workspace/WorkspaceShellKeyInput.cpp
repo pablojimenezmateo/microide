@@ -651,19 +651,24 @@ bool WorkspaceShell::HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   switch (event.key) {
     case SDLK_UP:
       directory_tree_.MoveSelection(-1);
+      RevealSelectedTreeSidebarLine();
       return true;
     case SDLK_DOWN:
       directory_tree_.MoveSelection(1);
+      RevealSelectedTreeSidebarLine();
       return true;
     case SDLK_LEFT:
       directory_tree_.CollapseSelection();
+      RevealSelectedTreeSidebarLine();
       return true;
     case SDLK_RIGHT:
       directory_tree_.ExpandSelection();
+      RevealSelectedTreeSidebarLine();
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER: {
       const auto opened = directory_tree_.ActivateSelection();
+      RevealSelectedTreeSidebarLine();
       if (opened.has_value()) {
         OpenFile(*opened);
       }

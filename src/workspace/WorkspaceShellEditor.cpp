@@ -63,6 +63,7 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
     RevealActiveMergeSelection();
   } else if (tab.kind == TabEntry::Kind::Editor && !text_viewport_.path().empty()) {
     directory_tree_.SelectPath(text_viewport_.path().lexically_normal());
+    RevealSelectedTreeSidebarLine();
   }
   EnsureActiveTabVisible();
   surface_.focus = FocusTarget::Editor;
@@ -169,6 +170,7 @@ void WorkspaceShell::SyncActiveEditorTabMetadata() {
   tab.title = EditorTabLabel(text_viewport_);
   if (path_changed && !active_path.empty()) {
     directory_tree_.SelectPath(active_path);
+    RevealSelectedTreeSidebarLine();
   }
 }
 
@@ -790,6 +792,7 @@ void WorkspaceShell::CloseTab(std::size_t index) {
     }
     if (!tab.path.empty()) {
       directory_tree_.SelectPath(tab.path);
+      RevealSelectedTreeSidebarLine();
     }
     surface_.focus = FocusTarget::Editor;
   }

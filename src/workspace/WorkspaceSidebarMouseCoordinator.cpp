@@ -197,6 +197,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
     if (Contains(row_rect, event.button.x, event.button.y) &&
         event.button.button != SDL_BUTTON_RIGHT) {
       const auto opened = shell_.directory_tree_.ActivateSelection();
+      shell_.RevealSelectedTreeSidebarLine();
       if (opened.has_value()) {
         shell_.OpenFile(*opened);
       }

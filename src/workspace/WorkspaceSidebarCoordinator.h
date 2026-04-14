@@ -21,6 +21,7 @@ class WorkspaceShell::SidebarCoordinator {
   void RestorePrevious();
   void RefreshProjectFiles();
   void RefreshGit();
+  void RevealSelectedTreeLine();
   void RevealSelectedGitLine();
   void MoveGitSelection(int delta);
   bool OpenGitEntry(std::size_t entry_index);

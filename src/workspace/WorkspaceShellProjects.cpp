@@ -344,6 +344,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       ApplyEditorPreferences(startup_view);
       text_viewport_ = startup_view;
       directory_tree_.SelectPath(candidate);
+      RevealSelectedTreeSidebarLine();
       open_tabs_.push_back(TabEntry{
           .kind = TabEntry::Kind::Editor,
           .path = candidate,

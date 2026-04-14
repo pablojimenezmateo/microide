@@ -524,6 +524,35 @@ void TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal() {
          "reselecting the open file tab should reselect the file in the tree");
 }
 
+void TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 40; ++i) {
+    WriteFile(root / ("file" + std::to_string(i) + ".txt"), "line\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 320);
+
+  const auto layout = microide::workspace::ComputeLayout(
+      1280.0f, 320.0f, true, false, 288.0f, 184.0f);
+  const float wheel_x = layout.sidebar.x + layout.sidebar.w * 0.5f;
+  const float wheel_y = layout.sidebar.y + 72.0f;
+
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == root.lexically_normal(),
+         "tree scroll fixture should start with the root selected");
+  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -8),
+         "scrolling the tree sidebar should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
+         "tree scrolling should move the sidebar away from the selected root row");
+
+  WorkspaceShellTestAccess::RenderFrame(shell);
+
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
+         "rendering should not snap tree scrolling back to keep the selected row visible");
+}
+
 void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1498,6 +1527,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
+  AddTest(tests, "WorkspaceShell/TreeScrollDoesNotSnapToSelectionDuringRender",
+          TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",

@@ -273,6 +273,7 @@ bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::pat
                                });
 
   shell_.directory_tree_.SelectPath(normalized_path);
+  shell_.RevealSelectedTreeSidebarLine();
 
   if (existing != shell_.open_tabs_.end()) {
     const std::size_t existing_index =

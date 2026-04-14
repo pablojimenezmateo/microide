@@ -1144,6 +1144,7 @@ class WorkspaceShell {
                                                                  const GitSidebarEntry& entry) const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
+  void RevealSelectedTreeSidebarLine();
   void RevealSelectedGitSidebarLine();
   void MoveGitSidebarSelection(int delta);
   bool OpenGitSidebarEntry(std::size_t entry_index);

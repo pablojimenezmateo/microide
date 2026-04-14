@@ -228,6 +228,9 @@ struct WorkspaceShellTestAccess {
     shell.last_window_width_ = width;
     shell.last_window_height_ = height;
   }
+  static void RenderFrame(WorkspaceShell& shell) {
+    shell.Render(nullptr, shell.last_window_width_, shell.last_window_height_);
+  }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
                                WorkspaceShell::ActionSource::Menu);
@@ -765,6 +768,9 @@ struct WorkspaceShellTestAccess {
   }
   static std::filesystem::path SelectedTreePath(const WorkspaceShell& shell) {
     return shell.SelectedTreePath();
+  }
+  static int SidebarScrollRow(const WorkspaceShell& shell) {
+    return shell.surface_.sidebar_scroll_row;
   }
   static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.project_catalog_.entries.size(); }
   static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {

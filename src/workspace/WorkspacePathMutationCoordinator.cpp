@@ -235,6 +235,7 @@ void WorkspaceShell::PathMutationCoordinator::RefreshProjectViewsAfterMutation(
   } else if (!shell_.project_root_.empty()) {
     shell_.directory_tree_.SelectPath(shell_.project_root_);
   }
+  shell_.RevealSelectedTreeSidebarLine();
   if (!shell_.overlay_workflow_.project_search.query.empty()) {
     shell_.RefreshProjectSearch();
   }

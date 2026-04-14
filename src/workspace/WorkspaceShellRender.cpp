@@ -1345,9 +1345,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
       const auto& entries = directory_tree_.entries();
       const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-      int scroll_row =
-          RevealScrollableListIndex(list_layout, static_cast<int>(directory_tree_.selected_index()));
-      surface_.sidebar_scroll_row = scroll_row;
+      const int scroll_row = list_layout.scroll_row;
 
       for (int row = 0; row < list_layout.visible_rows; ++row) {
         const int entry_index = scroll_row + row;

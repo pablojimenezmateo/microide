@@ -123,6 +123,7 @@ void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
 
 void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
   shell_.directory_tree_.Refresh();
+  RevealSelectedTreeLine();
   shell_.file_index_.Refresh();
   shell_.file_finder_.SetIndex(&shell_.file_index_);
   RefreshGit();
@@ -188,6 +189,30 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
   }
 
   RevealSelectedGitLine();
+}
+
+void WorkspaceShell::SidebarCoordinator::RevealSelectedTreeLine() {
+  if (shell_.last_window_width_ <= 0 || shell_.last_window_height_ <= 0) {
+    return;
+  }
+
+  const auto& entries = shell_.directory_tree_.entries();
+  if (shell_.directory_tree_.selected_index() >= entries.size()) {
+    return;
+  }
+
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(shell_.last_window_width_),
+                    static_cast<float>(shell_.last_window_height_),
+                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
+                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  if (layout.sidebar.h <= 0.0f) {
+    return;
+  }
+
+  const auto list_layout = shell_.ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
+  shell_.surface_.sidebar_scroll_row = RevealScrollableListIndex(
+      list_layout, static_cast<int>(shell_.directory_tree_.selected_index()));
 }
 
 void WorkspaceShell::SidebarCoordinator::RevealSelectedGitLine() {
@@ -430,6 +455,10 @@ void WorkspaceShell::RefreshGitSidebar() {
 
 void WorkspaceShell::RevealSelectedGitSidebarLine() {
   SidebarCoordinator(*this).RevealSelectedGitLine();
+}
+
+void WorkspaceShell::RevealSelectedTreeSidebarLine() {
+  SidebarCoordinator(*this).RevealSelectedTreeLine();
 }
 
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {
