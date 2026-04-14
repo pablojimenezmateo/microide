@@ -42,7 +42,7 @@ std::string ShortRefLabel(std::string_view ref) {
 }
 
 std::optional<std::string> ReadTrimmedGitValue(const GitRepository& repo,
-                                               std::string_view arguments) {
+                                               std::initializer_list<std::string_view> arguments) {
   const auto result = repo.Execute(arguments);
   const std::string value = TrimTrailingWhitespace(result.output);
   if (!result.success() || value.empty()) {
@@ -55,9 +55,7 @@ bool GitRefExists(const GitRepository& repo, std::string_view ref) {
   if (ref.empty()) {
     return false;
   }
-  return repo.ExecuteSucceeds("show-ref --verify --quiet '" +
-                              microide::project::internal::EscapeShellArg(std::string(ref)) +
-                              "'");
+  return repo.ExecuteSucceeds({"show-ref", "--verify", "--quiet", std::string(ref)});
 }
 
 std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepository& repo,
@@ -151,17 +149,15 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
   }
 
   const std::optional<std::string> current_branch =
-      ReadTrimmedGitValue(repo, "symbolic-ref --quiet --short HEAD");
+      ReadTrimmedGitValue(repo, {"symbolic-ref", "--quiet", "--short", "HEAD"});
   if (current_branch.has_value()) {
     const std::string merge_base_key = "branch." + *current_branch + ".gh-merge-base";
-    const std::optional<std::string> pr_base = ReadTrimmedGitValue(
-        repo, "config --get '" +
-                  microide::project::internal::EscapeShellArg(merge_base_key) + "'");
+    const std::optional<std::string> pr_base =
+        ReadTrimmedGitValue(repo, {"config", "--get", merge_base_key});
     if (pr_base.has_value()) {
       const std::string remote_key = "branch." + *current_branch + ".remote";
-      const std::optional<std::string> branch_remote = ReadTrimmedGitValue(
-          repo, "config --get '" +
-                    microide::project::internal::EscapeShellArg(remote_key) + "'");
+      const std::optional<std::string> branch_remote =
+          ReadTrimmedGitValue(repo, {"config", "--get", remote_key});
       if (const auto pr_base_ref =
               ResolveNamedBranchReference(repo, *pr_base,
                                           branch_remote.value_or(std::string{}));
@@ -171,7 +167,8 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
     }
   }
 
-  const auto origin_head_result = repo.Execute("symbolic-ref --quiet refs/remotes/origin/HEAD");
+  const auto origin_head_result =
+      repo.Execute({"symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"});
   const std::string origin_head = TrimTrailingWhitespace(origin_head_result.output);
   if (origin_head_result.success() && !origin_head.empty()) {
     return GitBranchReference{
@@ -183,7 +180,8 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
   const std::array<std::string_view, 2> local_defaults = {"main", "master"};
   for (std::string_view candidate : local_defaults) {
     const auto exists_result =
-        repo.Execute("show-ref --verify --quiet 'refs/heads/" + std::string(candidate) + "'");
+        repo.Execute({"show-ref", "--verify", "--quiet",
+                      "refs/heads/" + std::string(candidate)});
     if (exists_result.success()) {
       return GitBranchReference{
           .ref = std::string(candidate),
@@ -193,7 +191,7 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
   }
 
   const auto upstream_result =
-      repo.Execute("rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'");
+      repo.Execute({"rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"});
   const std::string upstream = TrimTrailingWhitespace(upstream_result.output);
   if (upstream_result.success() && !upstream.empty()) {
     return GitBranchReference{
@@ -212,9 +210,8 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
     return {};
   }
 
-  const auto result = repo.Execute("diff --name-status --find-renames '" +
-                                   microide::project::internal::EscapeShellArg(
-                                       std::string(base_ref)) + "...HEAD'");
+  const auto result = repo.Execute(
+      {"diff", "--name-status", "--find-renames", std::string(base_ref) + "...HEAD"});
   if (!result.success() || result.output.empty()) {
     return {};
   }

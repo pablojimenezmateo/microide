@@ -28,8 +28,14 @@ class GitRepository {
     bool success() const { return exit_code == 0; }
   };
 
-  CommandResult Execute(std::string_view arguments, bool silence_stderr = true) const;
-  bool ExecuteSucceeds(std::string_view arguments, bool silence_stderr = true) const;
+  CommandResult Execute(std::initializer_list<std::string_view> arguments,
+                        bool silence_stderr = true) const;
+  CommandResult Execute(const std::vector<std::string>& arguments,
+                        bool silence_stderr = true) const;
+  bool ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
+                       bool silence_stderr = true) const;
+  bool ExecuteSucceeds(const std::vector<std::string>& arguments,
+                       bool silence_stderr = true) const;
 
   std::unordered_map<std::string, GitFileStatus> GetStatuses() const;
   std::vector<GitWorkingTreeEntry> GetWorkingTreeEntries() const;

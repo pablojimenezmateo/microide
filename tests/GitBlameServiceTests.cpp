@@ -183,6 +183,36 @@ void TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges() {
          "later unchanged saved lines should still keep commit attribution");
 }
 
+void TestGitBlameServiceHandlesQuotedAndSpacedPaths() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "dir with spaces" / "quote's file.cpp";
+  WriteFile(file_path, "alpha\nbeta\n");
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Add weird blame path", "weird blame path");
+
+  GitBlameService service;
+  const GitBlameRequest request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 0,
+      .visible_line_count = 2,
+      .total_line_count = 2,
+      .dirty = false,
+      .large_file_mode = false,
+  };
+
+  const auto snapshot = WaitForSnapshot(service, request);
+  service.Stop();
+
+  Expect(snapshot.eligible, "quoted tracked file should remain blame-eligible");
+  Expect(snapshot.lines.size() == 2,
+         "quoted tracked file should load visible blame lines");
+  Expect(snapshot.lines[0].summary == "Add weird blame path",
+         "quoted tracked file should preserve blame commit metadata");
+}
+
 void TestGitBlameServiceInvalidateDropsStaleCache() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -383,6 +413,8 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceSuppressesDirtyAndUntrackedFiles);
   AddTest(tests, "GitBlame/UsesWorkingTreeContentsForSavedTrackedChanges",
           TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges);
+  AddTest(tests, "GitBlame/HandlesQuotedAndSpacedPaths",
+          TestGitBlameServiceHandlesQuotedAndSpacedPaths);
   AddTest(tests, "GitBlame/InvalidateDropsStaleCache",
           TestGitBlameServiceInvalidateDropsStaleCache);
   AddTest(tests, "GitBlame/InvalidateDropsInFlightResults",

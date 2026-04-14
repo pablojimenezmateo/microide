@@ -338,6 +338,32 @@ void TestGitRepositoryDirectApi() {
          "git repository wrapper should report untracked files");
 }
 
+void TestGitRepositoryHandlesQuotedAndSpacedPaths() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+
+  const auto weird_file = repo_path / "dir with spaces" / "quote's file.cpp";
+  WriteFile(weird_file, "int value = 1;\n");
+  CommitAll(repo_path, "Add weird path", "weird path");
+
+  GitRepository repo(repo_path);
+  const auto relative = repo.ToRelative(weird_file);
+  Expect(relative.has_value(), "git repository wrapper should relativize quoted paths");
+  Expect(*relative == std::filesystem::path("dir with spaces") / "quote's file.cpp",
+         "git repository wrapper should preserve the exact relative path");
+
+  const auto history = repo.GetFileHistory(*relative);
+  Expect(history.size() == 1, "quoted path history should be readable through git repository");
+  Expect(history[0].subject == "Add weird path",
+         "quoted path history should preserve commit metadata");
+
+  const auto head_content = repo.ReadFileAtRevision(*relative);
+  Expect(head_content.has_value(), "quoted path content should be readable at HEAD");
+  Expect(*head_content == "int value = 1;\n",
+         "quoted path content should round-trip through git show");
+}
+
 void TestGitPorcelainParserStatusV1() {
   std::string output;
   output += "R  old/name.cpp";
@@ -433,6 +459,8 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
           TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
   AddTest(tests, "Git/RepositoryDirectApi", TestGitRepositoryDirectApi);
+  AddTest(tests, "Git/RepositoryHandlesQuotedAndSpacedPaths",
+          TestGitRepositoryHandlesQuotedAndSpacedPaths);
   AddTest(tests, "Git/PorcelainParserStatusV1", TestGitPorcelainParserStatusV1);
   AddTest(tests, "Git/PorcelainParserWorkingTreeEntries", TestGitPorcelainParserWorkingTreeEntries);
   AddTest(tests, "Git/PorcelainParserLog", TestGitPorcelainParserLog);

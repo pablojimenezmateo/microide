@@ -7,6 +7,19 @@ namespace microide::project {
 
 namespace gitutil = microide::project::internal;
 
+namespace {
+
+std::vector<std::string> OwnArguments(std::initializer_list<std::string_view> arguments) {
+  std::vector<std::string> owned;
+  owned.reserve(arguments.size());
+  for (std::string_view argument : arguments) {
+    owned.emplace_back(argument);
+  }
+  return owned;
+}
+
+}  // namespace
+
 GitRepository::GitRepository(std::filesystem::path root) : root_(std::move(root)) {
   if (!root_.empty()) {
     root_ = root_.lexically_normal();
@@ -27,22 +40,35 @@ std::filesystem::path GitRepository::ToAbsolute(
   return (root_ / relative_path).lexically_normal();
 }
 
-GitRepository::CommandResult GitRepository::Execute(std::string_view arguments,
-                                                    bool silence_stderr) const {
-  const std::string command = gitutil::BuildGitCommand(root_, arguments, silence_stderr);
-  const auto result = gitutil::ReadCommandOutput(command);
+GitRepository::CommandResult GitRepository::Execute(
+    std::initializer_list<std::string_view> arguments,
+    bool silence_stderr) const {
+  return Execute(OwnArguments(arguments), silence_stderr);
+}
+
+GitRepository::CommandResult GitRepository::Execute(
+    const std::vector<std::string>& arguments,
+    bool silence_stderr) const {
+  const auto result =
+      gitutil::ReadGitCommandOutput(root_, std::vector<std::string>(arguments), silence_stderr);
   return CommandResult{
       .exit_code = result.exit_code,
       .output = result.output,
   };
 }
 
-bool GitRepository::ExecuteSucceeds(std::string_view arguments, bool silence_stderr) const {
+bool GitRepository::ExecuteSucceeds(std::initializer_list<std::string_view> arguments,
+                                    bool silence_stderr) const {
+  return Execute(arguments, silence_stderr).success();
+}
+
+bool GitRepository::ExecuteSucceeds(const std::vector<std::string>& arguments,
+                                    bool silence_stderr) const {
   return Execute(arguments, silence_stderr).success();
 }
 
 std::unordered_map<std::string, GitFileStatus> GitRepository::GetStatuses() const {
-  const auto result = Execute("status --porcelain=v1 -z --untracked-files=all");
+  const auto result = Execute({"status", "--porcelain=v1", "-z", "--untracked-files=all"});
   if (!result.success() || result.output.empty()) {
     return {};
   }
@@ -50,7 +76,7 @@ std::unordered_map<std::string, GitFileStatus> GitRepository::GetStatuses() cons
 }
 
 std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
-  const auto result = Execute("status --porcelain=v1 -z --untracked-files=all");
+  const auto result = Execute({"status", "--porcelain=v1", "-z", "--untracked-files=all"});
   if (!result.success() || result.output.empty()) {
     return {};
   }
@@ -59,10 +85,9 @@ std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
 
 std::vector<GitCommitEntry> GitRepository::GetFileHistory(
     const std::filesystem::path& relative_path) const {
-  const std::string arguments =
-      "log --follow --no-color --pretty=format:%H%x09%h%x09%s -- '" +
-      gitutil::EscapeShellArg(relative_path.generic_string()) + "'";
-  const auto result = Execute(arguments);
+  const auto result = Execute({"log", "--follow", "--no-color",
+                               "--pretty=format:%H%x09%h%x09%s", "--",
+                               relative_path.generic_string()});
   if (!result.success()) {
     return {};
   }
@@ -71,16 +96,15 @@ std::vector<GitCommitEntry> GitRepository::GetFileHistory(
 
 bool GitRepository::FileExistsAtRevision(const std::filesystem::path& relative_path,
                                          std::string_view revision) const {
-  const std::string spec = std::string(revision) + ":" + relative_path.generic_string();
-  return ExecuteSucceeds("cat-file -e '" + gitutil::EscapeShellArg(spec) + "'");
+  return ExecuteSucceeds(
+      {"cat-file", "-e", std::string(revision) + ":" + relative_path.generic_string()});
 }
 
 std::optional<std::string> GitRepository::ReadFileAtRevision(
     const std::filesystem::path& relative_path,
     std::string_view revision) const {
-  const std::string spec = std::string(revision) + ":" + relative_path.generic_string();
-  const std::string arguments = "show '" + gitutil::EscapeShellArg(spec) + "'";
-  const auto result = Execute(arguments);
+  const auto result =
+      Execute({"show", std::string(revision) + ":" + relative_path.generic_string()});
   if (!result.success()) {
     return std::nullopt;
   }
@@ -88,7 +112,7 @@ std::optional<std::string> GitRepository::ReadFileAtRevision(
 }
 
 std::optional<std::string> GitRepository::ResolveHeadId() const {
-  const auto result = Execute("rev-parse --verify HEAD");
+  const auto result = Execute({"rev-parse", "--verify", "HEAD"});
   if (!result.success() || result.output.empty()) {
     return std::nullopt;
   }
@@ -100,57 +124,57 @@ std::optional<std::string> GitRepository::ResolveHeadId() const {
 }
 
 bool GitRepository::HasHeadCommit() const {
-  return ExecuteSucceeds("rev-parse --verify HEAD >/dev/null");
+  return ExecuteSucceeds({"rev-parse", "--verify", "HEAD"});
 }
 
 bool GitRepository::FileIsTracked(const std::filesystem::path& relative_path) const {
-  return ExecuteSucceeds("ls-files --error-unmatch -- '" +
-                         gitutil::EscapeShellArg(relative_path.generic_string()) + "' >/dev/null");
+  return ExecuteSucceeds({"ls-files", "--error-unmatch", "--", relative_path.generic_string()});
 }
 
 bool GitRepository::FileIsWorkingTreeClean(const std::filesystem::path& relative_path) const {
-  const auto result = Execute("status --porcelain=v1 -z --untracked-files=all -- '" +
-                              gitutil::EscapeShellArg(relative_path.generic_string()) + "'");
+  const auto result = Execute(
+      {"status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
+       relative_path.generic_string()});
   return result.success() && result.output.empty();
 }
 
 bool GitRepository::Stage(const std::filesystem::path& relative_path) const {
-  return ExecuteSucceeds("add -- '" + gitutil::EscapeShellArg(relative_path.generic_string()) + "'");
+  return ExecuteSucceeds({"add", "--", relative_path.generic_string()});
 }
 
 bool GitRepository::Unstage(const std::filesystem::path& relative_path) const {
-  const std::string escaped_relative = gitutil::EscapeShellArg(relative_path.generic_string());
   if (FileExistsAtRevision(relative_path)) {
-    return ExecuteSucceeds("restore --staged -- '" + escaped_relative + "' >/dev/null");
+    return ExecuteSucceeds({"restore", "--staged", "--", relative_path.generic_string()});
   }
-  return ExecuteSucceeds("rm --cached -- '" + escaped_relative + "' >/dev/null");
+  return ExecuteSucceeds({"rm", "--cached", "--", relative_path.generic_string()});
 }
 
 bool GitRepository::Discard(const std::filesystem::path& relative_path) const {
-  const std::string escaped_relative = gitutil::EscapeShellArg(relative_path.generic_string());
   if (FileExistsAtRevision(relative_path)) {
-    return ExecuteSucceeds("restore --source=HEAD --staged --worktree -- '" + escaped_relative +
-                           "' >/dev/null");
+    return ExecuteSucceeds(
+        {"restore", "--source=HEAD", "--staged", "--worktree", "--",
+         relative_path.generic_string()});
   }
 
-  return ExecuteSucceeds("rm -f --cached --ignore-unmatch -- '" + escaped_relative +
-                             "' >/dev/null") &&
-         ExecuteSucceeds("clean -fd -- '" + escaped_relative + "' >/dev/null");
+  return ExecuteSucceeds(
+             {"rm", "-f", "--cached", "--ignore-unmatch", "--",
+              relative_path.generic_string()}) &&
+         ExecuteSucceeds({"clean", "-fd", "--", relative_path.generic_string()});
 }
 
 bool GitRepository::StageAll() const {
-  return ExecuteSucceeds("add -A -- . >/dev/null");
+  return ExecuteSucceeds({"add", "-A", "--", "."});
 }
 
 bool GitRepository::DiscardAll() const {
   if (HasHeadCommit()) {
-    return ExecuteSucceeds("reset --quiet HEAD -- . >/dev/null") &&
-           ExecuteSucceeds("restore --source=HEAD --worktree -- . >/dev/null") &&
-           ExecuteSucceeds("clean -fd -- . >/dev/null");
+    return ExecuteSucceeds({"reset", "--quiet", "HEAD", "--", "."}) &&
+           ExecuteSucceeds({"restore", "--source=HEAD", "--worktree", "--", "."}) &&
+           ExecuteSucceeds({"clean", "-fd", "--", "."});
   }
 
-  return ExecuteSucceeds("rm -r -f --cached --ignore-unmatch -- . >/dev/null") &&
-         ExecuteSucceeds("clean -fd -- . >/dev/null");
+  return ExecuteSucceeds({"rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", "."}) &&
+         ExecuteSucceeds({"clean", "-fd", "--", "."});
 }
 
 }  // namespace microide::project

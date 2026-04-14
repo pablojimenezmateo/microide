@@ -91,7 +91,7 @@ bool IsHexCommitPrefix(std::string_view line) {
 
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
   const auto output =
-      gitutil::ReadCommandOutput(gitutil::BuildGitCommand(root, "rev-parse --verify HEAD"));
+      gitutil::ReadGitCommandOutput(root, {"rev-parse", "--verify", "HEAD"});
   if (!output.success() || output.output.empty()) {
     return std::nullopt;
   }
@@ -104,18 +104,15 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
 }
 
 bool FileIsTracked(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
-  const std::string command = gitutil::BuildGitCommand(
-      root, "ls-files --error-unmatch -- '" +
-                gitutil::EscapeShellArg(relative_path.generic_string()) + "' >/dev/null");
-  return gitutil::CommandSucceeds(command);
+  return gitutil::GitCommandSucceeds(
+      root, {"ls-files", "--error-unmatch", "--", relative_path.generic_string()});
 }
 
 bool FileIsWorkingTreeClean(const std::filesystem::path& root,
                             const std::filesystem::path& relative_path) {
-  const std::string command = gitutil::BuildGitCommand(
-      root, "status --porcelain=v1 -z --untracked-files=all -- '" +
-                gitutil::EscapeShellArg(relative_path.generic_string()) + "'");
-  const auto output = gitutil::ReadCommandOutput(command);
+  const auto output = gitutil::ReadGitCommandOutput(
+      root, {"status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
+             relative_path.generic_string()});
   return output.success() && output.output.empty();
 }
 
@@ -698,22 +695,18 @@ struct GitBlameService::Impl {
       if (!RequestStillCurrent(request)) {
         return;
       }
-      const std::string command =
-          working_tree_clean
-              ? gitutil::BuildGitCommand(
-                    request.request.root,
-                    "blame --incremental --encoding=UTF-8 -L " +
-                        std::to_string(span.start + 1) + "," + std::to_string(span.end + 1) +
-                        " -- '" + gitutil::EscapeShellArg(request.relative_path.generic_string()) + "'")
-              : gitutil::BuildGitCommand(
-                    request.request.root,
-                    "blame --incremental --encoding=UTF-8 --contents '" +
-                        gitutil::EscapeShellArg(
-                            request.request.absolute_path.lexically_normal().string()) +
-                        "' -L " + std::to_string(span.start + 1) + "," +
-                        std::to_string(span.end + 1) + " -- '" +
-                        gitutil::EscapeShellArg(request.relative_path.generic_string()) + "'");
-      const auto output = gitutil::ReadCommandOutput(command);
+      std::vector<std::string> arguments = {"blame", "--incremental", "--encoding=UTF-8"};
+      if (!working_tree_clean) {
+        arguments.emplace_back("--contents");
+        arguments.push_back(request.request.absolute_path.lexically_normal().string());
+      }
+      arguments.emplace_back("-L");
+      arguments.push_back(std::to_string(span.start + 1) + "," +
+                          std::to_string(span.end + 1));
+      arguments.emplace_back("--");
+      arguments.push_back(request.relative_path.generic_string());
+      const auto output =
+          gitutil::ReadGitCommandOutput(request.request.root, std::move(arguments));
       if (!RequestStillCurrent(request)) {
         return;
       }
