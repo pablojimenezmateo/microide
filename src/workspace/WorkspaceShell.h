@@ -782,6 +782,7 @@ class WorkspaceShell {
   class LifecycleCoordinator;
   class SidebarCoordinator;
   class CompareInteractionCoordinator;
+  class ChromeMouseCoordinator;
   class TabMouseCoordinator;
   class SidebarMouseCoordinator;
   class PanelMouseCoordinator;

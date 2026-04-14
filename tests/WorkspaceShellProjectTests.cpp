@@ -1014,6 +1014,55 @@ void TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus() {
          "menu bar should omit the removed Help menu");
 }
 
+void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto file_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
+  const auto edit_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "Edit");
+  Expect(file_rect.has_value(), "menu hover fixture should expose a File menu item");
+  Expect(edit_rect.has_value(), "menu hover fixture should expose an Edit menu item");
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, file_rect->x + file_rect->w * 0.5f, file_rect->y + file_rect->h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "clicking the File menu should be handled");
+  Expect(WorkspaceShellTestAccess::FileMenuOpen(shell),
+         "clicking the File menu should open the File popup");
+
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(
+             shell, edit_rect->x + edit_rect->w * 0.5f, edit_rect->y + edit_rect->h * 0.5f, 0),
+         "hovering another menu while the menu bar is open should be handled");
+  Expect(WorkspaceShellTestAccess::EditMenuOpen(shell),
+         "hovering the Edit menu should switch the active popup");
+}
+
+void TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
+  const float click_x = button_rect.x + button_rect.w * 0.5f;
+  const float click_y = button_rect.y + button_rect.h * 0.5f;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking the sidebar mode control should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
+         "clicking the sidebar mode control should open its anchored menu");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "opening the sidebar mode menu should keep sidebar focus");
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking the active sidebar mode control again should be handled");
+  Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell),
+         "clicking the active sidebar mode control again should close the anchored menu");
+}
+
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -1305,6 +1354,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/MenuBarOmitsDuplicateTerminalAndHelpMenus",
           TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus);
+  AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
+          TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
+  AddTest(tests, "WorkspaceShell/SidebarModeButtonTogglesAnchoredMenu",
+          TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu);
   AddTest(tests, "WorkspaceShell/ProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog",
           TestWorkspaceShellProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog);
   AddTest(tests, "WorkspaceShell/ProjectOpenFailureRestoresPreviousActiveProject",

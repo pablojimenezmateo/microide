@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "editor/EditorViewRenderer.h"
+#include "workspace/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -94,129 +95,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                     surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   surface_.mouse_selecting = false;
 
-  if (surface_.tree_context_menu.open) {
-    if (const auto popup_rect = ComputeTreeContextMenuRect();
-        popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
-      for (const VisiblePopupMenuItem& item : ComputeVisiblePopupMenuItems(
-               TreeContextMenuItems(surface_.tree_context_menu.target),
-               surface_.tree_context_menu.active_item_index, *popup_rect)) {
-        if (!Contains(item.rect, event.button.x, event.button.y)) {
-          continue;
-        }
-        surface_.tree_context_menu.active_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-        if (event.button.button == SDL_BUTTON_LEFT && !item.separator && item.enabled) {
-          ExecuteTreeContextMenuItem(item.index);
-        }
-        return true;
-      }
-      return true;
-    }
-    CloseTreeContextMenu();
-  }
-
-  if (surface_.menu_bar_open && event.button.button != SDL_BUTTON_LEFT) {
-    CloseMenuBar();
+  if (ChromeMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+    return true;
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
     if (EditorBlameLineAtPosition(static_cast<float>(event.button.x),
                                   static_cast<float>(event.button.y)) != nullptr) {
       surface_.focus = FocusTarget::Editor;
-      return true;
-    }
-  }
-
-  if (event.button.button == SDL_BUTTON_LEFT) {
-    if (surface_.sidebar_visible) {
-      const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
-      if (Contains(sidebar_mode_rect, event.button.x, event.button.y)) {
-        if (surface_.menu_bar_open && surface_.active_menu_id == MenuId::SidebarMode &&
-            surface_.active_menu_anchor_rect.has_value()) {
-          CloseMenuBar();
-        } else {
-          OpenAnchoredMenu(MenuId::SidebarMode, sidebar_mode_rect);
-        }
-        surface_.focus = FocusTarget::Sidebar;
-        return true;
-      }
-    }
-
-    const auto menu_bar_items = ComputeVisibleMenuBarItems(layout.menu_bar);
-    const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
-    for (const VisibleWindowControlButton& button : window_buttons) {
-      if (!Contains(button.rect, event.button.x, event.button.y)) {
-        continue;
-      }
-      CloseMenuBar();
-      switch (button.id) {
-        case WindowControlButtonId::Minimize:
-          pending_window_action_ = WindowAction::Minimize;
-          break;
-        case WindowControlButtonId::Maximize:
-          pending_window_action_ = WindowAction::ToggleMaximize;
-          break;
-        case WindowControlButtonId::Close:
-          RequestQuit();
-          break;
-      }
-      return true;
-    }
-    if (surface_.menu_bar_open) {
-      for (const VisibleMenuBarItem& item : menu_bar_items) {
-        if (!Contains(item.rect, event.button.x, event.button.y)) {
-          continue;
-        }
-        if (item.id == surface_.active_menu_id) {
-          CloseMenuBar();
-        } else {
-          OpenMenuBarMenu(item.id);
-        }
-        return true;
-      }
-
-      if (const auto submenu_rect = ActiveSubmenuRect(layout.menu_bar);
-          submenu_rect.has_value() && Contains(*submenu_rect, event.button.x, event.button.y)) {
-        for (const VisiblePopupMenuItem& item :
-             ComputeVisiblePopupMenuItems(surface_.active_submenu_id, *submenu_rect)) {
-          if (!Contains(item.rect, event.button.x, event.button.y)) {
-            continue;
-          }
-          surface_.active_submenu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-          if (!item.separator && item.enabled) {
-            ExecuteMenuItem(surface_.active_submenu_id, item.index);
-          }
-          return true;
-        }
-        return true;
-      }
-
-      if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, surface_.active_menu_id);
-          popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
-        for (const VisiblePopupMenuItem& item :
-             ComputeVisiblePopupMenuItems(surface_.active_menu_id, *popup_rect)) {
-          if (!Contains(item.rect, event.button.x, event.button.y)) {
-            continue;
-          }
-          surface_.active_menu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-          if (!item.separator && item.enabled) {
-            ExecuteMenuItem(surface_.active_menu_id, item.index);
-          }
-          return true;
-        }
-        return true;
-      }
-
-      CloseMenuBar();
-      return true;
-    }
-
-    if (Contains(layout.menu_bar, event.button.x, event.button.y)) {
-      for (const VisibleMenuBarItem& item : menu_bar_items) {
-        if (Contains(item.rect, event.button.x, event.button.y)) {
-          OpenMenuBarMenu(item.id);
-          return true;
-        }
-      }
       return true;
     }
   }
@@ -228,47 +114,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (PanelMouseCoordinator(*this).HandleResizeButtonDown(event, layout)) {
-    return true;
-  }
-
-  if (surface_.overlay_visible && event.button.button == SDL_BUTTON_LEFT) {
-    const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
-
-    if (!Contains(overlay, event.button.x, event.button.y)) {
-      DismissOverlay();
-      return true;
-    }
-
-    ClampOverlayScrollRow(overlay);
-    const auto list_layout = ComputeOverlayListLayout(overlay);
-    if (list_layout.scrollbar.has_value() &&
-        Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
-      surface_.drag_target = DragTarget::OverlayScrollbar;
-      surface_.drag_scrollbar_offset =
-          Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
-              : list_layout.scrollbar->thumb.h * 0.5f;
-      surface_.overlay_scroll_row =
-          std::clamp(static_cast<int>(std::lround(
-                         ScrollUnitsForPointer(*list_layout.scrollbar,
-                                              static_cast<float>(event.button.y),
-                                              surface_.drag_scrollbar_offset))),
-                     0, list_layout.max_scroll);
-      surface_.focus = FocusTarget::Overlay;
-      return true;
-    }
-
-    if (const auto item_index =
-            ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-        item_index.has_value() && *item_index >= 0 &&
-        *item_index < static_cast<int>(OverlayItemCount())) {
-      SetOverlaySelectedIndex(static_cast<std::size_t>(*item_index));
-      RevealOverlaySelection(overlay);
-      if (surface_.overlay_mode == OverlayMode::CommitPicker) {
-        ActivateOverlaySelection();
-      }
-    }
-    surface_.focus = FocusTarget::Overlay;
     return true;
   }
 
@@ -698,73 +543,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
-  if (surface_.tree_context_menu.open) {
-    if (const auto popup_rect = ComputeTreeContextMenuRect();
-        popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
-      surface_.tree_context_menu.active_item_index = -1;
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(TreeContextMenuItems(surface_.tree_context_menu.target),
-                                        surface_.tree_context_menu.active_item_index, *popup_rect)) {
-        if (Contains(item.rect, event.motion.x, event.motion.y)) {
-          surface_.tree_context_menu.active_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-          break;
-        }
-      }
-      return true;
-    }
-    surface_.tree_context_menu.active_item_index = -1;
-    return true;
-  }
-
-  if (surface_.menu_bar_open) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
-    for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
-      if (!Contains(item.rect, event.motion.x, event.motion.y)) {
-        continue;
-      }
-      if (item.id != surface_.active_menu_id) {
-        OpenMenuBarMenu(item.id);
-      }
-      return true;
-    }
-    if (const auto submenu_rect = ActiveSubmenuRect(layout.menu_bar);
-        submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
-      surface_.active_submenu_item_index = -1;
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(surface_.active_submenu_id, *submenu_rect)) {
-        if (Contains(item.rect, event.motion.x, event.motion.y)) {
-          surface_.active_submenu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-          break;
-        }
-      }
-      return true;
-    }
-    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, surface_.active_menu_id);
-        popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
-      surface_.active_menu_item_index = -1;
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(surface_.active_menu_id, *popup_rect)) {
-        if (Contains(item.rect, event.motion.x, event.motion.y)) {
-          surface_.active_menu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-          const MenuSpec* menu = FindMenuSpec(surface_.active_menu_id);
-          if (menu != nullptr && item.enabled) {
-            const MenuItemSpec& spec = menu->items[item.index];
-            if (spec.submenu != MenuId::None) {
-              OpenSubmenu(spec.submenu, item.rect);
-            } else {
-              CloseSubmenu();
-            }
-          } else {
-            CloseSubmenu();
-          }
-          break;
-        }
-      }
-      return true;
-    }
-    surface_.active_menu_item_index = -1;
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
+                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  if (ChromeMouseCoordinator(*this).HandleMotion(event, layout)) {
     return true;
   }
 
@@ -788,9 +570,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    const WorkspaceLayout drag_layout =
-        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+    const WorkspaceLayout drag_layout = layout;
 
     if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
       return true;
@@ -1064,9 +844,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (merge_tab != nullptr) {
       const std::optional<MergeHoverState> previous_hover = merge_tab->hover_state;
       std::optional<MergeHoverState> next_hover;
-      const WorkspaceLayout layout =
-          ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                        surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
       if (Contains(layout.editor_surface, event.motion.x, event.motion.y) &&
           !(surface_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
         const MergeSurfaceLayout surface_layout =
@@ -1095,9 +872,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return hover_visual_changed;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   if (!Contains(layout.editor_surface, event.motion.x, event.motion.y)) {
     return false;
   }
@@ -1219,17 +993,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
                     surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
 
-  if (surface_.overlay_visible) {
-    const int overlay_ticks = vertical_ticks != 0 ? vertical_ticks : horizontal_ticks;
-    if (surface_.overlay_mode == OverlayMode::CommitPicker) {
-      MoveComparePickerSelection(-overlay_ticks);
-    } else if (surface_.overlay_mode == OverlayMode::BufferSearch || surface_.overlay_mode == OverlayMode::BufferReplace) {
-      MoveBufferSearchSelection(-overlay_ticks);
-    } else if (surface_.overlay_mode == OverlayMode::ProjectSearch) {
-      MoveProjectSearchSelection(-overlay_ticks);
-    } else {
-      MoveFileFinderSelection(-overlay_ticks);
-    }
+  if (ChromeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
     return true;
   }
 

@@ -714,6 +714,26 @@ struct WorkspaceShellTestAccess {
     }
     return labels;
   }
+  static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell, std::string_view label) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (const auto* menu = shell.FindMenuSpec(item.id);
+          menu != nullptr && menu->label == label) {
+        return item.rect;
+      }
+    }
+    return std::nullopt;
+  }
+  static SDL_FRect SidebarModeButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    return shell.SidebarModeControlRect(layout.sidebar);
+  }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.directory_tree_.entries();
@@ -777,6 +797,13 @@ struct WorkspaceShellTestAccess {
   static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.surface_.menu_bar_open; }
   static bool EditMenuOpen(const WorkspaceShell& shell) {
     return shell.surface_.menu_bar_open && shell.surface_.active_menu_id == WorkspaceShell::MenuId::Edit;
+  }
+  static bool FileMenuOpen(const WorkspaceShell& shell) {
+    return shell.surface_.menu_bar_open && shell.surface_.active_menu_id == WorkspaceShell::MenuId::File;
+  }
+  static bool SidebarModeMenuOpen(const WorkspaceShell& shell) {
+    return shell.surface_.menu_bar_open &&
+           shell.surface_.active_menu_id == WorkspaceShell::MenuId::SidebarMode;
   }
   static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
     return shell.surface_.menu_bar_open &&
