@@ -5,36 +5,10 @@
 #include <string>
 #include <vector>
 
+#include "workspace/WorkspaceConstants.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
-
-namespace {
-
-constexpr std::array<std::string_view, 3> kSidebarToolNames = {
-    "git",
-    "search",
-    "tree",
-};
-
-constexpr std::array<std::string_view, 3> kFocusTargetNames = {
-    "editor",
-    "panel",
-    "sidebar",
-};
-
-constexpr std::array<std::string_view, 2> kToggleValues = {
-    "off",
-    "on",
-};
-
-constexpr std::array<std::string_view, 3> kUiScaleCommands = {
-    "down",
-    "reset",
-    "up",
-};
-
-}  // namespace
 
 void WorkspaceShell::ResetCommandSessionState() {
   command_.history_index.reset();

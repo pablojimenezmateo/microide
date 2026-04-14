@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/WorkspaceConstants.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -61,29 +62,6 @@ constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
-constexpr std::array<std::string_view, 3> kSidebarToolNames = {
-    "git",
-    "search",
-    "tree",
-};
-
-constexpr std::array<std::string_view, 3> kFocusTargetNames = {
-    "editor",
-    "panel",
-    "sidebar",
-};
-
-constexpr std::array<std::string_view, 2> kToggleValues = {
-    "off",
-    "on",
-};
-
-constexpr std::array<std::string_view, 3> kUiScaleCommands = {
-    "down",
-    "reset",
-    "up",
-};
-
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
 }
