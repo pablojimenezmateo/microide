@@ -200,6 +200,55 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
          "restored first project should preserve compare horizontal scroll");
 }
 
+void TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "project-a";
+  const std::filesystem::path first_file = first_root / "a.txt";
+  WriteFile(first_file, "alpha\n");
+
+  const std::filesystem::path second_root = temp_dir.path() / "project-b";
+  const std::filesystem::path second_file = second_root / "b.txt";
+  WriteFile(second_file, "beta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false),
+         "first workspace project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, first_file);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false),
+         "second workspace project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, second_file);
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "fixture should make the first project active before shutdown");
+
+  shell.Shutdown();
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored),
+         "workspace session restore after shutdown should succeed");
+  Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 2,
+         "workspace restore should keep both project entries");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == first_root.lexically_normal(),
+         "workspace restore should reactivate the first project");
+
+  const auto restored_roots = WorkspaceShellTestAccess::ProjectRoots(restored);
+  Expect(restored_roots.size() == 2,
+         "restored workspace should expose two distinct project roots");
+  Expect(restored_roots[0] == first_root.lexically_normal(),
+         "restored workspace should preserve the first saved project root");
+  Expect(restored_roots[1] == second_root.lexically_normal(),
+         "restored workspace should preserve the second saved project root");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1008,6 +1057,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
+  AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",
+          TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
 }
 
 }  // namespace microide::tests

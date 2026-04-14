@@ -553,6 +553,38 @@ void TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender() {
          "rendering should not snap tree scrolling back to keep the selected row visible");
 }
 
+void TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path nested_dir = root / "src" / "nested";
+  const std::filesystem::path source = nested_dir / "main.cpp";
+  std::filesystem::create_directories(nested_dir);
+  WriteFile(source, "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const auto tree_contains_path = [&](const std::filesystem::path& path) {
+    const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
+    return std::any_of(entries.begin(), entries.end(),
+                       [&](const auto& entry) { return entry.path == path.lexically_normal(); });
+  };
+
+  Expect(tree_contains_path(source),
+         "opening a nested file should expand its ancestors before collapsing all");
+  const SDL_FRect button_rect = WorkspaceShellTestAccess::TreeSidebarCollapseButtonRect(shell);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, button_rect.x + button_rect.w * 0.5f, button_rect.y + button_rect.h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "clicking the collapse button should be handled");
+  Expect(!tree_contains_path(source),
+         "clicking the collapse button should hide descendants under expanded directories");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == (root / "src").lexically_normal(),
+         "collapsing all should keep selection on the nearest still-visible ancestor");
+}
+
 void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1529,6 +1561,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
   AddTest(tests, "WorkspaceShell/TreeScrollDoesNotSnapToSelectionDuringRender",
           TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender);
+  AddTest(tests, "WorkspaceShell/TreeCollapseButtonCollapsesAllOpenDirectories",
+          TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",

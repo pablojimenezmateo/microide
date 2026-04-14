@@ -533,7 +533,9 @@ void WorkspaceShell::SaveWorkspaceSession() {
       project_catalog_.entries.empty() ? 0 : std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
   persisted_session.project_roots.reserve(project_catalog_.entries.size());
   for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
-    const std::filesystem::path project_root = ProjectCatalogRoot(i);
+    const auto* entry = ProjectCatalogEntry(i);
+    const std::filesystem::path project_root =
+        entry != nullptr ? entry->root : ProjectCatalogRoot(i);
     if (project_root.empty()) {
       continue;
     }

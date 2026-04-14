@@ -158,6 +158,34 @@ void DirectoryTree::CollapseSelection() {
   }
 }
 
+void DirectoryTree::CollapseAll() {
+  if (root_.empty()) {
+    return;
+  }
+
+  const auto selected_path =
+      entries_.empty() ? root_ : entries_[selected_index_].path.lexically_normal();
+  expanded_paths_.clear();
+  expanded_paths_.insert(NormalizePathKey(root_));
+  RebuildEntries(false);
+
+  std::filesystem::path visible_path = selected_path;
+  while (!visible_path.empty()) {
+    for (std::size_t i = 0; i < entries_.size(); ++i) {
+      if (entries_[i].path == visible_path) {
+        selected_index_ = i;
+        return;
+      }
+    }
+    if (visible_path == root_) {
+      break;
+    }
+    visible_path = visible_path.parent_path().lexically_normal();
+  }
+
+  selected_index_ = 0;
+}
+
 std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
   if (entries_.empty()) {
     return std::nullopt;
@@ -313,6 +341,10 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path) c
 
 bool DirectoryTree::IsExpanded(const std::filesystem::path& path) const {
   return expanded_paths_.contains(NormalizePathKey(path));
+}
+
+bool DirectoryTree::CanCollapseAll() const {
+  return !root_.empty() && expanded_paths_.size() > 1;
 }
 
 std::string DirectoryTree::NormalizePathKey(const std::filesystem::path& path) {

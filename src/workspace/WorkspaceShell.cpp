@@ -1504,6 +1504,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
 
+    if (Contains(TreeSidebarCollapseButtonRect(layout.sidebar), x, y) &&
+        directory_tree_.CanCollapseAll()) {
+      return CursorKind::Pointer;
+    }
+
     if (Contains(TreeSidebarRefreshButtonRect(layout.sidebar), x, y)) {
       return CursorKind::Pointer;
     }

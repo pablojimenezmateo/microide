@@ -157,6 +157,14 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
     return true;
   }
 
+  if (event.button.button == SDL_BUTTON_LEFT && shell_.directory_tree_.CanCollapseAll() &&
+      Contains(shell_.TreeSidebarCollapseButtonRect(layout.sidebar), event.button.x,
+               event.button.y)) {
+    shell_.directory_tree_.CollapseAll();
+    shell_.RevealSelectedTreeSidebarLine();
+    return true;
+  }
+
   if (event.button.button == SDL_BUTTON_LEFT &&
       Contains(shell_.TreeSidebarRefreshButtonRect(layout.sidebar), event.button.x,
                event.button.y)) {

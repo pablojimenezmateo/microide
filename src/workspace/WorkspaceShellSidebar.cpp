@@ -107,6 +107,17 @@ ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRec
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
+SDL_FRect WorkspaceShell::TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(sidebar_rect);
+  const float button_width = std::max(76.0f, text_renderer_.MeasureWidth("Collapse") + 18.0f);
+  return MakeRect(refresh_rect.x - 6.0f - button_width, sidebar_rect.y + 4.0f, button_width,
+                  18.0f);
+}
+
 SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
   if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);

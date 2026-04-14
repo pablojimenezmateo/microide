@@ -1321,20 +1321,33 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           list_layout.list_rect, static_cast<float>(lines.size()), list_layout.visible_units,
           static_cast<float>(scroll_row), surface_.drag_target == DragTarget::SidebarScrollbar);
     } else {
+      const auto draw_action_button = [&](const SDL_FRect& button_rect,
+                                          std::string_view label,
+                                          bool enabled) {
+        if (button_rect.w <= 0.0f || button_rect.h <= 0.0f) {
+          return;
+        }
+        const bool hovered =
+            enabled && last_mouse_position_valid_ && Contains(button_rect, last_mouse_x_, last_mouse_y_);
+        const SDL_Color fill = hovered ? theme_.row_highlight : theme_.surface_raised;
+        const SDL_Color border =
+            !enabled ? theme_.border : hovered ? theme_.accent : theme_.border;
+        const SDL_Color text =
+            !enabled ? theme_.text_muted : hovered ? theme_.text_primary : theme_.accent;
+        DrawFilledRect(renderer, button_rect, fill);
+        DrawRect(renderer, button_rect, border);
+        draw_centered_text_on(button_rect, text, fill, label);
+      };
+
+      const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
       const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
-      const bool refresh_hovered =
-          last_mouse_position_valid_ && Contains(refresh_rect, last_mouse_x_, last_mouse_y_);
-      DrawFilledRect(renderer, refresh_rect,
-                     refresh_hovered ? theme_.row_highlight : theme_.surface_raised);
-      DrawRect(renderer, refresh_rect, refresh_hovered ? theme_.accent : theme_.border);
-      draw_centered_text_on(refresh_rect, refresh_hovered ? theme_.text_primary : theme_.accent,
-                            refresh_hovered ? theme_.row_highlight : theme_.surface_raised,
-                            "Refresh");
+      draw_action_button(collapse_rect, "Collapse", directory_tree_.CanCollapseAll());
+      draw_action_button(refresh_rect, "Refresh", true);
 
       const std::string tree_root_label = ProjectLabel();
       const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
       const float root_label_left = sidebar_mode_rect.x + sidebar_mode_rect.w + 10.0f;
-      const float root_label_right = refresh_rect.x - 10.0f;
+      const float root_label_right = collapse_rect.x - 10.0f;
       const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
       const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
       if (!root_label.empty()) {

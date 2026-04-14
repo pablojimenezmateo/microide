@@ -1126,6 +1126,7 @@ class WorkspaceShell {
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
+  SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;

@@ -38,7 +38,9 @@ class DirectoryTree {
   bool SelectPath(const std::filesystem::path& path);
   void ExpandSelection();
   void CollapseSelection();
+  void CollapseAll();
   std::optional<std::filesystem::path> ActivateSelection();
+  bool CanCollapseAll() const;
 
   const std::filesystem::path& root() const { return root_; }
   const std::vector<TreeEntry>& entries() const { return entries_; }

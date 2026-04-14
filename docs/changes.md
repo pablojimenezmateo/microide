@@ -1,0 +1,10 @@
+- Selecting text with the cursor does not copy it into the the special copy buffer, this should work for all editors and terminal
+- Pasting with middle mouse click from that same buffer
+- Double clicking the title bar should toggle full screen
+- Add a right click menu to the terminal to copy selected text, paste from the regular buffer
+- Wrong mouse cursor on the diff/merge editable panes, it shows a hand, should be the caret
+- In the diff view, the middle column where we show the state, is too thick, it should only be thick enough to cover the characters we show
+- In the diff view, we cannot resize panes
+- Remove from menu Project and Terminal, cleaning the code (no dead code)
+- Remove from menu View -> Focus options
+- Add an option to menu File -> 'Close all tabs' that should close all editor tabs, not the project tabs
