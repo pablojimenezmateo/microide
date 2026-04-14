@@ -1179,6 +1179,63 @@ void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
          "dragged editor tab should keep its buffer active");
 }
 
+void TestWorkspaceShellProjectTabWheelScrollsStrip() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+
+  for (int i = 0; i < 8; ++i) {
+    const std::filesystem::path root =
+        temp_dir.path() / ("project-" + std::to_string(i) + "-with-a-long-name");
+    WriteFile(root / "README.md", "root\n");
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+           "project fixture should open");
+  }
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 720);
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "first project should become active before the wheel scroll test");
+  const SDL_FRect first_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 0);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_WHEEL;
+  event.wheel.integer_y = -2;
+  event.wheel.y = -2.0f;
+  event.wheel.mouse_x = first_rect.x + first_rect.w * 0.5f;
+  event.wheel.mouse_y = first_rect.y + first_rect.h * 0.5f;
+
+  Expect(shell.HandleEvent(event), "mouse wheel over the project strip should be handled");
+  Expect(WorkspaceShellTestAccess::ProjectTabScrollIndex(shell) == 2,
+         "mouse wheel over the project strip should update the project strip scroll index");
+}
+
+void TestWorkspaceShellEditorTabWheelScrollsStrip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  for (int i = 0; i < 10; ++i) {
+    const std::filesystem::path file =
+        root / ("file-" + std::to_string(i) + "-with-a-very-long-name.cpp");
+    WriteFile(file, "int value() { return 1; }\n");
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file),
+           "editor tab fixture should open");
+  }
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 720);
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const SDL_FRect first_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_WHEEL;
+  event.wheel.integer_y = -3;
+  event.wheel.y = -3.0f;
+  event.wheel.mouse_x = first_rect.x + first_rect.w * 0.5f;
+  event.wheel.mouse_y = first_rect.y + first_rect.h * 0.5f;
+
+  Expect(shell.HandleEvent(event), "mouse wheel over the editor strip should be handled");
+  Expect(WorkspaceShellTestAccess::EditorTabScrollIndex(shell) == 3,
+         "mouse wheel over the editor strip should update the editor strip scroll index");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -1258,6 +1315,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",
           TestWorkspaceShellEditorTabsDragReorderBetweenTabs);
+  AddTest(tests, "WorkspaceShell/ProjectTabWheelScrollsStrip",
+          TestWorkspaceShellProjectTabWheelScrollsStrip);
+  AddTest(tests, "WorkspaceShell/EditorTabWheelScrollsStrip",
+          TestWorkspaceShellEditorTabWheelScrollsStrip);
 }
 
 }  // namespace microide::tests

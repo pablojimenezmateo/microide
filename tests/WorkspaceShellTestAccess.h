@@ -385,6 +385,10 @@ struct WorkspaceShellTestAccess {
     event.motion.state = state;
     return shell.HandleEvent(event);
   }
+  static int ProjectTabScrollIndex(const WorkspaceShell& shell) {
+    return shell.project_catalog_.tab_scroll_index;
+  }
+  static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.tab_scroll_index_; }
   static SDL_FRect ProjectTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),
