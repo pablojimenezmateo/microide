@@ -783,6 +783,7 @@ class WorkspaceShell {
   class SidebarCoordinator;
   class CompareInteractionCoordinator;
   class TabMouseCoordinator;
+  class SidebarMouseCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;

@@ -151,6 +151,31 @@ void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
          "rerunning project search should publish only the new query results");
 }
 
+void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "search click fixture should expose one result");
+  const SDL_FRect result_rect = WorkspaceShellTestAccess::ProjectSearchResultRect(shell, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, result_rect.x + result_rect.w * 0.5f,
+             result_rect.y + result_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking a project search result should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
+         "clicking a project search result should open the matched file");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "clicking a project search result should return focus to the editor");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
@@ -162,6 +187,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchCaseModeCycleReruns);
   AddTest(tests, "WorkspaceShell/ProjectSearchRerunClearsTruncation",
           TestWorkspaceShellProjectSearchRerunClearsTruncation);
+  AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickOpensResult",
+          TestWorkspaceShellProjectSearchSidebarClickOpensResult);
 }
 
 }  // namespace microide::tests

@@ -389,6 +389,18 @@ struct WorkspaceShellTestAccess {
     return shell.project_catalog_.tab_scroll_index;
   }
   static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.tab_scroll_index_; }
+  static SDL_FRect ProjectSearchResultRect(WorkspaceShell& shell, std::size_t result_index) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
+                      shell.surface_.bottom_panel_height);
+    const auto line_map = shell.BuildProjectSearchLineMap();
+    const auto list_layout =
+        shell.ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
+    const int line_index = shell.ProjectSearchLineForResult(result_index);
+    return ScrollableListRowRect(list_layout, line_index - list_layout.scroll_row);
+  }
   static SDL_FRect ProjectTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),

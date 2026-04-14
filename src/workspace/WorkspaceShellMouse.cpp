@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "editor/EditorViewRenderer.h"
+#include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
 
@@ -13,7 +14,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
 
 bool MergeHoverStatesEqual(const std::optional<MergeHoverState>& lhs,
@@ -273,245 +273,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (event.button.button == SDL_BUTTON_LEFT && surface_.sidebar_visible) {
-    if (surface_.sidebar_mode == SidebarMode::Search) {
-      const auto line_map = BuildProjectSearchLineMap();
-      const auto list_layout =
-          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
-      if (list_layout.scrollbar.has_value() &&
-          Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
-        surface_.drag_target = DragTarget::SidebarScrollbar;
-        surface_.drag_scrollbar_offset =
-            Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
-                : list_layout.scrollbar->thumb.h * 0.5f;
-        surface_.sidebar_scroll_row =
-            std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*list_layout.scrollbar,
-                                                static_cast<float>(event.button.y),
-                                                surface_.drag_scrollbar_offset))),
-                       0, list_layout.max_scroll);
-        surface_.focus = FocusTarget::Sidebar;
-        return true;
-      }
-    } else if (surface_.sidebar_mode == SidebarMode::Git) {
-      const auto lines = BuildGitSidebarLines();
-      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-      if (list_layout.scrollbar.has_value() &&
-          Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
-        surface_.drag_target = DragTarget::SidebarScrollbar;
-        surface_.drag_scrollbar_offset =
-            Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
-                : list_layout.scrollbar->thumb.h * 0.5f;
-        surface_.sidebar_scroll_row =
-            std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*list_layout.scrollbar,
-                                                static_cast<float>(event.button.y),
-                                                surface_.drag_scrollbar_offset))),
-                       0, list_layout.max_scroll);
-        surface_.focus = FocusTarget::Sidebar;
-        return true;
-      }
-    } else {
-      const auto& entries = directory_tree_.entries();
-      const auto list_layout =
-          ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-      if (list_layout.scrollbar.has_value() &&
-          Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
-        surface_.drag_target = DragTarget::SidebarScrollbar;
-        surface_.drag_scrollbar_offset =
-            Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
-                : list_layout.scrollbar->thumb.h * 0.5f;
-        surface_.sidebar_scroll_row =
-            std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*list_layout.scrollbar,
-                                                static_cast<float>(event.button.y),
-                                                surface_.drag_scrollbar_offset))),
-                       0, list_layout.max_scroll);
-        surface_.focus = FocusTarget::Sidebar;
-        return true;
-      }
-    }
-  }
-
-  if (TabMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+  if (SidebarMouseCoordinator(*this).HandleButtonDown(event, layout)) {
     return true;
   }
 
-  if (surface_.sidebar_visible && Contains(layout.sidebar, event.button.x, event.button.y)) {
-    surface_.focus = FocusTarget::Sidebar;
-    const float local_y =
-        event.button.y - (layout.sidebar.y + kSidebarHeaderHeight + 6.0f);
-
-    if (surface_.sidebar_mode == SidebarMode::Search) {
-      if (event.button.button != SDL_BUTTON_LEFT) {
-        return true;
-      }
-      if (Contains(ProjectSearchQueryRect(layout.sidebar), event.button.x, event.button.y)) {
-        BeginProjectSearchEdit(ProjectSearchEditField::Query);
-        return true;
-      }
-      if (Contains(ProjectSearchReplaceRect(layout.sidebar), event.button.x, event.button.y)) {
-        BeginProjectSearchEdit(ProjectSearchEditField::Replace);
-        return true;
-      }
-      if (Contains(ProjectSearchModeButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        if (overlay_workflow_.project_search.editing) {
-          CommitProjectSearchEdit();
-        }
-        ToggleProjectSearchPatternMode();
-        return true;
-      }
-      if (Contains(ProjectSearchCaseButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        if (overlay_workflow_.project_search.editing) {
-          CommitProjectSearchEdit();
-        }
-        CycleProjectSearchCaseMode();
-        return true;
-      }
-      if (Contains(ProjectSearchHiddenButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        if (overlay_workflow_.project_search.editing) {
-          CommitProjectSearchEdit();
-        }
-        ToggleProjectSearchHiddenFiles();
-        return true;
-      }
-      if (local_y < 0.0f) {
-        return true;
-      }
-
-      const auto line_map = BuildProjectSearchLineMap();
-      const auto list_layout =
-          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
-      if (const auto line_index =
-              ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-          line_index.has_value() && *line_index >= 0 &&
-          *line_index < static_cast<int>(line_map.size()) &&
-          line_map[static_cast<std::size_t>(*line_index)] >= 0) {
-        overlay_workflow_.project_search.selected_index =
-            static_cast<std::size_t>(line_map[static_cast<std::size_t>(*line_index)]);
-        const auto& result =
-            overlay_workflow_.project_search
-                .results[overlay_workflow_.project_search.selected_index];
-        OpenFile(project_root_ / result.relative_path);
-        text_viewport_.MoveCursorTo(result.line, result.column);
-        if (surface_.sidebar_temporary) {
-          RestorePreviousSidebar();
-        }
-        surface_.focus = FocusTarget::Editor;
-      }
-      return true;
-    }
-
-    if (surface_.sidebar_mode == SidebarMode::Git) {
-      if (event.button.button != SDL_BUTTON_LEFT) {
-        return true;
-      }
-      if (CanStageAllGitSidebarEntries() &&
-          Contains(GitSidebarStageAllButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        return StageAllGitSidebarEntries();
-      }
-      if (CanDiscardAllGitSidebarEntries() &&
-          Contains(GitSidebarDiscardAllButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        OpenDiscardAllGitSidebarPrompt();
-        return true;
-      }
-      if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-        return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
-      }
-      if (event.button.y < GitSidebarListTop(layout.sidebar)) {
-        return true;
-      }
-
-      const auto lines = BuildGitSidebarLines();
-      const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-      const auto line_index =
-          ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-      if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(lines.size())) {
-        return true;
-      }
-
-      const auto& line = lines[static_cast<std::size_t>(*line_index)];
-      if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
-        return true;
-      }
-
-      git_sidebar_.selected_index = static_cast<std::size_t>(line.entry_index);
-      const auto& entry = git_sidebar_.entries[git_sidebar_.selected_index];
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      const GitSidebarEntryActionLayout actions =
-          ComputeGitSidebarEntryActionLayout(row_rect, entry);
-      if (actions.primary_rect.has_value() &&
-          Contains(*actions.primary_rect, event.button.x, event.button.y)) {
-        if (entry.staged) {
-          UnstageGitSidebarEntry(git_sidebar_.selected_index);
-        } else {
-          StageGitSidebarEntry(git_sidebar_.selected_index);
-        }
-        return true;
-      }
-      if (actions.discard_rect.has_value() &&
-          Contains(*actions.discard_rect, event.button.x, event.button.y)) {
-        DiscardGitSidebarEntry(git_sidebar_.selected_index);
-        return true;
-      }
-      OpenGitSidebarEntry(git_sidebar_.selected_index);
-      return true;
-    }
-
-    if (event.button.button == SDL_BUTTON_LEFT &&
-        Contains(TreeSidebarRefreshButtonRect(layout.sidebar), event.button.x, event.button.y)) {
-      return ExecuteAction(ActionId::TreeRefresh, {}, ActionSource::Shortcut);
-    }
-
-    if (local_y < 0.0f) {
-      if (event.button.button == SDL_BUTTON_RIGHT) {
-        OpenTreeContextMenu(TreeContextTargetKind::Background, {},
-                            MakeRect(static_cast<float>(event.button.x),
-                                     static_cast<float>(event.button.y), 1.0f, 1.0f));
-      }
-      return true;
-    }
-
-    const auto& entries = directory_tree_.entries();
-    const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-    const auto entry_index =
-        ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-    if (entry_index.has_value() && *entry_index >= 0 &&
-        *entry_index < static_cast<int>(entries.size())) {
-      directory_tree_.SetSelectedIndex(static_cast<std::size_t>(*entry_index));
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *entry_index - list_layout.scroll_row);
-      if (Contains(row_rect, event.button.x, event.button.y) &&
-          event.button.button == SDL_BUTTON_RIGHT) {
-        const auto& entry = entries[static_cast<std::size_t>(*entry_index)];
-        const TreeContextTargetKind target =
-            !entry.is_directory ? TreeContextTargetKind::File
-            : entry.path == project_root_ ? TreeContextTargetKind::Root
-                                          : TreeContextTargetKind::Directory;
-        OpenTreeContextMenu(target, entry.path,
-                            MakeRect(static_cast<float>(event.button.x),
-                                     static_cast<float>(event.button.y), 1.0f, 1.0f));
-        return true;
-      }
-      if (Contains(row_rect, event.button.x, event.button.y) &&
-          event.button.button != SDL_BUTTON_RIGHT) {
-        const auto opened = directory_tree_.ActivateSelection();
-        if (opened.has_value()) {
-          OpenFile(*opened);
-        }
-      }
-      return true;
-    }
-    if (event.button.button == SDL_BUTTON_RIGHT) {
-      OpenTreeContextMenu(TreeContextTargetKind::Background, {},
-                          MakeRect(static_cast<float>(event.button.x),
-                                   static_cast<float>(event.button.y), 1.0f, 1.0f));
-    }
+  if (TabMouseCoordinator(*this).HandleButtonDown(event, layout)) {
     return true;
   }
 
@@ -1227,54 +993,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (surface_.drag_target == DragTarget::SidebarScrollbar && surface_.sidebar_visible) {
-      if (surface_.sidebar_mode == SidebarMode::Search) {
-        const auto line_map = BuildProjectSearchLineMap();
-        const auto list_layout =
-            ComputeProjectSearchSidebarListLayout(drag_layout.sidebar, line_map.size());
-        if (!list_layout.scrollbar.has_value()) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        surface_.sidebar_scroll_row =
-            std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*list_layout.scrollbar,
-                                                static_cast<float>(event.motion.y),
-                                                surface_.drag_scrollbar_offset))),
-                       0, list_layout.max_scroll);
-      } else if (surface_.sidebar_mode == SidebarMode::Git) {
-        const auto lines = BuildGitSidebarLines();
-        const auto list_layout = ComputeGitSidebarListLayout(drag_layout.sidebar, lines.size());
-        if (!list_layout.scrollbar.has_value()) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        surface_.sidebar_scroll_row =
-            std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*list_layout.scrollbar,
-                                                static_cast<float>(event.motion.y),
-                                                surface_.drag_scrollbar_offset))),
-                       0, list_layout.max_scroll);
-      } else {
-        const auto& entries = directory_tree_.entries();
-        const auto list_layout =
-            ComputeTreeSidebarListLayout(drag_layout.sidebar, entries.size());
-        if (!list_layout.scrollbar.has_value()) {
-          surface_.drag_target = DragTarget::None;
-          surface_.drag_scrollbar_offset = 0.0f;
-          return false;
-        }
-        surface_.sidebar_scroll_row =
-            std::clamp(static_cast<int>(std::lround(
-                           ScrollUnitsForPointer(*list_layout.scrollbar,
-                                                static_cast<float>(event.motion.y),
-                                                surface_.drag_scrollbar_offset))),
-                       0, list_layout.max_scroll);
-      }
-      surface_.focus = FocusTarget::Sidebar;
-      return true;
+    if (surface_.drag_target == DragTarget::SidebarScrollbar) {
+      return SidebarMouseCoordinator(*this).HandleDrag(event, drag_layout);
     }
 
     if (surface_.drag_target == DragTarget::BottomPanelScrollbar && BottomPanelVisible()) {
@@ -1678,21 +1398,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (surface_.sidebar_visible && Contains(layout.sidebar, event.wheel.mouse_x, event.wheel.mouse_y)) {
-    int max_scroll = 0;
-    if (surface_.sidebar_mode == SidebarMode::Search) {
-      const auto line_map = BuildProjectSearchLineMap();
-      max_scroll =
-          ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size()).max_scroll;
-    } else if (surface_.sidebar_mode == SidebarMode::Git) {
-      const auto lines = BuildGitSidebarLines();
-      max_scroll = ComputeGitSidebarListLayout(layout.sidebar, lines.size()).max_scroll;
-    } else {
-      const auto& entries = directory_tree_.entries();
-      max_scroll = ComputeTreeSidebarListLayout(layout.sidebar, entries.size()).max_scroll;
-    }
-    surface_.sidebar_scroll_row = std::clamp(surface_.sidebar_scroll_row - vertical_ticks, 0, max_scroll);
-    surface_.focus = FocusTarget::Sidebar;
+  if (SidebarMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
     return true;
   }
 
