@@ -60,9 +60,10 @@ Impact:
 - This makes failures harder to localize and encourages broad helper access into internals.
 
 Evidence:
-- `tests/WorkspaceShellProjectTests.cpp`: 1260 lines
+- `tests/WorkspaceShellProjectTests.cpp`: 1055 lines
 - `tests/WorkspaceShellCompareTests.cpp`: 341 lines
 - `tests/WorkspaceShellChromeTests.cpp`: 115 lines
+- `tests/WorkspaceShellEditorBlameTests.cpp`: 230 lines
 - `tests/WorkspaceShellSourceControlTests.cpp`: 119 lines
 - `tests/WorkspaceShellTerminalTests.cpp`: 570 lines
 
@@ -76,9 +77,10 @@ Recommendation:
 Addressed in this pass:
 - Compare and merge interaction coverage now lives in `tests/WorkspaceShellCompareTests.cpp`.
 - Menu and window-chrome interaction coverage now lives in `tests/WorkspaceShellChromeTests.cpp`.
+- Editor blame interaction coverage now lives in `tests/WorkspaceShellEditorBlameTests.cpp`.
 - Git sidebar and source-control interaction coverage now lives in `tests/WorkspaceShellSourceControlTests.cpp`.
 - `tests/WorkspaceShellProjectTests.cpp` is now narrower and focused on general project and editor behavior.
-- The next split should separate remaining editor-blame-focused coverage from general project interaction tests.
+- Further test splitting is no longer the recommended next step for this branch; the next priority is production-code debt in `WorkspaceShell`.
 
 ### 4. Git service execution is still shell-string based
 
@@ -110,5 +112,4 @@ Recommendation:
 
 1. Done in this pass: make `Outgoing files` align with configured PR base.
 2. Next: reduce `WorkspaceShell` blast radius around compare and chrome state.
-3. In progress: split the large workspace-shell test files by behavior domain, starting with compare and merge coverage.
-4. After that: replace shell-string git execution with a safer command layer.
+3. After that: replace shell-string git execution with a safer command layer.

@@ -194,6 +194,7 @@ add_executable(microide_tests
   tests/TextViewportTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceShellChromeTests.cpp
+  tests/WorkspaceShellEditorBlameTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
   tests/WorkspaceShellProjectTests.cpp
