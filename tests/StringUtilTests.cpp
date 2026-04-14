@@ -49,10 +49,15 @@ void TestStringUtilSplitLinesNormalizesMixedLineEndings() {
 void TestCompareModelHandlesCrLfInputViaSharedSplitter() {
   const auto model =
       microide::compare::BuildCompareModel("alpha\r\nbeta\r\n", "alpha\r\nbeta\r\ngamma\r\n");
-  Expect(model.rows.size() >= 3,
-         "compare model should keep line structure when fed CRLF content");
+  Expect(model.rows.size() == 4,
+         "compare model should preserve logical lines plus the shared trailing empty row");
   Expect(model.rows[0].left_text == "alpha" && model.rows[1].left_text == "beta",
          "compare model should split CRLF input into plain logical lines");
+  Expect(model.rows[2].kind == microide::compare::CompareRowKind::Added &&
+             model.rows[2].right_text == "gamma",
+         "compare model should preserve added CRLF lines under the shared splitter");
+  Expect(model.rows[3].left_text.empty() && model.rows[3].right_text.empty(),
+         "compare model should preserve the trailing empty row from TextViewport splitting");
 }
 
 }  // namespace

@@ -186,6 +186,7 @@ add_executable(microide_tests
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
   tests/ProjectSearchServiceTests.cpp
+  tests/RegexUtilTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp

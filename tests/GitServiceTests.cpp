@@ -128,9 +128,10 @@ void TestGitCompareFixture() {
       BuildCompareModel(ReadFile(base_dir / "src/session.cpp"), ReadFile(head_dir / "src/session.cpp"));
   const auto compare_summary = Summarize(compare_model);
   Expect(compare_model.hunks.size() == 3, "git session fixture should produce 3 hunks");
-  Expect(compare_model.rows.size() == 26, "git session fixture should produce 26 rows");
-  Expect(compare_summary.unchanged == 18,
-         "git session fixture should produce 18 unchanged rows");
+  Expect(compare_model.rows.size() == 27,
+         "git session fixture should preserve the terminal empty row");
+  Expect(compare_summary.unchanged == 19,
+         "git session fixture should keep unchanged rows plus the terminal empty row");
   Expect(compare_summary.modified == 2, "git session fixture should produce 2 modified rows");
   Expect(compare_summary.added == 6, "git session fixture should produce 6 added rows");
   Expect(compare_summary.deleted == 0, "git session fixture should produce 0 deleted rows");

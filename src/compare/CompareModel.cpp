@@ -62,20 +62,6 @@ bool ProductExceeds(std::size_t left, std::size_t right, std::size_t limit) {
   return left > limit / right;
 }
 
-std::vector<std::string> SplitCompareLines(std::string_view text) {
-  std::vector<std::string> lines = util::SplitLines(text);
-  if (!text.empty() && !lines.empty() && lines.back().empty()) {
-    const char last = text.back();
-    if (last == '\n' || last == '\r') {
-      lines.pop_back();
-    }
-  }
-  if (lines.empty()) {
-    lines.emplace_back();
-  }
-  return lines;
-}
-
 LineTokenKind ClassifyCodepoint(std::string_view text, std::size_t offset) {
   if (offset >= text.size()) {
     return LineTokenKind::Symbol;
@@ -528,8 +514,8 @@ std::vector<DiffOp> BuildFallbackOps(const std::vector<std::string>& left_lines,
 }  // namespace
 
 CompareModel BuildCompareModel(const std::string& left, const std::string& right) {
-  const auto left_lines = SplitCompareLines(left);
-  const auto right_lines = SplitCompareLines(right);
+  const auto left_lines = util::SplitLines(left);
+  const auto right_lines = util::SplitLines(right);
   CompareModel model;
 
   if (left_lines == right_lines) {

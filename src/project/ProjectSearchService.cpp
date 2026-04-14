@@ -1,20 +1,17 @@
-#define PCRE2_CODE_UNIT_WIDTH 8
-
 #include "project/ProjectSearchService.h"
-
-#include <pcre2.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <system_error>
-#include <utility>
 #include <vector>
 
 #include "project/ProjectFileScanner.h"
+#include "util/RegexUtil.h"
 
 namespace microide::project {
 
@@ -48,112 +45,43 @@ std::string ToLowerAscii(std::string_view text) {
   return lowered;
 }
 
-std::string BuildRegexErrorMessage(int error_code, PCRE2_SIZE error_offset) {
-  std::array<PCRE2_UCHAR, 256> buffer{};
-  const int length = pcre2_get_error_message(error_code, buffer.data(), buffer.size());
-  const std::string message =
-      length > 0 ? std::string(reinterpret_cast<const char*>(buffer.data()),
-                               static_cast<std::size_t>(length))
-                 : "invalid regular expression";
-  return "Invalid project search pattern at offset " + std::to_string(error_offset) + ": " +
-         message;
-}
-
-class CompiledSearchPattern {
- public:
-  CompiledSearchPattern(std::string_view query, ProjectSearchCaseMode case_mode) {
-    if (query.empty()) {
-      error_ = "Project search query is empty";
-      return;
-    }
-
-    const uint32_t options = UsesCaseSensitiveSearch(query, case_mode) ? 0u : PCRE2_CASELESS;
-    int error_code = 0;
-    PCRE2_SIZE error_offset = 0;
-    code_ = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(query.data()), query.size(), options,
-                          &error_code, &error_offset, nullptr);
-    if (code_ == nullptr) {
-      error_ = BuildRegexErrorMessage(error_code, error_offset);
-    }
-  }
-
-  ~CompiledSearchPattern() {
-    if (code_ != nullptr) {
-      pcre2_code_free(code_);
-      code_ = nullptr;
-    }
-  }
-
-  CompiledSearchPattern(const CompiledSearchPattern&) = delete;
-  CompiledSearchPattern& operator=(const CompiledSearchPattern&) = delete;
-
-  CompiledSearchPattern(CompiledSearchPattern&& other) noexcept
-      : code_(std::exchange(other.code_, nullptr)), error_(std::move(other.error_)) {}
-
-  CompiledSearchPattern& operator=(CompiledSearchPattern&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-    if (code_ != nullptr) {
-      pcre2_code_free(code_);
-    }
-    code_ = std::exchange(other.code_, nullptr);
-    error_ = std::move(other.error_);
-    return *this;
-  }
-
-  bool valid() const { return code_ != nullptr; }
-  const std::string& error() const { return error_; }
-
-  pcre2_match_data* CreateMatchData() const {
-    return valid() ? pcre2_match_data_create_from_pattern(code_, nullptr) : nullptr;
-  }
-
-  bool FindNext(std::string_view line,
-                std::size_t* search_from,
-                pcre2_match_data* match_data,
-                std::size_t* match_start,
-                std::size_t* match_end) const {
-    if (!valid() || search_from == nullptr || match_data == nullptr || match_start == nullptr ||
-        match_end == nullptr) {
-      return false;
-    }
-
-    while (*search_from <= line.size()) {
-      const int rc =
-          pcre2_match(code_, reinterpret_cast<PCRE2_SPTR>(line.data()), line.size(), *search_from,
-                      0, match_data, nullptr);
-      if (rc == PCRE2_ERROR_NOMATCH) {
-        return false;
-      }
-      if (rc < 0) {
-        return false;
-      }
-
-      PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(match_data);
-      const std::size_t start = static_cast<std::size_t>(ovector[0]);
-      const std::size_t end = static_cast<std::size_t>(ovector[1]);
-      if (start > line.size() || end > line.size()) {
-        return false;
-      }
-      if (start == end) {
-        *search_from = end < line.size() ? end + 1 : line.size() + 1;
-        continue;
-      }
-
-      *match_start = start;
-      *match_end = end;
-      *search_from = end;
-      return true;
-    }
-
+bool FindNextRegexMatch(const util::CompiledRegex& pattern,
+                        std::string_view line,
+                        std::size_t* search_from,
+                        util::RegexMatchData* match_data,
+                        std::size_t* match_start,
+                        std::size_t* match_end) {
+  if (!pattern.valid() || search_from == nullptr || match_data == nullptr ||
+      !match_data->valid() || match_start == nullptr || match_end == nullptr) {
     return false;
   }
 
- private:
-  pcre2_code* code_ = nullptr;
-  std::string error_;
-};
+  while (*search_from <= line.size()) {
+    const int rc = pattern.Match(line, *search_from, *match_data);
+    if (rc == PCRE2_ERROR_NOMATCH) {
+      return false;
+    }
+    if (rc < 0) {
+      return false;
+    }
+
+    util::RegexMatchRange range;
+    if (!pattern.CaptureRange(*match_data, line.size(), &range)) {
+      return false;
+    }
+    if (range.start == range.end) {
+      *search_from = range.end < line.size() ? range.end + 1 : line.size() + 1;
+      continue;
+    }
+
+    *match_start = range.start;
+    *match_end = range.end;
+    *search_from = range.end;
+    return true;
+  }
+
+  return false;
+}
 
 class PreparedLiteralQuery {
  public:
@@ -277,26 +205,26 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     return SearchCompletion{.error = "Failed to index project files"};
   }
 
-  std::unique_ptr<CompiledSearchPattern> regex_pattern;
+  std::optional<util::CompiledRegex> regex_pattern;
   std::unique_ptr<PreparedLiteralQuery> literal_query;
-  std::unique_ptr<pcre2_match_data, void (*)(pcre2_match_data*)> match_data_guard(
-      nullptr, [](pcre2_match_data* data) {
-        if (data != nullptr) {
-          pcre2_match_data_free(data);
-        }
-      });
+  util::RegexMatchData match_data;
 
   if (options.pattern_mode == ProjectSearchPatternMode::Regex) {
-    regex_pattern = std::make_unique<CompiledSearchPattern>(query, options.case_mode);
+    if (query.empty()) {
+      return SearchCompletion{.error = "Project search query is empty"};
+    }
+
+    const uint32_t regex_options = UsesCaseSensitiveSearch(query, options.case_mode) ? 0u
+                                                                                      : PCRE2_CASELESS;
+    regex_pattern.emplace(query, regex_options, "Invalid project search pattern");
     if (!regex_pattern->valid()) {
       return SearchCompletion{.error = regex_pattern->error()};
     }
 
-    pcre2_match_data* match_data = regex_pattern->CreateMatchData();
-    if (match_data == nullptr) {
+    match_data = regex_pattern->CreateMatchData();
+    if (!match_data.valid()) {
       return SearchCompletion{.error = "Failed to initialize project search matcher"};
     }
-    match_data_guard.reset(match_data);
   } else {
     literal_query = std::make_unique<PreparedLiteralQuery>(query, options.case_mode);
     if (!literal_query->valid()) {
@@ -342,9 +270,9 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       std::size_t search_from = 0;
       std::size_t match_start = 0;
       std::size_t match_end = 0;
-      while ((regex_pattern != nullptr &&
-              regex_pattern->FindNext(line, &search_from, match_data_guard.get(), &match_start,
-                                      &match_end)) ||
+      while ((regex_pattern.has_value() &&
+              FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data, &match_start,
+                                 &match_end)) ||
              (literal_query != nullptr &&
               literal_query->FindNext(line, &search_from, &match_start, &match_end))) {
         batch.push_back(ProjectSearchResult{

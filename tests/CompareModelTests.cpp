@@ -64,8 +64,8 @@ void TestCompareSimpleFixture() {
   const auto summary = Summarize(model);
 
   Expect(model.hunks.size() == 4, "simple diff should produce 4 hunks");
-  Expect(model.rows.size() == 10, "simple diff should produce 10 rows");
-  Expect(summary.unchanged == 4, "simple diff should produce 4 unchanged rows");
+  Expect(model.rows.size() == 11, "simple diff should preserve the terminal empty row");
+  Expect(summary.unchanged == 5, "simple diff should keep unchanged rows plus the terminal empty row");
   Expect(summary.modified == 3, "simple diff should produce 3 modified rows");
   Expect(summary.deleted == 1, "simple diff should produce 1 deleted row");
   Expect(summary.added == 2, "simple diff should produce 2 added rows");
@@ -75,8 +75,11 @@ void TestCompareSimpleFixture() {
   Expect(model.rows[1].right_text == "anchor-B-new", "row 2 right text mismatch");
   Expect(model.rows[3].hunk == 1, "fourth row should belong to second hunk");
   Expect(model.rows[7].kind == CompareRowKind::Deleted, "row 8 should be deleted");
-  Expect(model.rows[9].kind == CompareRowKind::Added, "last row should be added");
-  Expect(model.rows[9].right_text == "anchor-H-add-only", "last row text mismatch");
+  Expect(model.rows[9].kind == CompareRowKind::Added, "row 10 should be added");
+  Expect(model.rows[9].right_text == "anchor-H-add-only", "added row text mismatch");
+  Expect(model.rows[10].kind == CompareRowKind::Unchanged && model.rows[10].left_text.empty() &&
+             model.rows[10].right_text.empty(),
+         "simple diff should preserve the shared trailing empty line");
 }
 
 void TestCompareCodeFixture() {
@@ -86,8 +89,8 @@ void TestCompareCodeFixture() {
   const auto summary = Summarize(model);
 
   Expect(model.hunks.size() == 4, "code diff should produce 4 hunks");
-  Expect(model.rows.size() == 35, "code diff should produce 35 rows");
-  Expect(summary.unchanged == 29, "code diff should produce 29 unchanged rows");
+  Expect(model.rows.size() == 36, "code diff should preserve the terminal empty row");
+  Expect(summary.unchanged == 30, "code diff should keep unchanged rows plus the terminal empty row");
   Expect(summary.modified == 5, "code diff should produce 5 modified rows");
   Expect(summary.deleted == 0, "code diff should produce 0 deleted rows");
   Expect(summary.added == 1, "code diff should produce 1 added row");
@@ -113,7 +116,7 @@ void TestCompareCodeFixture() {
 }
 
 void TestCompareAsciiChangedSpans() {
-  const auto model = BuildCompareModel("alpha uvw omega\n", "alpha xyz omega\n");
+  const auto model = BuildCompareModel("alpha uvw omega", "alpha xyz omega");
   Expect(model.rows.size() == 1, "ascii span diff should produce one row");
   const auto& row = model.rows.front();
   Expect(row.kind == CompareRowKind::Modified, "ascii span row should be modified");
@@ -126,7 +129,7 @@ void TestCompareAsciiChangedSpans() {
 }
 
 void TestCompareUtf8ChangedSpans() {
-  const auto model = BuildCompareModel("a😀x\n", "a😃x\n");
+  const auto model = BuildCompareModel("a😀x", "a😃x");
   Expect(model.rows.size() == 1, "utf8 span diff should produce one row");
   const auto& row = model.rows.front();
   Expect(row.kind == CompareRowKind::Modified, "utf8 span row should be modified");
@@ -271,16 +274,21 @@ void TestCompareLargeInputsUseBoundedFallback() {
   const auto model = BuildCompareModel(left, right);
   const auto summary = Summarize(model);
 
-  Expect(model.rows.size() == 1502, "large fallback compare should preserve row cardinality");
+  Expect(model.rows.size() == 1503,
+         "large fallback compare should preserve row cardinality including the terminal empty row");
   Expect(model.hunks.size() == 1, "large fallback compare should produce one changed hunk");
-  Expect(summary.unchanged == 2, "large fallback compare should preserve shared prefix and suffix");
+  Expect(summary.unchanged == 3,
+         "large fallback compare should preserve shared prefix, suffix, and terminal empty row");
   Expect(summary.modified == 1500, "large fallback compare should pair middle rows as modified");
   Expect(model.rows.front().kind == CompareRowKind::Unchanged &&
              model.rows.front().left_text == "header",
          "large fallback compare should keep the shared prefix unchanged");
-  Expect(model.rows.back().kind == CompareRowKind::Unchanged &&
-             model.rows.back().right_text == "footer",
+  Expect(model.rows[model.rows.size() - 2].kind == CompareRowKind::Unchanged &&
+             model.rows[model.rows.size() - 2].right_text == "footer",
          "large fallback compare should keep the shared suffix unchanged");
+  Expect(model.rows.back().kind == CompareRowKind::Unchanged &&
+             model.rows.back().left_text.empty() && model.rows.back().right_text.empty(),
+         "large fallback compare should preserve the shared trailing empty row");
 }
 
 void TestCompareLargeInputsUseCoarseChangedSpans() {
@@ -320,8 +328,9 @@ void TestCompareLargeIdenticalInputsStayUnchanged() {
   const auto model = BuildCompareModel(text, text);
   const auto summary = Summarize(model);
   Expect(model.hunks.empty(), "large identical compare should not create hunks");
-  Expect(model.rows.size() == 3000, "large identical compare should keep all rows");
-  Expect(summary.unchanged == 3000 && summary.added == 0 && summary.deleted == 0 &&
+  Expect(model.rows.size() == 3001,
+         "large identical compare should keep all rows including the terminal empty row");
+  Expect(summary.unchanged == 3001 && summary.added == 0 && summary.deleted == 0 &&
              summary.modified == 0,
          "large identical compare should be fully unchanged");
 }

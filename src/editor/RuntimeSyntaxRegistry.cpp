@@ -1,11 +1,6 @@
-#define PCRE2_CODE_UNIT_WIDTH 8
-
 #include "editor/RuntimeSyntaxRegistry.h"
 
-#include <pcre2.h>
-
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstdint>
 #include <optional>
@@ -15,6 +10,7 @@
 #include <vector>
 
 #include "editor/RuntimeSyntaxData.h"
+#include "util/RegexUtil.h"
 
 namespace microide::editor::runtime_syntax {
 
@@ -33,155 +29,108 @@ struct RegionStartMatch {
   MatchRange match;
 };
 
-class CompiledRegex {
- public:
-  CompiledRegex() = default;
+using CompiledRegex = util::CompiledRegex;
+std::vector<MatchRange> FindAllRegex(std::string_view text, const CompiledRegex& pattern);
 
-  explicit CompiledRegex(std::string_view pattern) : pattern_(NormalizePattern(pattern)) {
-    if (pattern_.empty()) {
-      return;
+std::string NormalizePattern(std::string_view pattern) {
+  std::string normalized;
+  normalized.reserve(pattern.size());
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    if (pattern[i] == '\\' && i + 1 < pattern.size() &&
+        (pattern[i + 1] == '<' || pattern[i + 1] == '>')) {
+      normalized += "\\b";
+      ++i;
+      continue;
     }
+    normalized.push_back(pattern[i]);
+  }
+  return normalized;
+}
 
-    int error_code = 0;
-    PCRE2_SIZE error_offset = 0;
-    code_ = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern_.c_str()), PCRE2_ZERO_TERMINATED,
-                          kRegexCompileOptions, &error_code, &error_offset, nullptr);
+CompiledRegex CompileSyntaxRegex(std::string_view pattern) {
+  return CompiledRegex(NormalizePattern(pattern), kRegexCompileOptions);
+}
+
+std::size_t AdvanceToNextCodePoint(std::string_view text, std::size_t offset) {
+  if (offset >= text.size()) {
+    return text.size() + 1;
   }
 
-  ~CompiledRegex() {
-    if (code_ != nullptr) {
-      pcre2_code_free(code_);
-      code_ = nullptr;
+  std::size_t next = offset + 1;
+  while (next < text.size() && (static_cast<unsigned char>(text[next]) & 0xc0u) == 0x80u) {
+    ++next;
+  }
+  return next;
+}
+
+std::optional<MatchRange> FindFirstRegex(std::string_view text,
+                                         const CompiledRegex& pattern,
+                                         const CompiledRegex* skip = nullptr) {
+  if (!pattern.valid()) {
+    return std::nullopt;
+  }
+  if (skip != nullptr && skip->valid()) {
+    std::string masked(text);
+    for (const MatchRange match : FindAllRegex(text, *skip)) {
+      std::fill(masked.begin() + static_cast<std::ptrdiff_t>(match.start),
+                masked.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
     }
+    return FindFirstRegex(masked, pattern, nullptr);
   }
 
-  CompiledRegex(const CompiledRegex&) = delete;
-  CompiledRegex& operator=(const CompiledRegex&) = delete;
-
-  CompiledRegex(CompiledRegex&& other) noexcept
-      : code_(std::exchange(other.code_, nullptr)), pattern_(std::move(other.pattern_)) {}
-
-  CompiledRegex& operator=(CompiledRegex&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-    if (code_ != nullptr) {
-      pcre2_code_free(code_);
-    }
-    code_ = std::exchange(other.code_, nullptr);
-    pattern_ = std::move(other.pattern_);
-    return *this;
+  auto match_data = pattern.CreateMatchData();
+  if (!match_data.valid()) {
+    return std::nullopt;
   }
 
-  bool valid() const { return code_ != nullptr; }
-
-  bool Matches(std::string_view text) const { return FindFirst(text).has_value(); }
-
-  std::optional<MatchRange> FindFirst(std::string_view text,
-                                      const CompiledRegex* skip = nullptr) const {
-    if (!valid()) {
-      return std::nullopt;
-    }
-    if (skip != nullptr && skip->valid()) {
-      std::string masked(text);
-      for (const MatchRange match : skip->FindAll(text)) {
-        std::fill(masked.begin() + static_cast<std::ptrdiff_t>(match.start),
-                  masked.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
-      }
-      return FindFirst(masked, nullptr);
-    }
-    return FindFirstFrom(text, 0);
+  const int rc = pattern.Match(text, 0, match_data);
+  if (rc < 0) {
+    return std::nullopt;
   }
 
-  std::vector<MatchRange> FindAll(std::string_view text) const {
-    std::vector<MatchRange> matches;
-    if (!valid() || text.empty()) {
-      return matches;
-    }
+  util::RegexMatchRange range;
+  if (!pattern.CaptureRange(match_data, text.size(), &range) || range.start >= range.end) {
+    return std::nullopt;
+  }
+  return MatchRange{range.start, range.end};
+}
 
-    pcre2_match_data* match_data = pcre2_match_data_create_from_pattern(code_, nullptr);
-    if (match_data == nullptr) {
-      return matches;
-    }
-
-    for (std::size_t offset = 0; offset <= text.size();) {
-      const int rc = pcre2_match(code_, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
-                                 offset, 0, match_data, nullptr);
-      if (rc < 0) {
-        break;
-      }
-
-      PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(match_data);
-      const std::size_t start = static_cast<std::size_t>(ovector[0]);
-      const std::size_t end = static_cast<std::size_t>(ovector[1]);
-      if (start >= end || end > text.size()) {
-        offset = AdvanceToNextCodePoint(text, end);
-        continue;
-      }
-
-      matches.push_back(MatchRange{start, end});
-      offset = end;
-    }
-
-    pcre2_match_data_free(match_data);
+std::vector<MatchRange> FindAllRegex(std::string_view text, const CompiledRegex& pattern) {
+  std::vector<MatchRange> matches;
+  if (!pattern.valid() || text.empty()) {
     return matches;
   }
 
- private:
-  static std::string NormalizePattern(std::string_view pattern) {
-    std::string normalized;
-    normalized.reserve(pattern.size());
-    for (std::size_t i = 0; i < pattern.size(); ++i) {
-      if (pattern[i] == '\\' && i + 1 < pattern.size() &&
-          (pattern[i + 1] == '<' || pattern[i + 1] == '>')) {
-        normalized += "\\b";
-        ++i;
-        continue;
-      }
-      normalized.push_back(pattern[i]);
-    }
-    return normalized;
+  auto match_data = pattern.CreateMatchData();
+  if (!match_data.valid()) {
+    return matches;
   }
 
-  std::optional<MatchRange> FindFirstFrom(std::string_view text, std::size_t offset) const {
-    pcre2_match_data* match_data = pcre2_match_data_create_from_pattern(code_, nullptr);
-    if (match_data == nullptr) {
-      return std::nullopt;
-    }
-
-    const int rc = pcre2_match(code_, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
-                               offset, 0, match_data, nullptr);
+  for (std::size_t offset = 0; offset <= text.size();) {
+    const int rc = pattern.Match(text, offset, match_data);
     if (rc < 0) {
-      pcre2_match_data_free(match_data);
-      return std::nullopt;
+      break;
     }
 
-    PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(match_data);
-    const std::size_t start = static_cast<std::size_t>(ovector[0]);
-    const std::size_t end = static_cast<std::size_t>(ovector[1]);
-    pcre2_match_data_free(match_data);
-    if (start >= end || end > text.size()) {
-      return std::nullopt;
+    util::RegexMatchRange range;
+    if (!pattern.CaptureRange(match_data, text.size(), &range)) {
+      break;
     }
-    return MatchRange{start, end};
+    if (range.start >= range.end) {
+      offset = AdvanceToNextCodePoint(text, range.end);
+      continue;
+    }
+
+    matches.push_back(MatchRange{range.start, range.end});
+    offset = range.end;
   }
 
-  static std::size_t AdvanceToNextCodePoint(std::string_view text, std::size_t offset) {
-    if (offset >= text.size()) {
-      return text.size() + 1;
-    }
+  return matches;
+}
 
-    std::size_t next = offset + 1;
-    while (next < text.size() &&
-           (static_cast<unsigned char>(text[next]) & 0xc0u) == 0x80u) {
-      ++next;
-    }
-    return next;
-  }
-
-  pcre2_code* code_ = nullptr;
-  std::string pattern_;
-};
+bool RegexMatches(std::string_view text, const CompiledRegex& pattern) {
+  return FindFirstRegex(text, pattern).has_value();
+}
 
 struct Rule {
   GeneratedRuleKind kind = GeneratedRuleKind::Pattern;
@@ -278,16 +227,16 @@ Registry BuildRegistry() {
     rule.limit_group =
         TokenKindForGroupName(generated.limit_group_name == nullptr ? "" : generated.limit_group_name);
     if (generated.pattern != nullptr) {
-      rule.pattern = CompiledRegex(generated.pattern);
+      rule.pattern = CompileSyntaxRegex(generated.pattern);
     }
     if (generated.start_regex != nullptr) {
-      rule.start = CompiledRegex(generated.start_regex);
+      rule.start = CompileSyntaxRegex(generated.start_regex);
     }
     if (generated.end_regex != nullptr) {
-      rule.end = CompiledRegex(generated.end_regex);
+      rule.end = CompileSyntaxRegex(generated.end_regex);
     }
     if (generated.skip_regex != nullptr) {
-      rule.skip = CompiledRegex(generated.skip_regex);
+      rule.skip = CompileSyntaxRegex(generated.skip_regex);
     }
     rule.first_child = generated.first_child;
     rule.child_count = generated.child_count;
@@ -301,13 +250,13 @@ Registry BuildRegistry() {
     Definition definition;
     definition.filetype = generated.filetype == nullptr ? "" : generated.filetype;
     if (generated.filename_regex != nullptr) {
-      definition.filename_regex = CompiledRegex(generated.filename_regex);
+      definition.filename_regex = CompileSyntaxRegex(generated.filename_regex);
     }
     if (generated.header_regex != nullptr) {
-      definition.header_regex = CompiledRegex(generated.header_regex);
+      definition.header_regex = CompileSyntaxRegex(generated.header_regex);
     }
     if (generated.signature_regex != nullptr) {
-      definition.signature_regex = CompiledRegex(generated.signature_regex);
+      definition.signature_regex = CompileSyntaxRegex(generated.signature_regex);
     }
     definition.first_rule = generated.first_rule;
     definition.rule_count = generated.rule_count;
@@ -376,7 +325,7 @@ void ApplyPatternRules(const Registry& registry,
       continue;
     }
 
-    for (const MatchRange match : rule.pattern.FindAll(segment)) {
+    for (const MatchRange match : FindAllRegex(segment, rule.pattern)) {
       MarkRange(tokens, absolute_offset + match.start, absolute_offset + match.end, rule.group);
     }
   }
@@ -396,8 +345,8 @@ std::optional<RegionStartMatch> FindEarliestRegionStart(const Registry& registry
       continue;
     }
 
-    const std::optional<MatchRange> match = rule.start.FindFirst(
-        segment, rule.skip.valid() ? &rule.skip : nullptr);
+    const std::optional<MatchRange> match =
+        FindFirstRegex(segment, rule.start, rule.skip.valid() ? &rule.skip : nullptr);
     if (!match.has_value() || match->start >= search_limit) {
       continue;
     }
@@ -488,7 +437,7 @@ std::size_t HighlightRegion(const Registry& registry,
   while (cursor <= line.size()) {
     const std::string_view tail = line.substr(cursor);
     const std::optional<MatchRange> end_match =
-        region->end.FindFirst(tail, region->skip.valid() ? &region->skip : nullptr);
+        FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr);
     const bool closes_immediately = end_match.has_value() && end_match->start == 0;
     const std::size_t search_limit = end_match.has_value() ? end_match->start : tail.size();
     const Definition* definition = DefinitionById(registry, definition_id);
@@ -560,12 +509,12 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
     const Definition& definition = registry.definitions[i];
     const std::uint32_t definition_id = static_cast<std::uint32_t>(i + 1);
 
-    if (definition.filename_regex.valid() && definition.filename_regex.Matches(path_text)) {
+    if (definition.filename_regex.valid() && RegexMatches(path_text, definition.filename_regex)) {
       filename_matches.push_back(definition_id);
       continue;
     }
     if (filename_matches.empty() && definition.header_regex.valid() &&
-        definition.header_regex.Matches(header_line)) {
+        RegexMatches(header_line, definition.header_regex)) {
       header_matches.push_back(definition_id);
     }
   }
@@ -586,7 +535,7 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
       continue;
     }
     for (std::size_t i = 0; i < line_limit; ++i) {
-      if (definition->signature_regex.Matches((*lines)[i])) {
+      if (RegexMatches((*lines)[i], definition->signature_regex)) {
         return definition_id;
       }
     }
