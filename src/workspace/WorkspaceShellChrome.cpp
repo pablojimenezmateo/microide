@@ -11,8 +11,6 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kBottomPanelHeaderButtonSize = 18.0f;
-constexpr float kTabCloseButtonSize = 14.0f;
-constexpr float kTabCloseButtonRightInset = 6.0f;
 
 }  // namespace
 
@@ -31,8 +29,8 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::BuildVisibleStripTa
   const auto visible = ComputeVisibleStripLayouts(widths, start_x, gap, max_tab_x, scroll_index);
   const auto models =
       BuildChromeTabRenderItems(visible, tab_y, tab_height, model_indices, active_index,
-                                display_titles, tooltip_labels, kTabCloseButtonSize,
-                                kTabCloseButtonRightInset);
+                                display_titles, tooltip_labels, kWorkspaceTabCloseButtonSize,
+                                kWorkspaceTabCloseButtonRightInset);
 
   std::vector<VisibleStripTab> tabs;
   tabs.reserve(models.size());
@@ -69,8 +67,7 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
     widths.push_back(ProjectTabWidthForIndex(i));
   }
 
-  const float strip_width =
-      last_window_width_ > 0 ? static_cast<float>(last_window_width_) : 1440.0f;
+  const float strip_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1440.0f;
   const float start_x = 12.0f;
   const float gap = 1.0f;
   const float max_tab_x = std::max(start_x + 120.0f, strip_width - 12.0f);
@@ -133,7 +130,7 @@ void WorkspaceShell::EnsureActiveTabVisible() {
   }
 
   const float tab_strip_width =
-      last_window_width_ > 0 ? static_cast<float>(last_window_width_) : 1440.0f;
+      CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1440.0f;
   const float start_x = 12.0f;
   const float gap = 1.0f;
   const float right_reserve = std::clamp(tab_strip_width * 0.22f, 160.0f, 240.0f);

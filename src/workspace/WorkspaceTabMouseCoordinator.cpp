@@ -3,11 +3,12 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/WorkspaceShellShared.h"
+
 namespace microide::workspace {
 
 namespace {
 
-constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kTabDragStartDistance = 6.0f;
 
 template <typename VisibleTabType>
@@ -117,7 +118,8 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
   }
 
   const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
-                                          layout.bottom_panel.w, kBottomPanelHeaderHeight);
+                                          layout.bottom_panel.w,
+                                          kWorkspaceBottomPanelHeaderHeight);
   if (shell_.ActiveTerminalTab() == nullptr ||
       !Contains(panel_header, event.button.x, event.button.y)) {
     return false;
@@ -197,11 +199,11 @@ bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
   }
   shell_.tab_drag_state_.dragging = true;
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                    static_cast<float>(shell_.last_window_height_),
-                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return false;
+  }
+  const WorkspaceLayout layout = *layout_state;
   switch (shell_.tab_drag_state_.kind) {
     case TabDragKind::Project:
       if (Contains(layout.project_tab_strip, event.motion.x, event.motion.y) &&
@@ -237,7 +239,7 @@ bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
       if (shell_.BottomPanelVisible()) {
         const SDL_FRect panel_header =
             MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-                     kBottomPanelHeaderHeight);
+                     kWorkspaceBottomPanelHeaderHeight);
         if (Contains(panel_header, event.motion.x, event.motion.y) &&
             !shell_.terminal_tabs_.empty()) {
           const auto visible_tabs = shell_.ComputeVisibleTerminalTabs(panel_header);

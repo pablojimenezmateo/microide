@@ -12,8 +12,6 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kCompareDividerHitWidth = 12.0f;
-constexpr float kScrollbarThickness = 10.0f;
-constexpr float kScrollbarInset = 2.0f;
 
 std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   std::size_t max_columns = 0;
@@ -630,9 +628,9 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
     layout.rows_y = rect.y + layout.line_height + 12.0f;
 
     const float reserved_width =
-        reserve_vertical ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+        reserve_vertical ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
     const float reserved_height =
-        reserve_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+        reserve_horizontal ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
     const float content_width =
         std::max(40.0f,
                  rect.w - reserved_width - layout.gutter_width * 2.0f - layout.divider_width -

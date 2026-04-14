@@ -12,8 +12,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kScrollbarThickness = 10.0f;
-constexpr float kScrollbarInset = 2.0f;
 constexpr float kMergeToolbarHeight = 36.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
@@ -85,10 +83,14 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     layout.header_y = rect.y + kMergeToolbarHeight + 4.0f;
     layout.rows_y = rect.y + kMergeToolbarHeight + layout.line_height + 12.0f;
 
-    const float reserved_width =
-        reserve_vertical ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
-    const float reserved_height =
-        reserve_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+    const float reserved_width = reserve_vertical
+                                     ? (kWorkspaceScrollbarThickness +
+                                        kWorkspaceScrollbarInset)
+                                     : 0.0f;
+    const float reserved_height = reserve_horizontal
+                                      ? (kWorkspaceScrollbarThickness +
+                                         kWorkspaceScrollbarInset)
+                                      : 0.0f;
     const float content_width = std::max(
         kMinMergePaneWidth * 3.0f,
         rect.w - reserved_width - layout.gutter_width * 3.0f - layout.divider_width * 2.0f -
@@ -200,8 +202,10 @@ WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayo
     const SDL_FRect& rect,
     const MergeSurfaceLayout& surface,
     MergeTabState& merge_tab) const {
-  const float bottom_reserved =
-      surface.show_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
+  const float bottom_reserved = surface.show_horizontal
+                                    ? (kWorkspaceScrollbarThickness +
+                                       kWorkspaceScrollbarInset)
+                                    : 0.0f;
   return MergeInteractionLayout{
       .content_bottom = rect.y + std::max(0.0f, rect.h - bottom_reserved),
       .result = BuildMergeResultInteractionLayout(rect, surface, merge_tab),

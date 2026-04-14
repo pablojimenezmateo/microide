@@ -6,15 +6,6 @@
 
 namespace microide::workspace {
 
-namespace {
-
-constexpr float kWindowControlButtonGap = 4.0f;
-constexpr float kWindowControlButtonRightInset = 8.0f;
-constexpr float kMenuPopupSeparatorHeight = 8.0f;
-constexpr float kMenuPopupItemHeight = 22.0f;
-
-}  // namespace
-
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuItems(
     TreeContextTargetKind target) {
   const auto item = [](ActionId action, std::string_view label = {}) {
@@ -113,14 +104,16 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
 std::vector<WorkspaceShell::VisibleWindowControlButton>
 WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) const {
   std::vector<VisibleWindowControlButton> buttons;
-  if (!window_chrome_.custom_enabled) {
+  if (!CurrentWindowChromeState().custom_enabled) {
     return buttons;
   }
 
   const float button_size = std::max(18.0f, menu_bar.h - 6.0f);
-  const float total_width = button_size * 3.0f + kWindowControlButtonGap * 2.0f;
+  const float total_width =
+      button_size * 3.0f + kWorkspaceWindowControlButtonGap * 2.0f;
   const float start_x =
-      menu_bar.x + std::max(0.0f, menu_bar.w - total_width - kWindowControlButtonRightInset);
+      menu_bar.x + std::max(0.0f, menu_bar.w - total_width -
+                                      kWorkspaceWindowControlButtonRightInset);
   const float y = menu_bar.y + (menu_bar.h - button_size) * 0.5f;
   static constexpr auto kButtonIds = std::to_array<WindowControlButtonId>({
       WindowControlButtonId::Minimize,
@@ -137,7 +130,7 @@ WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) co
         .hovered =
             last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
     });
-    x += button_size + kWindowControlButtonGap;
+    x += button_size + kWorkspaceWindowControlButtonGap;
   }
   return buttons;
 }
@@ -154,12 +147,12 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
   float height = 12.0f;
   for (const MenuItemSpec& item : items) {
     if (item.separator) {
-      height += kMenuPopupSeparatorHeight;
+      height += kWorkspaceMenuPopupSeparatorHeight;
       continue;
     }
     width = std::max(width, text_renderer_.MeasureWidth(MenuItemLabel(item)) +
                                 text_renderer_.MeasureWidth(MenuItemAccelerator(item)) + 68.0f);
-    height += kMenuPopupItemHeight;
+    height += kWorkspaceMenuPopupItemHeight;
   }
 
   const float max_width = std::max(172.0f, bounds.w - 8.0f);
@@ -205,7 +198,8 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
   float y = popup_rect.y + 6.0f;
   for (std::size_t i = 0; i < items.size(); ++i) {
     const MenuItemSpec& item = items[i];
-    const float height = item.separator ? kMenuPopupSeparatorHeight : kMenuPopupItemHeight;
+    const float height = item.separator ? kWorkspaceMenuPopupSeparatorHeight
+                                        : kWorkspaceMenuPopupItemHeight;
     const SDL_FRect rect =
         MakeRect(popup_rect.x + 6.0f, y, std::max(0.0f, popup_rect.w - 12.0f), height);
     visible_items.push_back(VisiblePopupMenuItem{

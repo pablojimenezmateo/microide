@@ -15,10 +15,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kScrollbarReserve = 12.0f;
-constexpr float kCompareMarkerLaneWidth = 6.0f;
-constexpr float kCompareMarkerLaneGap = 3.0f;
-
 SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
   const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
   const auto blend = [&](Uint8 base_component, Uint8 tint_component) {
@@ -233,8 +229,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
           ? BuildCompareBlameOverlay(*compare_tab, surface, rect)
           : std::nullopt;
   visible_editor_blame_overlay_ = blame_overlay;
-  const float bottom_reserved = surface.show_horizontal ? kScrollbarReserve : 0.0f;
-  const float right_reserved = surface.show_vertical ? kScrollbarReserve : 0.0f;
+  const float bottom_reserved =
+      surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
+  const float right_reserved =
+      surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
   const float divider_x = surface.center_x;
@@ -494,9 +492,9 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_F
   if (scroll_layout.vertical_scrollbar.has_value()) {
     const SDL_FRect marker_lane = MakeRect(
         std::max(editor_surface.x,
-                 scroll_layout.vertical_scrollbar->track.x - kCompareMarkerLaneGap -
-                     kCompareMarkerLaneWidth),
-        scroll_layout.vertical_scrollbar->track.y, kCompareMarkerLaneWidth,
+                 scroll_layout.vertical_scrollbar->track.x - kWorkspaceDiffMarkerLaneGap -
+                     kWorkspaceDiffMarkerLaneWidth),
+        scroll_layout.vertical_scrollbar->track.y, kWorkspaceDiffMarkerLaneWidth,
         scroll_layout.vertical_scrollbar->track.h);
     const SDL_FRect marker_inner_lane =
         MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f, std::max(0.0f, marker_lane.w - 2.0f),

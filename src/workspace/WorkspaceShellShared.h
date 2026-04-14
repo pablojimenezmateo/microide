@@ -330,6 +330,36 @@ inline constexpr std::array<float, 10> kUiScalePresets = {
 inline constexpr float kMinUiScale = kUiScalePresets.front();
 inline constexpr float kMaxUiScale = kUiScalePresets.back();
 
+inline constexpr float kWorkspaceHeaderHeight = 26.0f;
+inline constexpr float kWorkspaceDividerThickness = 1.0f;
+inline constexpr float kWorkspaceResizeHandleThickness = 6.0f;
+inline constexpr float kWorkspaceScrollbarThickness = 10.0f;
+inline constexpr float kWorkspaceScrollbarInset = 2.0f;
+inline constexpr float kWorkspaceScrollbarMinThumbLength = 24.0f;
+inline constexpr float kWorkspaceMinSidebarWidth = 160.0f;
+inline constexpr float kWorkspaceMaxSidebarWidth = 520.0f;
+inline constexpr float kWorkspaceMinEditorAreaWidth = 280.0f;
+inline constexpr float kWorkspaceMinBottomPanelHeight = 96.0f;
+inline constexpr float kWorkspaceMinEditorAreaHeight = 120.0f;
+inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;
+inline constexpr float kWorkspaceBottomPanelCommandReserveHeight = 56.0f;
+inline constexpr float kWorkspaceBottomPanelCommandPromptHeight = 18.0f;
+inline constexpr float kWorkspaceBottomPanelCommandInset = 10.0f;
+inline constexpr float kWorkspaceBottomPanelCommandTopPadding = 8.0f;
+inline constexpr float kWorkspaceBottomPanelCommandBottomPadding = 8.0f;
+inline constexpr float kWorkspaceOverlayMaxHeight = 360.0f;
+inline constexpr float kWorkspaceEditorSplitDividerThickness = 6.0f;
+inline constexpr float kWorkspaceMinSplitPaneExtent = 180.0f;
+inline constexpr float kWorkspaceWindowControlButtonGap = 4.0f;
+inline constexpr float kWorkspaceWindowControlButtonRightInset = 8.0f;
+inline constexpr float kWorkspaceTabCloseButtonSize = 14.0f;
+inline constexpr float kWorkspaceTabCloseButtonRightInset = 6.0f;
+inline constexpr float kWorkspaceMenuPopupSeparatorHeight = 8.0f;
+inline constexpr float kWorkspaceMenuPopupItemHeight = 22.0f;
+inline constexpr float kWorkspaceDiffScrollbarReserve = 12.0f;
+inline constexpr float kWorkspaceDiffMarkerLaneWidth = 6.0f;
+inline constexpr float kWorkspaceDiffMarkerLaneGap = 3.0f;
+
 std::string UiScaleLabel(float scale);
 std::optional<float> ParseUiScaleValue(std::string_view text);
 float StepUiScale(float current_scale, int delta);

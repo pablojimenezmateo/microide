@@ -8,6 +8,11 @@ Scope:
 - `tests/*`
 - recent compare, terminal, window-chrome, and source-control changes
 
+Update:
+- The app-tech-debt roadmap items that came out of this review are now complete.
+- Remaining debt in this area is lower priority than the items captured below and is no longer
+  tracked as an active app-roadmap slice.
+
 ## Highest Impact Debt
 
 ### 1. Source Control outgoing files were not reliably PR-base-aware
@@ -35,7 +40,7 @@ Remaining caveat:
 - If the local branch has no explicit PR-base metadata, the fallback is still heuristic.
 - This is much safer than before, but not a complete PR integration layer.
 
-## Next Debt Items
+## Follow-up Notes
 
 ### 2. `WorkspaceShell` remains a high-blast-radius object
 
@@ -59,6 +64,8 @@ Addressed in this pass:
 - Application-to-shell window updates now flow through a single `WindowPresentationState`
   snapshot carrying logical size, presentation scale, and chrome state together.
 - `Application` no longer keeps a separate `custom_window_chrome_enabled_` flag.
+- `WorkspaceShell` no longer keeps separate `last_window_width_`, `last_window_height_`, or
+  standalone `window_chrome_` fields after receiving that snapshot.
 - Shell callers that need the current window bounds or workspace layout now reuse
   `CurrentWindowRect()` and `CurrentWorkspaceLayout()` instead of repeating ad hoc width/height
   guards and `ComputeLayout(...)` calls.
@@ -68,6 +75,10 @@ Addressed in this pass:
 - Merge tab access, layout, scroll, interaction, hover classification, and reveal helpers now live in `WorkspaceShellMerge.cpp` instead of `WorkspaceShell.cpp`.
 - Merge result text-input placement and merge scrollbar rendering now route through merge-owned
   helpers instead of being inlined in `WorkspaceShellRender.cpp`.
+- Merge rendering ownership now lives in `WorkspaceShellMergeRender.cpp` instead of staying mixed
+  into compare rendering.
+- Shared workspace geometry metrics now live in `WorkspaceShellShared.h`, and the render/chrome/
+  compare/merge units now consume those shared constants instead of repeating raw values.
 - `WorkspaceShell.cpp` is smaller and no longer owns as much compare-specific mechanics directly.
 
 ### 3. Workspace-shell tests are too monolithic
@@ -100,7 +111,7 @@ Addressed in this pass:
 - `tests/WorkspaceShellProjectTests.cpp` is now narrower and focused on general project and editor behavior.
 - Further test splitting is no longer the recommended next step for this branch; the next priority is production-code debt in `WorkspaceShell`.
 
-### 4. Git service execution is still shell-string based
+### 4. Git service execution was shell-string based
 
 Impact:
 - Medium
@@ -111,9 +122,11 @@ Evidence:
 - `src/project/GitCommandUtil.h` constructs shell commands directly.
 - `GitCompareService.cpp` still composes git queries as raw shell strings.
 
-Recommendation:
-- Introduce a small argument-vector command runner for git operations.
-- Keep shell fallback only where absolutely necessary.
+Addressed in this pass:
+- `GitCommandUtil.h` now provides an argument-vector runner for git operations.
+- `GitRepository`, `GitCompareService`, and `GitBlameService` now invoke git through argv-based
+  calls instead of shell-string composition.
+- Regression coverage now includes quoted and spaced repository paths.
 
 ### 5. Window chrome state is spread across app and workspace layers
 
@@ -130,11 +143,14 @@ Addressed in this pass:
 - `WorkspaceShell` now stores window chrome state in a dedicated `WindowChromeState` struct instead of separate booleans.
 - `Application` now captures SDL window mode into that shared state before handing it to the shell.
 - Shell-side hit testing, menu chrome, and window-control rendering now consume the shared state helpers instead of recomputing combined flags.
+- That shared state is now part of the shell’s single `WindowPresentationState` snapshot instead of
+  being mirrored by separate shell-local caches.
 
 ## Recommended Order
 
 1. Done in this pass: make `Outgoing files` align with configured PR base.
-2. In progress: reduce `WorkspaceShell` blast radius around compare and chrome state.
-3. Next: reduce shell-internal reliance on loose cached window width/height now that presentation
-   state enters through one snapshot.
-4. After that: replace shell-string git execution with a safer command layer.
+2. Done in follow-up passes: reduce `WorkspaceShell` blast radius around compare, merge, and
+   chrome state.
+3. Done in follow-up passes: replace shell-internal loose window caches with one presentation
+   snapshot model.
+4. Done in follow-up passes: replace shell-string git execution with an argv-based command layer.
