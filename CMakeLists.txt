@@ -127,6 +127,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
+  src/workspace/WorkspaceShellMergeRender.cpp
   src/workspace/WorkspaceSidebarCoordinator.cpp
   src/workspace/WorkspaceSidebarMouseCoordinator.cpp
   src/workspace/WorkspaceTabMouseCoordinator.cpp
