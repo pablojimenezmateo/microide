@@ -16,6 +16,8 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kScrollbarReserve = 12.0f;
+constexpr float kCompareMarkerLaneWidth = 6.0f;
+constexpr float kCompareMarkerLaneGap = 3.0f;
 
 SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
   const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
@@ -73,6 +75,70 @@ SDL_Color CompareTokenColor(const render::Theme& theme,
     default:
       return selected ? theme.text_primary : fallback;
   }
+}
+
+SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
+  switch (kind) {
+    case compare::CompareRowKind::Added:
+      return theme.diff_added;
+    case compare::CompareRowKind::Deleted:
+      return theme.diff_deleted;
+    case compare::CompareRowKind::Modified:
+      return theme.diff_modified;
+    case compare::CompareRowKind::Unchanged:
+    default:
+      return theme.text_muted;
+  }
+}
+
+void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
+                                 const render::Theme& theme,
+                                 const SDL_FRect& track,
+                                 const compare::CompareModel& model) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  const auto markers = BuildCompareScrollbarMarkers(track, model);
+  for (const CompareScrollbarMarker& marker : markers) {
+    const SDL_Color color = CompareMarkerColor(theme, marker.kind);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderFillRect(renderer, &marker.rect);
+  }
+}
+
+void DrawScrollbarTrack(SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& track) {
+  if (renderer == nullptr || track.w <= 0.0f || track.h <= 0.0f) {
+    return;
+  }
+
+  SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
+                         theme.surface_raised.b, theme.surface_raised.a);
+  SDL_RenderFillRect(renderer, &track);
+}
+
+void DrawScrollbarThumb(SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& thumb,
+                        bool active = false) {
+  if (renderer == nullptr || thumb.w <= 0.0f || thumb.h <= 0.0f) {
+    return;
+  }
+
+  const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
+  SDL_SetRenderDrawColor(renderer, thumb_color.r, thumb_color.g, thumb_color.b, thumb_color.a);
+  SDL_RenderFillRect(renderer, &thumb);
+}
+
+void DrawScrollbar(SDL_Renderer* renderer,
+                   const render::Theme& theme,
+                   const SDL_FRect& track,
+                   const SDL_FRect& thumb,
+                   bool active = false) {
+  DrawScrollbarTrack(renderer, theme, track);
+  DrawScrollbarThumb(renderer, theme, thumb, active);
 }
 
 }  // namespace
@@ -409,6 +475,44 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       }
     }
     draw_text(divider_x, surface.divider_width, marker_color, std::string(1, marker));
+  }
+}
+
+void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (renderer == nullptr || compare_tab == nullptr) {
+    return;
+  }
+
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(editor_surface, *compare_tab);
+  const auto scroll_layout =
+      ComputeCompareScrollLayout(editor_surface, surface_layout, *compare_tab);
+  compare_tab->scroll_row = scroll_layout.vertical_scroll;
+  compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+
+  if (scroll_layout.vertical_scrollbar.has_value()) {
+    const SDL_FRect marker_lane = MakeRect(
+        std::max(editor_surface.x,
+                 scroll_layout.vertical_scrollbar->track.x - kCompareMarkerLaneGap -
+                     kCompareMarkerLaneWidth),
+        scroll_layout.vertical_scrollbar->track.y, kCompareMarkerLaneWidth,
+        scroll_layout.vertical_scrollbar->track.h);
+    const SDL_FRect marker_inner_lane =
+        MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f, std::max(0.0f, marker_lane.w - 2.0f),
+                 std::max(0.0f, marker_lane.h - 2.0f));
+    DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
+    DrawRect(renderer, marker_lane, theme_.border);
+    DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
+    DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+    DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
+                       surface_.drag_target == DragTarget::CompareVerticalScrollbar);
+  }
+
+  if (scroll_layout.horizontal_scrollbar.has_value()) {
+    DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+                  scroll_layout.horizontal_scrollbar->thumb,
+                  surface_.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
 }
 

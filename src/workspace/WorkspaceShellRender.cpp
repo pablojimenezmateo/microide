@@ -60,20 +60,6 @@ void DrawScrollbar(SDL_Renderer* renderer,
   DrawScrollbarThumb(renderer, theme, thumb, active);
 }
 
-SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
-  switch (kind) {
-    case compare::CompareRowKind::Added:
-      return theme.diff_added;
-    case compare::CompareRowKind::Deleted:
-      return theme.diff_deleted;
-    case compare::CompareRowKind::Modified:
-      return theme.diff_modified;
-    case compare::CompareRowKind::Unchanged:
-    default:
-      return theme.text_muted;
-  }
-}
-
 SDL_Color MergeMarkerColor(const render::Theme& theme,
                            compare::MergeChoice choice,
                            bool valid) {
@@ -91,22 +77,6 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
     case compare::MergeChoice::Base:
     default:
       return theme.diff_deleted;
-  }
-}
-
-void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
-                                 const render::Theme& theme,
-                                 const SDL_FRect& track,
-                                 const compare::CompareModel& model) {
-  if (renderer == nullptr) {
-    return;
-  }
-
-  const auto markers = BuildCompareScrollbarMarkers(track, model);
-  for (const CompareScrollbarMarker& marker : markers) {
-    const SDL_Color color = CompareMarkerColor(theme, marker.kind);
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderFillRect(renderer, &marker.rect);
   }
 }
 
@@ -828,38 +798,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   if (ActiveTabIsCompare()) {
-    CompareTabState* compare_tab = ActiveCompareTab();
-    if (compare_tab != nullptr) {
-      const CompareSurfaceLayout surface_layout =
-          ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-      const auto scroll_layout =
-          ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
-      compare_tab->scroll_row = scroll_layout.vertical_scroll;
-      compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-      if (scroll_layout.vertical_scrollbar.has_value()) {
-        const SDL_FRect marker_lane = MakeRect(
-            std::max(layout.editor_surface.x,
-                     scroll_layout.vertical_scrollbar->track.x - kCompareMarkerLaneGap -
-                         kCompareMarkerLaneWidth),
-            scroll_layout.vertical_scrollbar->track.y, kCompareMarkerLaneWidth,
-            scroll_layout.vertical_scrollbar->track.h);
-        const SDL_FRect marker_inner_lane =
-            MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
-                     std::max(0.0f, marker_lane.w - 2.0f),
-                     std::max(0.0f, marker_lane.h - 2.0f));
-        DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
-        DrawRect(renderer, marker_lane, theme_.border);
-        DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
-        DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
-        DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                           surface_.drag_target == DragTarget::CompareVerticalScrollbar);
-      }
-      if (scroll_layout.horizontal_scrollbar.has_value()) {
-        DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
-                      scroll_layout.horizontal_scrollbar->thumb,
-                      surface_.drag_target == DragTarget::CompareHorizontalScrollbar);
-      }
-    }
+    RenderCompareScrollbars(renderer, layout.editor_surface);
   } else if (ActiveTabIsMerge()) {
     MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab != nullptr) {

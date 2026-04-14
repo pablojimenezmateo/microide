@@ -65,6 +65,8 @@ Next step:
 Progress in this pass:
 - Compare editor text-input visual placement now routes through a compare-owned helper instead of
   being inlined inside the main `WorkspaceShell::Render()` text-input switch.
+- Compare scrollbar and marker rendering now routes through a compare-owned helper instead of
+  being inlined in the main render function.
 
 ### 4. Merge layout/state still mirrors the old compare debt shape
 

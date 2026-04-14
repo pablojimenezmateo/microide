@@ -1426,6 +1426,7 @@ class WorkspaceShell {
   SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
                                   const CompareSurfaceLayout& surface) const;
   std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface);
+  void RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void UpdateMouseCursor(float x, float y);
