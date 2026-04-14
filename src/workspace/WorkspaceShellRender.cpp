@@ -23,8 +23,6 @@ constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 constexpr float kScrollbarThickness = 10.0f;
 constexpr float kBottomPanelCommandTopPadding = 8.0f;
-constexpr float kCompareMarkerLaneWidth = 6.0f;
-constexpr float kCompareMarkerLaneGap = 3.0f;
 
 void DrawScrollbarTrack(SDL_Renderer* renderer,
                         const render::Theme& theme,
@@ -58,43 +56,6 @@ void DrawScrollbar(SDL_Renderer* renderer,
                    bool active = false) {
   DrawScrollbarTrack(renderer, theme, track);
   DrawScrollbarThumb(renderer, theme, thumb, active);
-}
-
-SDL_Color MergeMarkerColor(const render::Theme& theme,
-                           compare::MergeChoice choice,
-                           bool valid) {
-  if (!valid) {
-    return theme.text_disabled;
-  }
-
-  switch (choice) {
-    case compare::MergeChoice::Incoming:
-      return theme.diff_added;
-    case compare::MergeChoice::Current:
-      return theme.diff_modified;
-    case compare::MergeChoice::Both:
-      return theme.accent;
-    case compare::MergeChoice::Base:
-    default:
-      return theme.diff_deleted;
-  }
-}
-
-void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
-                               const render::Theme& theme,
-                               const SDL_FRect& track,
-                               std::size_t total_rows,
-                               const std::vector<MergeScrollbarMarkerInput>& inputs) {
-  if (renderer == nullptr) {
-    return;
-  }
-
-  const auto markers = BuildMergeScrollbarMarkers(track, total_rows, inputs);
-  for (const MergeScrollbarMarker& marker : markers) {
-    const SDL_Color color = MergeMarkerColor(theme, marker.choice, marker.valid);
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderFillRect(renderer, &marker.rect);
-  }
 }
 
 char GitMarker(project::GitFileStatus status) {
@@ -388,27 +349,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           return BuildCompareTextInputVisual(layout.editor_surface);
         }
         if (ActiveTabIsMerge()) {
-          MergeTabState* merge_tab = ActiveMergeTab();
-          if (merge_tab == nullptr) {
-            return std::nullopt;
-          }
-          const MergeSurfaceLayout surface_layout =
-              ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-          const MergeResultInteractionLayout interaction =
-              BuildMergeResultInteractionLayout(layout.editor_surface, surface_layout, *merge_tab);
-          const float cursor_x =
-              TextGridCursorX(interaction.text, merge_tab->result_viewport.cursor_visual_column());
-          const float cursor_y = TextGridLineY(interaction.text, merge_tab->result_viewport.cursor_line());
-          return TextInputVisual{
-              .surface = surface,
-              .area = MakeRect(cursor_x, cursor_y - 1.0f, interaction.text.char_width,
-                               interaction.text.line_height),
-              .text_x = cursor_x,
-              .text_y = cursor_y,
-              .cursor_x = cursor_x,
-              .foreground = theme_.text_primary,
-              .background = theme_.editor_background,
-          };
+          return BuildMergeTextInputVisual(layout.editor_surface);
         }
         if (!active_editor_pane_rect.has_value()) {
           return std::nullopt;
@@ -800,57 +741,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   if (ActiveTabIsCompare()) {
     RenderCompareScrollbars(renderer, layout.editor_surface);
   } else if (ActiveTabIsMerge()) {
-    MergeTabState* merge_tab = ActiveMergeTab();
-    if (merge_tab != nullptr) {
-      const MergeSurfaceLayout surface_layout =
-          ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-      const auto scroll_layout =
-          ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
-      merge_tab->scroll_row = scroll_layout.vertical_scroll;
-      merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-      const std::size_t line_count =
-          std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
-                    merge_tab->model.current_lines.size(), std::size_t{1}});
-      if (scroll_layout.vertical_scrollbar.has_value()) {
-        const SDL_FRect marker_lane = MakeRect(
-            std::max(layout.editor_surface.x,
-                     scroll_layout.vertical_scrollbar->track.x - kCompareMarkerLaneGap -
-                         kCompareMarkerLaneWidth),
-            scroll_layout.vertical_scrollbar->track.y, kCompareMarkerLaneWidth,
-            scroll_layout.vertical_scrollbar->track.h);
-        const SDL_FRect marker_inner_lane =
-            MakeRect(marker_lane.x + 1.0f, marker_lane.y + 1.0f,
-                     std::max(0.0f, marker_lane.w - 2.0f),
-                     std::max(0.0f, marker_lane.h - 2.0f));
-        std::vector<MergeScrollbarMarkerInput> inputs;
-        inputs.reserve(merge_tab->conflicts.size());
-        for (const auto& conflict : merge_tab->conflicts) {
-          const int start_row = static_cast<int>(std::min(
-              {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
-          const int end_row = static_cast<int>(std::max(
-              {std::max(conflict.incoming_end_line, conflict.incoming_start_line + 1),
-               std::max(conflict.end_line, conflict.start_line + 1),
-               std::max(conflict.current_end_line, conflict.current_start_line + 1)}));
-          inputs.push_back(MergeScrollbarMarkerInput{
-              .start_row = start_row,
-              .end_row = end_row,
-              .choice = conflict.last_choice,
-              .valid = conflict.valid,
-          });
-        }
-        DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
-        DrawRect(renderer, marker_lane, theme_.border);
-        DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs);
-        DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
-        DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                           surface_.drag_target == DragTarget::CompareVerticalScrollbar);
-      }
-      if (scroll_layout.horizontal_scrollbar.has_value()) {
-        DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
-                      scroll_layout.horizontal_scrollbar->thumb,
-                      surface_.drag_target == DragTarget::CompareHorizontalScrollbar);
-      }
-    }
+    RenderMergeScrollbars(renderer, layout.editor_surface);
   } else {
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
     auto* editor_tab = ActiveEditorTab();
