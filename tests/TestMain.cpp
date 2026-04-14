@@ -17,6 +17,7 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
@@ -44,6 +45,7 @@ int main() {
   microide::tests::RegisterStringUtilTests(tests);
   microide::tests::RegisterTextViewportTests(tests);
   microide::tests::RegisterWindowPresentationTests(tests);
+  microide::tests::RegisterWorkspaceShellChromeTests(tests);
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
   microide::tests::RegisterWorkspaceShellCompareTests(tests);
   microide::tests::RegisterWorkspaceShellProjectTests(tests);
