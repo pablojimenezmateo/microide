@@ -21,8 +21,13 @@ std::string ReadFile(const std::filesystem::path& path);
 void WriteFile(const std::filesystem::path& path, const std::string& content);
 void CopyTree(const std::filesystem::path& source, const std::filesystem::path& destination);
 std::string ShellEscape(std::string_view text);
+std::string EscapedRepoPath(const std::filesystem::path& repo_path);
 int RunCommand(const std::string& command);
 void RequireCommandSuccess(const std::string& command, std::string_view context);
+void InitializeGitRepo(const std::filesystem::path& repo_path);
+void CommitAll(const std::filesystem::path& repo_path,
+               std::string_view message,
+               std::string_view context);
 
 class TemporaryDirectory {
  public:

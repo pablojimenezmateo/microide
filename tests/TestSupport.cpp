@@ -73,6 +73,10 @@ std::string ShellEscape(std::string_view text) {
   return escaped;
 }
 
+std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
+  return ShellEscape(repo_path.string());
+}
+
 int RunCommand(const std::string& command) {
   return std::system(command.c_str());
 }
@@ -81,6 +85,32 @@ void RequireCommandSuccess(const std::string& command, std::string_view context)
   if (RunCommand(command) != 0) {
     throw std::runtime_error(std::string(context) + ": command failed: " + command);
   }
+}
+
+void InitializeGitRepo(const std::filesystem::path& repo_path) {
+  const std::string escaped_repo = EscapedRepoPath(repo_path);
+  RequireCommandSuccess(
+      "git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
+      "git init");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
+      "git config user.name");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo +
+          "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
+      "git config user.email");
+}
+
+void CommitAll(const std::filesystem::path& repo_path,
+               std::string_view message,
+               std::string_view context) {
+  const std::string escaped_repo = EscapedRepoPath(repo_path);
+  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null",
+                        std::string(context) + " add");
+  RequireCommandSuccess(
+      "git -C '" + escaped_repo + "' commit -m '" + std::string(message) +
+          "' >/dev/null 2>/dev/null",
+      std::string(context) + " commit");
 }
 
 TemporaryDirectory::TemporaryDirectory() {

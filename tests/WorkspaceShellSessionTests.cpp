@@ -17,36 +17,6 @@ using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 using microide::compare::MergeChoice;
 
-std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
-  return ShellEscape(repo_path.string());
-}
-
-void InitializeGitRepo(const std::filesystem::path& repo_path) {
-  const std::string escaped_repo = EscapedRepoPath(repo_path);
-  RequireCommandSuccess(
-      "git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
-      "git init");
-  RequireCommandSuccess(
-      "git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
-      "git config user.name");
-  RequireCommandSuccess(
-      "git -C '" + escaped_repo +
-          "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
-      "git config user.email");
-}
-
-void CommitAll(const std::filesystem::path& repo_path,
-               std::string_view message,
-               std::string_view context) {
-  const std::string escaped_repo = EscapedRepoPath(repo_path);
-  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null",
-                        std::string(context) + " add");
-  RequireCommandSuccess(
-      "git -C '" + escaped_repo + "' commit -m '" + std::string(message) +
-          "' >/dev/null 2>/dev/null",
-      std::string(context) + " commit");
-}
-
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
