@@ -360,6 +360,80 @@ void TestWorkspaceShellTerminalTabsDragReorderToStart() {
          "dragged terminal tab should stay active after reordering");
 }
 
+void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  std::string transcript;
+  for (int i = 0; i < 40; ++i) {
+    transcript += "line " + std::to_string(i) + "\n";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, transcript);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
+
+  const SDL_FRect panel_rect = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  Expect(WorkspaceShellTestAccess::HandleMouseWheel(
+             shell, panel_rect.x + 12.0f, panel_rect.y + 12.0f, -3),
+         "mouse wheel over the bottom panel should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == 3,
+         "mouse wheel over the bottom panel should advance the transcript scroll row");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "mouse wheel over the bottom panel should keep panel focus");
+}
+
+void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "select me");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  const SDL_FPoint end = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start.x, start.y,
+                                                         SDL_BUTTON_LEFT),
+         "pressing inside the terminal panel should start transcript selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK),
+         "dragging inside the terminal panel should update transcript selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end.x, end.y,
+                                                       SDL_BUTTON_LEFT),
+         "releasing inside the terminal panel should end transcript selection");
+
+  Expect(WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "dragging across terminal cells should create a selection");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) == "select",
+         "terminal drag selection should capture the selected transcript text");
+}
+
+void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetMouseTracking(session, true, false, false);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point.x, point.y,
+                                                         SDL_BUTTON_LEFT),
+         "mouse presses should be handled when the terminal requests mouse capture");
+  Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "mouse-captured presses should not create a transcript selection");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "mouse-captured presses should keep panel focus");
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, point.x, point.y,
+                                                       SDL_BUTTON_LEFT),
+         "mouse releases should be handled when the terminal requests mouse capture");
+  Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "mouse-captured releases should leave transcript selection disabled");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
@@ -397,6 +471,12 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",
           TestWorkspaceShellTerminalTabsDragReorderToStart);
+  AddTest(tests, "WorkspaceShell/BottomPanelWheelScrollsTranscript",
+          TestWorkspaceShellBottomPanelWheelScrollsTranscript);
+  AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
+          TestWorkspaceShellTerminalDragSelectsTranscriptText);
+  AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
+          TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
 }
 
 }  // namespace microide::tests

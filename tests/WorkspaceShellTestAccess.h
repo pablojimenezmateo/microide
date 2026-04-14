@@ -385,10 +385,61 @@ struct WorkspaceShellTestAccess {
     event.motion.state = state;
     return shell.HandleEvent(event);
   }
+  static bool HandleMouseWheel(WorkspaceShell& shell,
+                               float x,
+                               float y,
+                               int vertical_ticks,
+                               int horizontal_ticks = 0) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_WHEEL;
+    event.wheel.mouse_x = x;
+    event.wheel.mouse_y = y;
+    event.wheel.integer_x = horizontal_ticks;
+    event.wheel.integer_y = vertical_ticks;
+    event.wheel.x = static_cast<float>(horizontal_ticks);
+    event.wheel.y = static_cast<float>(vertical_ticks);
+    return shell.HandleEvent(event);
+  }
   static int ProjectTabScrollIndex(const WorkspaceShell& shell) {
     return shell.project_catalog_.tab_scroll_index;
   }
   static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.tab_scroll_index_; }
+  static SDL_FRect BottomPanelContentRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_),
+                      shell.surface_.sidebar_visible, shell.BottomPanelVisible(),
+                      shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    return microide::workspace::BottomPanelContentRect(layout, shell.surface_.command_mode);
+  }
+  static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
+                                      std::size_t row,
+                                      std::size_t column) {
+    const auto* terminal_tab = shell.ActiveTerminalTab();
+    const auto lines = terminal_tab != nullptr ? terminal_tab->session.SnapshotLines()
+                                               : std::vector<microide::terminal::TerminalLine>{};
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_),
+                      shell.surface_.sidebar_visible, shell.BottomPanelVisible(),
+                      shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const auto panel_layout = shell.ComputeBottomPanelLogLayout(layout, lines.size());
+    return SDL_FPoint{
+        .x = panel_layout.text_x +
+             static_cast<float>(column) * std::max(1.0f, shell.text_renderer_.CharWidth()) + 1.0f,
+        .y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height +
+             panel_layout.line_height * 0.5f,
+    };
+  }
+  static bool TerminalHasSelection(const WorkspaceShell& shell) {
+    return shell.TerminalHasSelection();
+  }
+  static std::string ActiveTerminalSelectedText(WorkspaceShell& shell) {
+    auto* terminal_tab = shell.ActiveTerminalTab();
+    return terminal_tab != nullptr
+               ? shell.SelectedTerminalText(terminal_tab->session.SnapshotLines())
+               : std::string{};
+  }
   static SDL_FRect ProjectSearchResultRect(WorkspaceShell& shell, std::size_t result_index) {
     const WorkspaceLayout layout =
         ComputeLayout(static_cast<float>(shell.last_window_width_),

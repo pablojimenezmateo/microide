@@ -69,6 +69,16 @@ struct TerminalSessionTestAccess {
     session.running_ = running;
   }
 
+  static void SetMouseTracking(microide::terminal::TerminalSession& session,
+                               bool normal,
+                               bool drag,
+                               bool any) {
+    std::scoped_lock lock(session.mutex_);
+    session.mouse_tracking_normal_ = normal;
+    session.mouse_tracking_drag_ = drag;
+    session.mouse_tracking_any_ = any;
+  }
+
   static std::string SentBytes(const microide::terminal::TerminalSession& session) {
 #ifdef MICROIDE_TESTING
     std::scoped_lock lock(session.mutex_);
