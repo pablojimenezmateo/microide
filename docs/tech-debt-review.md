@@ -56,6 +56,7 @@ Recommendation:
 Addressed in this pass:
 - Window chrome state now flows through a shared `WindowChromeState` struct instead of separate shell booleans.
 - Compare divider hit-testing, active compare tab access, compare surface layout, compare scroll calculations, and compare selection reveal logic now live in `WorkspaceShellCompare.cpp` instead of `WorkspaceShell.cpp`.
+- Compare editor text-input visual placement now routes through a compare-owned helper instead of being inlined in the main render switch.
 - `WorkspaceShell.cpp` is smaller and no longer owns as much compare-specific mechanics directly.
 
 ### 3. Workspace-shell tests are too monolithic

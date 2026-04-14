@@ -407,15 +407,6 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   const auto draw_text = [&](float x, float y, SDL_Color foreground, std::string_view text) {
     text_renderer_.DrawString(renderer, x, y, foreground, text);
   };
-  struct TextInputVisual {
-    TextInputSurface surface = TextInputSurface::None;
-    SDL_FRect area{};
-    float text_x = 0.0f;
-    float text_y = 0.0f;
-    float cursor_x = 0.0f;
-    SDL_Color foreground{};
-    SDL_Color background{};
-  };
   const auto active_text_input_visual = [&]() -> std::optional<TextInputVisual> {
     const TextInputSurface surface = CurrentTextInputSurface();
     const float line_height = text_renderer_.LineHeight();
@@ -424,28 +415,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     switch (surface) {
       case TextInputSurface::Editor: {
         if (ActiveTabIsCompare()) {
-          CompareTabState* compare_tab = ActiveCompareTab();
-          if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
-            return std::nullopt;
-          }
-          const CompareSurfaceLayout surface_layout =
-              ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-          const TextGridInteractionLayout interaction =
-              BuildCompareRightInteractionLayout(surface_layout, *compare_tab);
-          const std::size_t model_row =
-              CompareRowIndexForRightLine(*compare_tab, compare_tab->right_viewport.cursor_line());
-          const float cursor_x =
-              TextGridCursorX(interaction, compare_tab->right_viewport.cursor_visual_column());
-          const float cursor_y = TextGridLineY(interaction, model_row);
-          return TextInputVisual{
-              .surface = surface,
-              .area = MakeRect(cursor_x, cursor_y - 1.0f, interaction.char_width, interaction.line_height),
-              .text_x = cursor_x,
-              .text_y = cursor_y,
-              .cursor_x = cursor_x,
-              .foreground = theme_.text_primary,
-              .background = theme_.editor_background,
-          };
+          return BuildCompareTextInputVisual(layout.editor_surface);
         }
         if (ActiveTabIsMerge()) {
           MergeTabState* merge_tab = ActiveMergeTab();

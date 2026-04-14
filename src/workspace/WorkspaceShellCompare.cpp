@@ -753,6 +753,33 @@ void WorkspaceShell::RevealActiveCompareSelection() {
   }
 }
 
+std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextInputVisual(
+    const SDL_FRect& editor_surface) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
+    return std::nullopt;
+  }
+
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(editor_surface, *compare_tab);
+  const TextGridInteractionLayout interaction =
+      BuildCompareRightInteractionLayout(surface_layout, *compare_tab);
+  const std::size_t model_row =
+      CompareRowIndexForRightLine(*compare_tab, compare_tab->right_viewport.cursor_line());
+  const float cursor_x =
+      TextGridCursorX(interaction, compare_tab->right_viewport.cursor_visual_column());
+  const float cursor_y = TextGridLineY(interaction, model_row);
+  return TextInputVisual{
+      .surface = TextInputSurface::Editor,
+      .area = MakeRect(cursor_x, cursor_y - 1.0f, interaction.char_width, interaction.line_height),
+      .text_x = cursor_x,
+      .text_y = cursor_y,
+      .cursor_x = cursor_x,
+      .foreground = theme_.text_primary,
+      .background = theme_.editor_background,
+  };
+}
+
 void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
   const std::string right_content =
       SerializeLines(compare_tab.right_viewport.lines(), compare_tab.right_viewport.line_ending());

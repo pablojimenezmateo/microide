@@ -268,6 +268,16 @@ class WorkspaceShell {
     bool show_horizontal = false;
   };
 
+  struct TextInputVisual {
+    TextInputSurface surface = TextInputSurface::None;
+    SDL_FRect area{};
+    float text_x = 0.0f;
+    float text_y = 0.0f;
+    float cursor_x = 0.0f;
+    SDL_Color foreground{};
+    SDL_Color background{};
+  };
+
   struct MergeSurfaceLayout {
     float line_height = 14.0f;
     float gutter_width = 28.0f;
@@ -1415,6 +1425,7 @@ class WorkspaceShell {
   bool CaretVisibleNow() const;
   SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
                                   const CompareSurfaceLayout& surface) const;
+  std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface);
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void UpdateMouseCursor(float x, float y);
