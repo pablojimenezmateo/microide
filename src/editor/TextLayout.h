@@ -37,7 +37,6 @@ class TextLayout {
   static std::size_t AdvanceVisualColumn(std::size_t visual_column,
                                          char character,
                                          std::size_t tab_size);
-  static std::size_t Utf8SequenceLength(std::string_view line, std::size_t offset);
 };
 
 }  // namespace microide::editor

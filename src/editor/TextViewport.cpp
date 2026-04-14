@@ -6,6 +6,8 @@
 #include <ostream>
 #include <sstream>
 
+#include "util/StringUtil.h"
+
 namespace microide::editor {
 
 namespace {
@@ -1172,99 +1174,11 @@ TextViewport::TextEncoding TextViewport::DetectEncoding(const std::vector<std::s
 }
 
 bool TextViewport::IsValidUtf8(std::string_view content) {
-  std::size_t i = 0;
-  while (i < content.size()) {
-    const unsigned char lead = static_cast<unsigned char>(content[i]);
-    if (lead <= 0x7F) {
-      ++i;
-      continue;
-    }
-
-    auto continuation = [&](std::size_t offset) {
-      return i + offset < content.size() &&
-             (static_cast<unsigned char>(content[i + offset]) & 0xC0) == 0x80;
-    };
-
-    if (lead >= 0xC2 && lead <= 0xDF) {
-      if (!continuation(1)) {
-        return false;
-      }
-      i += 2;
-      continue;
-    }
-
-    if (lead == 0xE0) {
-      if (i + 2 >= content.size()) {
-        return false;
-      }
-      const unsigned char second = static_cast<unsigned char>(content[i + 1]);
-      if (second < 0xA0 || second > 0xBF || !continuation(2)) {
-        return false;
-      }
-      i += 3;
-      continue;
-    }
-
-    if ((lead >= 0xE1 && lead <= 0xEC) || (lead >= 0xEE && lead <= 0xEF)) {
-      if (!continuation(1) || !continuation(2)) {
-        return false;
-      }
-      i += 3;
-      continue;
-    }
-
-    if (lead == 0xED) {
-      if (i + 2 >= content.size()) {
-        return false;
-      }
-      const unsigned char second = static_cast<unsigned char>(content[i + 1]);
-      if (second < 0x80 || second > 0x9F || !continuation(2)) {
-        return false;
-      }
-      i += 3;
-      continue;
-    }
-
-    if (lead == 0xF0) {
-      if (i + 3 >= content.size()) {
-        return false;
-      }
-      const unsigned char second = static_cast<unsigned char>(content[i + 1]);
-      if (second < 0x90 || second > 0xBF || !continuation(2) || !continuation(3)) {
-        return false;
-      }
-      i += 4;
-      continue;
-    }
-
-    if (lead >= 0xF1 && lead <= 0xF3) {
-      if (!continuation(1) || !continuation(2) || !continuation(3)) {
-        return false;
-      }
-      i += 4;
-      continue;
-    }
-
-    if (lead == 0xF4) {
-      if (i + 3 >= content.size()) {
-        return false;
-      }
-      const unsigned char second = static_cast<unsigned char>(content[i + 1]);
-      if (second < 0x80 || second > 0x8F || !continuation(2) || !continuation(3)) {
-        return false;
-      }
-      i += 4;
-      continue;
-    }
-
-    return false;
-  }
-
-  return true;
+  return util::IsValidUtf8(content);
 }
 
 std::vector<std::string> TextViewport::SplitLines(const std::string& content) {
-  return DecodeDocument(content).lines;
+  return util::SplitLines(content);
 }
 
 bool TextViewport::IsBefore(const TextPosition& lhs, const TextPosition& rhs) {

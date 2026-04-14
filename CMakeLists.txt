@@ -98,6 +98,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
   src/util/StartupTrace.cpp
+  src/util/StringUtil.cpp
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
@@ -188,6 +189,7 @@ add_executable(microide_tests
   tests/TerminalSessionTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp
+  tests/StringUtilTests.cpp
   tests/TextViewportTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceShellPromptTests.cpp
@@ -230,6 +232,7 @@ add_executable(microide_diff_bench
   src/project/GitCompareService.cpp
   src/project/GitPorcelainParser.cpp
   src/project/GitRepository.cpp
+  src/util/StringUtil.cpp
   tools/CompareBench.cpp
 )
 

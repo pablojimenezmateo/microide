@@ -12,6 +12,7 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
+void RegisterStringUtilTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
@@ -37,6 +38,7 @@ int main() {
   microide::tests::RegisterProjectSearchServiceTests(tests);
   microide::tests::RegisterGitBlameServiceTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);
+  microide::tests::RegisterStringUtilTests(tests);
   microide::tests::RegisterTextViewportTests(tests);
   microide::tests::RegisterWindowPresentationTests(tests);
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
