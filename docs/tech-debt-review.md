@@ -45,9 +45,10 @@ Impact:
 - This increases regression risk and slows iteration.
 
 Evidence:
-- `src/workspace/WorkspaceShell.cpp`: 1724 lines
+- `src/workspace/WorkspaceShell.cpp`: 1387 lines
 - `src/workspace/WorkspaceShellCompare.cpp`: 1117 lines
-- `src/workspace/WorkspaceShellRender.cpp`: 1895 lines
+- `src/workspace/WorkspaceShellMerge.cpp`: 353 lines
+- `src/workspace/WorkspaceShellRender.cpp`: 1804 lines
 
 Recommendation:
 - Continue extracting subsystem-owned layout and render code, starting with compare and window-chrome state.
@@ -58,6 +59,7 @@ Addressed in this pass:
 - Compare divider hit-testing, active compare tab access, compare surface layout, compare scroll calculations, and compare selection reveal logic now live in `WorkspaceShellCompare.cpp` instead of `WorkspaceShell.cpp`.
 - Compare editor text-input visual placement now routes through a compare-owned helper instead of being inlined in the main render switch.
 - Compare scrollbar and marker rendering now route through a compare-owned helper instead of being inlined in `WorkspaceShellRender.cpp`.
+- Merge tab access, layout, scroll, interaction, hover classification, and reveal helpers now live in `WorkspaceShellMerge.cpp` instead of `WorkspaceShell.cpp`.
 - `WorkspaceShell.cpp` is smaller and no longer owns as much compare-specific mechanics directly.
 
 ### 3. Workspace-shell tests are too monolithic
@@ -125,5 +127,5 @@ Addressed in this pass:
 
 1. Done in this pass: make `Outgoing files` align with configured PR base.
 2. In progress: reduce `WorkspaceShell` blast radius around compare and chrome state.
-3. Next: extract more compare render/layout ownership out of `WorkspaceShellRender.cpp`.
+3. Next: extract more merge render/layout ownership out of the general shell/render files.
 4. After that: replace shell-string git execution with a safer command layer.

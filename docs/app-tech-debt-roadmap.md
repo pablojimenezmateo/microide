@@ -75,14 +75,15 @@ Status:
 
 Current state:
 - Merge helpers remain spread across `WorkspaceShell.cpp` and `WorkspaceShellCompareRender.cpp`.
+- Core merge layout, scroll, interaction, and reveal helpers now live in `WorkspaceShellMerge.cpp`.
 
 Why this still matters:
 - Merge is structurally similar to where compare was before extraction.
 - The same blast-radius problem is likely to repeat there.
 
 Next step:
-- Split merge layout/scroll/interaction helpers into merge-owned implementation units after the
-  compare render extraction stabilizes.
+- Continue moving merge render-adjacent support out of the general shell/render files now that the
+  core layout/interaction helpers have their own unit.
 
 ### 5. Git command execution is still shell-string based
 
