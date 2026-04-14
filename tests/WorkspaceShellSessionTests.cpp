@@ -714,6 +714,34 @@ void OpenMergeHoverFixture(WorkspaceShell& shell,
   }
 }
 
+void OpenTallMergeMouseFixture(WorkspaceShell& shell, TemporaryDirectory& temp_dir) {
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+
+  std::string base_text;
+  std::string incoming_text;
+  std::string current_text;
+  for (int i = 0; i < 120; ++i) {
+    const std::string line = "line " + std::to_string(i) + "\n";
+    base_text += line;
+    incoming_text += i == 60 ? "incoming change\n" : line;
+    current_text += i == 60 ? "current change\n" : line;
+  }
+
+  WriteFile(base, base_text);
+  WriteFile(incoming, incoming_text);
+  WriteFile(current, current_text);
+  WriteFile(output, base_text);
+
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 360);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "tall merge mouse fixture should open a merge editor");
+}
+
 void TestWorkspaceShellMergeHoverPrefersIncomingAcceptButton() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -759,6 +787,74 @@ void TestWorkspaceShellMergeHoverPrefersResultActionButton() {
          "result action button hover should take precedence over generic result conflict hover");
   Expect(hover->preview_choice == MergeChoice::Both,
          "result action button hover should advertise the hovered merge choice");
+}
+
+void TestWorkspaceShellMergeResultDragSelectionTracksPointer() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  OpenMergeHoverFixture(shell, temp_dir, nullptr, nullptr, nullptr, nullptr);
+
+  const auto interaction = WorkspaceShellTestAccess::ActiveMergeInteractionLayout(shell);
+  const float y = interaction.result.text.first_line_y +
+                  interaction.result.text.line_height * 0.5f;
+  const float start_x = interaction.result.text.text_x +
+                        interaction.result.text.char_width * 0.1f;
+  const float end_x = interaction.result.text.text_x +
+                      interaction.result.text.char_width * 3.1f;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+         "pressing inside the merge result pane should start selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
+         "dragging inside the merge result pane should update selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end_x, y, SDL_BUTTON_LEFT),
+         "releasing after a merge result drag should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveMergeHasSelection(shell),
+         "dragging across merge result text should create a selection");
+  Expect(WorkspaceShellTestAccess::ActiveMergeSelectedText(shell) == "top",
+         "merge result drag selection should capture the dragged text");
+}
+
+void TestWorkspaceShellMergeDividerDragUpdatesPaneFractions() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  OpenMergeHoverFixture(shell, temp_dir, nullptr, nullptr, nullptr, nullptr);
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const float before_fraction = merge.left_divider_fraction;
+  const auto divider_rects = WorkspaceShellTestAccess::MergeDividerRects(shell);
+  const float start_x = divider_rects[0].x + divider_rects[0].w * 0.5f;
+  const float y = divider_rects[0].y + divider_rects[0].h * 0.5f;
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+         "pressing the merge divider should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, start_x + 80.0f, y,
+                                                     SDL_BUTTON_LMASK),
+         "dragging the merge divider should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, start_x + 80.0f, y,
+                                                       SDL_BUTTON_LEFT),
+         "releasing the merge divider drag should be handled");
+  Expect(merge.left_divider_fraction > before_fraction,
+         "dragging the merge divider should update the left pane fraction");
+}
+
+void TestWorkspaceShellMergeWheelScrollsRows() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  OpenTallMergeMouseFixture(shell, temp_dir);
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  Expect(merge.result_viewport.lines().size() > static_cast<std::size_t>(surface.visible_rows),
+         "merge wheel fixture should overflow the viewport");
+
+  const int before_scroll = merge.scroll_row;
+  const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
+  const float wheel_x = result_rect.x + 24.0f;
+  const float wheel_y = result_rect.y + 24.0f;
+  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -1),
+         "scrolling the merge result pane should be handled");
+  Expect(merge.scroll_row > before_scroll,
+         "scrolling the merge result pane should advance the visible row");
 }
 
 void TestWorkspaceShellMergeToolbarButtonsNavigateConflicts() {
@@ -900,6 +996,12 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeHoverPrefersIncomingAcceptButton);
   AddTest(tests, "WorkspaceShell/MergeHoverPrefersResultActionButton",
           TestWorkspaceShellMergeHoverPrefersResultActionButton);
+  AddTest(tests, "WorkspaceShell/MergeResultDragSelectionTracksPointer",
+          TestWorkspaceShellMergeResultDragSelectionTracksPointer);
+  AddTest(tests, "WorkspaceShell/MergeDividerDragUpdatesPaneFractions",
+          TestWorkspaceShellMergeDividerDragUpdatesPaneFractions);
+  AddTest(tests, "WorkspaceShell/MergeWheelScrollsRows",
+          TestWorkspaceShellMergeWheelScrollsRows);
   AddTest(tests, "WorkspaceShell/MergeToolbarButtonsNavigateConflicts",
           TestWorkspaceShellMergeToolbarButtonsNavigateConflicts);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",

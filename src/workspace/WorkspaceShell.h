@@ -785,6 +785,7 @@ class WorkspaceShell {
   class ChromeMouseCoordinator;
   class EditorMouseCoordinator;
   class CompareMouseCoordinator;
+  class MergeMouseCoordinator;
   class TabMouseCoordinator;
   class SidebarMouseCoordinator;
   class PanelMouseCoordinator;

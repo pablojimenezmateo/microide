@@ -58,6 +58,14 @@ struct WorkspaceShellTestAccess {
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
     return shell.open_tabs_[shell.active_tab_index_].merge.value();
   }
+  static bool ActiveMergeHasSelection(const WorkspaceShell& shell) {
+    return shell.open_tabs_[shell.active_tab_index_]
+        .merge->result_viewport.selection_range()
+        .has_value();
+  }
+  static std::string ActiveMergeSelectedText(WorkspaceShell& shell) {
+    return shell.open_tabs_[shell.active_tab_index_].merge->result_viewport.SelectedText();
+  }
   static void ApplyMergeChoice(WorkspaceShell& shell, microide::compare::MergeChoice choice) {
     shell.ApplyMergeChoice(choice);
   }
@@ -144,6 +152,17 @@ struct WorkspaceShellTestAccess {
     const auto surface = ActiveMergeSurfaceLayout(shell);
     const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
     return {toolbar.prev_rect, toolbar.next_rect};
+  }
+  static std::array<SDL_FRect, 2> MergeDividerRects(WorkspaceShell& shell) {
+    const WorkspaceLayout layout =
+        ComputeLayout(static_cast<float>(shell.last_window_width_),
+                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
+                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const auto surface = ActiveMergeSurfaceLayout(shell);
+    return {MakeRect(surface.center_x - surface.divider_width, layout.editor_surface.y,
+                     surface.divider_width, layout.editor_surface.h),
+            MakeRect(surface.right_x - surface.divider_width, layout.editor_surface.y,
+                     surface.divider_width, layout.editor_surface.h)};
   }
 
   static void PrepareRenamePrompt(WorkspaceShell& shell,
