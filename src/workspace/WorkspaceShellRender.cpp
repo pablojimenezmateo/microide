@@ -826,7 +826,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                            menu->label);
   }
 
-  if (custom_window_chrome_enabled_) {
+  if (window_chrome_.custom_enabled) {
     const std::string title = "microide";
     const float title_width = text_renderer_.MeasureWidth(title);
     const float left_limit =
@@ -854,7 +854,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
     DrawFilledRect(renderer, button.rect, background);
     DrawWindowControlGlyph(renderer, button.rect, button.id, glyph,
-                           window_maximized_ || window_fullscreen_);
+                           window_chrome_.Expanded());
   }
 
   if (ActiveTabIsCompare()) {

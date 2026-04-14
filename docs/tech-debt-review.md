@@ -108,8 +108,14 @@ Recommendation:
 - Consolidate chrome state into a small shared struct with explicit `maximized`, `fullscreen`, and `custom_enabled` fields.
 - Keep rendering dependent on one state object instead of recomputing combined flags at call sites.
 
+Addressed in this pass:
+- `WorkspaceShell` now stores window chrome state in a dedicated `WindowChromeState` struct instead of separate booleans.
+- `Application` now captures SDL window mode into that shared state before handing it to the shell.
+- Shell-side hit testing, menu chrome, and window-control rendering now consume the shared state helpers instead of recomputing combined flags.
+
 ## Recommended Order
 
 1. Done in this pass: make `Outgoing files` align with configured PR base.
-2. Next: reduce `WorkspaceShell` blast radius around compare and chrome state.
-3. After that: replace shell-string git execution with a safer command layer.
+2. In progress: reduce `WorkspaceShell` blast radius around compare and chrome state.
+3. Next: extract compare layout/state helpers out of `WorkspaceShell`.
+4. After that: replace shell-string git execution with a safer command layer.

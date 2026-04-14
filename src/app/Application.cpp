@@ -17,6 +17,20 @@ namespace {
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
 
+workspace::WorkspaceShell::WindowChromeState CaptureWindowChromeState(SDL_Window* window,
+                                                                      bool custom_enabled) {
+  workspace::WorkspaceShell::WindowChromeState state;
+  state.custom_enabled = custom_enabled;
+  if (window == nullptr) {
+    return state;
+  }
+
+  const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+  state.maximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+  state.fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+  return state;
+}
+
 }  // namespace
 
 Application::~Application() {
@@ -307,13 +321,11 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
 
   const util::WindowPresentation presentation = util::ComputeWindowPresentation(
       pixel_width, pixel_height, SDL_GetWindowDisplayScale(window_), workspace_shell_.UiScale());
-  const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
   workspace_shell_.SetPresentationScale(presentation.presentation_scale_x,
                                         presentation.presentation_scale_y);
-  workspace_shell_.SetWindowChromeState(presentation.logical_width, presentation.logical_height,
-                                        (flags & SDL_WINDOW_MAXIMIZED) != 0,
-                                        (flags & SDL_WINDOW_FULLSCREEN) != 0,
-                                        custom_window_chrome_enabled_);
+  workspace_shell_.SetWindowChromeState(
+      presentation.logical_width, presentation.logical_height,
+      CaptureWindowChromeState(window_, custom_window_chrome_enabled_));
 
   if (!SDL_SetRenderLogicalPresentation(renderer_, presentation.logical_width,
                                         presentation.logical_height,

@@ -113,7 +113,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
 std::vector<WorkspaceShell::VisibleWindowControlButton>
 WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) const {
   std::vector<VisibleWindowControlButton> buttons;
-  if (!custom_window_chrome_enabled_) {
+  if (!window_chrome_.custom_enabled) {
     return buttons;
   }
 

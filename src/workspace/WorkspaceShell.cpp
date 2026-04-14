@@ -436,22 +436,18 @@ void WorkspaceShell::SetPresentationScale(float scale_x, float scale_y) {
 
 void WorkspaceShell::SetWindowChromeState(int width,
                                           int height,
-                                          bool maximized,
-                                          bool fullscreen,
-                                          bool custom_enabled) {
+                                          WindowChromeState state) {
   if (width > 0) {
     last_window_width_ = width;
   }
   if (height > 0) {
     last_window_height_ = height;
   }
-  window_maximized_ = maximized;
-  window_fullscreen_ = fullscreen;
-  custom_window_chrome_enabled_ = custom_enabled;
+  window_chrome_ = state;
 }
 
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
-  if (!custom_window_chrome_enabled_ || last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (!window_chrome_.custom_enabled || last_window_width_ <= 0 || last_window_height_ <= 0) {
     return SDL_HITTEST_NORMAL;
   }
 
@@ -461,7 +457,7 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
     return SDL_HITTEST_NORMAL;
   }
 
-  if (!window_maximized_ && !window_fullscreen_) {
+  if (window_chrome_.ResizableFrameEnabled()) {
     const bool left = x < kWindowFrameHitThickness;
     const bool right = x >= window_width - kWindowFrameHitThickness;
     const bool top = y < kWindowFrameHitThickness;
@@ -475,7 +471,7 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
 }
 
 bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
-  if (!custom_window_chrome_enabled_ || last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (!window_chrome_.custom_enabled || last_window_width_ <= 0 || last_window_height_ <= 0) {
     return false;
   }
 

@@ -232,9 +232,11 @@ struct WorkspaceShellTestAccess {
                                      bool enabled,
                                      bool maximized = false,
                                      bool fullscreen = false) {
-    shell.custom_window_chrome_enabled_ = enabled;
-    shell.window_maximized_ = maximized;
-    shell.window_fullscreen_ = fullscreen;
+    shell.window_chrome_ = WorkspaceShell::WindowChromeState{
+        .custom_enabled = enabled,
+        .maximized = maximized,
+        .fullscreen = fullscreen,
+    };
   }
   static void RenderFrame(WorkspaceShell& shell) {
     shell.Render(nullptr, shell.last_window_width_, shell.last_window_height_);

@@ -47,6 +47,17 @@ class WorkspaceShell {
     Close,
   };
 
+  struct WindowChromeState {
+    bool custom_enabled = false;
+    bool maximized = false;
+    bool fullscreen = false;
+
+    [[nodiscard]] bool Expanded() const { return maximized || fullscreen; }
+    [[nodiscard]] bool ResizableFrameEnabled() const {
+      return custom_enabled && !Expanded();
+    }
+  };
+
   WorkspaceShell() = default;
 
   static std::vector<std::string> DocumentedCommandUsages();
@@ -59,11 +70,7 @@ class WorkspaceShell {
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
   void SetPresentationScale(float scale_x, float scale_y);
-  void SetWindowChromeState(int width,
-                            int height,
-                            bool maximized,
-                            bool fullscreen,
-                            bool custom_enabled);
+  void SetWindowChromeState(int width, int height, WindowChromeState state);
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
   bool WindowDragRegionContains(float x, float y) const;
@@ -1457,9 +1464,7 @@ class WorkspaceShell {
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
-  bool custom_window_chrome_enabled_ = false;
-  bool window_maximized_ = false;
-  bool window_fullscreen_ = false;
+  WindowChromeState window_chrome_;
   WindowAction pending_window_action_ = WindowAction::None;
   TextInputSurface active_text_input_surface_ = TextInputSurface::None;
   TextCompositionState text_composition_;
