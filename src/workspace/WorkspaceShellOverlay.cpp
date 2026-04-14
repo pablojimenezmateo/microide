@@ -121,12 +121,10 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   if (update.finished) {
     overlay_workflow_.project_search.running = false;
   }
-  if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::ProjectSearch &&
-      last_window_width_ > 0 && last_window_height_ > 0) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
-    RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
+  if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::ProjectSearch) {
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+    }
   }
 }
 
@@ -538,11 +536,10 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
   text_viewport_.MoveCursorTo(match.start.line, match.start.column);
-  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
-    RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
+  if (surface_.overlay_visible) {
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+    }
   }
 }
 
@@ -555,11 +552,10 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   const int max_index = static_cast<int>(overlay_workflow_.project_search.results.size()) - 1;
   overlay_workflow_.project_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                      surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
-    RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
+  if (surface_.overlay_visible) {
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+    }
   }
 }
 

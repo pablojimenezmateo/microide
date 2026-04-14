@@ -404,14 +404,15 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
     int x,
     int y,
     const std::vector<terminal::TerminalLine>& lines) const {
-  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || lines.empty() ||
-      last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || lines.empty()) {
     return std::nullopt;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, lines.size());
   if (panel_layout.line_height <= 0.0f || y < panel_layout.text_y ||
       y >= panel_layout.content_rect.y + panel_layout.content_rect.h) {
@@ -439,8 +440,7 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
 
 std::optional<WorkspaceShell::TerminalSelectionPosition>
 WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
-  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || last_window_width_ <= 0 ||
-      last_window_height_ <= 0) {
+  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr) {
     return std::nullopt;
   }
 
@@ -455,9 +455,11 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
     return std::nullopt;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const SDL_FRect panel_content = BottomPanelContentRect(layout, surface_.command_mode);
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;

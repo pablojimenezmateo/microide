@@ -226,8 +226,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
 
     if (surface_.drag_target == DragTarget::SidebarDivider) {
+      const float window_width =
+          CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
       surface_.sidebar_width =
-          ClampSidebarWidth(static_cast<float>(event.motion.x), static_cast<float>(last_window_width_));
+          ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
       return true;
     }
 

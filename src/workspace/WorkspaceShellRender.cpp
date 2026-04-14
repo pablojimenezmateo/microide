@@ -14,15 +14,11 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kDivider = 1.0f;
 constexpr float kSidebarHeaderHeight = 26.0f;
-constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
-constexpr float kScrollbarThickness = 10.0f;
-constexpr float kBottomPanelCommandTopPadding = 8.0f;
 
 void DrawScrollbarTrack(SDL_Renderer* renderer,
                         const render::Theme& theme,
@@ -173,7 +169,7 @@ void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
 
   const int rows = BottomPanelVisibleRows(panel_rect.h);
   const float usable_width =
-      std::max(16.0f, panel_rect.w - 24.0f - kScrollbarThickness - 6.0f);
+      std::max(16.0f, panel_rect.w - 24.0f - kWorkspaceScrollbarThickness - 6.0f);
   const int columns = std::max(
       1, static_cast<int>(std::floor(usable_width / std::max(1.0f, text_renderer_.CharWidth()))));
   terminal_tab->session.Resize(static_cast<std::size_t>(rows), static_cast<std::size_t>(columns));
@@ -201,8 +197,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
-  last_window_width_ = width;
-  last_window_height_ = height;
+  window_presentation_.logical_width = width;
+  window_presentation_.logical_height = height;
   surface_.sidebar_width = ClampSidebarWidth(surface_.sidebar_width, static_cast<float>(width));
   surface_.bottom_panel_height = ClampBottomPanelHeight(surface_.bottom_panel_height, static_cast<float>(height));
 
@@ -238,38 +234,47 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   DrawFilledRect(renderer, layout.full, theme_.window_background);
   DrawFilledRect(renderer, layout.menu_bar, theme_.chrome_background);
   DrawFilledRect(renderer,
-                 MakeRect(layout.menu_bar.x, layout.menu_bar.y + layout.menu_bar.h - kDivider,
-                          layout.menu_bar.w, kDivider),
+                 MakeRect(layout.menu_bar.x,
+                          layout.menu_bar.y + layout.menu_bar.h -
+                              kWorkspaceDividerThickness,
+                          layout.menu_bar.w, kWorkspaceDividerThickness),
                  theme_.border);
   DrawFilledRect(renderer, layout.project_tab_strip, theme_.chrome_background);
   DrawFilledRect(renderer,
                  MakeRect(layout.project_tab_strip.x,
-                          layout.project_tab_strip.y + layout.project_tab_strip.h - kDivider,
-                          layout.project_tab_strip.w, kDivider),
+                          layout.project_tab_strip.y + layout.project_tab_strip.h -
+                              kWorkspaceDividerThickness,
+                          layout.project_tab_strip.w, kWorkspaceDividerThickness),
                  theme_.border);
   DrawFilledRect(renderer, layout.tab_strip, theme_.chrome_background);
   DrawFilledRect(renderer,
-                 MakeRect(layout.tab_strip.x, layout.tab_strip.y + layout.tab_strip.h - kDivider,
-                          layout.tab_strip.w, kDivider),
+                 MakeRect(layout.tab_strip.x,
+                          layout.tab_strip.y + layout.tab_strip.h -
+                              kWorkspaceDividerThickness,
+                          layout.tab_strip.w, kWorkspaceDividerThickness),
                  theme_.border);
   DrawFilledRect(renderer, layout.breadcrumb, theme_.chrome_background);
   DrawFilledRect(renderer,
-                 MakeRect(layout.breadcrumb.x, layout.breadcrumb.y + layout.breadcrumb.h - kDivider,
-                          layout.breadcrumb.w, kDivider),
+                 MakeRect(layout.breadcrumb.x,
+                          layout.breadcrumb.y + layout.breadcrumb.h -
+                              kWorkspaceDividerThickness,
+                          layout.breadcrumb.w, kWorkspaceDividerThickness),
                  theme_.border);
 
   if (surface_.sidebar_visible) {
     DrawFilledRect(renderer, layout.sidebar, theme_.surface_background);
     DrawFilledRect(renderer,
-                   MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y, kDivider,
-                            layout.sidebar.h),
+                   MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
+                            kWorkspaceDividerThickness, layout.sidebar.h),
                    surface_.drag_target == DragTarget::SidebarDivider ? theme_.accent : theme_.border);
     const SDL_FRect sidebar_header =
         MakeRect(layout.sidebar.x, layout.sidebar.y, layout.sidebar.w, kSidebarHeaderHeight);
     DrawFilledRect(renderer, sidebar_header, theme_.chrome_background);
     DrawFilledRect(renderer,
-                   MakeRect(sidebar_header.x, sidebar_header.y + sidebar_header.h - kDivider,
-                            sidebar_header.w, kDivider),
+                   MakeRect(sidebar_header.x,
+                            sidebar_header.y + sidebar_header.h -
+                                kWorkspaceDividerThickness,
+                            sidebar_header.w, kWorkspaceDividerThickness),
                    theme_.border);
   }
 
@@ -277,14 +282,17 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawFilledRect(renderer, layout.bottom_panel, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-                            kDivider),
+                            kWorkspaceDividerThickness),
                    surface_.drag_target == DragTarget::BottomPanelDivider ? theme_.accent : theme_.border);
     const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
-                                            layout.bottom_panel.w, kBottomPanelHeaderHeight);
+                                            layout.bottom_panel.w,
+                                            kWorkspaceBottomPanelHeaderHeight);
     DrawFilledRect(renderer, panel_header, theme_.chrome_background);
     DrawFilledRect(renderer,
-                   MakeRect(panel_header.x, panel_header.y + panel_header.h - kDivider,
-                            panel_header.w, kDivider),
+                   MakeRect(panel_header.x,
+                            panel_header.y + panel_header.h -
+                                kWorkspaceDividerThickness,
+                            panel_header.w, kWorkspaceDividerThickness),
                    theme_.border);
   }
 
@@ -707,7 +715,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                            menu->label);
   }
 
-  if (window_chrome_.custom_enabled) {
+  if (CurrentWindowChromeState().custom_enabled) {
     const std::string title = "microide";
     const float title_width = text_renderer_.MeasureWidth(title);
     const float left_limit =
@@ -735,7 +743,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
     DrawFilledRect(renderer, button.rect, background);
     DrawWindowControlGlyph(renderer, button.rect, button.id, glyph,
-                           window_chrome_.Expanded());
+                           CurrentWindowChromeState().Expanded());
   }
 
   if (ActiveTabIsCompare()) {
@@ -1247,8 +1255,10 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawRect(renderer, overlay, theme_.border);
     DrawFilledRect(renderer, overlay_header, theme_.chrome_background);
     DrawFilledRect(renderer,
-                   MakeRect(overlay_header.x, overlay_header.y + overlay_header.h - kDivider,
-                            overlay_header.w, kDivider),
+                   MakeRect(overlay_header.x,
+                            overlay_header.y + overlay_header.h -
+                                kWorkspaceDividerThickness,
+                            overlay_header.w, kWorkspaceDividerThickness),
                    theme_.border);
 
     ClampOverlayScrollRow(overlay);
@@ -1399,7 +1409,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   if (BottomPanelVisible()) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-                 kBottomPanelHeaderHeight);
+                 kWorkspaceBottomPanelHeaderHeight);
     const bool terminal_panel = ActiveTerminalTab() != nullptr;
     if (terminal_panel) {
       for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
@@ -1490,10 +1500,12 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (surface_.command_mode) {
       const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
       DrawFilledRect(renderer, command_area, theme_.surface_raised);
-      DrawFilledRect(renderer, MakeRect(command_area.x, command_area.y, command_area.w, kDivider),
+      DrawFilledRect(renderer,
+                     MakeRect(command_area.x, command_area.y, command_area.w,
+                              kWorkspaceDividerThickness),
                      theme_.border);
 
-      const float status_y = command_area.y + kBottomPanelCommandTopPadding;
+      const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
       draw_text_on(command_area.x + 12.0f, status_y, theme_.text_muted, theme_.surface_raised,
                    TruncateLabel(CommandPromptStatusText(), command_area.w - 24.0f));
 

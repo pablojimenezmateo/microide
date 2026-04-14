@@ -156,12 +156,13 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonUp(const SDL_Event& even
 bool WorkspaceShell::PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
                                                        const WorkspaceLayout& layout) {
   if (shell_.surface_.drag_target == DragTarget::BottomPanelDivider) {
-    const float desired_height =
-        static_cast<float>(shell_.last_window_height_) -
-        static_cast<float>(event.motion.y);
+    const auto window_rect = shell_.CurrentWindowRect();
+    if (!window_rect.has_value()) {
+      return false;
+    }
+    const float desired_height = window_rect->h - static_cast<float>(event.motion.y);
     shell_.surface_.bottom_panel_height =
-        ClampBottomPanelHeight(desired_height,
-                               static_cast<float>(shell_.last_window_height_));
+        ClampBottomPanelHeight(desired_height, window_rect->h);
     return true;
   }
 
@@ -229,12 +230,11 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleMotion(const SDL_Event& event)
       terminal_tab != nullptr && terminal_tab->mouse_selecting &&
       (event.motion.state & SDL_BUTTON_LMASK) != 0 && shell_.BottomPanelVisible() &&
       shell_.ActiveTerminalTab() != nullptr) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                      static_cast<float>(shell_.last_window_height_),
-                      shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                      shell_.surface_.sidebar_width,
-                      shell_.surface_.bottom_panel_height);
+    const auto layout_state = shell_.CurrentWorkspaceLayout();
+    if (!layout_state.has_value()) {
+      return false;
+    }
+    const WorkspaceLayout layout = *layout_state;
     if (!Contains(layout.bottom_panel, event.motion.x, event.motion.y)) {
       return false;
     }

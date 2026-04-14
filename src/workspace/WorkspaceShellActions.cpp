@@ -618,8 +618,10 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
       if (!request.has_value()) {
         return reject("sidebar-width requires a numeric width");
       }
+      const float current_width =
+          CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1.0f;
       surface_.sidebar_width = ClampSidebarWidth(request->width,
-                                                 static_cast<float>(std::max(1, last_window_width_)));
+                                                 std::max(1.0f, current_width));
       return ActionDispatchResult::Handled;
     }
     case ActionId::TreeRefresh:

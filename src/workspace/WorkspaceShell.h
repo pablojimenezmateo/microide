@@ -1429,6 +1429,7 @@ class WorkspaceShell {
   std::string TruncateLabel(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
+  const WindowChromeState& CurrentWindowChromeState() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;
@@ -1457,8 +1458,7 @@ class WorkspaceShell {
   SurfaceState surface_;
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs_;
   std::size_t active_terminal_tab_index_ = 0;
-  int last_window_width_ = 0;
-  int last_window_height_ = 0;
+  WindowPresentationState window_presentation_;
   OverlayWorkflowState overlay_workflow_;
   GitSidebarState git_sidebar_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
@@ -1487,7 +1487,6 @@ class WorkspaceShell {
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
-  WindowChromeState window_chrome_;
   WindowAction pending_window_action_ = WindowAction::None;
   TextInputSurface active_text_input_surface_ = TextInputSurface::None;
   TextCompositionState text_composition_;

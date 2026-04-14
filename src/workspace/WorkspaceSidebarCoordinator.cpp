@@ -192,20 +192,16 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
 }
 
 void WorkspaceShell::SidebarCoordinator::RevealSelectedTreeLine() {
-  if (shell_.last_window_width_ <= 0 || shell_.last_window_height_ <= 0) {
-    return;
-  }
-
   const auto& entries = shell_.directory_tree_.entries();
   if (shell_.directory_tree_.selected_index() >= entries.size()) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                    static_cast<float>(shell_.last_window_height_),
-                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   if (layout.sidebar.h <= 0.0f) {
     return;
   }
@@ -216,20 +212,16 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedTreeLine() {
 }
 
 void WorkspaceShell::SidebarCoordinator::RevealSelectedGitLine() {
-  if (shell_.last_window_width_ <= 0 || shell_.last_window_height_ <= 0) {
-    return;
-  }
-
   const auto selected_line = shell_.SelectedGitSidebarLineIndex();
   if (!selected_line.has_value()) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                    static_cast<float>(shell_.last_window_height_),
-                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   if (layout.sidebar.h <= 0.0f) {
     return;
   }

@@ -101,14 +101,10 @@ void WorkspaceShell::CompareInteractionCoordinator::MovePickerSelection(int delt
       static_cast<int>(shell_.overlay_workflow_.compare_picker.matches.size()) - 1;
   shell_.overlay_workflow_.compare_picker.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (shell_.surface_.overlay_visible && shell_.last_window_width_ > 0 &&
-      shell_.last_window_height_ > 0) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                      static_cast<float>(shell_.last_window_height_),
-                      shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                      shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
-    shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout.editor_area));
+  if (shell_.surface_.overlay_visible) {
+    if (const auto layout = shell_.CurrentWorkspaceLayout(); layout.has_value()) {
+      shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout->editor_area));
+    }
   }
 }
 

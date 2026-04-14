@@ -85,19 +85,16 @@ struct WorkspaceShellTestAccess {
     const auto& hover = shell.open_tabs_[shell.active_tab_index_].merge->hover_state;
     return hover.has_value() ? hover->preview_choice : microide::compare::MergeChoice::Base;
   }
+  static WorkspaceLayout CurrentLayout(WorkspaceShell& shell) {
+    return shell.CurrentWorkspaceLayout().value();
+  }
   static WorkspaceShell::MergeSurfaceLayout ActiveMergeSurfaceLayout(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
   }
   static WorkspaceShell::MergeInteractionLayout ActiveMergeInteractionLayout(WorkspaceShell& shell) {
     auto& merge = ActiveMerge(shell);
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = shell.ComputeMergeSurfaceLayout(layout.editor_surface, merge);
     const auto scroll =
         shell.ComputeMergeScrollLayout(layout.editor_surface, surface, merge);
@@ -111,17 +108,11 @@ struct WorkspaceShellTestAccess {
     return shell.BuildMergeInteractionLayout(layout.editor_surface, surface, merge);
   }
   static WorkspaceShell::CompareSurfaceLayout ActiveCompareSurfaceLayout(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeCompareSurfaceLayout(layout.editor_surface, ActiveCompare(shell));
   }
   static SDL_FRect ActiveMergeResultRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);
     return ComputeMergeResultViewportRect(layout.editor_surface, surface.center_x, surface.rows_y,
                                           surface.gutter_width, surface.center_width,
@@ -145,19 +136,13 @@ struct WorkspaceShellTestAccess {
     return shell.BuildMergeResultActionButtonRects(surface, interaction, conflict);
   }
   static std::array<SDL_FRect, 2> MergeToolbarNavigationRects(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);
     const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
     return {toolbar.prev_rect, toolbar.next_rect};
   }
   static std::array<SDL_FRect, 2> MergeDividerRects(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);
     return {MakeRect(surface.center_x - surface.divider_width, layout.editor_surface.y,
                      surface.divider_width, layout.editor_surface.h),
@@ -225,21 +210,22 @@ struct WorkspaceShellTestAccess {
     return shell.OpenProjectTab(project_root, restore_persistence, log_feedback);
   }
   static void SetWindowSize(WorkspaceShell& shell, int width, int height) {
-    shell.last_window_width_ = width;
-    shell.last_window_height_ = height;
+    shell.window_presentation_.logical_width = width;
+    shell.window_presentation_.logical_height = height;
   }
   static void SetWindowChromeEnabled(WorkspaceShell& shell,
                                      bool enabled,
                                      bool maximized = false,
                                      bool fullscreen = false) {
-    shell.window_chrome_ = WorkspaceShell::WindowChromeState{
+    shell.window_presentation_.chrome = WorkspaceShell::WindowChromeState{
         .custom_enabled = enabled,
         .maximized = maximized,
         .fullscreen = fullscreen,
     };
   }
   static void RenderFrame(WorkspaceShell& shell) {
-    shell.Render(nullptr, shell.last_window_width_, shell.last_window_height_);
+    shell.Render(nullptr, shell.window_presentation_.logical_width,
+                 shell.window_presentation_.logical_height);
   }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
@@ -474,11 +460,7 @@ struct WorkspaceShellTestAccess {
   }
   static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.tab_scroll_index_; }
   static SDL_FRect BottomPanelContentRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_),
-                      shell.surface_.sidebar_visible, shell.BottomPanelVisible(),
-                      shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return microide::workspace::BottomPanelContentRect(layout, shell.surface_.command_mode);
   }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
@@ -487,11 +469,7 @@ struct WorkspaceShellTestAccess {
     const auto* terminal_tab = shell.ActiveTerminalTab();
     const auto lines = terminal_tab != nullptr ? terminal_tab->session.SnapshotLines()
                                                : std::vector<microide::terminal::TerminalLine>{};
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_),
-                      shell.surface_.sidebar_visible, shell.BottomPanelVisible(),
-                      shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto panel_layout = shell.ComputeBottomPanelLogLayout(layout, lines.size());
     return SDL_FPoint{
         .x = panel_layout.text_x +
@@ -510,11 +488,7 @@ struct WorkspaceShellTestAccess {
                : std::string{};
   }
   static SDL_FRect ProjectSearchResultRect(WorkspaceShell& shell, std::size_t result_index) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
-                      shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto line_map = shell.BuildProjectSearchLineMap();
     const auto list_layout =
         shell.ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
@@ -522,10 +496,7 @@ struct WorkspaceShellTestAccess {
     return ScrollableListRowRect(list_layout, line_index - list_layout.scroll_row);
   }
   static SDL_FRect ProjectTabRect(WorkspaceShell& shell, std::size_t index) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab :
          shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (tab.index == index) {
@@ -535,10 +506,7 @@ struct WorkspaceShellTestAccess {
     return {};
   }
   static SDL_FRect EditorTabRect(WorkspaceShell& shell, std::size_t index) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
       if (tab.index == index) {
         return tab.rect;
@@ -553,37 +521,22 @@ struct WorkspaceShellTestAccess {
     return shell.TabTooltipLabel(index);
   }
   static std::string HoveredTabTooltipLabel(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredTabTooltipLabel(layout.tab_strip);
   }
   static std::string HoveredGitSidebarTooltipLabel(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
-                      shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredGitSidebarTooltipLabel(layout.sidebar);
   }
   static std::array<SDL_FRect, 3> GitSidebarTopActionRects(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
-                      shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return {shell.GitSidebarStageAllButtonRect(layout.sidebar),
             shell.GitSidebarDiscardAllButtonRect(layout.sidebar),
             shell.GitSidebarRefreshButtonRect(layout.sidebar)};
   }
   static std::array<SDL_FRect, 2> GitSidebarEntryActionRects(WorkspaceShell& shell,
                                                              std::size_t entry_index) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width,
-                      shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const auto lines = shell.BuildGitSidebarLines();
     const auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     for (std::size_t i = 0; i < lines.size(); ++i) {
@@ -600,10 +553,7 @@ struct WorkspaceShellTestAccess {
     return {};
   }
   static SDL_FRect ActiveEditorPaneRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     if (!shell.ActiveTabIsEditor()) {
       return {};
     }
@@ -635,10 +585,7 @@ struct WorkspaceShellTestAccess {
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveEditorBlameOverlay(
       WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     if (!shell.ActiveTabIsEditor()) {
       return std::nullopt;
     }
@@ -660,10 +607,7 @@ struct WorkspaceShellTestAccess {
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveCompareBlameOverlay(
       WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     if (!shell.ActiveTabIsCompare()) {
       return std::nullopt;
     }
@@ -693,10 +637,7 @@ struct WorkspaceShellTestAccess {
     return popup.has_value() ? std::make_optional(popup->copy_sha_rect) : std::nullopt;
   }
   static SDL_FRect ActiveTerminalTabRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
     for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
@@ -707,10 +648,7 @@ struct WorkspaceShellTestAccess {
     return {};
   }
   static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
     for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
@@ -780,10 +718,7 @@ struct WorkspaceShellTestAccess {
     return labels;
   }
   static std::vector<std::string> VisibleMenuBarLabels(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     std::vector<std::string> labels;
     for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
       if (const auto* menu = shell.FindMenuSpec(item.id); menu != nullptr) {
@@ -793,10 +728,7 @@ struct WorkspaceShellTestAccess {
     return labels;
   }
   static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell, std::string_view label) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
       if (const auto* menu = shell.FindMenuSpec(item.id);
           menu != nullptr && menu->label == label) {
@@ -806,17 +738,11 @@ struct WorkspaceShellTestAccess {
     return std::nullopt;
   }
   static SDL_FRect SidebarModeButtonRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.SidebarModeControlRect(layout.sidebar);
   }
   static SDL_FRect TreeSidebarCollapseButtonRect(WorkspaceShell& shell) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(shell.last_window_width_),
-                      static_cast<float>(shell.last_window_height_), shell.surface_.sidebar_visible,
-                      shell.BottomPanelVisible(), shell.surface_.sidebar_width, shell.surface_.bottom_panel_height);
+    const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.TreeSidebarCollapseButtonRect(layout.sidebar);
   }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }

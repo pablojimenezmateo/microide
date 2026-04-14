@@ -24,37 +24,13 @@ namespace {
 
 constexpr float kMenuBarHeight = 25.0f;
 constexpr float kWindowFrameHitThickness = 6.0f;
-constexpr float kWindowControlButtonGap = 4.0f;
-constexpr float kWindowControlButtonRightInset = 8.0f;
 constexpr float kProjectTabStripHeight = 32.0f;
 constexpr float kTabStripHeight = 34.0f;
-constexpr float kHeaderHeight = 26.0f;
-constexpr float kDivider = 1.0f;
-constexpr float kResizeHandleThickness = 6.0f;
-constexpr float kBottomPanelHeaderHeight = 28.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 constexpr float kOverlayMinWidth = 520.0f;
 constexpr float kOverlayMaxWidth = 840.0f;
 constexpr float kOverlayMinHeight = 220.0f;
-constexpr float kOverlayMaxHeight = 360.0f;
-constexpr float kScrollbarMinThumbLength = 24.0f;
-constexpr float kMinSidebarWidth = 160.0f;
-constexpr float kMaxSidebarWidth = 520.0f;
-constexpr float kMinEditorAreaWidth = 280.0f;
-constexpr float kMinBottomPanelHeight = 96.0f;
-constexpr float kMinEditorAreaHeight = 120.0f;
-constexpr float kEditorSplitDividerThickness = 6.0f;
-constexpr float kMinSplitPaneExtent = 180.0f;
-constexpr float kBottomPanelCommandReserveHeight = 56.0f;
-constexpr float kBottomPanelCommandPromptHeight = 18.0f;
-constexpr float kBottomPanelCommandInset = 10.0f;
-constexpr float kBottomPanelCommandTopPadding = 8.0f;
-constexpr float kBottomPanelCommandBottomPadding = 8.0f;
-constexpr float kTabCloseButtonSize = 14.0f;
-constexpr float kTabCloseButtonRightInset = 6.0f;
-constexpr float kMenuPopupSeparatorHeight = 8.0f;
-constexpr float kMenuPopupItemHeight = 22.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
@@ -426,22 +402,24 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
       std::isfinite(state.scale_x) && state.scale_x > 0.0f ? state.scale_x : 1.0f;
   presentation_scale_y_ =
       std::isfinite(state.scale_y) && state.scale_y > 0.0f ? state.scale_y : 1.0f;
-  if (state.logical_width > 0) {
-    last_window_width_ = state.logical_width;
+  if (state.logical_width <= 0) {
+    state.logical_width = window_presentation_.logical_width;
   }
-  if (state.logical_height > 0) {
-    last_window_height_ = state.logical_height;
+  if (state.logical_height <= 0) {
+    state.logical_height = window_presentation_.logical_height;
   }
-  window_chrome_ = state.chrome;
+  state.scale_x = presentation_scale_x_;
+  state.scale_y = presentation_scale_y_;
+  window_presentation_ = std::move(state);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentWindowRect() const {
-  if (last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (window_presentation_.logical_width <= 0 || window_presentation_.logical_height <= 0) {
     return std::nullopt;
   }
 
-  return MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
-                  static_cast<float>(last_window_height_));
+  return MakeRect(0.0f, 0.0f, static_cast<float>(window_presentation_.logical_width),
+                  static_cast<float>(window_presentation_.logical_height));
 }
 
 std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
@@ -455,18 +433,26 @@ std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
                        surface_.bottom_panel_height);
 }
 
+const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeState() const {
+  return window_presentation_.chrome;
+}
+
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
-  if (!window_chrome_.custom_enabled || last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (!CurrentWindowChromeState().custom_enabled) {
     return SDL_HITTEST_NORMAL;
   }
 
-  const float window_width = static_cast<float>(last_window_width_);
-  const float window_height = static_cast<float>(last_window_height_);
+  const auto window_rect = CurrentWindowRect();
+  if (!window_rect.has_value()) {
+    return SDL_HITTEST_NORMAL;
+  }
+  const float window_width = window_rect->w;
+  const float window_height = window_rect->h;
   if (x < 0.0f || y < 0.0f || x >= window_width || y >= window_height) {
     return SDL_HITTEST_NORMAL;
   }
 
-  if (window_chrome_.ResizableFrameEnabled()) {
+  if (CurrentWindowChromeState().ResizableFrameEnabled()) {
     const bool left = x < kWindowFrameHitThickness;
     const bool right = x >= window_width - kWindowFrameHitThickness;
     const bool top = y < kWindowFrameHitThickness;
@@ -480,12 +466,16 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
 }
 
 bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
-  if (!window_chrome_.custom_enabled || last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (!CurrentWindowChromeState().custom_enabled) {
     return false;
   }
 
-  const float window_width = static_cast<float>(last_window_width_);
-  const float window_height = static_cast<float>(last_window_height_);
+  const auto window_rect = CurrentWindowRect();
+  if (!window_rect.has_value()) {
+    return false;
+  }
+  const float window_width = window_rect->w;
+  const float window_height = window_rect->h;
   if (x < 0.0f || y < 0.0f || x >= window_width || y >= window_height) {
     return false;
   }
@@ -1114,7 +1104,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-                 kBottomPanelHeaderHeight);
+                 kWorkspaceBottomPanelHeaderHeight);
     if (ActiveTerminalTab() != nullptr && Contains(panel_header, x, y)) {
       if (Contains(BottomPanelTerminalNewTabRect(panel_header), x, y)) {
         return CursorKind::Pointer;
@@ -1138,7 +1128,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (surface_.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }
-    if (ActiveTerminalTab() != nullptr && y >= layout.bottom_panel.y + kBottomPanelHeaderHeight) {
+    if (ActiveTerminalTab() != nullptr &&
+        y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
       return CursorKind::Text;
     }
     return CursorKind::Default;

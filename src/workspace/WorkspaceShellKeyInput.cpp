@@ -342,12 +342,8 @@ bool WorkspaceShell::HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       case SDLK_HOME:
         if (!overlay_workflow_.compare_picker.matches.empty()) {
           overlay_workflow_.compare_picker.selected_index = 0;
-          if (last_window_width_ > 0 && last_window_height_ > 0) {
-            const WorkspaceLayout layout = ComputeLayout(
-                static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width,
-                surface_.bottom_panel_height);
-            RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
+          if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+            RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
           }
         }
         return true;
@@ -355,12 +351,8 @@ bool WorkspaceShell::HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
         if (!overlay_workflow_.compare_picker.matches.empty()) {
           overlay_workflow_.compare_picker.selected_index =
               overlay_workflow_.compare_picker.matches.size() - 1;
-          if (last_window_width_ > 0 && last_window_height_ > 0) {
-            const WorkspaceLayout layout = ComputeLayout(
-                static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width,
-                surface_.bottom_panel_height);
-            RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
+          if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+            RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
           }
         }
         return true;
