@@ -209,6 +209,20 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
     merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
     shell_.ResetCaretBlink();
     shell_.surface_.focus = FocusTarget::Editor;
+    if (event.button.button == SDL_BUTTON_MIDDLE) {
+      if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
+          text.has_value()) {
+        const std::vector<std::string> before_lines = merge_tab->result_viewport.lines();
+        const std::optional<editor::SelectionRange> selection_before =
+            merge_tab->result_viewport.selection_range();
+        const editor::TextPosition cursor_before{merge_tab->result_viewport.cursor_line(),
+                                                 merge_tab->result_viewport.cursor_column()};
+        merge_tab->result_viewport.InsertText(*text);
+        shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
+                                                    cursor_before);
+      }
+      return true;
+    }
     shell_.surface_.mouse_selecting = true;
     return true;
   }

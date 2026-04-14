@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1240,15 +1241,157 @@ void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
          "hovering a tab should expose the full relative path tooltip");
 }
 
-void TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus() {
+void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const std::vector<std::string> labels = WorkspaceShellTestAccess::VisibleMenuBarLabels(shell);
-  Expect(std::count(labels.begin(), labels.end(), "Terminal") == 1,
-         "menu bar should show only one Terminal menu");
+  Expect(std::find(labels.begin(), labels.end(), "Project") == labels.end(),
+         "menu bar should omit the removed Project menu");
+  Expect(std::find(labels.begin(), labels.end(), "Terminal") == labels.end(),
+         "menu bar should omit the removed Terminal menu");
   Expect(std::find(labels.begin(), labels.end(), "Help") == labels.end(),
          "menu bar should omit the removed Help menu");
+}
+
+void TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "left.txt";
+  const std::filesystem::path right = root / "right.txt";
+  WriteFile(left, "left\n");
+  WriteFile(right, "right\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, left);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, right),
+         "close-all fixture should open a second editor tab");
+
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2,
+         "close-all fixture should start with two tabs");
+  Expect(WorkspaceShellTestAccess::ExecuteCloseAllTabs(shell),
+         "close all tabs action should execute");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
+         "close all tabs should close every clean editor tab");
+}
+
+void TestWorkspaceShellDoubleClickTitleBarRequestsFullscreenToggle() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+
+  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 640.0f, 10.0f) == SDL_HITTEST_NORMAL,
+         "empty title-bar hit testing should stay normal so mouse clicks reach the shell");
+  Expect(WorkspaceShellTestAccess::WindowDragRegionContains(shell, 640.0f, 10.0f),
+         "empty title-bar space should still be eligible for window dragging");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, 640.0f, 10.0f, SDL_BUTTON_LEFT, 2),
+         "double-clicking an empty title-bar region should be handled");
+  Expect(WorkspaceShellTestAccess::ConsumeWindowAction(shell) ==
+             WorkspaceShell::WindowAction::ToggleFullscreen,
+         "double-clicking the title bar should request a fullscreen toggle");
+}
+
+void TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true, false, true);
+
+  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 1.0f, 1.0f) == SDL_HITTEST_NORMAL,
+         "fullscreen chrome state should not expose resize hit targets");
+}
+
+void TestWorkspaceShellCompareDividerMatchesMarkerWidth() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare divider fixture", "compare divider fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare divider fixture should open");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(surface.divider_width <= std::ceil(WorkspaceShellTestAccess::TextCharWidth(shell)) + 1.0f,
+         "compare divider should stay at roughly one glyph wide");
+  Expect(surface.right_x - surface.center_x <= surface.divider_width + 0.5f,
+         "compare divider should not reserve extra empty space before the right gutter");
+}
+
+void TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "abcdefghijklmnopqrstuvwxyz0123456789\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare resize fixture", "compare resize fixture");
+  WriteFile(source, "abcdefghijklmnopqrstuvwxyz9876543210\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare resize fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.divider_fraction = 0.75f;
+  const auto left_wide = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(left_wide.left_visible_columns > left_wide.right_visible_columns,
+         "widening the left compare pane should preserve more visible text on the left");
+
+  compare.divider_fraction = 0.25f;
+  const auto right_wide = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(right_wide.right_visible_columns > right_wide.left_visible_columns,
+         "widening the right compare pane should preserve more visible text on the right");
+}
+
+void TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.txt";
+  WriteFile(file, "hello world\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string primary_selection;
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(
+      shell, [&](std::string_view text) {
+        primary_selection = std::string(text);
+        return true;
+      });
+  WorkspaceShellTestAccess::SetPrimarySelectionTextReader(
+      shell, [&]() -> std::optional<std::string> { return primary_selection; });
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float start_x = metrics.text_x + 1.0f;
+  const float end_x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 5.0f + 1.0f;
+  const float y = metrics.first_line_y + std::min(4.0f, pane.h * 0.25f);
+
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+         "starting an editor drag selection should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
+         "dragging an editor selection should be handled");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end_x, y, SDL_BUTTON_LEFT),
+         "releasing an editor selection should be handled");
+  Expect(primary_selection == "hello",
+         "editor drag selection should update the primary selection buffer");
+
+  const float paste_x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 11.0f + 1.0f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, paste_x, y, SDL_BUTTON_MIDDLE),
+         "middle-clicking the editor should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "hello worldhello",
+         "middle-clicking the editor should paste the primary selection at the click location");
 }
 
 void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
@@ -1603,10 +1746,22 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
-  AddTest(tests, "WorkspaceShell/MenuBarOmitsDuplicateTerminalAndHelpMenus",
-          TestWorkspaceShellMenuBarOmitsDuplicateTerminalAndHelpMenus);
+  AddTest(tests, "WorkspaceShell/MenuBarOmitsRemovedMenus",
+          TestWorkspaceShellMenuBarOmitsRemovedMenus);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
+  AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
+          TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);
+  AddTest(tests, "WorkspaceShell/DoubleClickTitleBarRequestsFullscreenToggle",
+          TestWorkspaceShellDoubleClickTitleBarRequestsFullscreenToggle);
+  AddTest(tests, "WorkspaceShell/FullscreenStateDisablesResizableFrameHitTest",
+          TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest);
+  AddTest(tests, "WorkspaceShell/CompareDividerMatchesMarkerWidth",
+          TestWorkspaceShellCompareDividerMatchesMarkerWidth);
+  AddTest(tests, "WorkspaceShell/ComparePaneResizeKeepsWiderPaneTextVisible",
+          TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible);
+  AddTest(tests, "WorkspaceShell/EditorSelectionWritesPrimaryBufferAndMiddleClickPastes",
+          TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/SidebarModeButtonTogglesAnchoredMenu",
           TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu);
   AddTest(tests, "WorkspaceShell/ProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog",

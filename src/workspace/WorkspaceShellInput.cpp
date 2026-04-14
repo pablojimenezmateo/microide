@@ -282,6 +282,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && TerminalHasSelection()) {
     const std::string text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
     if (!text.empty() && WriteClipboardText(text)) {
+      WritePrimarySelectionText(text);
     }
     return true;
   }

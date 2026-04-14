@@ -126,8 +126,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (event.button.button != SDL_BUTTON_LEFT ||
-      !Contains(layout.editor_surface, event.button.x, event.button.y)) {
+  if (!Contains(layout.editor_surface, event.button.x, event.button.y) ||
+      (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE)) {
     return false;
   }
 
@@ -177,6 +177,9 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   }
   const bool was_selecting = surface_.mouse_selecting;
   surface_.mouse_selecting = false;
+  if (was_selecting) {
+    SyncPrimarySelectionWithActiveEditor();
+  }
   return was_selecting;
 }
 

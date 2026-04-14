@@ -318,6 +318,50 @@ void TestWorkspaceShellTerminalTabRightClickOpensContextMenu() {
          "right-clicking a terminal tab should open the terminal tab context menu");
 }
 
+void TestWorkspaceShellTerminalPanelRightClickOpensContextMenu() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect panel_rect = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  event.button.button = SDL_BUTTON_RIGHT;
+  event.button.x = static_cast<float>(panel_rect.x + 12.0f);
+  event.button.y = static_cast<float>(panel_rect.y + 12.0f);
+
+  Expect(shell.HandleEvent(event), "right-clicking the terminal panel should be handled");
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
+         "right-clicking the terminal panel should open a popup menu");
+  Expect(WorkspaceShellTestAccess::TerminalContextMenuOpen(shell),
+         "right-clicking the terminal panel should open the terminal context menu");
+}
+
+void TestWorkspaceShellTerminalPasteActionTargetsPanelFocus() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.txt";
+  WriteFile(file, "editor\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() -> std::optional<std::string> { return std::string("pwd"); });
+
+  const std::vector<std::string> editor_before =
+      WorkspaceShellTestAccess::ActiveEditor(shell).lines();
+  Expect(WorkspaceShellTestAccess::ExecutePasteClipboard(shell),
+         "paste should execute while the terminal owns focus");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "pwd",
+         "terminal-focused paste should send clipboard text to the terminal");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines() == editor_before,
+         "terminal-focused paste should not modify the editor buffer");
+}
+
 void TestWorkspaceShellTerminalTabsDragReorderToStart() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -410,6 +454,44 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
          "terminal drag selection should capture the selected transcript text");
 }
 
+void TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "select me");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string primary_selection;
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(
+      shell, [&](std::string_view text) {
+        primary_selection = std::string(text);
+        return true;
+      });
+  WorkspaceShellTestAccess::SetPrimarySelectionTextReader(
+      shell, [&]() -> std::optional<std::string> { return primary_selection; });
+
+  const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  const SDL_FPoint end = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start.x, start.y,
+                                                         SDL_BUTTON_LEFT),
+         "pressing inside the terminal panel should start transcript selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK),
+         "dragging inside the terminal panel should update transcript selection");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end.x, end.y,
+                                                       SDL_BUTTON_LEFT),
+         "releasing inside the terminal panel should end transcript selection");
+  Expect(primary_selection == "select",
+         "terminal drag selection should update the primary selection buffer");
+
+  const SDL_FPoint paste_point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 8);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, paste_point.x, paste_point.y,
+                                                         SDL_BUTTON_MIDDLE),
+         "middle-clicking the terminal panel should be handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session).find("select") != std::string::npos,
+         "middle-clicking the terminal panel should paste the primary selection");
+}
+
 void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -469,12 +551,18 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopyLastTerminalCommandPreservesSoftWrappedInvocation);
   AddTest(tests, "WorkspaceShell/TerminalTabRightClickOpensContextMenu",
           TestWorkspaceShellTerminalTabRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/TerminalPanelRightClickOpensContextMenu",
+          TestWorkspaceShellTerminalPanelRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/TerminalPasteActionTargetsPanelFocus",
+          TestWorkspaceShellTerminalPasteActionTargetsPanelFocus);
   AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",
           TestWorkspaceShellTerminalTabsDragReorderToStart);
   AddTest(tests, "WorkspaceShell/BottomPanelWheelScrollsTranscript",
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
+  AddTest(tests, "WorkspaceShell/TerminalSelectionWritesPrimaryBufferAndMiddleClickPastes",
+          TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
           TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
 }

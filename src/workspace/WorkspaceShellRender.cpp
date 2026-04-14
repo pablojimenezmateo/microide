@@ -198,7 +198,7 @@ void DrawWindowControlGlyph(SDL_Renderer* renderer,
                             const SDL_FRect& rect,
                             microide::workspace::WorkspaceShell::WindowControlButtonId id,
                             SDL_Color color,
-                            bool maximized) {
+                            bool expanded) {
   if (renderer == nullptr) {
     return;
   }
@@ -215,7 +215,7 @@ void DrawWindowControlGlyph(SDL_Renderer* renderer,
       SDL_RenderLine(renderer, left, center_y + 2.0f, right, center_y + 2.0f);
       return;
     case microide::workspace::WorkspaceShell::WindowControlButtonId::Maximize:
-      if (maximized) {
+      if (expanded) {
         const SDL_FRect back = SDL_FRect{left + 1.5f, top + 3.0f, rect.w - 9.0f, rect.h - 9.0f};
         const SDL_FRect front = SDL_FRect{left - 1.0f, top + 1.0f, rect.w - 9.0f, rect.h - 9.0f};
         SDL_RenderRect(renderer, &back);
@@ -853,7 +853,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
 
     DrawFilledRect(renderer, button.rect, background);
-    DrawWindowControlGlyph(renderer, button.rect, button.id, glyph, window_maximized_);
+    DrawWindowControlGlyph(renderer, button.rect, button.id, glyph,
+                           window_maximized_ || window_fullscreen_);
   }
 
   if (ActiveTabIsCompare()) {

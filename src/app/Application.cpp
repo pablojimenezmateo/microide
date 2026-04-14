@@ -146,6 +146,7 @@ void Application::Shutdown() {
     return;
   }
 
+  StopWindowDrag();
   workspace_shell_.SetDialogWindow(nullptr);
   workspace_shell_.Shutdown();
 
@@ -181,6 +182,20 @@ bool Application::HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       UpdateRendererPresentation();
       return true;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+      StopWindowDrag();
+      break;
+  }
+
+  if (window_drag_active_) {
+    if (event.type == SDL_EVENT_MOUSE_MOTION) {
+      return UpdateWindowDrag();
+    }
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP &&
+        event.button.button == SDL_BUTTON_LEFT) {
+      StopWindowDrag();
+      return true;
+    }
   }
 
   UpdateRendererPresentation();
@@ -189,13 +204,69 @@ bool Application::HandleEvent(const SDL_Event& event) {
     SDL_ConvertEventToRenderCoordinates(renderer_, &converted_event);
   }
 
+  const bool start_window_drag =
+      event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+      event.button.button == SDL_BUTTON_LEFT && event.button.clicks == 1 &&
+      window_ != nullptr &&
+      (SDL_GetWindowFlags(window_) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) == 0 &&
+      workspace_shell_.WindowDragRegionContains(converted_event.button.x,
+                                                converted_event.button.y);
+
   const bool handled = workspace_shell_.HandleEvent(converted_event);
   ConsumeWindowActions();
   if (workspace_shell_.ConsumeQuitRequested()) {
     running_ = false;
     return true;
   }
+  if (start_window_drag && StartWindowDrag(converted_event)) {
+    return true;
+  }
   return handled;
+}
+
+bool Application::StartWindowDrag(const SDL_Event& converted_event) {
+  if (window_ == nullptr || converted_event.type != SDL_EVENT_MOUSE_BUTTON_DOWN ||
+      converted_event.button.button != SDL_BUTTON_LEFT || window_drag_active_) {
+    return false;
+  }
+
+  if (!workspace_shell_.WindowDragRegionContains(converted_event.button.x,
+                                                 converted_event.button.y)) {
+    return false;
+  }
+
+  if (!SDL_GetWindowPosition(window_, &window_drag_origin_x_, &window_drag_origin_y_)) {
+    return false;
+  }
+  SDL_GetGlobalMouseState(&window_drag_mouse_x_, &window_drag_mouse_y_);
+  SDL_CaptureMouse(true);
+  window_drag_active_ = true;
+  return true;
+}
+
+bool Application::UpdateWindowDrag() {
+  if (!window_drag_active_ || window_ == nullptr) {
+    return false;
+  }
+
+  float global_mouse_x = 0.0f;
+  float global_mouse_y = 0.0f;
+  SDL_GetGlobalMouseState(&global_mouse_x, &global_mouse_y);
+  const int target_x = window_drag_origin_x_ +
+                       static_cast<int>(std::lround(global_mouse_x - window_drag_mouse_x_));
+  const int target_y = window_drag_origin_y_ +
+                       static_cast<int>(std::lround(global_mouse_y - window_drag_mouse_y_));
+  SDL_SetWindowPosition(window_, target_x, target_y);
+  return true;
+}
+
+void Application::StopWindowDrag() {
+  if (!window_drag_active_) {
+    return;
+  }
+
+  window_drag_active_ = false;
+  SDL_CaptureMouse(false);
 }
 
 void Application::Render() {
@@ -241,6 +312,7 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
                                         presentation.presentation_scale_y);
   workspace_shell_.SetWindowChromeState(presentation.logical_width, presentation.logical_height,
                                         (flags & SDL_WINDOW_MAXIMIZED) != 0,
+                                        (flags & SDL_WINDOW_FULLSCREEN) != 0,
                                         custom_window_chrome_enabled_);
 
   if (!SDL_SetRenderLogicalPresentation(renderer_, presentation.logical_width,
@@ -277,6 +349,13 @@ void Application::ConsumeWindowActions() {
       } else {
         SDL_MaximizeWindow(window_);
       }
+      UpdateRendererPresentation();
+      return;
+    }
+    case workspace::WorkspaceShell::WindowAction::ToggleFullscreen: {
+      const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
+      SDL_SetWindowFullscreen(window_, (flags & SDL_WINDOW_FULLSCREEN) == 0);
+      UpdateRendererPresentation();
       return;
     }
   }

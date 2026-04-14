@@ -157,6 +157,7 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
       ActionSpec{ActionId::Unsplit, "unsplit", "unsplit", "Close Split", ""},
       ActionSpec{ActionId::Vsplit, "vsplit", "vsplit [path]", "Split Right", ""},
       ActionSpec{ActionId::CloseActiveTab, "", "", "Close Tab", "Ctrl+W"},
+      ActionSpec{ActionId::CloseAllTabs, "", "", "Close All Tabs", ""},
       ActionSpec{ActionId::CopyLastTerminalCommand, "", "", "Copy Last Command + Output", ""},
       ActionSpec{ActionId::CopySelection, "", "", "Copy", "Ctrl+C"},
       ActionSpec{ActionId::CopySelectionWithContext, "", "", "Copy with Context", ""},
@@ -225,6 +226,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return true;
     case ActionId::CloseActiveTab:
       return !open_tabs_.empty();
+    case ActionId::CloseAllTabs:
+      return !open_tabs_.empty();
     case ActionId::CompareHead:
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
@@ -267,12 +270,16 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::CopySelectionWithContext:
       return ActiveEditableViewport() != nullptr && ActiveEditableViewport()->has_selection();
     case ActionId::CopySelection:
+      return (ActiveEditableViewport() != nullptr && ActiveEditableViewport()->has_selection()) ||
+             (surface_.focus == FocusTarget::Panel && TerminalHasSelection());
     case ActionId::CutSelection:
-    case ActionId::PasteClipboard:
     case ActionId::Redo:
     case ActionId::SelectAll:
     case ActionId::Undo:
       return ActiveEditableViewport() != nullptr;
+    case ActionId::PasteClipboard:
+      return ActiveEditableViewport() != nullptr ||
+             (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr);
     case ActionId::Goto:
     case ActionId::Jump:
     case ActionId::ReplaceInBuffer:
@@ -331,6 +338,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       item(ActionId::Tab),
       item(ActionId::Save),
       item(ActionId::CloseActiveTab),
+      item(ActionId::CloseAllTabs),
       item(ActionId::Reopen),
       separator(),
       item(ActionId::ProjectClose),
@@ -355,13 +363,6 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
            std::array<std::string_view, 2>{"down", {}}, 1),
       item(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
            std::array<std::string_view, 2>{"reset", {}}, 1),
-      separator(),
-      item(ActionId::Focus, "Focus Editor", {},
-           std::array<std::string_view, 2>{"editor", {}}, 1),
-      item(ActionId::Focus, "Focus Sidebar", {},
-           std::array<std::string_view, 2>{"sidebar", {}}, 1),
-      item(ActionId::Focus, "Focus Panel", {},
-           std::array<std::string_view, 2>{"panel", {}}, 1),
   });
   static const auto kSidebarModeItems = std::to_array<MenuItemSpec>({
       item(ActionId::SidebarShow, "Project", {}, std::array<std::string_view, 2>{"tree", {}}, 1,
@@ -377,16 +378,9 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       item(ActionId::Files),
       item(ActionId::ProjectSearch),
   });
-  static const auto kProjectItems = std::to_array<MenuItemSpec>({
-      item(ActionId::Compare, "Compare Current File..."),
-      item(ActionId::TreeRefresh),
-      item(ActionId::GitRefresh),
-      separator(),
-      item(ActionId::ProjectNext),
-      item(ActionId::ProjectPrev),
-  });
-  static const auto kTerminalItems = std::to_array<MenuItemSpec>({
-      item(ActionId::Term),
+  static const auto kTerminalContextItems = std::to_array<MenuItemSpec>({
+      item(ActionId::CopySelection),
+      item(ActionId::PasteClipboard),
   });
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       item(ActionId::CopyLastTerminalCommand),
@@ -397,8 +391,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", kSidebarModeItems},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
-      MenuSpec{MenuId::Project, "Project", kProjectItems},
-      MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
+      MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
   });
   return kMenus;
@@ -444,6 +437,7 @@ void WorkspaceShell::SetPresentationScale(float scale_x, float scale_y) {
 void WorkspaceShell::SetWindowChromeState(int width,
                                           int height,
                                           bool maximized,
+                                          bool fullscreen,
                                           bool custom_enabled) {
   if (width > 0) {
     last_window_width_ = width;
@@ -452,6 +446,7 @@ void WorkspaceShell::SetWindowChromeState(int width,
     last_window_height_ = height;
   }
   window_maximized_ = maximized;
+  window_fullscreen_ = fullscreen;
   custom_window_chrome_enabled_ = custom_enabled;
 }
 
@@ -466,7 +461,7 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
     return SDL_HITTEST_NORMAL;
   }
 
-  if (!window_maximized_) {
+  if (!window_maximized_ && !window_fullscreen_) {
     const bool left = x < kWindowFrameHitThickness;
     const bool right = x >= window_width - kWindowFrameHitThickness;
     const bool top = y < kWindowFrameHitThickness;
@@ -476,30 +471,44 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
     }
   }
 
+  return SDL_HITTEST_NORMAL;
+}
+
+bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
+  if (!custom_window_chrome_enabled_ || last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return false;
+  }
+
+  const float window_width = static_cast<float>(last_window_width_);
+  const float window_height = static_cast<float>(last_window_height_);
+  if (x < 0.0f || y < 0.0f || x >= window_width || y >= window_height) {
+    return false;
+  }
+
   if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
-    return SDL_HITTEST_NORMAL;
+    return false;
   }
 
   const WorkspaceLayout layout =
       ComputeLayout(window_width, window_height, surface_.sidebar_visible, BottomPanelVisible(),
                     surface_.sidebar_width, surface_.bottom_panel_height);
   if (!Contains(layout.menu_bar, x, y)) {
-    return SDL_HITTEST_NORMAL;
+    return false;
   }
 
   for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
     if (Contains(item.rect, x, y)) {
-      return SDL_HITTEST_NORMAL;
+      return false;
     }
   }
   for (const VisibleWindowControlButton& button :
        ComputeVisibleWindowControlButtons(layout.menu_bar)) {
     if (Contains(button.rect, x, y)) {
-      return SDL_HITTEST_NORMAL;
+      return false;
     }
   }
 
-  return SDL_HITTEST_DRAGGABLE;
+  return true;
 }
 
 WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
@@ -549,6 +558,15 @@ bool WorkspaceShell::CaretVisibleNow() const {
   return ((elapsed / kCaretBlinkIntervalMs) % 2) == 0;
 }
 
+SDL_FRect WorkspaceShell::CompareDividerHitRect(const SDL_FRect& editor_surface,
+                                                const CompareSurfaceLayout& surface) const {
+  constexpr float kCompareDividerHitWidth = 12.0f;
+  const float hit_width = std::max(kCompareDividerHitWidth, surface.divider_width);
+  const float center_x = surface.center_x + surface.divider_width * 0.5f;
+  return MakeRect(center_x - hit_width * 0.5f, editor_surface.y, hit_width,
+                  editor_surface.h);
+}
+
 bool WorkspaceShell::ActiveTabIsCompare() const {
   return active_tab_index_ < open_tabs_.size() &&
          open_tabs_[active_tab_index_].kind == TabEntry::Kind::Compare &&
@@ -590,7 +608,7 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
     layout.gutter_width = std::max(
         28.0f,
         text_renderer_.MeasureWidth(std::to_string(compare_tab.model.rows.size() + 1)) + 12.0f);
-    layout.divider_width = 18.0f;
+    layout.divider_width = std::max(1.0f, std::ceil(text_renderer_.CharWidth()));
     layout.left_x = rect.x + 8.0f;
     layout.header_y = rect.y + 6.0f;
     layout.rows_y = rect.y + layout.line_height + 12.0f;
@@ -601,20 +619,29 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
         reserve_horizontal ? (kScrollbarThickness + kScrollbarInset) : 0.0f;
     const float content_width = std::max(
         40.0f, rect.w - reserved_width - layout.gutter_width * 2.0f - layout.divider_width - 16.0f);
-    layout.left_width = std::floor(content_width * 0.5f);
-    layout.right_width = content_width - layout.left_width;
+    const float min_fraction =
+        std::min(0.5f, 120.0f / std::max(content_width, 1.0f));
+    const float divider_fraction =
+        std::clamp(compare_tab.divider_fraction, min_fraction, 1.0f - min_fraction);
+    layout.left_width = std::floor(content_width * divider_fraction);
+    layout.right_width = std::max(0.0f, content_width - layout.left_width);
     layout.center_x = layout.left_x + layout.gutter_width + layout.left_width;
-    layout.right_x = layout.center_x + layout.divider_width + layout.gutter_width;
+    layout.right_x = layout.center_x + layout.divider_width;
 
     const float row_region_height =
         rect.h - reserved_height - (layout.rows_y - rect.y) - 8.0f;
     layout.visible_rows = std::max(
         1, static_cast<int>(row_region_height / std::max(1.0f, layout.line_height)));
 
-    const float pane_text_width = std::max(0.0f, std::min(layout.left_width, layout.right_width) - 8.0f);
-    layout.visible_columns = std::max<std::size_t>(
-        1, static_cast<std::size_t>(
-               std::floor(pane_text_width / std::max(1.0f, text_renderer_.CharWidth()))));
+    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float left_pane_text_width = std::max(0.0f, layout.left_width - 8.0f);
+    const float right_pane_text_width = std::max(0.0f, layout.right_width - 8.0f);
+    layout.left_visible_columns = std::max<std::size_t>(
+        1, static_cast<std::size_t>(std::floor(left_pane_text_width / char_width)));
+    layout.right_visible_columns = std::max<std::size_t>(
+        1, static_cast<std::size_t>(std::floor(right_pane_text_width / char_width)));
+    layout.visible_columns =
+        std::min(layout.left_visible_columns, layout.right_visible_columns);
     layout.show_vertical = reserve_vertical;
     layout.show_horizontal = reserve_horizontal;
     return layout;
@@ -650,7 +677,7 @@ TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
     const CompareSurfaceLayout& surface,
     CompareTabState& compare_tab) const {
   compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface.visible_rows),
-                                             surface.visible_columns);
+                                             surface.right_visible_columns);
   compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
   return ComputeTextGridInteractionLayout(
       MakeRect(surface.right_x, surface.rows_y, surface.gutter_width + surface.right_width,
@@ -658,7 +685,7 @@ TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
       surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
       text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
       compare_tab.model.rows.size(), compare_tab.horizontal_scroll,
-      static_cast<std::size_t>(surface.visible_rows), surface.visible_columns);
+      static_cast<std::size_t>(surface.visible_rows), surface.right_visible_columns);
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
@@ -1166,6 +1193,59 @@ std::optional<std::string> WorkspaceShell::ReadClipboardText() const {
   return copied_text;
 }
 
+bool WorkspaceShell::WritePrimarySelectionText(std::string_view text) const {
+  if (text.empty()) {
+    return false;
+  }
+  if (primary_selection_text_writer_) {
+    return primary_selection_text_writer_(text);
+  }
+  return SDL_SetPrimarySelectionText(std::string(text).c_str());
+}
+
+std::optional<std::string> WorkspaceShell::ReadPrimarySelectionText() const {
+  if (primary_selection_text_reader_) {
+    return primary_selection_text_reader_();
+  }
+
+  char* selection_text = SDL_GetPrimarySelectionText();
+  if (selection_text == nullptr) {
+    return std::nullopt;
+  }
+
+  std::string copied_text(selection_text);
+  SDL_free(selection_text);
+  return copied_text;
+}
+
+void WorkspaceShell::SyncPrimarySelectionWithActiveEditor() {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || !viewport->has_selection()) {
+    return;
+  }
+
+  const std::string text = viewport->SelectedText();
+  if (!text.empty()) {
+    WritePrimarySelectionText(text);
+  }
+}
+
+void WorkspaceShell::SyncPrimarySelectionWithTerminalSelection() {
+  if (!TerminalHasSelection()) {
+    return;
+  }
+
+  const auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return;
+  }
+
+  const std::string text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
+  if (!text.empty()) {
+    WritePrimarySelectionText(text);
+  }
+}
+
 std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
   const editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr) {
@@ -1588,6 +1668,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
+    const SDL_FRect divider_rect =
+        CompareDividerHitRect(layout.editor_surface, surface_layout);
+    if (Contains(divider_rect, x, y)) {
+      return CursorKind::EwResize;
+    }
+    if (compare_tab->right_editable && x >= surface_layout.right_x) {
+      return CursorKind::Text;
+    }
     return CursorKind::Pointer;
   }
   if (ActiveTabIsMerge()) {
@@ -1662,7 +1750,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         hover.has_value() && hover->kind == MergeHoverState::Kind::ResultAction) {
       return CursorKind::Pointer;
     }
-    if (Contains(interaction.result.rect, x, y)) {
+    if (Contains(interaction.result.rect, x, y) ||
+        (x >= surface_layout.center_x && x < surface_layout.right_x && y >= surface_layout.rows_y)) {
       return CursorKind::Text;
     }
     return CursorKind::Pointer;

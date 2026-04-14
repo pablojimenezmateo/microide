@@ -59,8 +59,39 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
     return true;
   }
 
-  if (event.button.button != SDL_BUTTON_LEFT || !shell_.BottomPanelVisible() ||
+  if (!shell_.BottomPanelVisible() ||
       !Contains(layout.bottom_panel, event.button.x, event.button.y)) {
+    return false;
+  }
+
+  if (shell_.ActiveTerminalTab() != nullptr) {
+    const SDL_FRect panel_content =
+        BottomPanelContentRect(layout, shell_.surface_.command_mode);
+    if (event.button.button == SDL_BUTTON_RIGHT && Contains(panel_content, event.button.x,
+                                                            event.button.y)) {
+      shell_.surface_.focus = FocusTarget::Panel;
+      shell_.OpenAnchoredMenu(MenuId::TerminalContext,
+                              MakeRect(static_cast<float>(event.button.x),
+                                       static_cast<float>(event.button.y), 1.0f, 1.0f));
+      return true;
+    }
+    if (event.button.button == SDL_BUTTON_MIDDLE && Contains(panel_content, event.button.x,
+                                                             event.button.y)) {
+      if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
+          text.has_value()) {
+        shell_.ClearTerminalSelection();
+        if (auto* terminal_tab = shell_.ActiveTerminalTab(); terminal_tab != nullptr) {
+          terminal_tab->follow_tail = true;
+          shell_.AppendTerminalPendingInput(*text);
+          terminal_tab->session.PasteText(*text);
+        }
+      }
+      shell_.surface_.focus = FocusTarget::Panel;
+      return true;
+    }
+  }
+
+  if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
 
@@ -115,6 +146,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonUp(const SDL_Event& even
   if (auto* terminal_tab = shell_.ActiveTerminalTab();
       terminal_tab != nullptr && terminal_tab->mouse_selecting) {
     terminal_tab->mouse_selecting = false;
+    shell_.SyncPrimarySelectionWithTerminalSelection();
     return true;
   }
 

@@ -802,4 +802,14 @@ void WorkspaceShell::CloseTab(std::size_t index) {
   EnsureActiveTabVisible();
 }
 
+void WorkspaceShell::CloseAllTabs() {
+  SyncActiveEditorTab();
+  for (std::size_t i = open_tabs_.size(); i > 0; --i) {
+    if (TabIsDirty(i - 1)) {
+      continue;
+    }
+    CloseTab(i - 1);
+  }
+}
+
 }  // namespace microide::workspace

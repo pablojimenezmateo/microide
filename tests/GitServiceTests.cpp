@@ -255,6 +255,46 @@ void TestGitOutgoingBranchFiles() {
          "outgoing branch list should include both changed files");
 }
 
+void TestGitResolvePrBaseReferenceFromGhMergeBase() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto base_dir = FixturePath("diff/git/base");
+  CopyTree(base_dir, repo_path);
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base fixture", "base fixture");
+  RequireCommandSuccess(
+      "git -C '" + EscapedRepoPath(repo_path) +
+          "' checkout -b release/2.0 >/dev/null 2>/dev/null",
+      "git checkout release branch");
+  WriteFile(repo_path / "README.md", ReadFile(repo_path / "README.md") + "\nrelease-only\n");
+  CommitAll(repo_path, "release fixture", "release fixture");
+
+  RequireCommandSuccess(
+      "git -C '" + EscapedRepoPath(repo_path) +
+          "' checkout -b feature/pr-base >/dev/null 2>/dev/null",
+      "git checkout feature branch");
+  WriteFile(repo_path / "src/pr_only.cpp", "int main() { return 0; }\n");
+  CommitAll(repo_path, "feature fixture", "feature fixture");
+  RequireCommandSuccess(
+      "git -C '" + EscapedRepoPath(repo_path) +
+          "' config branch.feature/pr-base.gh-merge-base release/2.0 >/dev/null 2>/dev/null",
+      "git config gh merge base");
+
+  const auto base_ref = ResolveGitBaseReference(repo_path);
+  Expect(base_ref.has_value(), "git base reference should resolve from gh-merge-base");
+  Expect(base_ref->ref == "refs/heads/release/2.0",
+         "gh-merge-base should override the default branch when resolving the PR base");
+
+  const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, base_ref->ref);
+  Expect(outgoing.size() == 1,
+         "outgoing files should only include commits ahead of the configured PR base");
+  Expect(outgoing[0].relative_path == std::filesystem::path("src/pr_only.cpp"),
+         "outgoing files should exclude changes that already exist on the PR base branch");
+  Expect(outgoing[0].status == GitFileStatus::Added,
+         "PR-only file should be reported with the correct outgoing status");
+}
+
 void TestGitBulkStageAndDiscard() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -419,6 +459,8 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/CompareFixture", TestGitCompareFixture);
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
+  AddTest(tests, "Git/ResolvePrBaseReferenceFromGhMergeBase",
+          TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);
   AddTest(tests, "Git/RepositoryDirectApi", TestGitRepositoryDirectApi);
   AddTest(tests, "Git/PorcelainParserStatusV1", TestGitPorcelainParserStatusV1);

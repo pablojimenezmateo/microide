@@ -1023,6 +1023,9 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteTabAction(
         RequestCloseTab(active_tab_index_);
       }
       return ActionDispatchResult::Handled;
+    case ActionId::CloseAllTabs:
+      CloseAllTabs();
+      return ActionDispatchResult::Handled;
     default:
       return ActionDispatchResult::Unhandled;
   }
@@ -1118,11 +1121,17 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
       }
       return ActionDispatchResult::Handled;
     case ActionId::CopySelection: {
-      const std::string text =
-          ActiveEditableViewport() != nullptr ? ActiveEditableViewport()->SelectedText()
-                                              : std::string{};
+      std::string text;
+      if (surface_.focus == FocusTarget::Panel && TerminalHasSelection()) {
+        if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+          text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
+        }
+      } else if (ActiveEditableViewport() != nullptr) {
+        text = ActiveEditableViewport()->SelectedText();
+      }
       if (!text.empty()) {
         WriteClipboardText(text);
+        WritePrimarySelectionText(text);
       }
       return ActionDispatchResult::Handled;
     }
@@ -1137,6 +1146,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
       const std::optional<std::string> text = SelectionTextWithContext();
       if (text.has_value()) {
         WriteClipboardText(*text);
+        WritePrimarySelectionText(*text);
       }
       return ActionDispatchResult::Handled;
     }
@@ -1144,6 +1154,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
         const std::string text = viewport->SelectedText();
         if (!text.empty() && WriteClipboardText(text)) {
+          WritePrimarySelectionText(text);
           const std::vector<std::string> before_lines = viewport->lines();
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
@@ -1166,7 +1177,9 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
     case ActionId::PasteClipboard: {
       if (const std::optional<std::string> clipboard_text = ReadClipboardText();
           clipboard_text.has_value()) {
-        if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+        if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
+          PasteClipboardIntoTerminal();
+        } else if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
           const std::vector<std::string> before_lines = viewport->lines();
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};

@@ -228,6 +228,14 @@ struct WorkspaceShellTestAccess {
     shell.last_window_width_ = width;
     shell.last_window_height_ = height;
   }
+  static void SetWindowChromeEnabled(WorkspaceShell& shell,
+                                     bool enabled,
+                                     bool maximized = false,
+                                     bool fullscreen = false) {
+    shell.custom_window_chrome_enabled_ = enabled;
+    shell.window_maximized_ = maximized;
+    shell.window_fullscreen_ = fullscreen;
+  }
   static void RenderFrame(WorkspaceShell& shell) {
     shell.Render(nullptr, shell.last_window_width_, shell.last_window_height_);
   }
@@ -254,6 +262,16 @@ struct WorkspaceShellTestAccess {
   static void SetClipboardTextWriter(WorkspaceShell& shell,
                                      std::function<bool(std::string_view)> writer) {
     shell.clipboard_text_writer_ = std::move(writer);
+  }
+  static void SetPrimarySelectionTextReader(
+      WorkspaceShell& shell,
+      std::function<std::optional<std::string>()> reader) {
+    shell.primary_selection_text_reader_ = std::move(reader);
+  }
+  static void SetPrimarySelectionTextWriter(
+      WorkspaceShell& shell,
+      std::function<bool(std::string_view)> writer) {
+    shell.primary_selection_text_writer_ = std::move(writer);
   }
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
@@ -301,8 +319,16 @@ struct WorkspaceShellTestAccess {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
                                WorkspaceShell::ActionSource::Menu);
   }
+  static bool ExecutePasteClipboard(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::PasteClipboard, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
   static bool ExecuteCopyLastTerminalCommand(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteCloseAllTabs(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseAllTabs, {},
                                WorkspaceShell::ActionSource::Menu);
   }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
@@ -395,6 +421,19 @@ struct WorkspaceShellTestAccess {
     event.button.button = button;
     event.button.x = x;
     event.button.y = y;
+    return shell.HandleEvent(event);
+  }
+  static bool HandleMouseButtonDown(WorkspaceShell& shell,
+                                    float x,
+                                    float y,
+                                    Uint8 button,
+                                    Uint8 clicks) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = button;
+    event.button.x = x;
+    event.button.y = y;
+    event.button.clicks = clicks;
     return shell.HandleEvent(event);
   }
   static bool HandleMouseButtonUp(WorkspaceShell& shell, float x, float y, Uint8 button) {
@@ -586,6 +625,12 @@ struct WorkspaceShellTestAccess {
                                                                 shell.text_viewport_, pane);
   }
   static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
+  static SDL_HitTestResult WindowHitTest(WorkspaceShell& shell, float x, float y) {
+    return shell.WindowHitTest(x, y);
+  }
+  static bool WindowDragRegionContains(WorkspaceShell& shell, float x, float y) {
+    return shell.WindowDragRegionContains(x, y);
+  }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveEditorBlameOverlay(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout =
@@ -681,6 +726,9 @@ struct WorkspaceShellTestAccess {
   static void SaveWorkspaceSession(WorkspaceShell& shell) { shell.SaveWorkspaceSession(); }
   static void RequestQuit(WorkspaceShell& shell) { shell.RequestQuit(); }
   static bool ConsumeQuitRequested(WorkspaceShell& shell) { return shell.ConsumeQuitRequested(); }
+  static WorkspaceShell::WindowAction ConsumeWindowAction(WorkspaceShell& shell) {
+    return shell.ConsumeWindowAction();
+  }
 
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
     shell.prompts_.dirty.selected_action = selected_action;
@@ -846,6 +894,10 @@ struct WorkspaceShellTestAccess {
   static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
     return shell.surface_.menu_bar_open &&
            shell.surface_.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
+  }
+  static bool TerminalContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.surface_.menu_bar_open &&
+           shell.surface_.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
   }
 };
 

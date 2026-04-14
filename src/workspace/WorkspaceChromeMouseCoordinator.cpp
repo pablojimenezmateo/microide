@@ -177,6 +177,9 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
       return true;
     }
   }
+  if (event.button.clicks >= 2) {
+    shell_.pending_window_action_ = WindowAction::ToggleFullscreen;
+  }
   return true;
 }
 

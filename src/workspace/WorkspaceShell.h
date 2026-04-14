@@ -38,6 +38,7 @@ class WorkspaceShell {
     None,
     Minimize,
     ToggleMaximize,
+    ToggleFullscreen,
   };
 
   enum class WindowControlButtonId {
@@ -58,9 +59,14 @@ class WorkspaceShell {
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
   void SetPresentationScale(float scale_x, float scale_y);
-  void SetWindowChromeState(int width, int height, bool maximized, bool custom_enabled);
+  void SetWindowChromeState(int width,
+                            int height,
+                            bool maximized,
+                            bool fullscreen,
+                            bool custom_enabled);
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
+  bool WindowDragRegionContains(float x, float y) const;
   WindowAction ConsumeWindowAction();
 
  private:
@@ -100,6 +106,7 @@ class WorkspaceShell {
     Search,
     Project,
     Terminal,
+    TerminalContext,
     TerminalTabContext,
   };
 
@@ -142,6 +149,7 @@ class WorkspaceShell {
     None,
     SidebarDivider,
     BottomPanelDivider,
+    CompareDivider,
     MergeLeftDivider,
     MergeRightDivider,
     SidebarScrollbar,
@@ -193,6 +201,7 @@ class WorkspaceShell {
     int scroll_row = 0;
     std::size_t horizontal_scroll = 0;
     std::size_t max_visual_columns = 0;
+    float divider_fraction = 0.5f;
     bool right_editable = false;
     bool right_view_active = false;
     bool persistable = true;
@@ -245,6 +254,8 @@ class WorkspaceShell {
     float header_y = 0.0f;
     float rows_y = 0.0f;
     int visible_rows = 1;
+    std::size_t left_visible_columns = 1;
+    std::size_t right_visible_columns = 1;
     std::size_t visible_columns = 1;
     bool show_vertical = false;
     bool show_horizontal = false;
@@ -572,6 +583,7 @@ class WorkspaceShell {
     Unsplit,
     Vsplit,
     CloseActiveTab,
+    CloseAllTabs,
     CopyLastTerminalCommand,
     CopySelection,
     CopySelectionWithContext,
@@ -1295,7 +1307,12 @@ class WorkspaceShell {
   bool PasteClipboardIntoTerminal();
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
+  bool WritePrimarySelectionText(std::string_view text) const;
+  std::optional<std::string> ReadPrimarySelectionText() const;
   std::optional<std::string> SelectionTextWithContext() const;
+  void SyncPrimarySelectionWithActiveEditor();
+  void SyncPrimarySelectionWithTerminalSelection();
+  void CloseAllTabs();
   void AppendTerminalPendingInput(std::string_view input);
   void EraseLastTerminalPendingInputCodepoint();
   void SubmitTerminalPendingInput();
@@ -1389,6 +1406,8 @@ class WorkspaceShell {
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;
+  SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
+                                  const CompareSurfaceLayout& surface) const;
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void UpdateMouseCursor(float x, float y);
@@ -1422,6 +1441,8 @@ class WorkspaceShell {
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
   std::function<bool(std::string_view)> clipboard_text_writer_;
+  std::function<std::optional<std::string>()> primary_selection_text_reader_;
+  std::function<bool(std::string_view)> primary_selection_text_writer_;
   SDL_Window* dialog_window_ = nullptr;
   bool project_open_dialog_active_ = false;
   std::mutex project_open_dialog_mutex_;
@@ -1438,6 +1459,7 @@ class WorkspaceShell {
   float presentation_scale_y_ = 1.0f;
   bool custom_window_chrome_enabled_ = false;
   bool window_maximized_ = false;
+  bool window_fullscreen_ = false;
   WindowAction pending_window_action_ = WindowAction::None;
   TextInputSurface active_text_input_surface_ = TextInputSurface::None;
   TextCompositionState text_composition_;

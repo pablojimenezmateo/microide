@@ -97,6 +97,14 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
       line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
   shell_.ResetCaretBlink();
   shell_.surface_.focus = FocusTarget::Editor;
+  if (event.button.button == SDL_BUTTON_MIDDLE) {
+    if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
+        text.has_value()) {
+      shell_.text_viewport_.InsertText(*text);
+      shell_.ResetCaretBlink();
+    }
+    return true;
+  }
   shell_.surface_.mouse_selecting = true;
   return true;
 }

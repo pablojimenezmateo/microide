@@ -41,6 +41,69 @@ std::string ShortRefLabel(std::string_view ref) {
   return std::string(ref);
 }
 
+std::optional<std::string> ReadTrimmedGitValue(const GitRepository& repo,
+                                               std::string_view arguments) {
+  const auto result = repo.Execute(arguments);
+  const std::string value = TrimTrailingWhitespace(result.output);
+  if (!result.success() || value.empty()) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+bool GitRefExists(const GitRepository& repo, std::string_view ref) {
+  if (ref.empty()) {
+    return false;
+  }
+  return repo.ExecuteSucceeds("show-ref --verify --quiet '" +
+                              microide::project::internal::EscapeShellArg(std::string(ref)) +
+                              "'");
+}
+
+std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepository& repo,
+                                                              std::string_view branch_name,
+                                                              std::string_view remote_name) {
+  if (branch_name.empty()) {
+    return std::nullopt;
+  }
+
+  if (!remote_name.empty()) {
+    const std::string remote_ref =
+        "refs/remotes/" + std::string(remote_name) + "/" + std::string(branch_name);
+    if (GitRefExists(repo, remote_ref)) {
+      return GitBranchReference{
+          .ref = remote_ref,
+          .label = ShortRefLabel(remote_ref),
+      };
+    }
+  }
+
+  const std::string origin_ref = "refs/remotes/origin/" + std::string(branch_name);
+  if (GitRefExists(repo, origin_ref)) {
+    return GitBranchReference{
+        .ref = origin_ref,
+        .label = ShortRefLabel(origin_ref),
+    };
+  }
+
+  const std::string local_ref = "refs/heads/" + std::string(branch_name);
+  if (GitRefExists(repo, local_ref)) {
+    return GitBranchReference{
+        .ref = local_ref,
+        .label = std::string(branch_name),
+    };
+  }
+
+  if (GitRefExists(repo, branch_name)) {
+    return GitBranchReference{
+        .ref = std::string(branch_name),
+        .label = ShortRefLabel(branch_name),
+    };
+  }
+
+  return std::nullopt;
+}
+
 }  // namespace
 
 std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& root,
@@ -85,6 +148,27 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
   const GitRepository repo(root);
   if (!repo.IsValid()) {
     return std::nullopt;
+  }
+
+  const std::optional<std::string> current_branch =
+      ReadTrimmedGitValue(repo, "symbolic-ref --quiet --short HEAD");
+  if (current_branch.has_value()) {
+    const std::string merge_base_key = "branch." + *current_branch + ".gh-merge-base";
+    const std::optional<std::string> pr_base = ReadTrimmedGitValue(
+        repo, "config --get '" +
+                  microide::project::internal::EscapeShellArg(merge_base_key) + "'");
+    if (pr_base.has_value()) {
+      const std::string remote_key = "branch." + *current_branch + ".remote";
+      const std::optional<std::string> branch_remote = ReadTrimmedGitValue(
+          repo, "config --get '" +
+                    microide::project::internal::EscapeShellArg(remote_key) + "'");
+      if (const auto pr_base_ref =
+              ResolveNamedBranchReference(repo, *pr_base,
+                                          branch_remote.value_or(std::string{}));
+          pr_base_ref.has_value()) {
+        return pr_base_ref;
+      }
+    }
   }
 
   const auto origin_head_result = repo.Execute("symbolic-ref --quiet refs/remotes/origin/HEAD");
