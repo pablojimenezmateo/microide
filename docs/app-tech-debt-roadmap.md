@@ -37,6 +37,8 @@ Current state:
 - `last_window_width_` and `last_window_height_` are used widely in `WorkspaceShell`.
 - App-owned presentation updates now arrive through one snapshot, but render-time refresh still
   writes the cached dimensions directly.
+- Common callers now route repeated window-rect and layout lookups through
+  `CurrentWindowRect()` and `CurrentWorkspaceLayout()` instead of rebuilding those checks ad hoc.
 
 Why this still matters:
 - Layout-sensitive features depend on mutable cached dimensions instead of one explicit window

@@ -1427,6 +1427,8 @@ class WorkspaceShell {
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;
   std::string TruncateLabel(std::string_view text, float max_width) const;
+  std::optional<SDL_FRect> CurrentWindowRect() const;
+  std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;

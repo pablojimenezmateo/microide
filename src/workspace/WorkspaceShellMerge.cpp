@@ -317,15 +317,15 @@ void WorkspaceShell::ClampMergeHorizontalScroll(MergeTabState& merge_tab,
 
 void WorkspaceShell::RevealActiveMergeSelection() {
   MergeTabState* merge_tab = ActiveMergeTab();
-  if (merge_tab == nullptr || last_window_width_ <= 0 || last_window_height_ <= 0 ||
-      merge_tab->conflicts.empty()) {
+  if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width,
-                    surface_.bottom_panel_height);
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const MergeSurfaceLayout surface_layout =
       ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
   ClampMergeScrollRow(*merge_tab, surface_layout.visible_rows);

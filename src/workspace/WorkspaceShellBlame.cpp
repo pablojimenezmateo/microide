@@ -312,8 +312,7 @@ const editor::EditorBlameLine* WorkspaceShell::EditorBlameLineAtPosition(float x
 }
 
 std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEditorBlamePopupLayout() const {
-  if (!active_editor_blame_popup_line_.has_value() || last_window_width_ <= 0 ||
-      last_window_height_ <= 0) {
+  if (!active_editor_blame_popup_line_.has_value()) {
     return std::nullopt;
   }
 
@@ -322,9 +321,11 @@ std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEdit
     return std::nullopt;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const float copy_width = std::max(84.0f, text_renderer_.MeasureWidth("Copy SHA") + 18.0f);
   const float available_width = std::max(220.0f, layout.editor_surface.w - 16.0f);
   const float max_card_width = std::min(kBlamePopupMaxWidth, available_width);

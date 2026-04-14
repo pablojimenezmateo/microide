@@ -181,12 +181,8 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
     return std::nullopt;
   }
 
-  const SDL_FRect bounds =
-      MakeRect(0.0f, 0.0f,
-               last_window_width_ > 0 ? static_cast<float>(last_window_width_) : menu_bar.w,
-               last_window_height_ > 0
-                   ? static_cast<float>(last_window_height_)
-                   : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
+  const SDL_FRect bounds = CurrentWindowRect().value_or(
+      MakeRect(0.0f, 0.0f, menu_bar.w, std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h)));
   if (surface_.active_menu_anchor_rect.has_value() && id == surface_.active_menu_id) {
     return ComputePopupMenuRect(*surface_.active_menu_anchor_rect, menu->items, bounds);
   }
@@ -396,12 +392,8 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu
   if (submenu == nullptr) {
     return std::nullopt;
   }
-  const SDL_FRect bounds =
-      MakeRect(0.0f, 0.0f,
-               last_window_width_ > 0 ? static_cast<float>(last_window_width_) : menu_bar.w,
-               last_window_height_ > 0
-                   ? static_cast<float>(last_window_height_)
-                   : std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h));
+  const SDL_FRect bounds = CurrentWindowRect().value_or(
+      MakeRect(0.0f, 0.0f, menu_bar.w, std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h)));
   SDL_FRect anchor = *surface_.active_submenu_anchor_rect;
   anchor.x += anchor.w - 1.0f;
   return ComputePopupMenuRect(anchor, submenu->items, bounds);
@@ -418,14 +410,8 @@ bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
     return true;
   }
   if (item.submenu != MenuId::None) {
-    if (last_window_width_ > 0 && last_window_height_ > 0) {
-      const WorkspaceLayout layout = ComputeLayout(static_cast<float>(last_window_width_),
-                                                   static_cast<float>(last_window_height_),
-                                                   surface_.sidebar_visible,
-                                                   BottomPanelVisible(),
-                                                   surface_.sidebar_width,
-                                                   surface_.bottom_panel_height);
-      if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, menu_id);
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, menu_id);
           popup_rect.has_value()) {
         for (const VisiblePopupMenuItem& visible_item :
              ComputeVisiblePopupMenuItems(menu_id, *popup_rect)) {
@@ -491,13 +477,12 @@ std::filesystem::path WorkspaceShell::ResolveTreeActionPath(ActionSource source)
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
-  if (!surface_.tree_context_menu.open || last_window_width_ <= 0 || last_window_height_ <= 0) {
+  const auto window_rect = CurrentWindowRect();
+  if (!surface_.tree_context_menu.open || !window_rect.has_value()) {
     return std::nullopt;
   }
   return ComputePopupMenuRect(surface_.tree_context_menu.anchor_rect,
-                              TreeContextMenuItems(surface_.tree_context_menu.target),
-                              MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
-                                       static_cast<float>(last_window_height_)));
+                              TreeContextMenuItems(surface_.tree_context_menu.target), *window_rect);
 }
 
 void WorkspaceShell::OpenTreeContextMenu(TreeContextTargetKind target,

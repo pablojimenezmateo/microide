@@ -197,16 +197,15 @@ void WorkspaceShell::CompareInteractionCoordinator::JumpCompareHunk(int delta) {
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareRows(int delta) {
   CompareTabState* compare_tab = shell_.ActiveCompareTab();
-  if (compare_tab == nullptr || delta == 0 || shell_.last_window_width_ <= 0 ||
-      shell_.last_window_height_ <= 0) {
+  if (compare_tab == nullptr || delta == 0) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                    static_cast<float>(shell_.last_window_height_),
-                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const CompareSurfaceLayout surface_layout =
       shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const auto scroll_layout =
@@ -218,16 +217,15 @@ void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareRows(int delta)
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
   CompareTabState* compare_tab = shell_.ActiveCompareTab();
-  if (compare_tab == nullptr || delta == 0 || shell_.last_window_width_ <= 0 ||
-      shell_.last_window_height_ <= 0) {
+  if (compare_tab == nullptr || delta == 0) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                    static_cast<float>(shell_.last_window_height_),
-                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const CompareSurfaceLayout surface_layout =
       shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const auto scroll_layout =
@@ -255,16 +253,15 @@ void WorkspaceShell::CompareInteractionCoordinator::MoveMergeSelection(int delta
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
   MergeTabState* merge_tab = shell_.ActiveMergeTab();
-  if (merge_tab == nullptr || delta == 0 || shell_.last_window_width_ <= 0 ||
-      shell_.last_window_height_ <= 0) {
+  if (merge_tab == nullptr || delta == 0) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(shell_.last_window_width_),
-                    static_cast<float>(shell_.last_window_height_),
-                    shell_.surface_.sidebar_visible, shell_.BottomPanelVisible(),
-                    shell_.surface_.sidebar_width, shell_.surface_.bottom_panel_height);
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const MergeSurfaceLayout surface_layout =
       shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
   const auto scroll_layout =

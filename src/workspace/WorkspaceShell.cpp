@@ -435,6 +435,26 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   window_chrome_ = state.chrome;
 }
 
+std::optional<SDL_FRect> WorkspaceShell::CurrentWindowRect() const {
+  if (last_window_width_ <= 0 || last_window_height_ <= 0) {
+    return std::nullopt;
+  }
+
+  return MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
+                  static_cast<float>(last_window_height_));
+}
+
+std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
+  const auto window_rect = CurrentWindowRect();
+  if (!window_rect.has_value()) {
+    return std::nullopt;
+  }
+
+  return ComputeLayout(window_rect->w, window_rect->h, surface_.sidebar_visible,
+                       BottomPanelVisible(), surface_.sidebar_width,
+                       surface_.bottom_panel_height);
+}
+
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
   if (!window_chrome_.custom_enabled || last_window_width_ <= 0 || last_window_height_ <= 0) {
     return SDL_HITTEST_NORMAL;
@@ -591,12 +611,12 @@ const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
 
 void WorkspaceShell::MoveFileFinderSelection(int delta) {
   file_finder_.MoveSelection(delta);
-  if (surface_.overlay_visible && last_window_width_ > 0 && last_window_height_ > 0) {
-    const WorkspaceLayout layout =
-        ComputeLayout(static_cast<float>(last_window_width_),
-                      static_cast<float>(last_window_height_), surface_.sidebar_visible,
-                      BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
-    RevealOverlaySelection(ComputeOverlayRect(layout.editor_area));
+  if (surface_.overlay_visible) {
+    const auto layout = CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return;
+    }
+    RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
   }
 }
 
@@ -853,14 +873,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       break;
   }
 
-  if (last_window_width_ <= 0 || last_window_height_ <= 0) {
+  const auto window_rect = CurrentWindowRect();
+  if (!window_rect.has_value()) {
     return CursorKind::Default;
   }
 
   if (prompts_.dirty_visible) {
-    const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
-                                    static_cast<float>(last_window_height_));
-    const auto buttons = ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(full));
+    const auto buttons = ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(*window_rect));
     for (const SDL_FRect& button : buttons) {
       if (Contains(button, x, y)) {
         return CursorKind::Pointer;
@@ -870,9 +889,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (prompts_.surface_visible) {
-    const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
-                                    static_cast<float>(last_window_height_));
-    const SDL_FRect dialog = ComputePromptSurfaceRect(full);
+    const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
     for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(dialog)) {
       if (Contains(button, x, y)) {
         return CursorKind::Pointer;
@@ -885,9 +902,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return CursorKind::Default;
+  }
+  const WorkspaceLayout layout = *layout_state;
 
   if (surface_.tree_context_menu.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect();

@@ -16,11 +16,16 @@
 namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
-  if ((event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
-       event.button.button != SDL_BUTTON_RIGHT) ||
-      last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
+      event.button.button != SDL_BUTTON_RIGHT) {
     return false;
   }
+  const auto window_rect = CurrentWindowRect();
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!window_rect.has_value() || !layout_state.has_value()) {
+    return false;
+  }
+  const WorkspaceLayout layout = *layout_state;
 
   const auto visible_blame_popup = ActiveEditorBlamePopupLayout();
   if (event.button.button == SDL_BUTTON_LEFT && visible_blame_popup.has_value() &&
@@ -39,9 +44,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
 
   if (prompts_.dirty_visible) {
-    const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
-                                    static_cast<float>(last_window_height_));
-    const SDL_FRect dialog = ComputeDirtyPromptRect(full);
+    const SDL_FRect dialog = ComputeDirtyPromptRect(*window_rect);
     const auto buttons = ComputeDirtyPromptButtonRects(dialog);
     for (std::size_t i = 0; i < buttons.size(); ++i) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
@@ -54,9 +57,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (prompts_.surface_visible) {
-    const SDL_FRect full = MakeRect(0.0f, 0.0f, static_cast<float>(last_window_width_),
-                                    static_cast<float>(last_window_height_));
-    const SDL_FRect dialog = ComputePromptSurfaceRect(full);
+    const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
     const auto buttons = ComputePromptSurfaceButtonRects(dialog);
     for (std::size_t i = 0; i < buttons.size(); ++i) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
@@ -77,9 +78,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   surface_.mouse_selecting = false;
 
   if (ChromeMouseCoordinator(*this).HandleButtonDown(event, layout)) {
@@ -185,7 +183,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
 
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   bool hover_visual_changed = false;
-  if (last_window_width_ > 0 && last_window_height_ > 0) {
+  if (CurrentWindowRect().has_value()) {
     const std::optional<std::size_t> previous_popup_line = active_editor_blame_popup_line_;
     const bool previous_copy_hovered =
         last_mouse_position_valid_ && EditorBlamePopupCopyShaHovered(last_mouse_x_, last_mouse_y_);
@@ -204,13 +202,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return true;
   }
 
-  if (last_window_width_ <= 0 || last_window_height_ <= 0) {
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
     return false;
   }
-
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const WorkspaceLayout layout = *layout_state;
   if (ChromeMouseCoordinator(*this).HandleMotion(event, layout)) {
     return true;
   }
@@ -321,7 +317,8 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (last_window_width_ <= 0 || last_window_height_ <= 0) {
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
     return false;
   }
 
@@ -339,9 +336,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return false;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  const WorkspaceLayout layout = *layout_state;
 
   if (ChromeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
     return true;

@@ -728,14 +728,15 @@ void WorkspaceShell::ClampCompareHorizontalScroll(CompareTabState& compare_tab,
 
 void WorkspaceShell::RevealActiveCompareSelection() {
   CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr || last_window_width_ <= 0 || last_window_height_ <= 0) {
+  if (compare_tab == nullptr) {
     return;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                    surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width,
-                    surface_.bottom_panel_height);
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
@@ -865,11 +866,8 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
   compare_tab.selected_row = CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.cursor_line());
   compare_tab.horizontal_scroll = compare_tab.right_viewport.horizontal_scroll();
   if (reveal_selection) {
-    if (last_window_width_ > 0 && last_window_height_ > 0) {
-      const WorkspaceLayout layout =
-          ComputeLayout(static_cast<float>(last_window_width_), static_cast<float>(last_window_height_),
-                        surface_.sidebar_visible, BottomPanelVisible(), surface_.sidebar_width,
-                        surface_.bottom_panel_height);
+    if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
+      const WorkspaceLayout layout = *layout_state;
       const CompareSurfaceLayout surface_layout =
           ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
       ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
