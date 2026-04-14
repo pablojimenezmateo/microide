@@ -45,12 +45,18 @@ Impact:
 - This increases regression risk and slows iteration.
 
 Evidence:
-- `src/workspace/WorkspaceShell.cpp`: 1895 lines
+- `src/workspace/WorkspaceShell.cpp`: 1724 lines
+- `src/workspace/WorkspaceShellCompare.cpp`: 1117 lines
 - `src/workspace/WorkspaceShellRender.cpp`: 1895 lines
 
 Recommendation:
 - Continue extracting subsystem-owned layout and render code, starting with compare and window-chrome state.
 - Replace cross-file primitive state plumbing with narrower structs owned by the relevant subsystem.
+
+Addressed in this pass:
+- Window chrome state now flows through a shared `WindowChromeState` struct instead of separate shell booleans.
+- Compare divider hit-testing, active compare tab access, compare surface layout, compare scroll calculations, and compare selection reveal logic now live in `WorkspaceShellCompare.cpp` instead of `WorkspaceShell.cpp`.
+- `WorkspaceShell.cpp` is smaller and no longer owns as much compare-specific mechanics directly.
 
 ### 3. Workspace-shell tests are too monolithic
 
@@ -117,5 +123,5 @@ Addressed in this pass:
 
 1. Done in this pass: make `Outgoing files` align with configured PR base.
 2. In progress: reduce `WorkspaceShell` blast radius around compare and chrome state.
-3. Next: extract compare layout/state helpers out of `WorkspaceShell`.
+3. Next: extract more compare render/layout ownership out of `WorkspaceShellRender.cpp`.
 4. After that: replace shell-string git execution with a safer command layer.
