@@ -60,9 +60,10 @@ Impact:
 - This makes failures harder to localize and encourages broad helper access into internals.
 
 Evidence:
-- `tests/WorkspaceShellProjectTests.cpp`: 1343 lines
+- `tests/WorkspaceShellProjectTests.cpp`: 1260 lines
 - `tests/WorkspaceShellCompareTests.cpp`: 341 lines
 - `tests/WorkspaceShellChromeTests.cpp`: 115 lines
+- `tests/WorkspaceShellSourceControlTests.cpp`: 119 lines
 - `tests/WorkspaceShellTerminalTests.cpp`: 570 lines
 
 Recommendation:
@@ -75,8 +76,9 @@ Recommendation:
 Addressed in this pass:
 - Compare and merge interaction coverage now lives in `tests/WorkspaceShellCompareTests.cpp`.
 - Menu and window-chrome interaction coverage now lives in `tests/WorkspaceShellChromeTests.cpp`.
+- Git sidebar and source-control interaction coverage now lives in `tests/WorkspaceShellSourceControlTests.cpp`.
 - `tests/WorkspaceShellProjectTests.cpp` is now narrower and focused on general project and editor behavior.
-- The next split should peel git sidebar and source-control behavior into its own test unit.
+- The next split should separate remaining editor-blame-focused coverage from general project interaction tests.
 
 ### 4. Git service execution is still shell-string based
 

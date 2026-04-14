@@ -1,0 +1,120 @@
+#include "TestSupport.h"
+
+#include "WorkspaceShellTestAccess.h"
+
+#include <chrono>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace microide::tests {
+namespace {
+
+using microide::workspace::WorkspaceShell;
+using microide::workspace::WorkspaceShellTestAccess;
+
+std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
+    WorkspaceShell& shell,
+    std::size_t minimum_line_count = 1) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
+    if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
+      return overlay;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
+}
+
+void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\nint beta() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
+
+  const auto loaded_overlay = WaitForActiveEditorBlameOverlay(shell, 3);
+  Expect(loaded_overlay.has_value() && loaded_overlay->lines.size() == 3,
+         "refresh-preservation fixture should start with loaded blame lines");
+
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+
+  const auto refreshed_overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
+  Expect(refreshed_overlay.has_value() && refreshed_overlay->lines.size() == 3,
+         "refreshing the git sidebar should not flush an unrelated active editor blame cache");
+  Expect(refreshed_overlay->lines[1].author == "Microide Tests",
+         "refreshing the git sidebar should preserve blame metadata for the active editor");
+}
+
+void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git sidebar tooltip fixture", "git sidebar tooltip fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+
+  Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == 1,
+         "git sidebar tooltip fixture should expose a single modified entry");
+
+  const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
+  WorkspaceShellTestAccess::HandleMouseMotion(
+      shell, top_action_rects[0].x + top_action_rects[0].w * 0.5f,
+      top_action_rects[0].y + top_action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell).empty(),
+         "hovering the full-width stage-all button should not show a tooltip");
+
+  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[0].x + action_rects[0].w * 0.5f,
+                                              action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+         "hovering the compact stage button should expose the full action name");
+
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[0].x - 2.0f,
+                                              action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+         "stage button hover should tolerate a small hitbox miss");
+
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, action_rects[1].x + action_rects[1].w * 0.5f,
+                                              action_rects[1].y + action_rects[1].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Discard",
+         "hovering the compact discard button should expose the full action name");
+
+  Expect(WorkspaceShellTestAccess::StageAllGitSidebarEntries(shell),
+         "staging the tooltip fixture should succeed");
+  const auto staged_action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
+  WorkspaceShellTestAccess::HandleMouseMotion(
+      shell, staged_action_rects[0].x + staged_action_rects[0].w * 0.5f,
+      staged_action_rects[0].y + staged_action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Unstage",
+         "hovering the compact unstage button should expose the full action name");
+}
+
+}  // namespace
+
+void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
+          TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
+  AddTest(tests, "WorkspaceShell/GitSidebarCompactButtonsExposeHoverTooltips",
+          TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
+}
+
+}  // namespace microide::tests
