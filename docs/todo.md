@@ -3,7 +3,7 @@
 This file tracks the verified current state of the SDL rewrite.
 It is not a design document.
 
-Revalidated on 2026-04-10 by reading the current `src/*` and `tests/*` implementation together
+Revalidated on 2026-04-15 by reading the current `src/*` and `tests/*` implementation together
 with the remaining docs in this directory.
 
 ## Status Rules
@@ -65,6 +65,7 @@ These are done and should not be treated as open migration work:
 - `[x]` terminal tabs now honor common OSC `0`, `1`, and `2` title updates emitted by shells and full-screen terminal apps
 - `[x]` terminal tabs now honor common OSC `52` clipboard-copy requests and route decoded text into the workspace clipboard handler
 - `[x]` focused terminal tabs now honor DECSET `1004` and emit focus in/out notifications as panel or window focus changes
+- `[x]` terminal session wake events now coalesce until the shell consumes one update, and transcript-copy paths avoid full scrollback snapshots when only a small row range is needed
 - `[ ]` broaden real-world terminal validation and fill the remaining ANSI or control-sequence gaps that matter in practice
 - `[x]` terminal-tab context menus now support copying the last command plus its rendered output, and they fall back to copying only the invoked command while full-screen apps own the alternate screen
 
@@ -96,6 +97,7 @@ These are done and should not be treated as open migration work:
 ### Rendering And Performance
 
 - `[x]` proper HiDPI scaling now derives logical presentation from display scale and render pixels, keeps IME areas and mouse hover coordinates aligned, and rerasterizes text sharply at non-100% UI scales
+- `[x]` `TextRenderer` now caches measured widths across repeated labels and invalidates that cache on backend or presentation-scale changes; truncation now uses UTF-8-aware bounded probing instead of linearly measuring every prefix
 - `[ ]` glyph-atlas style text rendering backend
 - `[ ]` dirty-rect invalidation
 - `[ ]` caret-only invalidation without wider redraw
@@ -107,6 +109,7 @@ These are done and should not be treated as open migration work:
 - `[~]` editor-core coverage now checks large-file mode on open plus edit-time threshold crossings and undo, but broader text editing primitives and undo/redo still need dedicated tests
 - `[x]` project-search coverage now checks capped-result handling, stable ordering, latest-run restart behavior, and workspace option reruns
 - `[~]` terminal-session coverage now checks alternate-screen scroll regions, explicit scroll-up/scroll-down sequences, reverse index, region-aware line insert/delete, application cursor-key mode, origin mode, autowrap control, bracketed paste behavior, focus-event mode, device/cursor query replies, charset-designation escape handling, and OSC `52` clipboard decoding; workspace coverage now checks terminal paste shortcuts, DECCKM-aware navigation keys, `Esc` delivery, routing terminal clipboard updates into the shared clipboard handler, and terminal focus notifications as panel or window focus changes, but broader real-app validation is still needed
+- `[x]` performance notes for the recent text-measurement, terminal wake-event, and transcript-snapshot fixes live in `docs/performance-findings.md`
 - `[~]` project-open workflow tests now cover native picker launch, selection, cancellation, and menu fallback behavior
 - `[~]` multi-project restore and workspace-session tests now cover active-project restore plus compare-session reopen, but broader scenarios still need more validation
 - `[~]` tree-mutation workflow tests now cover dirty rename/delete prompts, split-editor consequences, compare-path preservation across renames, and renamed working-tree compare session restore, but create flows and broader directory workflows still need more validation

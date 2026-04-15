@@ -5,7 +5,7 @@ This document is forward-looking.
 
 ## Reviewed Code Anchors
 
-This roadmap was rechecked against the current codebase on 2026-04-10 with emphasis on:
+This roadmap was rechecked against the current codebase on 2026-04-15 with emphasis on:
 
 - `src/project/ProjectSearchService.cpp`
 - `src/project/FileIndex.cpp`
@@ -161,6 +161,8 @@ The highest-value missing automated coverage is:
 
 The highest-value remaining performance work is:
 
+- keep the recent width-cache and terminal wake-coalescing gains intact while validating larger
+  real-world workloads; see `docs/performance-findings.md`
 - glyph-atlas style text rendering work
 - dirty-rect and caret-only invalidation
 - validate the new HiDPI scaling path on mixed-scale and multi-monitor setups without regressing sharp text, input-coordinate alignment, or IME placement
