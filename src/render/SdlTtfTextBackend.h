@@ -50,7 +50,6 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     int width = 0;
     int height = 0;
     int minx = 0;
-    int maxy = 0;
     bool loaded = false;
   };
 
@@ -86,7 +85,6 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   std::filesystem::path font_path_;
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
-  float font_ascent_pixels_ = 11.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;

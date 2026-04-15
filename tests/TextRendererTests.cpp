@@ -2,6 +2,10 @@
 
 #include "render/TextRenderer.h"
 
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <utility>
@@ -58,6 +62,112 @@ class CountingTextBackend final : public microide::render::TextRendererBackend {
   float scale_y_ = 1.0f;
 };
 
+#if MICROIDE_HAS_SDL3_TTF
+
+class ScopedSdl final {
+ public:
+  ScopedSdl() : video_driver_("SDL_VIDEODRIVER", "dummy") {
+    Expect(SDL_Init(SDL_INIT_VIDEO), "SDL should initialize with the dummy video driver");
+  }
+
+  ~ScopedSdl() {
+    SDL_Quit();
+  }
+
+ private:
+  ScopedEnvVar video_driver_;
+};
+
+class SoftwareCanvas final {
+ public:
+  SoftwareCanvas(int width, int height) {
+    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+    Expect(surface_ != nullptr, "renderer regression test should allocate a software surface");
+    renderer_ = SDL_CreateSoftwareRenderer(surface_);
+    Expect(renderer_ != nullptr, "renderer regression test should create a software renderer");
+  }
+
+  ~SoftwareCanvas() {
+    if (renderer_ != nullptr) {
+      SDL_DestroyRenderer(renderer_);
+    }
+    if (surface_ != nullptr) {
+      SDL_DestroySurface(surface_);
+    }
+  }
+
+  SDL_Renderer* renderer() const { return renderer_; }
+
+ private:
+  SDL_Surface* surface_ = nullptr;
+  SDL_Renderer* renderer_ = nullptr;
+};
+
+bool IsRedDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
+  return a > 0 && r >= 24 && r > g + 12 && r > b + 12;
+}
+
+bool IsGreenDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
+  return a > 0 && g >= 24 && g > r + 12 && g > b + 12;
+}
+
+void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
+  ScopedSdl sdl;
+  SoftwareCanvas canvas(320, 160);
+
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "SDL_ttf regression test should exercise the real font backend");
+
+  SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "renderer regression test should clear the software canvas");
+
+  const float line_height = std::max(1.0f, renderer.LineHeight());
+  const float first_line_y = 6.0f;
+  const float second_line_y = first_line_y + line_height;
+  renderer.DrawString(canvas.renderer(), 8.0f, first_line_y, SDL_Color{255, 0, 0, 255}, "HELLO");
+  renderer.DrawString(canvas.renderer(), 8.0f, second_line_y, SDL_Color{0, 255, 0, 255}, "WORLD");
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "renderer regression test should read back rendered pixels");
+
+  bool found_red = false;
+  bool found_green = false;
+  int max_red_y = -1;
+  int min_green_y = pixels->h;
+  for (int y = 0; y < pixels->h; ++y) {
+    for (int x = 0; x < pixels->w; ++x) {
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
+      Uint8 a = 0;
+      Expect(SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a),
+             "renderer regression test should read software pixels");
+      if (IsRedDominant(r, g, b, a)) {
+        found_red = true;
+        max_red_y = std::max(max_red_y, y);
+      }
+      if (IsGreenDominant(r, g, b, a)) {
+        found_green = true;
+        min_green_y = std::min(min_green_y, y);
+      }
+    }
+  }
+
+  SDL_DestroySurface(pixels);
+
+  Expect(found_red, "first ASCII line should render red pixels");
+  Expect(found_green, "second ASCII line should render green pixels");
+  Expect(max_red_y < static_cast<int>(std::floor(second_line_y)),
+         "ASCII glyph rendering should stay inside its line band instead of spilling into the next row");
+  Expect(min_green_y >= static_cast<int>(std::floor(second_line_y)),
+         "the second ASCII line should begin at its own row band");
+}
+
+#endif
+
 void TestMeasureWidthCachesRepeatedStrings() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -113,6 +223,11 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer truncation uses bounded width probes",
           TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements);
+#if MICROIDE_HAS_SDL3_TTF
+  AddTest(tests,
+          "TextRenderer SDL_ttf ASCII glyphs stay within line bands",
+          TestSdlTtfAsciiGlyphsStayWithinLineBands);
+#endif
 }
 
 }  // namespace microide::tests

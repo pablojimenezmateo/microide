@@ -254,6 +254,12 @@ add_executable(microide_tests
   tests/WorkspaceShellTerminalTests.cpp
 )
 
+if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
+  target_sources(microide_tests PRIVATE src/render/SdlTtfTextBackend.cpp)
+  target_compile_definitions(microide_tests PRIVATE MICROIDE_HAS_SDL3_TTF=1)
+  target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
+endif()
+
 target_include_directories(microide_tests PRIVATE src)
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")

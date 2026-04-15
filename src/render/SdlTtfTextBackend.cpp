@@ -113,7 +113,6 @@ void SdlTtfTextBackend::RefreshMetrics() {
     return;
   }
 
-  font_ascent_pixels_ = static_cast<float>(TTF_GetFontAscent(font_));
   line_height_ =
       static_cast<float>(TTF_GetFontHeight(font_)) / std::max(kMinPresentationScale, presentation_scale_y_);
   static constexpr std::string_view kAdvanceProbe = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
@@ -270,7 +269,7 @@ void SdlTtfTextBackend::DrawFastAsciiString(SDL_Renderer* renderer,
       SDL_SetTextureAlphaMod(glyph->texture, color.a);
       const SDL_FRect destination = SDL_FRect{
           std::round(cursor_x + static_cast<float>(glyph->minx) / scale_x),
-          std::round(y + (font_ascent_pixels_ - static_cast<float>(glyph->maxy)) / scale_y),
+          std::round(y),
           static_cast<float>(glyph->width) / scale_x,
           static_cast<float>(glyph->height) / scale_y,
       };
@@ -296,8 +295,7 @@ SdlTtfTextBackend::GlyphEntry* SdlTtfTextBackend::ResolveGlyph(unsigned char ch)
   }
 
   int minx = 0;
-  int maxy = 0;
-  if (!TTF_GetGlyphMetrics(font_, ch, &minx, nullptr, nullptr, &maxy, nullptr)) {
+  if (!TTF_GetGlyphMetrics(font_, ch, &minx, nullptr, nullptr, nullptr, nullptr)) {
     return &entry;
   }
 
@@ -317,7 +315,6 @@ SdlTtfTextBackend::GlyphEntry* SdlTtfTextBackend::ResolveGlyph(unsigned char ch)
   entry.width = surface->w;
   entry.height = surface->h;
   entry.minx = minx;
-  entry.maxy = maxy;
   SDL_DestroySurface(surface);
   return &entry;
 }
