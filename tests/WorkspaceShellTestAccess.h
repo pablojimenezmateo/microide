@@ -822,6 +822,19 @@ struct WorkspaceShellTestAccess {
     return shell.surface_.overlay_mode == WorkspaceShell::OverlayMode::FileFinder;
   }
   static bool SidebarVisible(const WorkspaceShell& shell) { return shell.surface_.sidebar_visible; }
+  static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
+    return shell.surface_.sidebar_mode;
+  }
+  static const std::string& SidebarPluginId(const WorkspaceShell& shell) {
+    return shell.surface_.sidebar_plugin_id;
+  }
+  static const std::vector<plugin::PluginHost::SidebarItem>& PluginSidebarItems(
+      const WorkspaceShell& shell) {
+    return shell.plugin_sidebar_.items;
+  }
+  static const std::string& PluginSidebarError(const WorkspaceShell& shell) {
+    return shell.plugin_sidebar_.error;
+  }
   static float SidebarWidth(const WorkspaceShell& shell) { return shell.surface_.sidebar_width; }
   static float UiScale(const WorkspaceShell& shell) { return shell.UiScale(); }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {

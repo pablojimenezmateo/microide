@@ -78,6 +78,7 @@ SidebarToolRequest ParseBuiltinSidebarToolRequest(const std::vector<std::string>
       break;
     case WorkspaceShell::SidebarMode::Git:
     case WorkspaceShell::SidebarMode::None:
+    case WorkspaceShell::SidebarMode::Plugin:
       break;
   }
 

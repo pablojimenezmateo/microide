@@ -108,6 +108,11 @@ ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRec
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
+ScrollableListLayout WorkspaceShell::ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                                    std::size_t line_count) const {
+  return ComputeTreeSidebarListLayout(sidebar_rect, line_count);
+}
+
 SDL_FRect WorkspaceShell::TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const {
   if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
@@ -130,6 +135,13 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 }
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
+  if (surface_.sidebar_mode == SidebarMode::Plugin &&
+      !surface_.sidebar_plugin_id.empty()) {
+    if (const auto* provider = plugin_host_.FindSidebarProvider(surface_.sidebar_plugin_id);
+        provider != nullptr) {
+      return provider->label;
+    }
+  }
   if (const SidebarToolSpec* tool = FindBuiltinSidebarTool(surface_.sidebar_mode);
       tool != nullptr) {
     return std::string(tool->label);

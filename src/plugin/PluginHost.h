@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,9 +12,30 @@ namespace microide::plugin {
 
 class PluginHost {
  public:
+  struct OpenFileRequest {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+
+  struct SidebarProviderInfo {
+    std::string id;
+    std::string label;
+    std::string plugin_id;
+  };
+
+  struct SidebarItem {
+    std::string label;
+    std::string detail;
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
-    std::function<bool(const std::filesystem::path&)> open_file;
+    std::function<bool(const OpenFileRequest&)> open_file;
+    std::function<bool(std::string_view)> show_sidebar;
     std::function<void(const std::string&)> log_sink;
   };
 
@@ -34,6 +56,14 @@ class PluginHost {
                       const std::vector<std::string>& args,
                       std::string* error_message = nullptr);
   const std::vector<std::string>& CommandNames() const;
+  const std::vector<SidebarProviderInfo>& SidebarProviders() const;
+  const SidebarProviderInfo* FindSidebarProvider(std::string_view id) const;
+  bool SnapshotSidebar(std::string_view id,
+                       std::vector<SidebarItem>* items,
+                       std::string* error_message = nullptr);
+  bool ConfirmSidebarItem(std::string_view id,
+                          const SidebarItem& item,
+                          std::string* error_message = nullptr);
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

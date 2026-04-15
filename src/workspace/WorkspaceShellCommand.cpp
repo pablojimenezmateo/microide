@@ -138,7 +138,14 @@ void WorkspaceShell::CompleteCommandInput() {
     candidates = CompletePath(completion_root, active_prefix, true);
   } else if (command == "sidebar-show" || command == "sidebar-toggle") {
     if (active_index == 1) {
-      candidates = CompleteFromValues(active_prefix, BuiltinSidebarToolNames());
+      std::vector<std::string> sidebar_names = BuiltinSidebarToolNames();
+      for (const auto& provider : plugin_host_.SidebarProviders()) {
+        sidebar_names.push_back(provider.id);
+      }
+      std::sort(sidebar_names.begin(), sidebar_names.end());
+      sidebar_names.erase(std::unique(sidebar_names.begin(), sidebar_names.end()),
+                          sidebar_names.end());
+      candidates = CompleteFromValues(active_prefix, sidebar_names);
     } else if (parsed.tokens.size() >= 2 && parsed.tokens[1].text == "tree" && active_index == 2) {
       candidates = CompletePath(completion_root, active_prefix, true);
     }

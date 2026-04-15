@@ -530,6 +530,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
   switch (id) {
     case ActionId::SidebarToggle: {
       const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
+      const std::string plugin_id = args.empty() ? std::string{} : args.front();
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Git) {
         if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
@@ -558,11 +559,21 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
         }
         return ActionDispatchResult::Handled;
       }
+      if (!plugin_id.empty() && plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Plugin &&
+            surface_.sidebar_plugin_id == plugin_id) {
+          CloseSidebar();
+        } else if (!ShowPluginSidebar(plugin_id, false)) {
+          return reject("Failed to show plugin sidebar: " + plugin_id);
+        }
+        return ActionDispatchResult::Handled;
+      }
       ToggleSidebar();
       return ActionDispatchResult::Handled;
     }
     case ActionId::SidebarShow: {
       const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
+      const std::string plugin_id = args.empty() ? std::string{} : args.front();
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Git) {
         ShowGitSidebar();
@@ -576,6 +587,12 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Search) {
         ShowSearchSidebar(request.query, false);
+        return ActionDispatchResult::Handled;
+      }
+      if (!plugin_id.empty() && plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
+        if (!ShowPluginSidebar(plugin_id, false)) {
+          return reject("Failed to show plugin sidebar: " + plugin_id);
+        }
         return ActionDispatchResult::Handled;
       }
       surface_.sidebar_visible = true;

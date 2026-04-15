@@ -197,7 +197,8 @@ Plugin runtime:
 - project-local plugins load from `<project-root>/.microide/plugins/<plugin-id>/init.lua`
 - plugin entry points return `require("microide").plugin({...})`
 - current lifecycle hooks are `setup`, `on_project_open`, `on_project_close`, `on_buffer_open`, `on_buffer_save`, and `shutdown`
-- the current host API is intentionally small: plugin command registration, `workspace.project_root()`, `workspace.open_file(path)`, and `ctx.log(...)`
+- the current host API includes `ctx.log(...)`, `ctx.commands.add(name, fn)`, `ctx.sidebar.add({...})`, `ctx.sidebar.show(id)`, `ctx.workspace.project_root()`, `ctx.workspace.open_file(path, line, column)`, `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, `ctx.files.exists(path)`, and `ctx.process.run(argv, { cwd = ..., stdin = ... })`
+- plugin sidebars use host-owned rendering and can be opened from the command line with `sidebar-show <sidebar-id>`
 - `plugins-reload` rebuilds the active plugin host and reloads commands for the current project
 
 Diff benchmark:

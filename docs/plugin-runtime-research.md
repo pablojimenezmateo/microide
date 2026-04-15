@@ -24,6 +24,16 @@ Phase 1 status:
 - the current host API is intentionally narrow: `log`, plugin command registration, `workspace.project_root()`, and `workspace.open_file(path)`
 - the shell now exposes a built-in `plugins-reload` command and forwards project activation plus buffer open/save events into the plugin host
 
+Phase 2 status:
+
+- implemented on 2026-04-15 in the host codebase
+- plugin setup can now register host-rendered sidebar providers through `ctx.sidebar.add({...})`
+- plugins can show those providers through `ctx.sidebar.show(id)` or the built-in `sidebar-show <id>` command
+- the workspace API now supports `ctx.workspace.open_file(path, line, column)`
+- plugins now have basic project-relative file helpers: `ctx.files.read_text`, `ctx.files.write_text`, and `ctx.files.exists`
+- plugins now have an argv-based process helper: `ctx.process.run(argv, { cwd = ..., stdin = ... })`
+- the current process surface is intentionally synchronous; the async spawn shape from the design notes remains future work if real plugins need it
+
 Constraints for this pass:
 
 - plugins are installed manually
@@ -841,7 +851,7 @@ This pass implemented the smallest useful version of the runtime:
 - the shell now reloads the active plugin set when the active project changes and forwards buffer-open and buffer-save events to the runtime
 - built-in command completion and command dispatch now include plugin-registered commands
 
-The current Lua surface stays intentionally narrow:
+The current Phase 1 Lua surface stays intentionally narrow:
 
 - `require("microide").plugin({...})` for plugin descriptors
 - `ctx.log(...)`
@@ -849,19 +859,22 @@ The current Lua surface stays intentionally narrow:
 - `ctx.workspace.project_root()`
 - `ctx.workspace.open_file(path)`
 
+### Phase 2: Landed High-Value Contribution Points
+
+This pass extended the runtime without changing the core product boundary:
+
+- command registration remains the same Phase 1 `ctx.commands.add(name, fn)` surface
+- plugins can now register left-sidebar list providers through `ctx.sidebar.add({ id, label, snapshot, on_confirm })`
+- plugin sidebars render through the host and participate in the existing sidebar command flow through `sidebar-show <id>` and `ctx.sidebar.show(id)`
+- `ctx.workspace.open_file(path, line, column)` now supports jumping directly to a location
+- `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, and `ctx.files.exists(path)` provide project-relative file access
+- `ctx.process.run(argv, { cwd, stdin })` provides argv-based external tool execution and returns `ok`, `exit_code`, `stdout`, and `stderr`
+
 What this phase still does not include:
 
-- sidebar provider registration
 - diagnostics, underlines, or hover decoration APIs
 - syntax contribution loading
-- process spawning for tool integrations such as ESLint
-
-### Phase 2: High-Value Contribution Points
-
-- command registration
-- sidebar providers
-- file/workspace APIs
-- process service
+- async process spawning or cancellation callbacks
 
 ### Phase 3: Editor Extensibility
 

@@ -36,7 +36,7 @@ These are done and should not be treated as open migration work:
 - `[x]` project-local editor preferences and colorscheme persistence
 - `[x]` project-local session restore for editor, compare, and merge tabs plus core workspace chrome
 - `[x]` app-level user config for UI scale
-- `[x]` manual Lua 5.4 plugin loading from global and project-local directories, plus lifecycle hooks, plugin commands, and `plugins-reload`
+- `[x]` manual Lua 5.4 plugin loading from global and project-local directories, plus lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, argv-based process helpers, and `plugins-reload`
 - `[x]` fixture-driven tests for compare, merge, git services, file operations, and workspace shared helpers
 
 ## Remaining Work

@@ -151,6 +151,69 @@ return ide.plugin({
          "plugins-reload should rebuild the active plugin command table");
 }
 
+void TestWorkspaceShellPluginSidebarOpensItems() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path readme = project_root / "README.md";
+  const std::filesystem::path source = project_root / "src" / "main.txt";
+  WriteFile(readme, "root\n");
+  WriteFile(source, "alpha\nbeta\n");
+
+  WritePluginInit(
+      plugins_root, "problems",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "problems",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = "problems",
+      label = "Problems",
+      snapshot = function()
+        return {
+          { label = "main.txt", detail = "2:2", path = "src/main.txt", line = 2, column = 2 }
+        }
+      end,
+      on_confirm = function(item)
+        ctx.log("confirm:" .. item.label)
+        ctx.workspace.open_file(item.path, item.line, item.column)
+      end
+    })
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "plugin sidebar fixture should open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show problems"),
+         "sidebar-show should accept plugin sidebar ids");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
+         "plugin sidebar should activate the plugin sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "problems",
+         "plugin sidebar should record the active provider id");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
+         "plugin sidebar should snapshot its items when shown");
+  Expect(WorkspaceShellTestAccess::PluginSidebarError(shell).empty(),
+         "plugin sidebar should load without runtime errors");
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing Enter in a plugin sidebar should confirm the selected item");
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() == "problems: confirm:main.txt",
+         "plugin sidebar confirm should run the plugin callback");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 1,
+         "plugin sidebar confirm should be able to open files at the requested location");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
@@ -158,6 +221,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellLoadsPluginsAndRunsBufferHooks);
   AddTest(tests, "WorkspaceShell/PluginsReloadCommandRefreshesCommands",
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
+  AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
+          TestWorkspaceShellPluginSidebarOpensItems);
 }
 
 }  // namespace microide::tests

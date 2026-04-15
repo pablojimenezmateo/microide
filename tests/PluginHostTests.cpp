@@ -95,10 +95,11 @@ return ide.plugin({
   host.SetCallbacks(PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view name) { return name != "quit"; },
       .open_file =
-          [&](const std::filesystem::path& path) {
-            opened_paths.push_back(path.lexically_normal());
+          [&](const PluginHost::OpenFileRequest& request) {
+            opened_paths.push_back(request.path.lexically_normal());
             return true;
           },
+      .show_sidebar = {},
       .log_sink = {},
   });
 
@@ -195,6 +196,7 @@ return ide.plugin({
   host.SetCallbacks(PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view) { return true; },
       .open_file = {},
+      .show_sidebar = {},
       .log_sink = {},
   });
 
@@ -207,6 +209,122 @@ return ide.plugin({
          "duplicate plugin ids should produce a clear error");
 }
 
+void TestPluginHostPhase2Apis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "plugin host phase2\n");
+
+  WritePluginInit(
+      global_plugins, "phase2",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase2",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = "problems",
+      label = "Problems",
+      snapshot = function()
+        return {
+          { label = "README", detail = "2:3", path = "README.md", line = 2, column = 3 }
+        }
+      end,
+      on_confirm = function(item)
+        ctx.log("confirm:" .. item.path .. ":" .. tostring(item.line) .. ":" .. tostring(item.column))
+      end
+    })
+
+    ctx.commands.add("phase2.probe", function(ctx, args)
+      local readme = ctx.files.read_text("README.md") or "missing"
+      local exists = ctx.files.exists("README.md")
+      local wrote = ctx.files.write_text("notes.txt", "written by plugin\n")
+      local cat = ctx.process.run({"cat"}, { stdin = "stdin payload\n", cwd = "." })
+      local pwd = ctx.process.run({"pwd"}, { cwd = "." })
+      ctx.log("read:" .. readme)
+      ctx.log("exists:" .. tostring(exists))
+      ctx.log("wrote:" .. tostring(wrote))
+      ctx.log("cat:" .. tostring(cat.exit_code) .. ":" .. cat.stdout)
+      ctx.log("pwd:" .. tostring(pwd.exit_code) .. ":" .. pwd.stdout)
+      ctx.workspace.open_file("README.md", 2, 3)
+      ctx.sidebar.show("problems")
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  std::optional<PluginHost::OpenFileRequest> opened_file;
+  std::string shown_sidebar;
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file =
+          [&](const PluginHost::OpenFileRequest& request) {
+            opened_file = request;
+            return true;
+          },
+      .show_sidebar =
+          [&](std::string_view id) {
+            shown_sidebar = std::string(id);
+            return true;
+          },
+      .log_sink = {},
+  });
+
+  Expect(host.Reload(project_root), "phase2 plugin fixture should reload successfully");
+  Expect(host.SidebarProviders().size() == 1,
+         "phase2 plugin fixture should register one sidebar provider");
+  Expect(host.SidebarProviders()[0].id == "problems",
+         "phase2 plugin fixture should expose the registered sidebar id");
+
+  std::string command_error;
+  Expect(host.ExecuteCommand("phase2.probe", {}, &command_error),
+         "phase2 plugin command should execute");
+  Expect(command_error.empty(), "successful phase2 plugin command should not set an error");
+  Expect(opened_file.has_value() && opened_file->path == (project_root / "README.md").lexically_normal(),
+         "workspace.open_file should resolve project-relative paths");
+  Expect(opened_file.has_value() && opened_file->line == 2 && opened_file->column == 3,
+         "workspace.open_file should forward requested line and column");
+  Expect(shown_sidebar == "problems",
+         "ctx.sidebar.show should call back into the host");
+  Expect(std::filesystem::exists(project_root / "notes.txt"),
+         "ctx.files.write_text should create project-relative files");
+  Expect(ReadFile(project_root / "notes.txt") == "written by plugin\n",
+         "ctx.files.write_text should persist the requested content");
+  Expect(std::find(host.Messages().begin(), host.Messages().end(), "phase2: exists:true") !=
+             host.Messages().end(),
+         "ctx.files.exists should report existing project-relative files");
+  Expect(std::find(host.Messages().begin(), host.Messages().end(),
+                   "phase2: cat:0:stdin payload\n") != host.Messages().end(),
+         "ctx.process.run should capture stdout and stdin");
+  const auto pwd_message =
+      std::find_if(host.Messages().begin(), host.Messages().end(), [](const std::string& message) {
+        return message.rfind("phase2: pwd:0:", 0) == 0;
+      });
+  Expect(pwd_message != host.Messages().end() &&
+             pwd_message->find(project_root.lexically_normal().string()) != std::string::npos,
+         "ctx.process.run should honor cwd relative to the active project");
+
+  std::vector<PluginHost::SidebarItem> items;
+  Expect(host.SnapshotSidebar("problems", &items, &command_error),
+         "plugin host should snapshot registered sidebars");
+  Expect(items.size() == 1 && items[0].label == "README",
+         "plugin sidebar snapshots should return item rows");
+  host.ClearMessages();
+  Expect(host.ConfirmSidebarItem("problems", items[0], &command_error),
+         "plugin host should dispatch sidebar confirm handlers");
+  Expect(host.Messages().size() == 1 &&
+             host.Messages().front() == "phase2: confirm:" +
+                                          (project_root / "README.md").lexically_normal().string() +
+                                          ":2:3",
+         "plugin sidebar confirm handlers should receive resolved item paths and locations");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -214,6 +332,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
   AddTest(tests, "PluginHost/RejectsDuplicatePluginIds",
           TestPluginHostRejectsDuplicatePluginIds);
+  AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
 }
 
 }  // namespace microide::tests

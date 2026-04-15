@@ -98,6 +98,7 @@ class WorkspaceShell {
     Tree,
     Search,
     Git,
+    Plugin,
   };
 
  private:
@@ -692,6 +693,8 @@ class WorkspaceShell {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
     SidebarMode sidebar_prev_mode = SidebarMode::None;
+    std::string sidebar_plugin_id;
+    std::string sidebar_prev_plugin_id;
     bool sidebar_temporary = false;
     bool overlay_visible = false;
     OverlayMode overlay_mode = OverlayMode::FileFinder;
@@ -722,6 +725,8 @@ class WorkspaceShell {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
     SidebarMode sidebar_prev_mode = SidebarMode::None;
+    std::string sidebar_plugin_id;
+    std::string sidebar_prev_plugin_id;
     bool sidebar_temporary = false;
     bool overlay_visible = false;
     OverlayMode overlay_mode = OverlayMode::FileFinder;
@@ -785,6 +790,12 @@ class WorkspaceShell {
     std::size_t selected_index = 0;
   };
 
+  struct PluginSidebarState {
+    std::vector<plugin::PluginHost::SidebarItem> items;
+    std::string error;
+    std::size_t selected_index = 0;
+  };
+
   struct PromptState {
     bool dirty_visible = false;
     FocusTarget dirty_previous_focus = FocusTarget::Editor;
@@ -810,6 +821,7 @@ class WorkspaceShell {
     std::size_t active_terminal_tab_index = 0;
     OverlayWorkflowState overlay_workflow;
     GitSidebarState git_sidebar;
+    PluginSidebarState plugin_sidebar;
     CommandState command;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
@@ -1174,6 +1186,7 @@ class WorkspaceShell {
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
   void ShowGitSidebar();
+  bool ShowPluginSidebar(std::string_view id, bool temporary = false);
   std::string SidebarModeControlLabel() const;
   SDL_FRect SidebarModeControlRect(const SDL_FRect& sidebar_rect) const;
   void CloseSidebar();
@@ -1181,6 +1194,7 @@ class WorkspaceShell {
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
+  bool RefreshPluginSidebar();
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const;
@@ -1195,6 +1209,8 @@ class WorkspaceShell {
                                                    std::size_t line_count) const;
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
+  ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                      std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
@@ -1202,8 +1218,11 @@ class WorkspaceShell {
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
   void RevealSelectedTreeSidebarLine();
   void RevealSelectedGitSidebarLine();
+  void RevealSelectedPluginSidebarLine();
   void MoveGitSidebarSelection(int delta);
+  void MovePluginSidebarSelection(int delta);
   bool OpenGitSidebarEntry(std::size_t entry_index);
+  bool OpenSelectedPluginSidebarItem();
   bool CanStageAllGitSidebarEntries() const;
   bool CanDiscardAllGitSidebarEntries() const;
   bool StageAllGitSidebarEntries();
@@ -1483,6 +1502,7 @@ class WorkspaceShell {
   WindowPresentationState window_presentation_;
   OverlayWorkflowState overlay_workflow_;
   GitSidebarState git_sidebar_;
+  PluginSidebarState plugin_sidebar_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   plugin::PluginHost plugin_host_;
   Uint32 git_blame_event_type_ = 0;

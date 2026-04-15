@@ -72,6 +72,8 @@ WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
       .sidebar_visible = state.sidebar_visible,
       .sidebar_mode = state.sidebar_mode,
       .sidebar_prev_mode = state.sidebar_prev_mode,
+      .sidebar_plugin_id = state.sidebar_plugin_id,
+      .sidebar_prev_plugin_id = state.sidebar_prev_plugin_id,
       .sidebar_temporary = state.sidebar_temporary,
       .overlay_visible = state.overlay_visible,
       .overlay_mode = state.overlay_mode,
@@ -89,6 +91,8 @@ void WorkspaceShell::ApplyProjectSurfaceState(const ProjectSurfaceState& state) 
   surface_.sidebar_visible = state.sidebar_visible;
   surface_.sidebar_mode = state.sidebar_mode;
   surface_.sidebar_prev_mode = state.sidebar_prev_mode;
+  surface_.sidebar_plugin_id = state.sidebar_plugin_id;
+  surface_.sidebar_prev_plugin_id = state.sidebar_prev_plugin_id;
   surface_.sidebar_temporary = state.sidebar_temporary;
   surface_.overlay_visible = state.overlay_visible;
   surface_.overlay_mode = state.overlay_mode;
@@ -247,6 +251,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   surface_.sidebar_visible = !show_welcome;
   surface_.sidebar_mode = SidebarMode::Tree;
   surface_.sidebar_prev_mode = SidebarMode::None;
+  surface_.sidebar_plugin_id.clear();
+  surface_.sidebar_prev_plugin_id.clear();
   surface_.sidebar_temporary = false;
   surface_.overlay_visible = false;
   surface_.overlay_mode = OverlayMode::FileFinder;
@@ -280,6 +286,9 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   git_sidebar_.base_label.clear();
   git_sidebar_.repo_available = false;
   git_sidebar_.selected_index = 0;
+  plugin_sidebar_.items.clear();
+  plugin_sidebar_.error.clear();
+  plugin_sidebar_.selected_index = 0;
   overlay_workflow_.compare_picker.path.clear();
   overlay_workflow_.compare_picker.query.clear();
   overlay_workflow_.compare_picker.commits.clear();
@@ -417,6 +426,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.overlay_workflow = std::move(overlay_workflow_);
   state.overlay_workflow.project_search.running = false;
   state.git_sidebar = std::move(git_sidebar_);
+  state.plugin_sidebar = std::move(plugin_sidebar_);
   state.command = std::move(command_);
   state.active_colorscheme_name = active_colorscheme_name_;
   state.project_base_color = project_base_color_;
@@ -443,6 +453,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   overlay_workflow_ = std::move(state.overlay_workflow);
   overlay_workflow_.project_search.running = false;
   git_sidebar_ = std::move(state.git_sidebar);
+  plugin_sidebar_ = std::move(state.plugin_sidebar);
   command_ = std::move(state.command);
   active_colorscheme_name_ = state.active_colorscheme_name;
   project_base_color_ = state.project_base_color;

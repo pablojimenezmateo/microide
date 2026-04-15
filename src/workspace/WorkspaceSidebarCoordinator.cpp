@@ -28,11 +28,16 @@ void WorkspaceShell::SidebarCoordinator::ShowMode(SidebarMode mode, bool tempora
   if (temporary) {
     if (!shell_.surface_.sidebar_temporary && shell_.surface_.sidebar_visible) {
       shell_.surface_.sidebar_prev_mode = shell_.surface_.sidebar_mode;
+      shell_.surface_.sidebar_prev_plugin_id = shell_.surface_.sidebar_plugin_id;
     }
   } else {
     shell_.surface_.sidebar_prev_mode = SidebarMode::None;
+    shell_.surface_.sidebar_prev_plugin_id.clear();
   }
 
+  if (mode != SidebarMode::Plugin) {
+    shell_.surface_.sidebar_plugin_id.clear();
+  }
   shell_.surface_.sidebar_mode = mode;
   shell_.surface_.sidebar_temporary = temporary;
   shell_.surface_.sidebar_visible = true;
@@ -69,6 +74,17 @@ void WorkspaceShell::SidebarCoordinator::ShowGit() {
   RevealSelectedGitLine();
 }
 
+bool WorkspaceShell::SidebarCoordinator::ShowPlugin(std::string_view id, bool temporary) {
+  const auto* provider = shell_.plugin_host_.FindSidebarProvider(id);
+  if (provider == nullptr) {
+    return false;
+  }
+
+  shell_.surface_.sidebar_plugin_id = provider->id;
+  ShowMode(SidebarMode::Plugin, temporary);
+  return RefreshPlugin();
+}
+
 void WorkspaceShell::SidebarCoordinator::Close() {
   if (shell_.surface_.sidebar_mode == SidebarMode::Search) {
     shell_.StopProjectSearch();
@@ -83,6 +99,7 @@ void WorkspaceShell::SidebarCoordinator::Close() {
   shell_.surface_.sidebar_visible = false;
   shell_.surface_.sidebar_temporary = false;
   shell_.surface_.sidebar_prev_mode = SidebarMode::None;
+  shell_.surface_.sidebar_prev_plugin_id.clear();
   if (shell_.surface_.focus == FocusTarget::Sidebar) {
     shell_.surface_.focus = FocusTarget::Editor;
   }
@@ -99,6 +116,7 @@ void WorkspaceShell::SidebarCoordinator::Toggle() {
   }
   shell_.surface_.sidebar_visible = true;
   shell_.surface_.sidebar_temporary = false;
+  shell_.surface_.sidebar_prev_plugin_id.clear();
   shell_.surface_.focus = FocusTarget::Sidebar;
 }
 
@@ -114,11 +132,16 @@ void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
   }
 
   shell_.surface_.sidebar_mode = shell_.surface_.sidebar_prev_mode;
+  shell_.surface_.sidebar_plugin_id = shell_.surface_.sidebar_prev_plugin_id;
   shell_.surface_.sidebar_prev_mode = SidebarMode::None;
+  shell_.surface_.sidebar_prev_plugin_id.clear();
   shell_.surface_.sidebar_temporary = false;
   shell_.surface_.sidebar_visible = true;
   shell_.surface_.focus = FocusTarget::Sidebar;
   shell_.surface_.sidebar_scroll_row = 0;
+  if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+    RefreshPlugin();
+  }
 }
 
 void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
@@ -127,6 +150,7 @@ void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
   shell_.file_index_.Refresh();
   shell_.file_finder_.SetIndex(&shell_.file_index_);
   RefreshGit();
+  RefreshPlugin();
 }
 
 void WorkspaceShell::SidebarCoordinator::RefreshGit() {
@@ -191,6 +215,35 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
   RevealSelectedGitLine();
 }
 
+bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
+  shell_.plugin_sidebar_.items.clear();
+  shell_.plugin_sidebar_.error.clear();
+  shell_.plugin_sidebar_.selected_index = 0;
+  if (shell_.surface_.sidebar_plugin_id.empty()) {
+    return false;
+  }
+  if (shell_.plugin_host_.FindSidebarProvider(shell_.surface_.sidebar_plugin_id) == nullptr) {
+    shell_.surface_.sidebar_plugin_id.clear();
+    if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+      shell_.surface_.sidebar_mode = SidebarMode::Tree;
+    }
+    return false;
+  }
+
+  std::string error_message;
+  if (!shell_.plugin_host_.SnapshotSidebar(shell_.surface_.sidebar_plugin_id,
+                                           &shell_.plugin_sidebar_.items, &error_message)) {
+    shell_.plugin_sidebar_.error = std::move(error_message);
+    return false;
+  }
+  if (!shell_.plugin_sidebar_.items.empty()) {
+    shell_.plugin_sidebar_.selected_index = std::min(
+        shell_.plugin_sidebar_.selected_index, shell_.plugin_sidebar_.items.size() - 1);
+  }
+  RevealSelectedPluginLine();
+  return true;
+}
+
 void WorkspaceShell::SidebarCoordinator::RevealSelectedTreeLine() {
   const auto& entries = shell_.directory_tree_.entries();
   if (shell_.directory_tree_.selected_index() >= entries.size()) {
@@ -231,6 +284,25 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedGitLine() {
       RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
 }
 
+void WorkspaceShell::SidebarCoordinator::RevealSelectedPluginLine() {
+  if (shell_.plugin_sidebar_.items.empty() ||
+      shell_.plugin_sidebar_.selected_index >= shell_.plugin_sidebar_.items.size()) {
+    return;
+  }
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
+  if (layout.sidebar.h <= 0.0f) {
+    return;
+  }
+  const auto list_layout =
+      shell_.ComputePluginSidebarListLayout(layout.sidebar, shell_.plugin_sidebar_.items.size());
+  shell_.surface_.sidebar_scroll_row = RevealScrollableListIndex(
+      list_layout, static_cast<int>(shell_.plugin_sidebar_.selected_index));
+}
+
 void WorkspaceShell::SidebarCoordinator::MoveGitSelection(int delta) {
   if (shell_.git_sidebar_.entries.empty() || delta == 0) {
     return;
@@ -240,6 +312,17 @@ void WorkspaceShell::SidebarCoordinator::MoveGitSelection(int delta) {
   shell_.git_sidebar_.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealSelectedGitLine();
+}
+
+void WorkspaceShell::SidebarCoordinator::MovePluginSelection(int delta) {
+  if (shell_.plugin_sidebar_.items.empty() || delta == 0) {
+    return;
+  }
+  const int current = static_cast<int>(shell_.plugin_sidebar_.selected_index);
+  const int max_index = static_cast<int>(shell_.plugin_sidebar_.items.size()) - 1;
+  shell_.plugin_sidebar_.selected_index =
+      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  RevealSelectedPluginLine();
 }
 
 bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
@@ -261,6 +344,27 @@ bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
       shell_.git_sidebar_.base_label.empty() ? shell_.git_sidebar_.base_ref
                                              : shell_.git_sidebar_.base_label,
       "HEAD", "HEAD");
+}
+
+bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
+  if (shell_.plugin_sidebar_.items.empty() ||
+      shell_.plugin_sidebar_.selected_index >= shell_.plugin_sidebar_.items.size()) {
+    return false;
+  }
+  const auto& item = shell_.plugin_sidebar_.items[shell_.plugin_sidebar_.selected_index];
+  std::string error_message;
+  const bool confirmed = shell_.plugin_host_.ConfirmSidebarItem(
+      shell_.surface_.sidebar_plugin_id, item, &error_message);
+  if (!confirmed && !error_message.empty()) {
+    shell_.plugin_sidebar_.error = std::move(error_message);
+  }
+  if (confirmed && shell_.surface_.sidebar_temporary) {
+    shell_.RestorePreviousSidebar();
+  }
+  if (confirmed && !item.path.empty()) {
+    shell_.surface_.focus = FocusTarget::Editor;
+  }
+  return confirmed;
 }
 
 bool WorkspaceShell::SidebarCoordinator::CanStageAllGitEntries() const {
@@ -425,6 +529,10 @@ void WorkspaceShell::ShowGitSidebar() {
   SidebarCoordinator(*this).ShowGit();
 }
 
+bool WorkspaceShell::ShowPluginSidebar(std::string_view id, bool temporary) {
+  return SidebarCoordinator(*this).ShowPlugin(id, temporary);
+}
+
 void WorkspaceShell::CloseSidebar() {
   SidebarCoordinator(*this).Close();
 }
@@ -445,6 +553,10 @@ void WorkspaceShell::RefreshGitSidebar() {
   SidebarCoordinator(*this).RefreshGit();
 }
 
+bool WorkspaceShell::RefreshPluginSidebar() {
+  return SidebarCoordinator(*this).RefreshPlugin();
+}
+
 void WorkspaceShell::RevealSelectedGitSidebarLine() {
   SidebarCoordinator(*this).RevealSelectedGitLine();
 }
@@ -453,12 +565,24 @@ void WorkspaceShell::RevealSelectedTreeSidebarLine() {
   SidebarCoordinator(*this).RevealSelectedTreeLine();
 }
 
+void WorkspaceShell::RevealSelectedPluginSidebarLine() {
+  SidebarCoordinator(*this).RevealSelectedPluginLine();
+}
+
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {
   SidebarCoordinator(*this).MoveGitSelection(delta);
 }
 
+void WorkspaceShell::MovePluginSidebarSelection(int delta) {
+  SidebarCoordinator(*this).MovePluginSelection(delta);
+}
+
 bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
   return SidebarCoordinator(*this).OpenGitEntry(entry_index);
+}
+
+bool WorkspaceShell::OpenSelectedPluginSidebarItem() {
+  return SidebarCoordinator(*this).OpenPluginItem();
 }
 
 bool WorkspaceShell::CanStageAllGitSidebarEntries() const {

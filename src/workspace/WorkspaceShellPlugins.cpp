@@ -12,9 +12,21 @@ WorkspaceShell::WorkspaceShell() {
       .is_command_name_available =
           [](std::string_view name) { return FindWorkspaceActionByCommand(name) == nullptr; },
       .open_file =
-          [this](const std::filesystem::path& path) {
-            const std::filesystem::path normalized_path = path.lexically_normal();
-            return OpenFileInNewTab(normalized_path);
+          [this](const plugin::PluginHost::OpenFileRequest& request) {
+            const std::filesystem::path normalized_path = request.path.lexically_normal();
+            if (!OpenFileInNewTab(normalized_path)) {
+              return false;
+            }
+            if (request.line > 0) {
+              const std::size_t target_line = request.line - 1;
+              const std::size_t target_column = request.column > 0 ? request.column - 1 : 0;
+              text_viewport_.MoveCursorTo(target_line, target_column);
+            }
+            return true;
+          },
+      .show_sidebar =
+          [this](std::string_view id) {
+            return ExecuteAction(ActionId::SidebarShow, {std::string(id)}, ActionSource::Shortcut);
           },
       .log_sink = {},
   });
@@ -25,6 +37,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject() {
     return false;
   }
   const bool clean_reload = plugin_host_.Reload(project_root_);
+  RefreshPluginSidebar();
   NotifyPluginsAboutOpenBuffers();
   return clean_reload;
 }

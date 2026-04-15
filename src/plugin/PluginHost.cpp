@@ -1,15 +1,24 @@
 #include "plugin/PluginHost.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <fcntl.h>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "workspace/WorkspaceShellShared.h"
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include <lua.hpp>
@@ -43,6 +52,148 @@ std::string Basename(const std::filesystem::path& path) {
   return path.filename().empty() ? path.lexically_normal().string() : path.filename().string();
 }
 
+struct ProcessResult {
+  int exit_code = -1;
+  std::string stdout_text;
+  std::string stderr_text;
+};
+
+std::filesystem::path ResolveRuntimePath(const std::filesystem::path& project_root,
+                                         const std::filesystem::path& path) {
+  if (path.empty()) {
+    return {};
+  }
+  if (path.is_absolute() || project_root.empty()) {
+    return path.lexically_normal();
+  }
+  return (project_root / path).lexically_normal();
+}
+
+void AppendPipeOutput(int fd, std::string* output) {
+  if (fd < 0 || output == nullptr) {
+    return;
+  }
+
+  std::array<char, 4096> buffer{};
+  while (true) {
+    const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
+    if (bytes_read > 0) {
+      output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
+      continue;
+    }
+    if (bytes_read == 0) {
+      break;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    break;
+  }
+}
+
+ProcessResult RunProcess(const std::vector<std::string>& argv,
+                         const std::filesystem::path& cwd,
+                         std::string_view stdin_text) {
+  ProcessResult result;
+  if (argv.empty()) {
+    return result;
+  }
+
+  int stdout_pipe[2] = {-1, -1};
+  int stderr_pipe[2] = {-1, -1};
+  int stdin_pipe[2] = {-1, -1};
+  if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0 ||
+      (!stdin_text.empty() && pipe(stdin_pipe) != 0)) {
+    if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
+    if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
+    if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
+    if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
+    if (stdin_pipe[0] >= 0) close(stdin_pipe[0]);
+    if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
+    return result;
+  }
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[0]);
+    close(stderr_pipe[1]);
+    if (stdin_pipe[0] >= 0) close(stdin_pipe[0]);
+    if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
+    return result;
+  }
+
+  if (pid == 0) {
+    dup2(stdout_pipe[1], STDOUT_FILENO);
+    dup2(stderr_pipe[1], STDERR_FILENO);
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[0]);
+    close(stderr_pipe[1]);
+
+    if (!stdin_text.empty()) {
+      dup2(stdin_pipe[0], STDIN_FILENO);
+      close(stdin_pipe[0]);
+      close(stdin_pipe[1]);
+    }
+
+    if (!cwd.empty()) {
+      (void)chdir(cwd.string().c_str());
+    }
+
+    std::vector<char*> raw_argv;
+    raw_argv.reserve(argv.size() + 1);
+    for (const std::string& arg : argv) {
+      raw_argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+    raw_argv.push_back(nullptr);
+    execvp(raw_argv[0], raw_argv.data());
+    _exit(errno == ENOENT ? 127 : 126);
+  }
+
+  close(stdout_pipe[1]);
+  close(stderr_pipe[1]);
+  if (!stdin_text.empty()) {
+    close(stdin_pipe[0]);
+    const char* data = stdin_text.data();
+    std::size_t remaining = stdin_text.size();
+    while (remaining > 0) {
+      const ssize_t written = write(stdin_pipe[1], data, remaining);
+      if (written > 0) {
+        data += written;
+        remaining -= static_cast<std::size_t>(written);
+        continue;
+      }
+      if (written < 0 && errno == EINTR) {
+        continue;
+      }
+      break;
+    }
+    close(stdin_pipe[1]);
+  }
+
+  AppendPipeOutput(stdout_pipe[0], &result.stdout_text);
+  AppendPipeOutput(stderr_pipe[0], &result.stderr_text);
+  close(stdout_pipe[0]);
+  close(stderr_pipe[0]);
+
+  int status = 0;
+  while (waitpid(pid, &status, 0) < 0) {
+    if (errno != EINTR) {
+      result.exit_code = -1;
+      return result;
+    }
+  }
+
+  if (WIFEXITED(status)) {
+    result.exit_code = WEXITSTATUS(status);
+  } else if (WIFSIGNALED(status)) {
+    result.exit_code = 128 + WTERMSIG(status);
+  }
+  return result;
+}
+
 }  // namespace
 
 struct PluginHost::Impl {
@@ -69,11 +220,22 @@ struct PluginHost::Impl {
 #endif
   };
 
+  struct SidebarProvider {
+    SidebarProviderInfo info;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int snapshot_ref = LUA_NOREF;
+    int confirm_ref = LUA_NOREF;
+#endif
+  };
+
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
   std::vector<PluginInstance> plugins;
   std::unordered_map<std::string, PluginCommand> commands;
   std::vector<std::string> command_names;
+  std::unordered_map<std::string, SidebarProvider> sidebars;
+  std::vector<SidebarProviderInfo> sidebar_providers;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -100,6 +262,10 @@ struct PluginHost::Impl {
     }
     reload_summary += " and " + std::to_string(command_names.size()) + " command";
     if (command_names.size() != 1) {
+      reload_summary += "s";
+    }
+    reload_summary += " and " + std::to_string(sidebar_providers.size()) + " sidebar";
+    if (sidebar_providers.size() != 1) {
       reload_summary += "s";
     }
     if (!errors.empty()) {
@@ -177,6 +343,18 @@ struct PluginHost::Impl {
       command_names.push_back(entry.first);
     }
     std::sort(command_names.begin(), command_names.end());
+  }
+
+  void RebuildSidebarProviders() {
+    sidebar_providers.clear();
+    sidebar_providers.reserve(sidebars.size());
+    for (const auto& entry : sidebars) {
+      sidebar_providers.push_back(entry.second.info);
+    }
+    std::sort(sidebar_providers.begin(), sidebar_providers.end(),
+              [](const SidebarProviderInfo& lhs, const SidebarProviderInfo& rhs) {
+                return lhs.id < rhs.id;
+              });
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -287,6 +465,101 @@ struct PluginHost::Impl {
     return 0;
   }
 
+  bool RegisterSidebar(lua_State* state, int table_index, std::string* error_message) {
+    PluginInstance* plugin = FindPluginByState(state);
+    if (plugin == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "plugin sidebar registration requires an active plugin state";
+      }
+      return false;
+    }
+
+    lua_getfield(state, table_index, "id");
+    if (!lua_isstring(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "sidebar id must be a string";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    const std::string id = lua_tostring(state, -1);
+    lua_pop(state, 1);
+    if (!IsValidIdentifier(id)) {
+      if (error_message != nullptr) {
+        *error_message = "invalid sidebar id: " + id;
+      }
+      return false;
+    }
+    if (sidebars.contains(id)) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate plugin sidebar: " + id;
+      }
+      return false;
+    }
+
+    lua_getfield(state, table_index, "label");
+    if (!lua_isstring(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "sidebar label must be a string";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    const std::string label = lua_tostring(state, -1);
+    lua_pop(state, 1);
+
+    lua_getfield(state, table_index, "snapshot");
+    if (!lua_isfunction(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "sidebar snapshot must be a function";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    const int snapshot_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+
+    int confirm_ref = LUA_NOREF;
+    lua_getfield(state, table_index, "on_confirm");
+    if (lua_isnil(state, -1)) {
+      lua_pop(state, 1);
+    } else if (lua_isfunction(state, -1)) {
+      confirm_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      if (error_message != nullptr) {
+        *error_message = "sidebar on_confirm must be a function";
+      }
+      lua_pop(state, 1);
+      luaL_unref(state, LUA_REGISTRYINDEX, snapshot_ref);
+      return false;
+    }
+
+    sidebars.emplace(id, SidebarProvider{
+                            .info =
+                                SidebarProviderInfo{
+                                    .id = id,
+                                    .label = label,
+                                    .plugin_id = plugin->id,
+                                },
+                            .state = state,
+                            .snapshot_ref = snapshot_ref,
+                            .confirm_ref = confirm_ref,
+                        });
+    RebuildSidebarProviders();
+    return true;
+  }
+
+  static int LuaSidebarAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error_message;
+    if (host == nullptr || !host->RegisterSidebar(state, 1, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to register plugin sidebar"
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     if (host == nullptr || host->current_project_root.empty()) {
@@ -305,21 +578,143 @@ struct PluginHost::Impl {
       return 1;
     }
 
-    std::filesystem::path path(raw_path);
-    if (path.is_relative()) {
-      if (host->current_project_root.empty()) {
-        lua_pushboolean(state, 0);
-        return 1;
-      }
-      path = host->current_project_root / path;
+    const std::filesystem::path path =
+        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
+    if (path.empty()) {
+      lua_pushboolean(state, 0);
+      return 1;
     }
 
-    lua_pushboolean(state, host->callbacks.open_file(path.lexically_normal()) ? 1 : 0);
+    const lua_Integer line = luaL_optinteger(state, 2, 0);
+    const lua_Integer column = luaL_optinteger(state, 3, 0);
+    lua_pushboolean(
+        state,
+        host->callbacks.open_file(OpenFileRequest{
+                                      .path = path,
+                                      .line = line > 0 ? static_cast<std::size_t>(line) : 0,
+                                      .column =
+                                          column > 0 ? static_cast<std::size_t>(column) : 0,
+                                  })
+            ? 1
+            : 0);
+    return 1;
+  }
+
+  static int LuaFilesReadText(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* raw_path = luaL_checkstring(state, 1);
+    if (host == nullptr) {
+      lua_pushnil(state);
+      return 1;
+    }
+
+    const std::filesystem::path path =
+        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
+    const std::optional<std::string> text = workspace::ReadFileText(path);
+    if (!text.has_value()) {
+      lua_pushnil(state);
+      return 1;
+    }
+    lua_pushlstring(state, text->c_str(), text->size());
+    return 1;
+  }
+
+  static int LuaFilesWriteText(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* raw_path = luaL_checkstring(state, 1);
+    size_t text_length = 0;
+    const char* text = luaL_checklstring(state, 2, &text_length);
+    if (host == nullptr) {
+      lua_pushboolean(state, 0);
+      return 1;
+    }
+
+    const std::filesystem::path path =
+        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
+    lua_pushboolean(state,
+                    workspace::WriteTextFileAtomically(path, std::string_view(text, text_length))
+                        ? 1
+                        : 0);
+    return 1;
+  }
+
+  static int LuaFilesExists(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* raw_path = luaL_checkstring(state, 1);
+    if (host == nullptr) {
+      lua_pushboolean(state, 0);
+      return 1;
+    }
+
+    std::error_code error;
+    const std::filesystem::path path =
+        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
+    lua_pushboolean(state, std::filesystem::exists(path, error) && !error ? 1 : 0);
+    return 1;
+  }
+
+  static int LuaProcessRun(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+
+    std::vector<std::string> argv;
+    const lua_Integer argc = static_cast<lua_Integer>(lua_rawlen(state, 1));
+    argv.reserve(static_cast<std::size_t>(argc));
+    for (lua_Integer i = 1; i <= argc; ++i) {
+      lua_rawgeti(state, 1, i);
+      if (!lua_isstring(state, -1)) {
+        return luaL_error(state, "process argv entries must be strings");
+      }
+      argv.emplace_back(lua_tostring(state, -1));
+      lua_pop(state, 1);
+    }
+
+    std::filesystem::path cwd = host != nullptr ? host->current_project_root : std::filesystem::path{};
+    std::string stdin_text;
+    if (lua_gettop(state) >= 2 && !lua_isnil(state, 2)) {
+      luaL_checktype(state, 2, LUA_TTABLE);
+      lua_getfield(state, 2, "cwd");
+      if (lua_isstring(state, -1)) {
+        cwd = ResolveRuntimePath(host != nullptr ? host->current_project_root : std::filesystem::path{},
+                                 std::filesystem::path(lua_tostring(state, -1)));
+      }
+      lua_pop(state, 1);
+
+      lua_getfield(state, 2, "stdin");
+      if (lua_isstring(state, -1)) {
+        size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length);
+        stdin_text.assign(text, length);
+      }
+      lua_pop(state, 1);
+    }
+
+    const ProcessResult result = RunProcess(argv, cwd, stdin_text);
+    lua_createtable(state, 0, 4);
+    lua_pushinteger(state, result.exit_code);
+    lua_setfield(state, -2, "exit_code");
+    lua_pushboolean(state, result.exit_code == 0 ? 1 : 0);
+    lua_setfield(state, -2, "ok");
+    lua_pushlstring(state, result.stdout_text.c_str(), result.stdout_text.size());
+    lua_setfield(state, -2, "stdout");
+    lua_pushlstring(state, result.stderr_text.c_str(), result.stderr_text.size());
+    lua_setfield(state, -2, "stderr");
+    return 1;
+  }
+
+  static int LuaSidebarShow(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* id = luaL_checkstring(state, 1);
+    if (host == nullptr || !host->callbacks.show_sidebar) {
+      lua_pushboolean(state, 0);
+      return 1;
+    }
+    lua_pushboolean(state, host->callbacks.show_sidebar(id) ? 1 : 0);
     return 1;
   }
 
   void PushPluginContext(lua_State* state) {
-    lua_createtable(state, 0, 3);
+    lua_createtable(state, 0, 5);
 
     lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaLog, 1);
@@ -339,6 +734,33 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaWorkspaceOpenFile, 1);
     lua_setfield(state, -2, "open_file");
     lua_setfield(state, -2, "workspace");
+
+    lua_createtable(state, 0, 3);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaFilesReadText, 1);
+    lua_setfield(state, -2, "read_text");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaFilesWriteText, 1);
+    lua_setfield(state, -2, "write_text");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaFilesExists, 1);
+    lua_setfield(state, -2, "exists");
+    lua_setfield(state, -2, "files");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaProcessRun, 1);
+    lua_setfield(state, -2, "run");
+    lua_setfield(state, -2, "process");
+
+    lua_createtable(state, 0, 2);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaSidebarAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaSidebarShow, 1);
+    lua_setfield(state, -2, "show");
+    lua_setfield(state, -2, "sidebar");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -363,6 +785,174 @@ struct PluginHost::Impl {
     }
   }
 
+  static SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
+    SidebarItem item;
+    const int absolute_index = lua_absindex(state, table_index);
+
+    lua_getfield(state, absolute_index, "label");
+    if (lua_isstring(state, -1)) {
+      item.label = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, absolute_index, "detail");
+    if (lua_isstring(state, -1)) {
+      item.detail = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, absolute_index, "path");
+    if (lua_isstring(state, -1)) {
+      item.path = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, absolute_index, "line");
+    if (lua_isinteger(state, -1)) {
+      const lua_Integer line = lua_tointeger(state, -1);
+      item.line = line > 0 ? static_cast<std::size_t>(line) : 0;
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, absolute_index, "column");
+    if (lua_isinteger(state, -1)) {
+      const lua_Integer column = lua_tointeger(state, -1);
+      item.column = column > 0 ? static_cast<std::size_t>(column) : 0;
+    }
+    lua_pop(state, 1);
+
+    return item;
+  }
+
+  void PushSidebarItemTable(lua_State* state, const SidebarItem& item) const {
+    lua_createtable(state, 0, 5);
+    lua_pushstring(state, item.label.c_str());
+    lua_setfield(state, -2, "label");
+    if (!item.detail.empty()) {
+      lua_pushstring(state, item.detail.c_str());
+      lua_setfield(state, -2, "detail");
+    }
+    if (!item.path.empty()) {
+      const std::filesystem::path resolved_path =
+          ResolveRuntimePath(current_project_root, item.path);
+      lua_pushstring(state, resolved_path.generic_string().c_str());
+      lua_setfield(state, -2, "path");
+    }
+    if (item.line > 0) {
+      lua_pushinteger(state, static_cast<lua_Integer>(item.line));
+      lua_setfield(state, -2, "line");
+    }
+    if (item.column > 0) {
+      lua_pushinteger(state, static_cast<lua_Integer>(item.column));
+      lua_setfield(state, -2, "column");
+    }
+  }
+
+  bool SnapshotSidebarProvider(const SidebarProvider& provider,
+                               std::vector<SidebarItem>* items,
+                               std::string* error_message) {
+    if (provider.state == nullptr || provider.snapshot_ref == LUA_NOREF || items == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "plugin sidebar is unavailable";
+      }
+      return false;
+    }
+
+    items->clear();
+    lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.snapshot_ref);
+    if (lua_pcall(provider.state, 0, 1, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message =
+            "plugin sidebar '" + provider.info.id + "' snapshot failed: " +
+            LuaErrorString(provider.state);
+      }
+      lua_pop(provider.state, 1);
+      return false;
+    }
+    if (!lua_istable(provider.state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "plugin sidebar '" + provider.info.id +
+                         "' snapshot must return an array table";
+      }
+      lua_pop(provider.state, 1);
+      return false;
+    }
+
+    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(provider.state, -1));
+    items->reserve(static_cast<std::size_t>(count));
+    for (lua_Integer i = 1; i <= count; ++i) {
+      lua_rawgeti(provider.state, -1, i);
+      if (!lua_istable(provider.state, -1)) {
+        if (error_message != nullptr) {
+          *error_message = "plugin sidebar '" + provider.info.id +
+                           "' snapshot items must be tables";
+        }
+        lua_pop(provider.state, 2);
+        items->clear();
+        return false;
+      }
+      SidebarItem item = ReadSidebarItem(provider.state, -1);
+      if (item.label.empty()) {
+        if (error_message != nullptr) {
+          *error_message = "plugin sidebar '" + provider.info.id +
+                           "' items require a label";
+        }
+        lua_pop(provider.state, 2);
+        items->clear();
+        return false;
+      }
+      if (!item.path.empty()) {
+        item.path = ResolveRuntimePath(current_project_root, item.path);
+      }
+      items->push_back(std::move(item));
+      lua_pop(provider.state, 1);
+    }
+
+    lua_pop(provider.state, 1);
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return true;
+  }
+
+  bool ConfirmSidebarProviderItem(const SidebarProvider& provider,
+                                  const SidebarItem& item,
+                                  std::string* error_message) {
+    if (provider.confirm_ref == LUA_NOREF || provider.state == nullptr) {
+      if (!item.path.empty() && callbacks.open_file) {
+        const bool opened = callbacks.open_file(OpenFileRequest{
+            .path = item.path,
+            .line = item.line,
+            .column = item.column,
+        });
+        if (error_message != nullptr) {
+          error_message->clear();
+        }
+        return opened;
+      }
+      if (error_message != nullptr) {
+        *error_message = "plugin sidebar '" + provider.info.id + "' has no confirm action";
+      }
+      return false;
+    }
+
+    lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.confirm_ref);
+    PushSidebarItemTable(provider.state, item);
+    if (lua_pcall(provider.state, 1, 0, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message =
+            "plugin sidebar '" + provider.info.id + "' confirm failed: " +
+            LuaErrorString(provider.state);
+      }
+      lua_pop(provider.state, 1);
+      return false;
+    }
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return true;
+  }
+
   void DestroyPluginState(PluginInstance* plugin) {
     if (plugin == nullptr || plugin->state == nullptr) {
       return;
@@ -384,7 +974,7 @@ struct PluginHost::Impl {
     plugin->state = nullptr;
   }
 
-  void UnregisterCommandsForState(lua_State* state) {
+  void UnregisterContributionsForState(lua_State* state) {
     for (auto it = commands.begin(); it != commands.end();) {
       if (it->second.state != state) {
         ++it;
@@ -394,6 +984,19 @@ struct PluginHost::Impl {
       it = commands.erase(it);
     }
     RebuildCommandNames();
+
+    for (auto it = sidebars.begin(); it != sidebars.end();) {
+      if (it->second.state != state) {
+        ++it;
+        continue;
+      }
+      luaL_unref(state, LUA_REGISTRYINDEX, it->second.snapshot_ref);
+      if (it->second.confirm_ref != LUA_NOREF && it->second.confirm_ref != LUA_REFNIL) {
+        luaL_unref(state, LUA_REGISTRYINDEX, it->second.confirm_ref);
+      }
+      it = sidebars.erase(it);
+    }
+    RebuildSidebarProviders();
   }
 
   void ConfigurePackage(lua_State* state, const std::filesystem::path& plugin_root) {
@@ -631,15 +1234,11 @@ struct PluginHost::Impl {
     for (auto& plugin : plugins) {
       CallShutdown(&plugin);
     }
-    for (auto& command : commands) {
-      if (command.second.state != nullptr &&
-          command.second.function_ref != LUA_NOREF &&
-          command.second.function_ref != LUA_REFNIL) {
-        luaL_unref(command.second.state, LUA_REGISTRYINDEX, command.second.function_ref);
+    for (auto& plugin : plugins) {
+      if (plugin.state != nullptr) {
+        UnregisterContributionsForState(plugin.state);
       }
     }
-    commands.clear();
-    command_names.clear();
     for (auto& plugin : plugins) {
       DestroyPluginState(&plugin);
     }
@@ -685,7 +1284,7 @@ struct PluginHost::Impl {
     }
 
     if (!CallSetup(&plugin, error_message)) {
-      UnregisterCommandsForState(plugin.state);
+      UnregisterContributionsForState(plugin.state);
       DestroyPluginState(&plugin);
       return false;
     }
@@ -723,6 +1322,8 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
                                                        : project_root.lexically_normal();
     impl_->commands.clear();
     impl_->command_names.clear();
+    impl_->sidebars.clear();
+    impl_->sidebar_providers.clear();
     impl_->plugins.clear();
     impl_->SetReloadSummary();
     return false;
@@ -757,6 +1358,8 @@ void PluginHost::Shutdown() {
     impl_->plugins.clear();
     impl_->commands.clear();
     impl_->command_names.clear();
+    impl_->sidebars.clear();
+    impl_->sidebar_providers.clear();
     impl_->current_project_root.clear();
     impl_->SetReloadSummary();
     return;
@@ -839,6 +1442,44 @@ bool PluginHost::ExecuteCommand(std::string_view name,
 
 const std::vector<std::string>& PluginHost::CommandNames() const {
   return impl_->command_names;
+}
+
+const std::vector<PluginHost::SidebarProviderInfo>& PluginHost::SidebarProviders() const {
+  return impl_->sidebar_providers;
+}
+
+const PluginHost::SidebarProviderInfo* PluginHost::FindSidebarProvider(std::string_view id) const {
+  const auto it = impl_->sidebars.find(std::string(id));
+  return it == impl_->sidebars.end() ? nullptr : &it->second.info;
+}
+
+bool PluginHost::SnapshotSidebar(std::string_view id,
+                                 std::vector<SidebarItem>* items,
+                                 std::string* error_message) {
+  const auto it = impl_->sidebars.find(std::string(id));
+  if (it == impl_->sidebars.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown plugin sidebar: " + std::string(id);
+    }
+    if (items != nullptr) {
+      items->clear();
+    }
+    return false;
+  }
+  return impl_->SnapshotSidebarProvider(it->second, items, error_message);
+}
+
+bool PluginHost::ConfirmSidebarItem(std::string_view id,
+                                    const SidebarItem& item,
+                                    std::string* error_message) {
+  const auto it = impl_->sidebars.find(std::string(id));
+  if (it == impl_->sidebars.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown plugin sidebar: " + std::string(id);
+    }
+    return false;
+  }
+  return impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {
