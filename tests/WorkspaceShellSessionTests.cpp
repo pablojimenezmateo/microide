@@ -17,6 +17,11 @@ using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 using microide::compare::MergeChoice;
 
+bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
+         lhs.y + lhs.h > rhs.y;
+}
+
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -217,6 +222,46 @@ void TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots() {
          "restored workspace should preserve the first saved project root");
   Expect(restored_roots[1] == second_root.lexically_normal(),
          "restored workspace should preserve the second saved project root");
+}
+
+void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "output.txt";
+  WriteFile(base, "line 1\nline 2\nline 3\n");
+  WriteFile(incoming, "line 1\nincoming 2\nline 3\n");
+  WriteFile(current, "line 1\ncurrent 2\nline 3\n");
+  WriteFile(output, "<<<<<<< ours\ncurrent 2\n=======\nincoming 2\n>>>>>>> theirs\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge invalidation fixture should open");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect left_rect =
+      microide::workspace::MakeRect(surface.left_x, layout.editor_surface.y,
+                                    surface.gutter_width + surface.left_width,
+                                    layout.editor_surface.h);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_KEY_DOWN;
+  event.key.key = SDLK_RIGHT;
+  const auto result = shell.HandleEvent(event);
+
+  Expect(result.handled, "merge horizontal navigation should be handled");
+  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+         "merge horizontal navigation should stay on a partial redraw path");
+  Expect(RectsIntersect(*result.redraw.rect, result_rect),
+         "merge horizontal navigation should repaint the result pane");
+  Expect(!RectsIntersect(*result.redraw.rect, left_rect),
+         "merge horizontal navigation should avoid repainting the incoming pane");
 }
 
 void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
@@ -1235,6 +1280,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeWheelScrollsRows);
   AddTest(tests, "WorkspaceShell/MergeToolbarButtonsNavigateConflicts",
           TestWorkspaceShellMergeToolbarButtonsNavigateConflicts);
+  AddTest(tests, "WorkspaceShell/MergeHorizontalNavigationInvalidatesResultPane",
+          TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",

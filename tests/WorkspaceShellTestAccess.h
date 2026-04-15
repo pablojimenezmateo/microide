@@ -111,6 +111,11 @@ struct WorkspaceShellTestAccess {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeCompareSurfaceLayout(layout.editor_surface, ActiveCompare(shell));
   }
+  static SDL_FRect ActiveCompareEditableRect(WorkspaceShell& shell) {
+    auto& compare = ActiveCompare(shell);
+    const auto surface = ActiveCompareSurfaceLayout(shell);
+    return shell.BuildCompareRightInteractionLayout(surface, compare).rect;
+  }
   static SDL_FRect ActiveMergeResultRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = ActiveMergeSurfaceLayout(shell);

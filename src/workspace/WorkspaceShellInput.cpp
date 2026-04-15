@@ -153,7 +153,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   if (surface_.focus == FocusTarget::Editor && active_compare_tab) {
     const bool handled = HandleCompareKeyDown(event.key, modifiers);
     if (handled) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      ensure_redraw([this]() { RequestFocusedEditorRedraw(); });
     }
     return finish(handled);
   }
@@ -161,7 +161,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   if (surface_.focus == FocusTarget::Editor && active_merge_tab) {
     const bool handled = HandleMergeKeyDown(event.key, modifiers);
     if (handled) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      ensure_redraw([this]() { RequestFocusedEditorRedraw(); });
     }
     return finish(handled);
   }
@@ -367,6 +367,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     if (viewport == nullptr) {
       return false;
     }
+    const bool was_dirty = viewport->dirty();
     const std::vector<std::string> before_lines = viewport->lines();
     const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
     const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
@@ -380,6 +381,9 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     }
     ResetCaretBlink();
     RequestFocusedEditorRedraw();
+    if (viewport->dirty() != was_dirty) {
+      RequestTabStripRedraw();
+    }
     return true;
   }
 

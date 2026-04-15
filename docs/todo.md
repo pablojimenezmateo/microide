@@ -101,7 +101,7 @@ These are done and should not be treated as open migration work:
 - `[~]` the SDL_ttf backend now has a cached ASCII glyph path for common monospaced text draws, but richer atlas-style batching for broader text cases is still open
 - `[x]` the app now keeps a retained scene texture, and redraw ownership now lives in `WorkspaceShell` through explicit per-surface invalidations for chrome, prompts, overlays, sidebars, editor surfaces, bottom panels, and caret blink paths
 - `[x]` caret-blink invalidation no longer forces a full shell redraw
-- `[~]` dirty-rect ownership is now explicit; active editor typing repaints only the focused pane and terminal typing or wake updates repaint only panel content, but compare, merge, and most editor or terminal updates still invalidate at pane- or surface-level granularity rather than row- or token-level granularity
+- `[~]` dirty-rect ownership is now explicit; active editor typing repaints only the focused pane, compare and merge keyboard navigation stay inside the active editable or result pane, terminal typing repaints only panel content, and terminal wake updates intentionally remain bottom-panel-wide because they may update tab titles, but most editor, compare, merge, and terminal updates still invalidate at pane- or surface-level granularity rather than row- or token-level granularity
 - `[~]` highlighted editor fragments still fall back to the older blended text path
 - `[~]` redraw tracing now exists behind `MICROIDE_TRACE_REDRAW=1`, but broader low-idle-CPU profiling and regular measurement discipline are still needed
 

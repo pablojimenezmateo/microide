@@ -16,6 +16,11 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 
+bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
+         lhs.y + lhs.h > rhs.y;
+}
+
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveCompareBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
@@ -149,6 +154,43 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
          "scrolling the compare surface should be handled");
   Expect(compare.scroll_row > before_scroll,
          "scrolling the compare surface should advance the visible row");
+}
+
+void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare invalidation fixture", "compare invalidation fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare invalidation fixture should open");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const SDL_FRect editable_rect = WorkspaceShellTestAccess::ActiveCompareEditableRect(shell);
+  const SDL_FRect left_rect =
+      microide::workspace::MakeRect(surface.left_x, surface.rows_y,
+                                    surface.gutter_width + surface.left_width,
+                                    static_cast<float>(surface.visible_rows) * surface.line_height);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_KEY_DOWN;
+  event.key.key = SDLK_RIGHT;
+  const auto result = shell.HandleEvent(event);
+
+  Expect(result.handled, "compare horizontal navigation should be handled");
+  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+         "compare horizontal navigation should stay on a partial redraw path");
+  Expect(RectsIntersect(*result.redraw.rect, editable_rect),
+         "compare horizontal navigation should repaint the editable pane");
+  Expect(!RectsIntersect(*result.redraw.rect, left_rect),
+         "compare horizontal navigation should avoid repainting the historical left pane");
 }
 
 void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {
@@ -324,6 +366,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
   AddTest(tests, "WorkspaceShell/CompareWheelScrollsRows",
           TestWorkspaceShellCompareWheelScrollsRows);
+  AddTest(tests, "WorkspaceShell/CompareHorizontalNavigationInvalidatesEditablePane",
+          TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane);
   AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",

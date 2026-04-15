@@ -76,8 +76,36 @@ Impact:
 - menu hover, prompt interactions, editor typing, terminal input, terminal wake updates, and
   similar high-frequency paths now stay on the retained-scene partial redraw path
 - redraw ownership is explicit instead of heuristic
-- active editor typing now repaints only the focused editor pane, and terminal typing or wake
-  updates now repaint only the panel content area instead of the full editor or bottom-panel surface
+- active editor typing now repaints only the focused editor pane, terminal typing repaints only the
+  panel content area, and terminal wake updates stay on a bottom-panel partial redraw instead of
+  falling back to the full window
+
+### Narrower compare and merge invalidation
+
+Problem:
+
+- compare and merge editor interactions still tended to invalidate the full editor surface even when
+  only the editable or result pane changed
+- narrowing redraws too aggressively can be incorrect when dirty-state indicators or terminal tab
+  titles also change
+
+Implemented:
+
+- compare keyboard navigation inside the editable right pane now redraws only that pane when the
+  historical left pane does not need to change
+- merge result-pane keyboard navigation now redraws only the result viewport instead of the whole
+  merge surface
+- normal editor and compare or merge edit paths that can toggle dirty state now request the tab
+  strip separately so tab indicators stay correct without unioning pane redraws into a much larger
+  bounding box
+- terminal wake updates intentionally remain bottom-panel wide because shell output can still change
+  terminal tab titles
+
+Impact:
+
+- compare and merge navigation stay on a narrower redraw path without regressing correctness
+- dirty-state indicators remain explicit and correct instead of being refreshed incidentally by
+  over-broad invalidation
 
 ### Faster ASCII text draws
 
@@ -101,12 +129,13 @@ Impact:
 ### Finer-grained surface invalidation
 
 Dirty-rect ownership is now explicit and broad enough to keep the common interaction paths off the
-full-frame fallback, but the shell still invalidates at major-surface granularity. The highest-value
-remaining UI work is now:
+full-frame fallback, but the shell still invalidates at pane or major-surface granularity. The
+highest-value remaining UI work is now:
 
-- editor edits and selections that repaint less than the full editor surface
-- compare and merge redraws that invalidate only the affected pane or rows
-- bottom-panel updates that repaint less than the full panel when only one row or caret changed
+- editor edits and selections that repaint less than the full active pane
+- compare and merge redraws that invalidate only the affected rows inside the active pane
+- bottom-panel updates that repaint less than the full content area when only one row or caret
+  changed
 
 Relevant code:
 

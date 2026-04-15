@@ -290,7 +290,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   if (BottomPanelVisible() != panel_visible_before || terminal_tabs_.size() != tab_count_before) {
     RequestWindowRedraw();
   } else if (panel_visible_before) {
-    RequestBottomPanelContentRedraw();
+    RequestBottomPanelRedraw();
   }
 }
 

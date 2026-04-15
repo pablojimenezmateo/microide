@@ -725,15 +725,25 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (compare_tab != nullptr && compare_tab->right_editable && compare_tab->right_view_active) {
     auto& viewport = compare_tab->right_viewport;
     const auto apply_compare_edit = [&](auto&& edit) {
+      const bool was_dirty = viewport.dirty();
       edit();
       RefreshCompareTabDerivedState(*compare_tab);
       SyncCompareSelectionFromViewport(*compare_tab, true);
       ResetCaretBlink();
+      RequestEditorSurfaceRedraw();
+      if (viewport.dirty() != was_dirty) {
+        RequestTabStripRedraw();
+      }
       return true;
     };
-    const auto sync_compare_navigation = [&]() {
+    const auto sync_compare_navigation = [&](std::size_t previous_selected_row) {
       SyncCompareSelectionFromViewport(*compare_tab, true);
       ResetCaretBlink();
+      if (compare_tab->selected_row != previous_selected_row) {
+        RequestEditorSurfaceRedraw();
+      } else {
+        RequestFocusedEditorRedraw();
+      }
       return true;
     };
 
@@ -767,31 +777,54 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       case SDLK_DELETE:
         return apply_compare_edit([&]() { viewport.DeleteForward(); });
       case SDLK_UP:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_DOWN:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_LEFT:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_RIGHT:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_PAGEUP:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.Page(-1);
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_PAGEDOWN:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.Page(1);
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_HOME:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         if (modifiers & SDL_KMOD_CTRL) {
           viewport.MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
         } else {
           viewport.MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
         }
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       case SDLK_END:
+        {
+          const std::size_t previous_selected_row = compare_tab->selected_row;
         if (modifiers & SDL_KMOD_CTRL) {
           const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
           viewport.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
@@ -799,7 +832,8 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
         } else {
           viewport.MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
         }
-        return sync_compare_navigation();
+        return sync_compare_navigation(previous_selected_row);
+        }
       default:
         break;
     }
@@ -825,6 +859,7 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       if (auto* active_compare_tab = ActiveCompareTab(); active_compare_tab != nullptr) {
         active_compare_tab->selected_row = 0;
         RevealActiveCompareSelection();
+        RequestEditorSurfaceRedraw();
       }
       return true;
     case SDLK_END:
@@ -832,6 +867,7 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
           active_compare_tab != nullptr && !active_compare_tab->model.rows.empty()) {
         active_compare_tab->selected_row = active_compare_tab->model.rows.size() - 1;
         RevealActiveCompareSelection();
+        RequestEditorSurfaceRedraw();
       }
       return true;
     case SDLK_LEFTBRACKET:
@@ -871,6 +907,7 @@ bool WorkspaceShell::HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keym
 
   auto& viewport = merge_tab->result_viewport;
   const auto apply_merge_edit = [&](auto&& edit) {
+    const bool was_dirty = viewport.dirty();
     const std::vector<std::string> before_lines = viewport.lines();
     const std::optional<editor::SelectionRange> selection_before = viewport.selection_range();
     const editor::TextPosition cursor_before{viewport.cursor_line(), viewport.cursor_column()};
@@ -878,12 +915,17 @@ bool WorkspaceShell::HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keym
     UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                          cursor_before);
     ResetCaretBlink();
+    RequestFocusedEditorRedraw();
+    if (viewport.dirty() != was_dirty) {
+      RequestTabStripRedraw();
+    }
     return true;
   };
   const auto sync_merge_navigation = [&]() {
     merge_tab->scroll_row = static_cast<int>(viewport.scroll_line());
     merge_tab->horizontal_scroll = viewport.horizontal_scroll();
     ResetCaretBlink();
+    RequestFocusedEditorRedraw();
     return true;
   };
 
@@ -975,22 +1017,50 @@ bool WorkspaceShell::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
                                                 SDL_Keymod modifiers) {
   switch (event.key) {
     case SDLK_TAB:
+      {
+        const bool was_dirty = text_viewport_.dirty();
       text_viewport_.InsertTab();
       ResetCaretBlink();
+      RequestFocusedEditorRedraw();
+      if (text_viewport_.dirty() != was_dirty) {
+        RequestTabStripRedraw();
+      }
       return true;
+      }
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
+      {
+        const bool was_dirty = text_viewport_.dirty();
       text_viewport_.InsertNewline();
       ResetCaretBlink();
+      RequestFocusedEditorRedraw();
+      if (text_viewport_.dirty() != was_dirty) {
+        RequestTabStripRedraw();
+      }
       return true;
+      }
     case SDLK_BACKSPACE:
+      {
+        const bool was_dirty = text_viewport_.dirty();
       text_viewport_.Backspace();
       ResetCaretBlink();
+      RequestFocusedEditorRedraw();
+      if (text_viewport_.dirty() != was_dirty) {
+        RequestTabStripRedraw();
+      }
       return true;
+      }
     case SDLK_DELETE:
+      {
+        const bool was_dirty = text_viewport_.dirty();
       text_viewport_.DeleteForward();
       ResetCaretBlink();
+      RequestFocusedEditorRedraw();
+      if (text_viewport_.dirty() != was_dirty) {
+        RequestTabStripRedraw();
+      }
       return true;
+      }
     default:
       break;
   }

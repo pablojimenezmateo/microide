@@ -402,6 +402,14 @@ void WorkspaceShell::RequestSidebarRedraw() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::RequestTabStripRedraw() {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+    RequestRedrawRect(layout->tab_strip);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
 void WorkspaceShell::RequestEditorSurfaceRedraw() {
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
     RequestRedrawRect(layout->editor_surface);

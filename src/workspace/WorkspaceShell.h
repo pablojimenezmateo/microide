@@ -1490,6 +1490,7 @@ class WorkspaceShell {
   void RequestWindowRedraw();
   void RequestChromeRedraw();
   void RequestSidebarRedraw();
+  void RequestTabStripRedraw();
   void RequestEditorSurfaceRedraw();
   void RequestFocusedEditorRedraw();
   void RequestBottomPanelRedraw();
