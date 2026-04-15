@@ -179,26 +179,37 @@ void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
 void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path source = root / "main.cpp";
-  WriteFile(source, "alpha\nbeta\n");
+  const std::filesystem::path left = root / "left.cpp";
+  const std::filesystem::path right = root / "right.cpp";
+  WriteFile(left, "alpha\nbeta\n");
+  WriteFile(right, "gamma\ndelta\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::OpenFile(shell, left);
+  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell, true),
+         "editor invalidation fixture should split the active editor");
+  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
+         "editor invalidation fixture should populate the active split");
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "editor invalidation fixture should activate the left split");
 
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
   const std::string text = "x";
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
-  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const SDL_FRect inactive_pane = WorkspaceShellTestAccess::InactiveEditorPaneRect(shell);
 
   Expect(result.handled, "editor typing should be handled");
   Expect(!result.redraw.full && result.redraw.rect.has_value(),
          "editor typing should request a partial redraw");
-  Expect(RectsIntersect(*result.redraw.rect, layout.editor_surface),
-         "editor typing redraws should stay scoped to the editor surface");
+  Expect(RectsIntersect(*result.redraw.rect, active_pane),
+         "editor typing redraws should include the active editor pane");
+  Expect(!RectsIntersect(*result.redraw.rect, inactive_pane),
+         "editor typing redraws should avoid repainting the inactive split pane");
 }
 
 void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {

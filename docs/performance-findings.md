@@ -76,6 +76,8 @@ Impact:
 - menu hover, prompt interactions, editor typing, terminal input, terminal wake updates, and
   similar high-frequency paths now stay on the retained-scene partial redraw path
 - redraw ownership is explicit instead of heuristic
+- active editor typing now repaints only the focused editor pane, and terminal typing or wake
+  updates now repaint only the panel content area instead of the full editor or bottom-panel surface
 
 ### Faster ASCII text draws
 

@@ -602,6 +602,25 @@ struct WorkspaceShellTestAccess {
     }
     return layout.editor_surface;
   }
+  static SDL_FRect InactiveEditorPaneRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    if (!shell.ActiveTabIsEditor()) {
+      return {};
+    }
+    shell.SyncActiveEditorTab();
+    auto* editor_tab = shell.ActiveEditorTab();
+    if (editor_tab == nullptr) {
+      return {};
+    }
+    shell.NormalizeEditorSplitTree(*editor_tab);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    for (const auto& pane : panes) {
+      if (!pane.active) {
+        return pane.rect;
+      }
+    }
+    return {};
+  }
   static microide::editor::EditorViewMetrics ActiveEditorMetrics(WorkspaceShell& shell) {
     const SDL_FRect pane = ActiveEditorPaneRect(shell);
     return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,

@@ -191,13 +191,15 @@ void TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_UP;
   const auto result = shell.HandleEvent(event);
-  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect panel_content = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
 
   Expect(result.handled, "terminal navigation keys should be handled");
   Expect(!result.redraw.full && result.redraw.rect.has_value(),
          "terminal navigation should request a partial redraw");
-  Expect(RectsIntersect(*result.redraw.rect, layout.bottom_panel),
-         "terminal key redraws should stay scoped to the bottom panel");
+  Expect(RectsIntersect(*result.redraw.rect, panel_content),
+         "terminal key redraws should include the terminal content area");
+  Expect(result.redraw.rect->y >= panel_content.y,
+         "terminal key redraws should avoid repainting the terminal tab strip");
 }
 
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {

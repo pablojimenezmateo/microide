@@ -410,12 +410,28 @@ void WorkspaceShell::RequestEditorSurfaceRedraw() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::RequestFocusedEditorRedraw() {
+  if (const auto rect = CurrentFocusedEditorRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestEditorSurfaceRedraw();
+}
+
 void WorkspaceShell::RequestBottomPanelRedraw() {
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
     RequestRedrawRect(layout->bottom_panel);
     return;
   }
   RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestBottomPanelContentRedraw() {
+  if (const auto rect = CurrentBottomPanelContentRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestBottomPanelRedraw();
 }
 
 void WorkspaceShell::RequestOverlayRedraw() {
@@ -457,6 +473,60 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
     }
   }
   return rect;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return std::nullopt;
+  }
+
+  if (ActiveTabIsCompare()) {
+    CompareTabState* compare_tab = const_cast<WorkspaceShell*>(this)->ActiveCompareTab();
+    if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
+      return std::nullopt;
+    }
+    const CompareSurfaceLayout surface_layout =
+        ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
+    return BuildCompareRightInteractionLayout(surface_layout, *compare_tab).rect;
+  }
+
+  if (ActiveTabIsMerge()) {
+    const MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab == nullptr) {
+      return std::nullopt;
+    }
+    const MergeSurfaceLayout surface_layout =
+        ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
+    return ComputeMergeResultViewportRect(layout->editor_surface, surface_layout.center_x,
+                                          surface_layout.rows_y, surface_layout.gutter_width,
+                                          surface_layout.center_width,
+                                          surface_layout.show_horizontal);
+  }
+
+  if (!ActiveTabIsEditor()) {
+    return std::nullopt;
+  }
+
+  auto* editor_tab = const_cast<WorkspaceShell*>(this)->ActiveEditorTab();
+  if (editor_tab == nullptr) {
+    return layout->editor_surface;
+  }
+  const_cast<WorkspaceShell*>(this)->SyncActiveEditorTab();
+  const_cast<WorkspaceShell*>(this)->NormalizeEditorSplitTree(*editor_tab);
+  const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
+  const auto active_pane =
+      std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
+  return active_pane != panes.end() ? std::optional<SDL_FRect>(active_pane->rect)
+                                    : std::optional<SDL_FRect>(layout->editor_surface);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() const {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value() || !BottomPanelVisible()) {
+    return std::nullopt;
+  }
+  return BottomPanelContentRect(*layout, surface_.command_mode);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {

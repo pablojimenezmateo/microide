@@ -41,7 +41,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     return finish(true);
   }
   if (git_blame_event_type_ != 0 && event.type == git_blame_event_type_) {
-    RequestEditorSurfaceRedraw();
+    RequestFocusedEditorRedraw();
     return finish(true);
   }
   if (terminal_event_type_ != 0 && event.type == terminal_event_type_) {
@@ -119,7 +119,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   if (surface_.command_mode) {
     const bool handled = HandleCommandKeyDown(event.key);
     if (handled) {
-      ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+      ensure_redraw([this]() { RequestBottomPanelContentRedraw(); });
     }
     return finish(handled);
   }
@@ -145,7 +145,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     const bool handled = HandleTerminalKeyDown(event.key, modifiers);
     if (handled) {
-      ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+      ensure_redraw([this]() { RequestBottomPanelContentRedraw(); });
     }
     return finish(handled);
   }
@@ -168,7 +168,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
 
   const bool handled = HandleDefaultEditorKeyDown(event.key, modifiers);
   if (handled) {
-    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    ensure_redraw([this]() { RequestFocusedEditorRedraw(); });
   }
   return finish(handled);
 }
@@ -239,7 +239,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
           RequestPromptRedraw();
           break;
         case TextInputSurface::Command:
-          RequestBottomPanelRedraw();
+          RequestBottomPanelContentRedraw();
           break;
         case TextInputSurface::SidebarSearchQuery:
         case TextInputSurface::SidebarSearchReplace:
@@ -254,7 +254,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
           RequestOverlayRedraw();
           break;
         case TextInputSurface::Editor:
-          RequestEditorSurfaceRedraw();
+          RequestFocusedEditorRedraw();
           break;
         case TextInputSurface::None:
         case TextInputSurface::Terminal:
@@ -274,7 +274,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
       RequestPromptRedraw();
       break;
     case TextInputSurface::Command:
-      RequestBottomPanelRedraw();
+      RequestBottomPanelContentRedraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -289,7 +289,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
       RequestOverlayRedraw();
       break;
     case TextInputSurface::Editor:
-      RequestEditorSurfaceRedraw();
+      RequestFocusedEditorRedraw();
       break;
     case TextInputSurface::None:
     case TextInputSurface::Terminal:
@@ -320,7 +320,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     command_.history_index.reset();
     command_.history_pending_input.clear();
     ClearCommandFeedback();
-    RequestBottomPanelRedraw();
+    RequestBottomPanelContentRedraw();
     return true;
   }
 
@@ -379,7 +379,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
       UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
     }
     ResetCaretBlink();
-    RequestEditorSurfaceRedraw();
+    RequestFocusedEditorRedraw();
     return true;
   }
 
@@ -390,7 +390,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
       AppendTerminalPendingInput(input);
       terminal_tab->session.SendBytes(input);
     }
-    RequestBottomPanelRedraw();
+    RequestBottomPanelContentRedraw();
     return true;
   }
 
@@ -404,7 +404,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
   }
   const auto follow_terminal_tail = [&]() { terminal_tab->follow_tail = true; };
   const auto handled_with_panel_redraw = [this]() {
-    RequestBottomPanelRedraw();
+    RequestBottomPanelContentRedraw();
     return true;
   };
 
@@ -554,7 +554,7 @@ bool WorkspaceShell::PasteClipboardIntoTerminal() {
   }
   terminal_tab->follow_tail = true;
   terminal_tab->session.PasteText(*clipboard_text);
-  RequestBottomPanelRedraw();
+  RequestBottomPanelContentRedraw();
   return true;
 }
 

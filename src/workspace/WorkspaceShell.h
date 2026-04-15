@@ -1491,10 +1491,14 @@ class WorkspaceShell {
   void RequestChromeRedraw();
   void RequestSidebarRedraw();
   void RequestEditorSurfaceRedraw();
+  void RequestFocusedEditorRedraw();
   void RequestBottomPanelRedraw();
+  void RequestBottomPanelContentRedraw();
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
+  std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
+  std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   std::optional<SDL_FRect> CurrentPromptRedrawRect() const;
   void ResetCaretBlink();
