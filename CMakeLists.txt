@@ -10,6 +10,7 @@ enable_testing()
 
 option(MICROIDE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(MICROIDE_ENABLE_SDL3_TTF "Enable SDL3_ttf text backend when available" ON)
+option(MICROIDE_ENABLE_LUA_PLUGINS "Enable Lua-based manual plugins" ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/microide")
 
@@ -65,6 +66,36 @@ endif()
 
 pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
 
+set(MICROIDE_LUA_TARGET "")
+
+if(MICROIDE_ENABLE_LUA_PLUGINS)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(LUA54 QUIET IMPORTED_TARGET lua5.4)
+    if(TARGET PkgConfig::LUA54)
+      set(MICROIDE_LUA_TARGET PkgConfig::LUA54)
+    else()
+      pkg_check_modules(LUA_5_4 QUIET IMPORTED_TARGET lua-5.4)
+      if(TARGET PkgConfig::LUA_5_4)
+        set(MICROIDE_LUA_TARGET PkgConfig::LUA_5_4)
+      endif()
+    endif()
+  endif()
+
+  if(MICROIDE_LUA_TARGET STREQUAL "")
+    find_path(MICROIDE_LUA_INCLUDE_DIR lua.hpp PATH_SUFFIXES lua5.4)
+    find_library(MICROIDE_LUA_LIBRARY NAMES lua5.4)
+    if(MICROIDE_LUA_INCLUDE_DIR AND MICROIDE_LUA_LIBRARY)
+      add_library(microide_lua INTERFACE)
+      target_include_directories(microide_lua INTERFACE ${MICROIDE_LUA_INCLUDE_DIR})
+      target_link_libraries(microide_lua INTERFACE ${MICROIDE_LUA_LIBRARY})
+      set(MICROIDE_LUA_TARGET microide_lua)
+    else()
+      message(WARNING "Lua 5.4 not found; disabling Lua plugin support.")
+      set(MICROIDE_ENABLE_LUA_PLUGINS OFF)
+    endif()
+  endif()
+endif()
+
 add_library(microide_runtime_syntax_generated OBJECT
   src/editor/RuntimeSyntaxGenerated.cpp
 )
@@ -79,6 +110,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
+  src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp
   src/project/FileOperationService.cpp
   src/project/GitCompareService.cpp
@@ -122,6 +154,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp
   src/workspace/WorkspaceShellPersistence.cpp
+  src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
@@ -164,6 +197,12 @@ endif()
 
 target_include_directories(microide PRIVATE src)
 target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+if(NOT MICROIDE_LUA_TARGET STREQUAL "")
+  target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
+endif()
+target_compile_definitions(microide PRIVATE
+  MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
+)
 
 if(UNIX AND NOT APPLE)
   target_link_libraries(microide PRIVATE util)
@@ -194,11 +233,13 @@ add_executable(microide_tests
   tests/TerminalSessionTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp
+  tests/PluginHostTests.cpp
   tests/StringUtilTests.cpp
   tests/TextViewportTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp
+  tests/WorkspaceShellPluginTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
   tests/WorkspaceShellProjectTests.cpp
@@ -214,9 +255,13 @@ add_executable(microide_tests
 
 target_include_directories(microide_tests PRIVATE src)
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+if(NOT MICROIDE_LUA_TARGET STREQUAL "")
+  target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
+endif()
 target_compile_definitions(microide_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1
+  MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

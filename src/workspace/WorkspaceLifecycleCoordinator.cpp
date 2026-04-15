@@ -106,6 +106,7 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
   }
 
   if (project_root.empty()) {
+    shell_.ReloadPluginsForCurrentProject();
     return true;
   }
 
@@ -114,6 +115,7 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
 }
 
 void WorkspaceShell::LifecycleCoordinator::Shutdown() {
+  shell_.plugin_host_.Shutdown();
   shell_.SaveUserConfig();
   shell_.git_blame_service_.Stop();
 

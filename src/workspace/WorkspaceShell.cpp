@@ -92,6 +92,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Colorscheme:
     case ActionId::Files:
     case ActionId::OpenCommandPrompt:
+    case ActionId::PluginsReload:
     case ActionId::ProjectOpen:
     case ActionId::Quit:
     case ActionId::SidebarClose:

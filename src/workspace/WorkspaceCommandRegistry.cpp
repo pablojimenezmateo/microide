@@ -55,6 +55,8 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceCommandSpecs() {
       WorkspaceShell::ActionSpec{WorkspaceShell::ActionId::ProjectSearch, "project-search",
                                  "project-search [query]", "Find in Project",
                                  "Ctrl+Shift+F"},
+      WorkspaceShell::ActionSpec{WorkspaceShell::ActionId::PluginsReload, "plugins-reload",
+                                 "plugins-reload", "Reload Plugins", ""},
       WorkspaceShell::ActionSpec{WorkspaceShell::ActionId::Quit, "quit", "quit", "Quit", ""},
       WorkspaceShell::ActionSpec{WorkspaceShell::ActionId::RenamePath, "", "", "Rename...", ""},
       WorkspaceShell::ActionSpec{WorkspaceShell::ActionId::Reopen, "reopen", "reopen", "Reopen",

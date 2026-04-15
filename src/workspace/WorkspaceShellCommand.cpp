@@ -92,7 +92,9 @@ void WorkspaceShell::CompleteCommandInput() {
       starts_new_token || parsed.tokens.empty() ? command_.input.size() : parsed.tokens.back().start;
   const std::filesystem::path completion_root =
       project_root_.empty() ? std::filesystem::current_path() : project_root_;
-  const std::vector<std::string>& command_names = WorkspaceCommandNames();
+  std::vector<std::string> command_names = WorkspaceCommandNames();
+  const auto& plugin_command_names = plugin_host_.CommandNames();
+  command_names.insert(command_names.end(), plugin_command_names.begin(), plugin_command_names.end());
 
   std::vector<CommandCompletionCandidate> candidates;
   if (active_index == 0) {
@@ -208,18 +210,32 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   PushCommandHistory(command_line);
   ClearCommandFeedback();
   const std::string& command = parsed.tokens.front().text;
-  const ActionSpec* action = FindWorkspaceActionByCommand(command);
-  if (action == nullptr) {
-    command_.feedback_text = "Unknown command: " + command;
-    return false;
-  }
-
   std::vector<std::string> args;
   args.reserve(parsed.tokens.size() - 1);
   for (std::size_t i = 1; i < parsed.tokens.size(); ++i) {
     args.push_back(parsed.tokens[i].text);
   }
-  return ExecuteAction(action->id, args, ActionSource::Command);
+
+  const ActionSpec* action = FindWorkspaceActionByCommand(command);
+  if (action != nullptr) {
+    return ExecuteAction(action->id, args, ActionSource::Command);
+  }
+
+  const std::size_t message_count_before = plugin_host_.Messages().size();
+  std::string plugin_error;
+  if (plugin_host_.ExecuteCommand(command, args, &plugin_error)) {
+    if (plugin_host_.Messages().size() > message_count_before) {
+      command_.feedback_text = plugin_host_.Messages().back();
+    }
+    return true;
+  }
+  if (!plugin_error.empty()) {
+    command_.feedback_text = std::move(plugin_error);
+    return false;
+  }
+
+  command_.feedback_text = "Unknown command: " + command;
+  return false;
 }
 
 }  // namespace microide::workspace

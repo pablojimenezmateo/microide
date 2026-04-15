@@ -1286,6 +1286,13 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       command_.input.clear();
       ResetCommandSessionState();
       return ActionDispatchResult::Handled;
+    case ActionId::PluginsReload:
+      if (!plugin_host_.enabled()) {
+        return reject("Lua plugin runtime unavailable");
+      }
+      ReloadPluginsForCurrentProject();
+      command_.feedback_text = plugin_host_.ReloadSummary();
+      return ActionDispatchResult::Handled;
     case ActionId::Quit:
       RequestQuit();
       return ActionDispatchResult::Handled;

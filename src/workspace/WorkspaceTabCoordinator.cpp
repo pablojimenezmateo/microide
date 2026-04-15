@@ -47,6 +47,7 @@ bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
       return false;
     }
     shell_.directory_tree_.Refresh();
+    shell_.NotifyPluginBufferSave(compare_tab.right_viewport.path());
     return true;
   }
 
@@ -62,6 +63,7 @@ bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
     merge_tab.persisted_output_baseline =
         SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
     shell_.directory_tree_.Refresh();
+    shell_.NotifyPluginBufferSave(merge_tab.result_viewport.path());
     return true;
   }
 
@@ -114,6 +116,7 @@ bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
   if (attempted_save) {
     for (const auto& path : saved_paths) {
       shell_.InvalidateEditorBlamePath(path);
+      shell_.NotifyPluginBufferSave(path);
     }
     shell_.directory_tree_.Refresh();
   }
@@ -304,6 +307,7 @@ bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::pat
   shell_.EnsureActiveTabVisible();
   shell_.surface_.focus = FocusTarget::Editor;
   shell_.ResetCaretBlink();
+  shell_.NotifyPluginBufferOpen(normalized_path);
   return true;
 }
 

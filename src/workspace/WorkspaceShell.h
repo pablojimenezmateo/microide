@@ -18,6 +18,7 @@
 #include "compare/MergeModel.h"
 #include "editor/EditorViewRenderer.h"
 #include "editor/TextViewport.h"
+#include "plugin/PluginHost.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/GitBlameService.h"
@@ -66,7 +67,7 @@ class WorkspaceShell {
     WindowChromeState chrome{};
   };
 
-  WorkspaceShell() = default;
+  WorkspaceShell();
 
   static std::vector<std::string> DocumentedCommandUsages();
   bool Initialize(const std::filesystem::path& project_root);
@@ -584,6 +585,7 @@ class WorkspaceShell {
     ProjectOpen,
     ProjectPrev,
     ProjectSearch,
+    PluginsReload,
     Quit,
     RenamePath,
     Reopen,
@@ -928,6 +930,10 @@ class WorkspaceShell {
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
+  bool ReloadPluginsForCurrentProject();
+  void NotifyPluginsAboutOpenBuffers();
+  void NotifyPluginBufferOpen(const std::filesystem::path& path);
+  void NotifyPluginBufferSave(const std::filesystem::path& path);
   static ProjectSurfaceState CaptureProjectSurfaceState(const SurfaceState& state);
   void ApplyProjectSurfaceState(const ProjectSurfaceState& state);
   void ResetProjectScopedState(bool show_welcome);
@@ -1466,6 +1472,7 @@ class WorkspaceShell {
   OverlayWorkflowState overlay_workflow_;
   GitSidebarState git_sidebar_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
+  plugin::PluginHost plugin_host_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

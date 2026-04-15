@@ -303,6 +303,16 @@ struct WorkspaceShellTestAccess {
   static bool OpenFileInNewTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.OpenFileInNewTab(path);
   }
+  static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
+    return shell.ExecuteCommand(command_line);
+  }
+  static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
+    return shell.plugin_host_.Messages();
+  }
+  static const std::vector<std::string>& PluginErrors(const WorkspaceShell& shell) {
+    return shell.plugin_host_.Errors();
+  }
+  static void ClearPluginMessages(WorkspaceShell& shell) { shell.plugin_host_.ClearMessages(); }
   static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
                                WorkspaceShell::ActionSource::Menu);

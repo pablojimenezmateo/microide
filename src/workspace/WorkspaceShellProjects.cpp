@@ -63,6 +63,7 @@ void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
   project_catalog_.active_index = 0;
   project_catalog_.tab_scroll_index = 0;
   ResetProjectScopedState(true);
+  ReloadPluginsForCurrentProject();
 }
 
 WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
@@ -330,6 +331,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (activate_restored_tab) {
       ActivateCurrentTabAfterStateLoad();
     }
+    ReloadPluginsForCurrentProject();
     return true;
   }
 
@@ -357,6 +359,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       if (terminal_tabs_.empty()) {
         OpenTerminal({}, false, false);
       }
+      ReloadPluginsForCurrentProject();
       return true;
     }
   }
@@ -369,6 +372,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (terminal_tabs_.empty()) {
     OpenTerminal({}, false, false);
   }
+  ReloadPluginsForCurrentProject();
   return true;
 }
 
@@ -388,6 +392,7 @@ bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
   if (activate_restored_tab) {
     ActivateCurrentTabAfterStateLoad();
   }
+  ReloadPluginsForCurrentProject();
   return true;
 }
 
