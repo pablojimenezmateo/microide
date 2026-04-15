@@ -375,27 +375,112 @@ std::vector<CompareTextSpan> BuildSpansFromChangedCodepoints(
   return spans;
 }
 
-void PopulateChangedSpans(CompareRow& row) {
+std::vector<CompareTextSpan> BuildSpansFromChangedTokens(const TokenizedLine& line,
+                                                         const std::vector<bool>& changed) {
+  std::vector<CompareTextSpan> spans;
+  if (line.tokens.empty() || changed.empty()) {
+    return spans;
+  }
+
+  std::size_t index = 0;
+  while (index < changed.size()) {
+    if (!changed[index]) {
+      ++index;
+      continue;
+    }
+    const std::size_t start = index;
+    while (index < changed.size() && changed[index]) {
+      ++index;
+    }
+    spans.push_back(CompareTextSpan{
+        .start = line.tokens[start].start,
+        .end = line.tokens[index - 1].end,
+    });
+  }
+  return spans;
+}
+
+bool PopulateTokenChangedSpans(CompareRow& row) {
+  const TokenizedLine left = TokenizeLine(row.left_text);
+  const TokenizedLine right = TokenizeLine(row.right_text);
+  if (left.tokens.size() < 2 || right.tokens.size() < 2 ||
+      ProductExceeds(left.tokens.size() + 1, right.tokens.size() + 1, kMaxIntralineLcsMatrixCells)) {
+    return false;
+  }
+
+  std::vector<bool> left_changed(left.tokens.size(), true);
+  std::vector<bool> right_changed(right.tokens.size(), true);
+
+  std::size_t prefix = 0;
+  while (prefix < left.tokens.size() && prefix < right.tokens.size() &&
+         TokenEquals(left.text, left.tokens[prefix], right.text, right.tokens[prefix])) {
+    left_changed[prefix] = false;
+    right_changed[prefix] = false;
+    ++prefix;
+  }
+
+  std::size_t left_suffix = left.tokens.size();
+  std::size_t right_suffix = right.tokens.size();
+  while (left_suffix > prefix && right_suffix > prefix &&
+         TokenEquals(left.text, left.tokens[left_suffix - 1], right.text,
+                     right.tokens[right_suffix - 1])) {
+    --left_suffix;
+    --right_suffix;
+    left_changed[left_suffix] = false;
+    right_changed[right_suffix] = false;
+  }
+
+  const std::size_t left_middle_count = left_suffix - prefix;
+  const std::size_t right_middle_count = right_suffix - prefix;
+  if (left_middle_count == 0 && right_middle_count == 0) {
+    row.left_changed_spans.clear();
+    row.right_changed_spans.clear();
+    return true;
+  }
+  if (left_middle_count == 0 || right_middle_count == 0) {
+    row.left_changed_spans = BuildSpansFromChangedTokens(left, left_changed);
+    row.right_changed_spans = BuildSpansFromChangedTokens(right, right_changed);
+    return true;
+  }
+
+  std::vector<int> dp((left_middle_count + 1) * (right_middle_count + 1), 0);
+  auto at = [&](std::size_t i, std::size_t j) -> int& {
+    return dp[i * (right_middle_count + 1) + j];
+  };
+
+  for (std::size_t i = left_middle_count; i-- > 0;) {
+    for (std::size_t j = right_middle_count; j-- > 0;) {
+      if (TokenEquals(left.text, left.tokens[prefix + i], right.text, right.tokens[prefix + j])) {
+        at(i, j) = at(i + 1, j + 1) + 1;
+      } else {
+        at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
+      }
+    }
+  }
+
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < left_middle_count && j < right_middle_count) {
+    if (TokenEquals(left.text, left.tokens[prefix + i], right.text, right.tokens[prefix + j])) {
+      left_changed[prefix + i] = false;
+      right_changed[prefix + j] = false;
+      ++i;
+      ++j;
+    } else if (at(i + 1, j) >= at(i, j + 1)) {
+      ++i;
+    } else {
+      ++j;
+    }
+  }
+
+  row.left_changed_spans = BuildSpansFromChangedTokens(left, left_changed);
+  row.right_changed_spans = BuildSpansFromChangedTokens(right, right_changed);
+  return !(row.left_changed_spans.empty() && row.right_changed_spans.empty());
+}
+
+void PopulateCodepointChangedSpans(CompareRow& row) {
   row.left_changed_spans.clear();
   row.right_changed_spans.clear();
-
-  if (row.kind == CompareRowKind::Unchanged) {
-    return;
-  }
-
-  if (row.kind == CompareRowKind::Deleted) {
-    if (!row.left_text.empty()) {
-      row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
-    }
-    return;
-  }
-
-  if (row.kind == CompareRowKind::Added) {
-    if (!row.right_text.empty()) {
-      row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
-    }
-    return;
-  }
 
   const std::vector<std::size_t> left_offsets = BuildUtf8Offsets(row.left_text);
   const std::vector<std::size_t> right_offsets = BuildUtf8Offsets(row.right_text);
@@ -464,6 +549,33 @@ void PopulateChangedSpans(CompareRow& row) {
 
   row.left_changed_spans = BuildSpansFromChangedCodepoints(left_offsets, left_changed);
   row.right_changed_spans = BuildSpansFromChangedCodepoints(right_offsets, right_changed);
+}
+
+void PopulateChangedSpans(CompareRow& row) {
+  row.left_changed_spans.clear();
+  row.right_changed_spans.clear();
+
+  if (row.kind == CompareRowKind::Unchanged) {
+    return;
+  }
+
+  if (row.kind == CompareRowKind::Deleted) {
+    if (!row.left_text.empty()) {
+      row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
+    }
+    return;
+  }
+
+  if (row.kind == CompareRowKind::Added) {
+    if (!row.right_text.empty()) {
+      row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
+    }
+    return;
+  }
+
+  if (!PopulateTokenChangedSpans(row)) {
+    PopulateCodepointChangedSpans(row);
+  }
 }
 
 void PopulateCoarseChangedSpans(CompareRow& row) {

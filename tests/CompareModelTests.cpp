@@ -150,6 +150,27 @@ void TestCompareUtf8ChangedSpans() {
          "utf8 right changed span should isolate the replacement emoji");
 }
 
+void TestCompareCodeTokenChangedSpans() {
+  const auto model = BuildCompareModel(
+      "item.active ? theme_.text_primary : theme_.text_secondary, background,",
+      "item.active ? theme_.chrome_active_text : theme_.chrome_text, background,");
+  Expect(model.rows.size() == 1, "code token span diff should produce one row");
+  const auto& row = model.rows.front();
+  Expect(row.kind == CompareRowKind::Modified, "code token span row should be modified");
+  Expect(row.left_changed_spans.size() == 2,
+         "code token span diff should isolate the two replaced left identifiers");
+  Expect(row.right_changed_spans.size() == 2,
+         "code token span diff should isolate the two replaced right identifiers");
+  Expect(SpanText(row.left_text, row.left_changed_spans[0]) == "text_primary",
+         "code token span diff should isolate left text_primary");
+  Expect(SpanText(row.left_text, row.left_changed_spans[1]) == "text_secondary",
+         "code token span diff should isolate left text_secondary");
+  Expect(SpanText(row.right_text, row.right_changed_spans[0]) == "chrome_active_text",
+         "code token span diff should isolate right chrome_active_text");
+  Expect(SpanText(row.right_text, row.right_changed_spans[1]) == "chrome_text",
+         "code token span diff should isolate right chrome_text");
+}
+
 void TestCompareContextAwareAlignment() {
   const auto model = BuildCompareModel(
       R"LEFT(for (const mv of metricValues) {
@@ -342,6 +363,7 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Compare/CodeFixture", TestCompareCodeFixture);
   AddTest(tests, "Compare/AsciiChangedSpans", TestCompareAsciiChangedSpans);
   AddTest(tests, "Compare/Utf8ChangedSpans", TestCompareUtf8ChangedSpans);
+  AddTest(tests, "Compare/CodeTokenChangedSpans", TestCompareCodeTokenChangedSpans);
   AddTest(tests, "Compare/ContextAwareAlignment", TestCompareContextAwareAlignment);
   AddTest(tests, "Compare/LargeInputsUseBoundedFallback",
           TestCompareLargeInputsUseBoundedFallback);

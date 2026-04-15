@@ -262,13 +262,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
     const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
     const bool selected = static_cast<std::size_t>(model_index) == compare_tab->selected_row;
     if (selected) {
+      DrawFilledRect(renderer, MakeRect(rect.x + 1.0f, y - 1.0f, 2.0f, surface.line_height),
+                     theme_.accent);
       DrawFilledRect(renderer,
-                     MakeRect(rect.x + 1.0f, y - 1.0f, std::max(0.0f, content_width - 2.0f),
-                              surface.line_height),
-                     theme_.row_highlight);
+                     MakeRect(rect.x + content_width - 3.0f, y - 1.0f, 2.0f, surface.line_height),
+                     theme_.accent);
     }
 
-    const SDL_Color row_background = selected ? theme_.row_highlight : theme_.editor_background;
+    const SDL_Color row_background = theme_.editor_background;
     const auto draw_text = [&](float x, float width, SDL_Color color, const std::string& text) {
       const std::string display_text = TruncateLabel(text, width);
       if (display_text.empty()) {
@@ -283,6 +284,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
                                       const std::vector<editor::SyntaxTokenKind>& full_tokens,
                                       const std::vector<compare::CompareTextSpan>& changed_spans,
                                       SDL_Color changed_background,
+                                      SDL_Color changed_marker,
                                       bool suppress_background = false) {
       if (text.empty()) {
         return;
@@ -334,6 +336,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
 
         const std::string_view segment_text(window.text.data() + segment_start,
                                             segment_end - segment_start);
+        const float segment_width = text_renderer_.MeasureWidth(segment_text);
         if (suppress_background) {
           text_renderer_.DrawString(renderer, segment_x, y,
                                     CompareTokenColor(theme_, kind, plain_color, selected),
@@ -344,7 +347,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
               CompareTokenColor(theme_, kind, plain_color, selected),
               changed ? changed_background : row_background, segment_text);
         }
-        segment_x += text_renderer_.MeasureWidth(segment_text);
+        if (changed && segment_width > 0.0f) {
+          DrawFilledRect(renderer,
+                         MakeRect(segment_x, y + surface.line_height - 2.0f, segment_width, 1.0f),
+                         changed_marker);
+        }
+        segment_x += segment_width;
         segment_start = segment_end;
       }
     };
@@ -404,7 +412,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
               : &kEmptyTokens;
       draw_syntax_text(surface.left_x + surface.gutter_width, surface.left_visible_columns,
                        left_color, compare_row.left_text, *cached_tokens,
-                       compare_row.left_changed_spans, left_changed_background);
+                       compare_row.left_changed_spans, left_changed_background,
+                       compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
+                                                                            : theme_.diff_modified);
     }
     if (compare_row.right_line > 0) {
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
@@ -445,7 +455,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
               : &kEmptyTokens;
       draw_syntax_text(right_interaction.text_x, surface.right_visible_columns, right_color,
                        compare_row.right_text, *cached_tokens, compare_row.right_changed_spans,
-                       right_changed_background, selection_active);
+                       right_changed_background,
+                       compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
+                                                                          : theme_.diff_modified,
+                       selection_active);
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
         const std::size_t caret_visual =
             editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text,
