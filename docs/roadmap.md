@@ -165,7 +165,7 @@ The highest-value remaining performance work is:
   wake-coalescing gains intact while validating larger
   real-world workloads; see `docs/performance-findings.md`
 - glyph-atlas style text rendering work
-- dirty-rect and caret-only invalidation
+- finer-grained dirty rects inside the new shell-owned invalidation model
 - validate the new HiDPI scaling path on mixed-scale and multi-monitor setups without regressing sharp text, input-coordinate alignment, or IME placement
 - preserve typing and scrolling latency as blame shadow text expands by keeping blame collection
   asynchronous, debounced on uncached viewport changes, and disabled for dirty or large buffers

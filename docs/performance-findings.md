@@ -51,12 +51,14 @@ Impact:
 - large terminal scrollback no longer causes avoidable allocations in the remaining command-copy and
   selection paths
 
-### Retained scene redraws
+### Retained scene redraws and explicit invalidation
 
 Problem:
 
 - the app previously repainted the whole shell directly to the window backbuffer on every redraw
 - caret blink ticks paid for a full shell render even though only one small visual region changed
+- most handled UI events still implicitly fell back to full-scene redraws because redraw ownership
+  lived in the app loop instead of the shell
 
 Implemented:
 
@@ -64,11 +66,16 @@ Implemented:
 - redraws can target only a clipped dirty rect on that texture
 - caret-blink updates now repaint only the active editor or terminal caret rect instead of the full
   shell
+- the app-shell event contract now carries handled state plus redraw invalidation
+- `WorkspaceShell` now owns redraw requests for chrome, overlay, prompt, sidebar, editor, and
+  bottom-panel surfaces instead of forcing the app to guess
 
 Impact:
 
 - the common idle animation path now does materially less work
-- dirty-rect infrastructure exists in the app layer instead of being deferred entirely
+- menu hover, prompt interactions, editor typing, terminal input, terminal wake updates, and
+  similar high-frequency paths now stay on the retained-scene partial redraw path
+- redraw ownership is explicit instead of heuristic
 
 ### Faster ASCII text draws
 
@@ -89,19 +96,21 @@ Impact:
 
 ## Still Worth Doing
 
-### Broader dirty-rect coverage
+### Finer-grained surface invalidation
 
-Caret-blink redraws are now clipped, but most interaction-driven invalidations still redraw the full
-scene. The highest-value remaining UI performance work is still:
+Dirty-rect ownership is now explicit and broad enough to keep the common interaction paths off the
+full-frame fallback, but the shell still invalidates at major-surface granularity. The highest-value
+remaining UI work is now:
 
-- hover-only local redraw paths
-- menu and tooltip invalidation that does not repaint unrelated surfaces
-- more granular editor, compare, and merge dirty regions for edit or selection changes
+- editor edits and selections that repaint less than the full editor surface
+- compare and merge redraws that invalidate only the affected pane or rows
+- bottom-panel updates that repaint less than the full panel when only one row or caret changed
 
 Relevant code:
 
-- `src/app/Application.cpp`
-- `src/workspace/WorkspaceShellRender.cpp`
+- `src/workspace/WorkspaceShell.cpp`
+- `src/workspace/WorkspaceShellInput.cpp`
+- `src/workspace/WorkspaceCompareInteractionCoordinator.cpp`
 
 ### Lower-cost text rendering backend
 

@@ -99,8 +99,9 @@ These are done and should not be treated as open migration work:
 - `[x]` proper HiDPI scaling now derives logical presentation from display scale and render pixels, keeps IME areas and mouse hover coordinates aligned, and rerasterizes text sharply at non-100% UI scales
 - `[x]` `TextRenderer` now caches measured widths across repeated labels and invalidates that cache on backend or presentation-scale changes; truncation now uses UTF-8-aware bounded probing instead of linearly measuring every prefix
 - `[~]` the SDL_ttf backend now has a cached ASCII glyph path for common monospaced text draws, but richer atlas-style batching for broader text cases is still open
-- `[~]` the app now keeps a retained scene texture and repaints only the active caret rect for blink-driven redraws, but broader dirty-rect coverage for hover, menu, and edit invalidations is still open
+- `[x]` the app now keeps a retained scene texture, and redraw ownership now lives in `WorkspaceShell` through explicit per-surface invalidations for chrome, prompts, overlays, sidebars, editor surfaces, bottom panels, and caret blink paths
 - `[x]` caret-blink invalidation no longer forces a full shell redraw
+- `[~]` dirty-rect ownership is now explicit, but editor, compare, merge, and terminal updates still invalidate at surface granularity rather than row- or token-level granularity
 - `[~]` highlighted editor fragments still fall back to the older blended text path
 - `[~]` redraw tracing now exists behind `MICROIDE_TRACE_REDRAW=1`, but broader low-idle-CPU profiling and regular measurement discipline are still needed
 
