@@ -51,16 +51,52 @@ Impact:
 - large terminal scrollback no longer causes avoidable allocations in the remaining command-copy and
   selection paths
 
+### Retained scene redraws
+
+Problem:
+
+- the app previously repainted the whole shell directly to the window backbuffer on every redraw
+- caret blink ticks paid for a full shell render even though only one small visual region changed
+
+Implemented:
+
+- `Application` now keeps a retained scene texture for the shell
+- redraws can target only a clipped dirty rect on that texture
+- caret-blink updates now repaint only the active editor or terminal caret rect instead of the full
+  shell
+
+Impact:
+
+- the common idle animation path now does materially less work
+- dirty-rect infrastructure exists in the app layer instead of being deferred entirely
+
+### Faster ASCII text draws
+
+Problem:
+
+- many hot text paths still rendered small ASCII runs through full string shaping and texture
+  creation in `SDL_ttf`
+
+Implemented:
+
+- `SdlTtfTextBackend` now has a cached ASCII glyph path for common monospaced runs
+- ASCII width measurement now uses fixed-cell width directly instead of calling into `TTF_GetStringSize`
+
+Impact:
+
+- editor, compare, merge, and terminal code paths that mostly draw ASCII text now avoid some of the
+  heavier per-string backend work
+
 ## Still Worth Doing
 
-### Partial redraw
+### Broader dirty-rect coverage
 
-The app still redraws whole frames after small invalidations. The highest-value remaining UI
-performance project is still:
+Caret-blink redraws are now clipped, but most interaction-driven invalidations still redraw the full
+scene. The highest-value remaining UI performance work is still:
 
-- dirty-rect invalidation
-- caret-only invalidation
-- hover-only or blink-only lightweight redraw paths
+- hover-only local redraw paths
+- menu and tooltip invalidation that does not repaint unrelated surfaces
+- more granular editor, compare, and merge dirty regions for edit or selection changes
 
 Relevant code:
 
@@ -69,9 +105,9 @@ Relevant code:
 
 ### Lower-cost text rendering backend
 
-`SDL_ttf` width caching helps, but text rendering still uses the current raster path. A glyph-atlas
-or similarly cached draw backend is still a good next step if text rendering remains a measurable
-cost.
+The new ASCII glyph cache is a good middle step, but it is still not a full atlas-backed text
+renderer. A more complete glyph-atlas or batched text path is still a good next step if text
+rendering remains measurable after this pass.
 
 Relevant code:
 
@@ -80,8 +116,8 @@ Relevant code:
 
 ### Profiling discipline
 
-The startup tracer exists, but broader redraw and idle profiling still needs to be done regularly
-before and after rendering work.
+The startup tracer exists, and redraw tracing can now be enabled with `MICROIDE_TRACE_REDRAW=1`, but
+broader redraw and idle profiling still needs to be done regularly before and after rendering work.
 
 Relevant docs:
 

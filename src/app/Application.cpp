@@ -6,6 +6,7 @@
 #include <cmath>
 #include <filesystem>
 #include <optional>
+#include <string_view>
 
 #include "util/StartupTrace.h"
 #include "util/WindowPresentation.h"
@@ -16,9 +17,31 @@ namespace {
 
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
+constexpr Uint64 kRenderTraceLogInterval = 120;
 
 bool CustomWindowChromeEnabled(SDL_Window* window) {
   return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) != 0;
+}
+
+bool FlagEnabled(const char* value) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+
+  const std::string_view text(value);
+  return text != "0" && text != "false" && text != "FALSE" && text != "off" && text != "OFF";
+}
+
+std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect, int width, int height) {
+  const int x0 = std::max(0, static_cast<int>(std::floor(rect.x)));
+  const int y0 = std::max(0, static_cast<int>(std::floor(rect.y)));
+  const int x1 = std::min(width, static_cast<int>(std::ceil(rect.x + rect.w)));
+  const int y1 = std::min(height, static_cast<int>(std::ceil(rect.y + rect.h)));
+  if (x1 <= x0 || y1 <= y0) {
+    return std::nullopt;
+  }
+
+  return SDL_Rect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
 }
 
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
@@ -69,12 +92,16 @@ int Application::Run() {
   }
 
   running_ = true;
-  bool dirty = true;
+  bool full_redraw_pending = true;
+  std::optional<SDL_FRect> dirty_rect;
+  const char* redraw_reason = "startup";
 
   while (running_) {
-    if (dirty) {
-      Render();
-      dirty = false;
+    if (full_redraw_pending || dirty_rect.has_value()) {
+      Render(full_redraw_pending ? std::nullopt : dirty_rect, redraw_reason);
+      full_redraw_pending = false;
+      dirty_rect.reset();
+      redraw_reason = "event";
     }
 
     SDL_Event event;
@@ -84,7 +111,9 @@ int Application::Run() {
                                : SDL_WaitEvent(&event);
     if (!has_event) {
       if (next_delay.has_value()) {
-        dirty = true;
+        dirty_rect = workspace_shell_.CurrentCaretDirtyRect();
+        full_redraw_pending = !dirty_rect.has_value();
+        redraw_reason = dirty_rect.has_value() ? "caret-blink" : "animation";
         continue;
       }
       SDL_Log("SDL_WaitEvent failed: %s", SDL_GetError());
@@ -92,7 +121,10 @@ int Application::Run() {
     }
 
     do {
-      dirty = HandleEvent(event) || dirty;
+      if (HandleEvent(event)) {
+        full_redraw_pending = true;
+        redraw_reason = "event";
+      }
     } while (SDL_PollEvent(&event));
   }
 
@@ -175,6 +207,7 @@ bool Application::Initialize() {
 
   initialized_ = true;
   first_render_complete_ = false;
+  redraw_trace_enabled_ = FlagEnabled(SDL_getenv("MICROIDE_TRACE_REDRAW"));
   return true;
 }
 
@@ -192,6 +225,7 @@ void Application::Shutdown() {
   }
 
   if (renderer_ != nullptr) {
+    DestroySceneTexture();
     SDL_DestroyRenderer(renderer_);
     renderer_ = nullptr;
   }
@@ -202,6 +236,7 @@ void Application::Shutdown() {
   }
 
   SDL_Quit();
+  LogRenderStatsIfNeeded(true);
   initialized_ = false;
 }
 
@@ -306,7 +341,7 @@ void Application::StopWindowDrag() {
   SDL_CaptureMouse(false);
 }
 
-void Application::Render() {
+void Application::Render(std::optional<SDL_FRect> dirty_rect, const char* reason) {
   if (renderer_ == nullptr) {
     return;
   }
@@ -322,8 +357,42 @@ void Application::Render() {
     return;
   }
 
-  workspace_shell_.Render(renderer_, width, height);
-  SDL_RenderPresent(renderer_);
+  const bool full_redraw = !dirty_rect.has_value() || !scene_texture_valid_;
+  const Uint64 render_start = SDL_GetTicksNS();
+  if (EnsureSceneTexture(width, height)) {
+    if (!SDL_SetRenderTarget(renderer_, scene_texture_)) {
+      SDL_Log("SDL_SetRenderTarget(scene texture) failed: %s", SDL_GetError());
+      DestroySceneTexture();
+      workspace_shell_.Render(renderer_, width, height);
+      SDL_RenderPresent(renderer_);
+      RecordRenderStats(true, std::nullopt, "fallback-full", SDL_GetTicksNS() - render_start);
+      first_render_complete_ = true;
+      return;
+    }
+
+    if (!full_redraw) {
+      const auto clip_rect = ToRenderClipRect(*dirty_rect, width, height);
+      if (clip_rect.has_value()) {
+        SDL_SetRenderClipRect(renderer_, &*clip_rect);
+      } else {
+        dirty_rect.reset();
+      }
+    }
+
+    workspace_shell_.Render(renderer_, width, height);
+
+    SDL_SetRenderClipRect(renderer_, nullptr);
+    SDL_SetRenderTarget(renderer_, nullptr);
+    SDL_RenderTexture(renderer_, scene_texture_, nullptr, nullptr);
+    SDL_RenderPresent(renderer_);
+    scene_texture_valid_ = true;
+    RecordRenderStats(full_redraw || !dirty_rect.has_value(), dirty_rect, reason,
+                      SDL_GetTicksNS() - render_start);
+  } else {
+    workspace_shell_.Render(renderer_, width, height);
+    SDL_RenderPresent(renderer_);
+    RecordRenderStats(true, std::nullopt, "fallback-full", SDL_GetTicksNS() - render_start);
+  }
   first_render_complete_ = true;
 }
 
@@ -353,6 +422,81 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     *logical_height = presentation->logical_height;
   }
   return true;
+}
+
+bool Application::EnsureSceneTexture(int logical_width, int logical_height) {
+  if (renderer_ == nullptr || logical_width <= 0 || logical_height <= 0) {
+    return false;
+  }
+
+  if (scene_texture_ != nullptr && scene_texture_width_ == logical_width &&
+      scene_texture_height_ == logical_height) {
+    return true;
+  }
+
+  DestroySceneTexture();
+  scene_texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+                                     SDL_TEXTUREACCESS_TARGET, logical_width, logical_height);
+  if (scene_texture_ == nullptr) {
+    return false;
+  }
+
+  SDL_SetTextureScaleMode(scene_texture_, SDL_SCALEMODE_NEAREST);
+  scene_texture_width_ = logical_width;
+  scene_texture_height_ = logical_height;
+  scene_texture_valid_ = false;
+  return true;
+}
+
+void Application::DestroySceneTexture() {
+  if (scene_texture_ != nullptr) {
+    SDL_DestroyTexture(scene_texture_);
+    scene_texture_ = nullptr;
+  }
+  scene_texture_width_ = 0;
+  scene_texture_height_ = 0;
+  scene_texture_valid_ = false;
+}
+
+void Application::RecordRenderStats(bool full_redraw,
+                                    std::optional<SDL_FRect> dirty_rect,
+                                    const char* reason,
+                                    Uint64 elapsed_ns) {
+  if (!redraw_trace_enabled_) {
+    return;
+  }
+
+  ++redraw_trace_frames_;
+  redraw_trace_total_ns_ += elapsed_ns;
+  if (full_redraw || !dirty_rect.has_value()) {
+    ++redraw_trace_full_frames_;
+  } else {
+    ++redraw_trace_partial_frames_;
+  }
+
+  if (redraw_trace_frames_ < kRenderTraceLogInterval) {
+    return;
+  }
+
+  const double average_ms = static_cast<double>(redraw_trace_total_ns_) /
+                            static_cast<double>(redraw_trace_frames_) / 1'000'000.0;
+  SDL_Log("microide redraw: %llu frames | %llu full | %llu partial | avg %.2f ms | last=%s",
+          static_cast<unsigned long long>(redraw_trace_frames_),
+          static_cast<unsigned long long>(redraw_trace_full_frames_),
+          static_cast<unsigned long long>(redraw_trace_partial_frames_), average_ms,
+          reason != nullptr ? reason : "unknown");
+  LogRenderStatsIfNeeded(true);
+}
+
+void Application::LogRenderStatsIfNeeded(bool force) {
+  if (!redraw_trace_enabled_ || (!force && redraw_trace_frames_ < kRenderTraceLogInterval)) {
+    return;
+  }
+
+  redraw_trace_frames_ = 0;
+  redraw_trace_full_frames_ = 0;
+  redraw_trace_partial_frames_ = 0;
+  redraw_trace_total_ns_ = 0;
 }
 
 void Application::ConsumeWindowActions() {

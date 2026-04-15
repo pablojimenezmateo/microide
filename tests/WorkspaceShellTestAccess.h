@@ -848,6 +848,9 @@ struct WorkspaceShellTestAccess {
   }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
   static bool CaretVisibleNow(const WorkspaceShell& shell) { return shell.CaretVisibleNow(); }
+  static std::optional<SDL_FRect> CurrentCaretDirtyRect(const WorkspaceShell& shell) {
+    return shell.CurrentCaretDirtyRect();
+  }
   static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Overlay;

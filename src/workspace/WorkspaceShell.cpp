@@ -464,6 +464,87 @@ bool WorkspaceShell::CaretVisibleNow() const {
   return ((elapsed / kCaretBlinkIntervalMs) % 2) == 0;
 }
 
+std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
+  if (!ShouldBlinkCaret()) {
+    return std::nullopt;
+  }
+
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return std::nullopt;
+  }
+
+  if (surface_.focus == FocusTarget::Editor) {
+    return ActiveEditorCaretRect(*layout);
+  }
+  if (surface_.focus == FocusTarget::Panel) {
+    return ActiveTerminalCaretRect(*layout);
+  }
+  return std::nullopt;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(const WorkspaceLayout& layout) const {
+  if (ActiveTabIsCompare()) {
+    const auto visual = BuildCompareTextInputVisual(layout.editor_surface);
+    return visual.has_value() ? std::optional<SDL_FRect>(visual->area) : std::nullopt;
+  }
+  if (ActiveTabIsMerge()) {
+    const auto visual = BuildMergeTextInputVisual(layout.editor_surface);
+    return visual.has_value() ? std::optional<SDL_FRect>(visual->area) : std::nullopt;
+  }
+
+  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  auto pane_it = std::find_if(panes.begin(), panes.end(),
+                              [](const EditorPaneLayout& pane) { return pane.active; });
+  if (pane_it == panes.end()) {
+    return text_viewport_.is_placeholder() ? std::optional<SDL_FRect>(layout.editor_surface)
+                                           : std::nullopt;
+  }
+
+  const editor::EditorViewMetrics metrics =
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, pane_it->rect);
+  const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+  const float cursor_x =
+      metrics.text_x +
+      static_cast<float>(text_viewport_.cursor_visual_column() - text_viewport_.horizontal_scroll()) *
+          char_width;
+  const float cursor_y =
+      metrics.first_line_y +
+      static_cast<float>(text_viewport_.cursor_line() - text_viewport_.scroll_line()) *
+          metrics.line_height;
+  return MakeRect(cursor_x, cursor_y - 1.0f, char_width, metrics.line_height);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(const WorkspaceLayout& layout) const {
+  const auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr || !terminal_tab->session.cursor_visible()) {
+    return std::nullopt;
+  }
+
+  const std::size_t line_count = terminal_tab->session.LineCount();
+  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
+  const std::size_t cursor_row = terminal_tab->session.cursor_row();
+  const std::size_t cursor_column = terminal_tab->session.cursor_column();
+  if (cursor_row < static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) ||
+      cursor_row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
+                                             panel_layout.scroll.visible_rows)) {
+    return std::nullopt;
+  }
+
+  const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+  const float cursor_x = panel_layout.text_x + static_cast<float>(cursor_column) * char_width;
+  const float cursor_y =
+      panel_layout.text_y +
+      static_cast<float>(cursor_row -
+                         static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
+          panel_layout.line_height;
+  if (cursor_x > panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {
+    return std::nullopt;
+  }
+
+  return MakeRect(cursor_x, cursor_y - 1.0f, char_width, panel_layout.line_height);
+}
+
 ScrollSurfaceLayout WorkspaceShell::ComputeEditorScrollLayout(
     const SDL_FRect& rect,
     const editor::TextViewport& viewport,

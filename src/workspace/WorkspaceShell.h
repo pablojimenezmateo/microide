@@ -75,6 +75,7 @@ class WorkspaceShell {
   bool HandleEvent(const SDL_Event& event);
   void Render(SDL_Renderer* renderer, int width, int height);
   std::optional<Uint32> NextAnimationDelayMs() const;
+  std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
   void RequestQuit();
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
@@ -1476,10 +1477,12 @@ class WorkspaceShell {
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;
+  std::optional<SDL_FRect> ActiveEditorCaretRect(const WorkspaceLayout& layout) const;
+  std::optional<SDL_FRect> ActiveTerminalCaretRect(const WorkspaceLayout& layout) const;
   SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
                                   const CompareSurfaceLayout& surface) const;
-  std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface);
-  std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface);
+  std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface) const;
+  std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface) const;
   void RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
   void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
   CursorKind CursorKindForPosition(float x, float y) const;

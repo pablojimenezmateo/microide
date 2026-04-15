@@ -753,16 +753,23 @@ void WorkspaceShell::RevealActiveCompareSelection() {
 }
 
 std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextInputVisual(
-    const SDL_FRect& editor_surface) {
-  CompareTabState* compare_tab = ActiveCompareTab();
+    const SDL_FRect& editor_surface) const {
+  const CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
     return std::nullopt;
   }
 
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(editor_surface, *compare_tab);
-  const TextGridInteractionLayout interaction =
-      BuildCompareRightInteractionLayout(surface_layout, *compare_tab);
+  const TextGridInteractionLayout interaction = ComputeTextGridInteractionLayout(
+      MakeRect(surface_layout.right_x, surface_layout.rows_y,
+               surface_layout.gutter_width + surface_layout.right_width,
+               static_cast<float>(surface_layout.visible_rows) * surface_layout.line_height),
+      surface_layout.right_x + surface_layout.gutter_width, surface_layout.rows_y,
+      surface_layout.line_height, text_renderer_.CharWidth(),
+      static_cast<std::size_t>(std::max(0, compare_tab->scroll_row)),
+      compare_tab->model.rows.size(), compare_tab->horizontal_scroll,
+      static_cast<std::size_t>(surface_layout.visible_rows), surface_layout.right_visible_columns);
   const std::size_t model_row =
       CompareRowIndexForRightLine(*compare_tab, compare_tab->right_viewport.cursor_line());
   const float cursor_x =

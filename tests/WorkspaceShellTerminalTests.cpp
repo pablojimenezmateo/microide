@@ -162,6 +162,21 @@ void TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking() {
          "focused terminal panels should show the caret immediately after a blink reset");
 }
 
+void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "prompt");
+
+  const std::optional<SDL_FRect> caret_rect = WorkspaceShellTestAccess::CurrentCaretDirtyRect(shell);
+  Expect(caret_rect.has_value(),
+         "focused terminal panels should expose a caret dirty rect for partial redraws");
+  Expect(caret_rect->w > 0.0f && caret_rect->h > 0.0f,
+         "terminal caret dirty rects should have a visible size");
+}
+
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -562,6 +577,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalFocusModeTracksWindowFocus);
   AddTest(tests, "WorkspaceShell/FocusedTerminalParticipatesInCaretBlinking",
           TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking);
+  AddTest(tests, "WorkspaceShell/TerminalCaretDirtyRectTracksVisibleCursor",
+          TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor);
   AddTest(tests, "WorkspaceShell/TypingReenablesTerminalTailFollow",
           TestWorkspaceShellTypingReenablesTerminalTailFollow);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",

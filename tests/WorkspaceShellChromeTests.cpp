@@ -118,6 +118,25 @@ void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
          "hovering the Edit menu should switch the active popup");
 }
 
+void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha\nbeta\ngamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
+
+  const std::optional<SDL_FRect> caret_rect = WorkspaceShellTestAccess::CurrentCaretDirtyRect(shell);
+  Expect(caret_rect.has_value(),
+         "focused editors should expose a caret dirty rect for partial redraws");
+  Expect(caret_rect->w > 0.0f && caret_rect->h > 0.0f,
+         "editor caret dirty rects should have a visible size");
+}
+
 void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -196,6 +215,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
+  AddTest(tests, "WorkspaceShell/EditorCaretDirtyRectFollowsActiveCaret",
+          TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
   AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",
           TestWorkspaceShellEditorTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",

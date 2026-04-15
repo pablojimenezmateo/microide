@@ -161,7 +161,8 @@ The highest-value missing automated coverage is:
 
 The highest-value remaining performance work is:
 
-- keep the recent width-cache and terminal wake-coalescing gains intact while validating larger
+- keep the recent width-cache, retained-scene caret redraw, ASCII glyph-cache, and terminal
+  wake-coalescing gains intact while validating larger
   real-world workloads; see `docs/performance-findings.md`
 - glyph-atlas style text rendering work
 - dirty-rect and caret-only invalidation
