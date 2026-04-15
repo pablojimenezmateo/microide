@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <iostream>
+#include <string_view>
 #include <vector>
 
 namespace microide::tests {
@@ -36,7 +37,7 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
-int main() {
+int main(int argc, char** argv) {
   std::vector<microide::tests::TestCase> tests;
   microide::tests::RegisterCompareModelTests(tests);
   microide::tests::RegisterWorkspaceShellSharedCoreTests(tests);
@@ -66,7 +67,23 @@ int main() {
   microide::tests::RegisterMergeModelTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);
 
+  bool ran_any = false;
   for (const auto& test : tests) {
+    if (argc > 1) {
+      bool selected = false;
+      for (int i = 1; i < argc; ++i) {
+        const std::string_view filter =
+            argv[i] != nullptr ? std::string_view(argv[i]) : std::string_view{};
+        if (!filter.empty() && test.name.find(filter) != std::string::npos) {
+          selected = true;
+          break;
+        }
+      }
+      if (!selected) {
+        continue;
+      }
+    }
+    ran_any = true;
     try {
       test.run();
     } catch (const std::exception& error) {
@@ -76,6 +93,11 @@ int main() {
       std::cerr << "microide_tests failed in " << test.name << ": unknown exception\n";
       return 1;
     }
+  }
+
+  if (!ran_any) {
+    std::cerr << "microide_tests: no tests matched the provided filters\n";
+    return 1;
   }
 
   return 0;

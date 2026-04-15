@@ -25,3 +25,10 @@ cmake -S . -B build/microide
 cmake --build build/microide
 ctest --test-dir build/microide --output-on-failure
 ```
+
+Run a focused subset of the in-tree test binary with one or more substring filters:
+
+```bash
+./build/microide/microide_tests TextRenderer
+./build/microide/microide_tests "WorkspaceShell/EditorDirty"
+```
