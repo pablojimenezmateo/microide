@@ -18,100 +18,159 @@ struct ScopeExit {
 
 }  // namespace
 
-bool WorkspaceShell::HandleEvent(const SDL_Event& event) {
+WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
   const ScopeExit sync_terminal_focus{[this]() { SyncTerminalFocusState(); }};
+  const auto finish = [this](bool handled) {
+    return EventResult{
+        .handled = handled,
+        .redraw = ConsumePendingRenderInvalidation(),
+    };
+  };
+  const auto ensure_redraw = [this](auto request_redraw) {
+    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+      request_redraw();
+    }
+  };
 
   if (project_open_dialog_event_type_ != 0 && event.type == project_open_dialog_event_type_) {
     ConsumePendingProjectOpenDialogResult();
-    return true;
+    return finish(true);
   }
   if (project_search_runtime_.HandlesEvent(event.type)) {
     ConsumeProjectSearchUpdates();
-    return true;
+    return finish(true);
   }
   if (git_blame_event_type_ != 0 && event.type == git_blame_event_type_) {
-    return true;
+    RequestEditorSurfaceRedraw();
+    return finish(true);
   }
   if (terminal_event_type_ != 0 && event.type == terminal_event_type_) {
     ConsumeTerminalSessionUpdates();
-    return true;
+    return finish(true);
   }
 
   SyncTextInputSurface(nullptr);
 
   switch (event.type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-      return HandleMouseButtonDown(event);
+      return finish(HandleMouseButtonDown(event));
     case SDL_EVENT_MOUSE_BUTTON_UP:
-      return HandleMouseButtonUp(event);
+      return finish(HandleMouseButtonUp(event));
     case SDL_EVENT_MOUSE_MOTION:
-      return HandleMouseMotion(event);
+      return finish(HandleMouseMotion(event));
     case SDL_EVENT_MOUSE_WHEEL:
-      return HandleMouseWheel(event);
+      return finish(HandleMouseWheel(event));
     case SDL_EVENT_TEXT_EDITING:
-      return HandleTextEditing(event.edit);
+      return finish(HandleTextEditing(event.edit));
     case SDL_EVENT_TEXT_INPUT:
-      return HandleTextInput(event.text);
+      return finish(HandleTextInput(event.text));
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
       surface_.window_has_input_focus = true;
-      return true;
+      RequestWindowRedraw();
+      return finish(true);
     case SDL_EVENT_WINDOW_FOCUS_LOST:
       surface_.window_has_input_focus = false;
-      return true;
+      RequestWindowRedraw();
+      return finish(true);
     case SDL_EVENT_KEY_DOWN:
       break;
     default:
-      return false;
+      return finish(false);
   }
 
   const SDL_Keymod modifiers =
       event.key.mod != SDL_KMOD_NONE ? event.key.mod : SDL_GetModState();
   if (prompts_.dirty_visible) {
-    return HandleDirtyPromptKeyDown(event.key, modifiers);
+    const bool handled = HandleDirtyPromptKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestPromptRedraw(); });
+    }
+    return finish(handled);
   }
   if (surface_.tree_context_menu.open) {
-    return HandleTreeContextMenuKeyDown(event.key);
+    const bool handled = HandleTreeContextMenuKeyDown(event.key);
+    if (handled) {
+      ensure_redraw([this]() { RequestChromeRedraw(); });
+    }
+    return finish(handled);
   }
   if (surface_.menu_bar_open) {
-    return HandleMenuBarKeyDown(event.key, modifiers);
+    const bool handled = HandleMenuBarKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestChromeRedraw(); });
+    }
+    return finish(handled);
   }
   if (CompositionConsumesKey(event.key.key, modifiers)) {
-    return true;
+    return finish(true);
   }
   if (prompts_.surface_visible) {
-    return HandlePromptSurfaceKeyDown(event.key);
+    const bool handled = HandlePromptSurfaceKeyDown(event.key);
+    if (handled) {
+      ensure_redraw([this]() { RequestPromptRedraw(); });
+    }
+    return finish(handled);
   }
   const bool active_compare_tab = ActiveTabIsCompare();
   const bool active_merge_tab = ActiveTabIsMerge();
   if (HandleGlobalKeyDown(event.key, modifiers, active_compare_tab, active_merge_tab)) {
-    return true;
+    return finish(true);
   }
   if (surface_.command_mode) {
-    return HandleCommandKeyDown(event.key);
+    const bool handled = HandleCommandKeyDown(event.key);
+    if (handled) {
+      ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+    }
+    return finish(handled);
   }
   if (HandleSurfaceNavigationKeyDown(event.key, modifiers)) {
-    return true;
+    ensure_redraw([this]() { RequestWindowRedraw(); });
+    return finish(true);
   }
   if (surface_.focus == FocusTarget::Overlay) {
-    return HandleOverlayKeyDown(event.key, modifiers);
+    const bool handled = HandleOverlayKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestOverlayRedraw(); });
+    }
+    return finish(handled);
   }
   if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible) {
-    return HandleSidebarKeyDown(event.key, modifiers);
+    const bool handled = HandleSidebarKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestSidebarRedraw(); });
+    }
+    return finish(handled);
   }
 
   if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
-    return HandleTerminalKeyDown(event.key, modifiers);
+    const bool handled = HandleTerminalKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+    }
+    return finish(handled);
   }
 
   if (surface_.focus == FocusTarget::Editor && active_compare_tab) {
-    return HandleCompareKeyDown(event.key, modifiers);
+    const bool handled = HandleCompareKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return finish(handled);
   }
 
   if (surface_.focus == FocusTarget::Editor && active_merge_tab) {
-    return HandleMergeKeyDown(event.key, modifiers);
+    const bool handled = HandleMergeKeyDown(event.key, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return finish(handled);
   }
 
-  return HandleDefaultEditorKeyDown(event.key, modifiers);
+  const bool handled = HandleDefaultEditorKeyDown(event.key, modifiers);
+  if (handled) {
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+  }
+  return finish(handled);
 }
 
 void WorkspaceShell::SyncTextInputSurface(SDL_Window* window) {
@@ -157,17 +216,51 @@ bool WorkspaceShell::CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifier
 
 bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
   if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
+    if (!text_composition_.text.empty()) {
+      RequestWindowRedraw();
+    }
     text_composition_ = TextCompositionState{};
     return true;
   }
   SyncTextInputSurface(nullptr);
   const TextInputSurface surface = CurrentTextInputSurface();
   if (surface == TextInputSurface::None || surface == TextInputSurface::Terminal) {
+    if (!text_composition_.text.empty()) {
+      RequestWindowRedraw();
+    }
     text_composition_ = TextCompositionState{};
     return false;
   }
 
   if (event.text == nullptr || event.text[0] == '\0') {
+    if (!text_composition_.text.empty()) {
+      switch (surface) {
+        case TextInputSurface::PromptInput:
+          RequestPromptRedraw();
+          break;
+        case TextInputSurface::Command:
+          RequestBottomPanelRedraw();
+          break;
+        case TextInputSurface::SidebarSearchQuery:
+        case TextInputSurface::SidebarSearchReplace:
+          RequestSidebarRedraw();
+          break;
+        case TextInputSurface::FileFinder:
+        case TextInputSurface::BufferSearch:
+        case TextInputSurface::BufferReplaceSearch:
+        case TextInputSurface::BufferReplaceReplace:
+        case TextInputSurface::ProjectSearchOverlay:
+        case TextInputSurface::CommitPicker:
+          RequestOverlayRedraw();
+          break;
+        case TextInputSurface::Editor:
+          RequestEditorSurfaceRedraw();
+          break;
+        case TextInputSurface::None:
+        case TextInputSurface::Terminal:
+          break;
+      }
+    }
     text_composition_ = TextCompositionState{};
     return true;
   }
@@ -176,6 +269,32 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
   text_composition_.text = event.text;
   text_composition_.start = event.start;
   text_composition_.length = event.length;
+  switch (surface) {
+    case TextInputSurface::PromptInput:
+      RequestPromptRedraw();
+      break;
+    case TextInputSurface::Command:
+      RequestBottomPanelRedraw();
+      break;
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+      RequestSidebarRedraw();
+      break;
+    case TextInputSurface::FileFinder:
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::ProjectSearchOverlay:
+    case TextInputSurface::CommitPicker:
+      RequestOverlayRedraw();
+      break;
+    case TextInputSurface::Editor:
+      RequestEditorSurfaceRedraw();
+      break;
+    case TextInputSurface::None:
+    case TextInputSurface::Terminal:
+      break;
+  }
   return true;
 }
 
@@ -193,6 +312,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   if (prompts_.surface_visible &&
       prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
     prompts_.surface.input.append(input);
+    RequestPromptRedraw();
     return true;
   }
   if (surface_.command_mode) {
@@ -200,6 +320,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     command_.history_index.reset();
     command_.history_pending_input.clear();
     ClearCommandFeedback();
+    RequestBottomPanelRedraw();
     return true;
   }
 
@@ -219,6 +340,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
           RefreshBufferSearch();
         } else {
           overlay_workflow_.buffer_search.replace_text.append(input);
+          RequestOverlayRedraw();
         }
         return true;
       case OverlayMode::ProjectSearch:
@@ -236,6 +358,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
   if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
       overlay_workflow_.project_search.editing) {
     overlay_workflow_.project_search.edit_buffer.append(input);
+    RequestSidebarRedraw();
     return true;
   }
 
@@ -256,6 +379,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
       UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
     }
     ResetCaretBlink();
+    RequestEditorSurfaceRedraw();
     return true;
   }
 
@@ -266,6 +390,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
       AppendTerminalPendingInput(input);
       terminal_tab->session.SendBytes(input);
     }
+    RequestBottomPanelRedraw();
     return true;
   }
 
@@ -278,6 +403,10 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
     return false;
   }
   const auto follow_terminal_tail = [&]() { terminal_tab->follow_tail = true; };
+  const auto handled_with_panel_redraw = [this]() {
+    RequestBottomPanelRedraw();
+    return true;
+  };
 
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && TerminalHasSelection()) {
     const std::string text = SelectedTerminalText();
@@ -289,7 +418,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
 
   if (event.key == SDLK_ESCAPE && TerminalHasSelection()) {
     ClearTerminalSelection();
-    return true;
+    return handled_with_panel_redraw();
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && (modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_V) {
@@ -306,25 +435,25 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
           static_cast<char>(1 + (event.key - SDLK_A));
       follow_terminal_tail();
       terminal_tab->session.SendBytes(std::string(1, control));
-      return true;
+      return handled_with_panel_redraw();
     }
     switch (event.key) {
       case SDLK_LEFTBRACKET:
         follow_terminal_tail();
         terminal_tab->session.SendBytes("\x1b");
-        return true;
+        return handled_with_panel_redraw();
       case SDLK_BACKSLASH:
         follow_terminal_tail();
         terminal_tab->session.SendBytes("\x1c");
-        return true;
+        return handled_with_panel_redraw();
       case SDLK_RIGHTBRACKET:
         follow_terminal_tail();
         terminal_tab->session.SendBytes("\x1d");
-        return true;
+        return handled_with_panel_redraw();
       case SDLK_SPACE:
         follow_terminal_tail();
         terminal_tab->session.SendBytes(std::string(1, '\0'));
-        return true;
+        return handled_with_panel_redraw();
       default:
         break;
     }
@@ -337,7 +466,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
       bytes.push_back(input_character);
       follow_terminal_tail();
       terminal_tab->session.SendBytes(bytes);
-      return true;
+      return handled_with_panel_redraw();
     }
   }
 
@@ -345,62 +474,62 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
     case SDLK_ESCAPE:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Escape);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       SubmitTerminalPendingInput();
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Enter);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_BACKSPACE:
       EraseLastTerminalPendingInputCodepoint();
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Backspace);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_TAB:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Tab);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_UP:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Up);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_DOWN:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Down);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_RIGHT:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Right);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_LEFT:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Left);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_HOME:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Home);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_END:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::End);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_PAGEUP:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::PageUp);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_PAGEDOWN:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::PageDown);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_INSERT:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Insert);
-      return true;
+      return handled_with_panel_redraw();
     case SDLK_DELETE:
       follow_terminal_tail();
       terminal_tab->session.SendKey(terminal::TerminalSession::Key::Delete);
-      return true;
+      return handled_with_panel_redraw();
     default:
       break;
   }
@@ -425,6 +554,7 @@ bool WorkspaceShell::PasteClipboardIntoTerminal() {
   }
   terminal_tab->follow_tail = true;
   terminal_tab->session.PasteText(*clipboard_text);
+  RequestBottomPanelRedraw();
   return true;
 }
 

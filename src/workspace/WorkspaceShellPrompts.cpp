@@ -11,6 +11,7 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
     return;
   }
 
+  RequestPromptRedraw();
   prompts_.dirty_visible = true;
   prompts_.dirty_previous_focus = surface_.focus;
   prompts_.dirty.kind = DirtyPromptState::Kind::CloseTab;
@@ -21,6 +22,7 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
 }
 
 void WorkspaceShell::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
@@ -29,6 +31,7 @@ void WorkspaceShell::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs
     return;
   }
 
+  RequestPromptRedraw();
   prompts_.dirty_visible = true;
   prompts_.dirty_previous_focus = surface_.focus;
   prompts_.dirty.kind = DirtyPromptState::Kind::CloseTabs;
@@ -39,6 +42,7 @@ void WorkspaceShell::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
 }
 
 void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
@@ -52,6 +56,7 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
     return;
   }
 
+  RequestPromptRedraw();
   prompts_.dirty_visible = true;
   prompts_.dirty_previous_focus = surface_.focus;
   prompts_.dirty.kind = DirtyPromptState::Kind::CloseProject;
@@ -61,6 +66,7 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
 }
 
 void WorkspaceShell::ShowDirtyPromptForQuit() {
@@ -72,6 +78,7 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
     dirty_count += DirtyEditorTabIndicesForProject(i).size();
   }
 
+  RequestPromptRedraw();
   prompts_.dirty_visible = true;
   prompts_.dirty_previous_focus = surface_.focus;
   prompts_.dirty.kind = DirtyPromptState::Kind::Quit;
@@ -82,14 +89,17 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
 }
 
 void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
+  RequestPromptRedraw();
   prompts_.dirty_visible = false;
   prompts_.dirty = DirtyPromptState{};
   if (restore_focus) {
     surface_.focus = prompts_.dirty_previous_focus;
   }
+  RequestPromptRedraw();
 }
 
 void WorkspaceShell::ConfirmDirtyPrompt() {
@@ -178,6 +188,7 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
                                        PromptSurfaceState::Kind kind,
                                        const std::filesystem::path& path,
                                        std::string input) {
+  RequestPromptRedraw();
   prompts_.surface_visible = true;
   prompts_.surface_previous_focus = surface_.focus;
   prompts_.surface.kind = kind;
@@ -186,14 +197,17 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.input = std::move(input);
   prompts_.surface.selected_button = 0;
   surface_.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
 }
 
 void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
+  RequestPromptRedraw();
   prompts_.surface_visible = false;
   prompts_.surface = PromptSurfaceState{};
   if (restore_focus) {
     surface_.focus = prompts_.surface_previous_focus;
   }
+  RequestPromptRedraw();
 }
 
 std::string WorkspaceShell::PromptSurfaceTitle() const {

@@ -14,6 +14,11 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 
+bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
+         lhs.y + lhs.h > rhs.y;
+}
+
 void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -118,6 +123,40 @@ void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
          "hovering the Edit menu should switch the active popup");
 }
 
+void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto file_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
+  const auto edit_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "Edit");
+  Expect(file_rect.has_value() && edit_rect.has_value(),
+         "menu invalidation fixture should expose File and Edit menu items");
+
+  SDL_Event click_event{};
+  click_event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  click_event.button.button = SDL_BUTTON_LEFT;
+  click_event.button.x = file_rect->x + file_rect->w * 0.5f;
+  click_event.button.y = file_rect->y + file_rect->h * 0.5f;
+  const auto open_result = shell.HandleEvent(click_event);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(open_result.handled, "opening a menu should be handled");
+  Expect(!open_result.redraw.full && open_result.redraw.rect.has_value(),
+         "opening a menu should request a partial redraw");
+  Expect(RectsIntersect(*open_result.redraw.rect, layout.menu_bar),
+         "menu redraws should include the chrome menu bar");
+
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = edit_rect->x + edit_rect->w * 0.5f;
+  motion_event.motion.y = edit_rect->y + edit_rect->h * 0.5f;
+  const auto hover_result = shell.HandleEvent(motion_event);
+  Expect(hover_result.handled, "switching menu hover should be handled");
+  Expect(!hover_result.redraw.full && hover_result.redraw.rect.has_value(),
+         "switching menu hover should stay on a partial redraw path");
+  Expect(RectsIntersect(*hover_result.redraw.rect, layout.menu_bar),
+         "menu hover redraws should stay scoped to chrome");
+}
+
 void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -135,6 +174,31 @@ void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
          "focused editors should expose a caret dirty rect for partial redraws");
   Expect(caret_rect->w > 0.0f && caret_rect->h > 0.0f,
          "editor caret dirty rects should have a visible size");
+}
+
+void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_TEXT_INPUT;
+  const std::string text = "x";
+  event.text.text = text.c_str();
+  const auto result = shell.HandleEvent(event);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+
+  Expect(result.handled, "editor typing should be handled");
+  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+         "editor typing should request a partial redraw");
+  Expect(RectsIntersect(*result.redraw.rect, layout.editor_surface),
+         "editor typing redraws should stay scoped to the editor surface");
 }
 
 void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
@@ -215,8 +279,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
+  AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",
+          TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation);
   AddTest(tests, "WorkspaceShell/EditorCaretDirtyRectFollowsActiveCaret",
           TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
+  AddTest(tests, "WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation",
+          TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
   AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",
           TestWorkspaceShellEditorTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",

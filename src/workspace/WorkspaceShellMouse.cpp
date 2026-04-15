@@ -16,6 +16,11 @@
 namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
+  const auto ensure_redraw = [this](auto request_redraw) {
+    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+      request_redraw();
+    }
+  };
   if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
       event.button.button != SDL_BUTTON_RIGHT) {
     return false;
@@ -39,6 +44,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
     }
     surface_.focus = FocusTarget::Editor;
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     return true;
   }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
@@ -50,9 +56,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         prompts_.dirty.selected_action = static_cast<int>(i);
         ConfirmDirtyPrompt();
+        ensure_redraw([this]() { RequestPromptRedraw(); });
         return true;
       }
     }
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
@@ -65,9 +73,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         if (event.button.button == SDL_BUTTON_LEFT) {
           ConfirmPromptSurface();
         }
+        ensure_redraw([this]() { RequestPromptRedraw(); });
         return true;
       }
     }
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
@@ -81,6 +91,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   surface_.mouse_selecting = false;
 
   if (ChromeMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
@@ -88,6 +99,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     if (EditorBlameLineAtPosition(static_cast<float>(event.button.x),
                                   static_cast<float>(event.button.y)) != nullptr) {
       surface_.focus = FocusTarget::Editor;
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
   }
@@ -99,18 +111,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (PanelMouseCoordinator(*this).HandleResizeButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
   if (SidebarMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestSidebarRedraw(); });
     return true;
   }
 
   if (TabMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (PanelMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -121,6 +137,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                      MakeRect(static_cast<float>(event.button.x),
                               static_cast<float>(event.button.y), 1.0f, 1.0f));
     surface_.focus = FocusTarget::Editor;
+    ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;
   }
 
@@ -130,34 +147,56 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (ActiveTabIsCompare()) {
-    return CompareMouseCoordinator(*this).HandleButtonDown(event, layout);
+    const bool handled = CompareMouseCoordinator(*this).HandleButtonDown(event, layout);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return handled;
   }
 
   if (ActiveTabIsMerge()) {
-    return MergeMouseCoordinator(*this).HandleButtonDown(event, layout);
+    const bool handled = MergeMouseCoordinator(*this).HandleButtonDown(event, layout);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return handled;
   }
 
-  return EditorMouseCoordinator(*this).HandleButtonDown(event, layout);
+  const bool handled = EditorMouseCoordinator(*this).HandleButtonDown(event, layout);
+  if (handled) {
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+  }
+  return handled;
 }
 
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
+  const auto ensure_redraw = [this](auto request_redraw) {
+    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+      request_redraw();
+    }
+  };
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
 
   if (prompts_.dirty_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
   if (prompts_.surface_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && tab_drag_state_.kind != TabDragKind::None) {
     if (TabMouseCoordinator(*this).HandleButtonUp(event)) {
+      ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;
     }
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (PanelMouseCoordinator(*this).HandleButtonUp(event)) {
+    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -171,17 +210,24 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     surface_.drag_editor_split_divider_index = 0;
     surface_.mouse_selecting = false;
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
   const bool was_selecting = surface_.mouse_selecting;
   surface_.mouse_selecting = false;
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
   return was_selecting;
 }
 
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
+  const auto ensure_redraw = [this](auto request_redraw) {
+    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+      request_redraw();
+    }
+  };
   bool hover_visual_changed = false;
   if (CurrentWindowRect().has_value()) {
     const std::optional<std::size_t> previous_popup_line = active_editor_blame_popup_line_;
@@ -196,9 +242,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (prompts_.dirty_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
   if (prompts_.surface_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
@@ -208,11 +256,16 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
   const WorkspaceLayout layout = *layout_state;
   if (ChromeMouseCoordinator(*this).HandleMotion(event, layout)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (tab_drag_state_.kind != TabDragKind::None) {
-    return TabMouseCoordinator(*this).HandleMotion(event);
+    const bool handled = TabMouseCoordinator(*this).HandleMotion(event);
+    if (handled) {
+      ensure_redraw([this]() { RequestWindowRedraw(); });
+    }
+    return handled;
   }
 
   if (surface_.drag_target != DragTarget::None) {
@@ -230,21 +283,28 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
       surface_.sidebar_width =
           ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
+      ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;
     }
 
     const WorkspaceLayout drag_layout = layout;
 
     if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+      ensure_redraw([this]() { RequestBottomPanelRedraw(); });
       return true;
     }
 
     if (MergeMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
     if (surface_.drag_target == DragTarget::SidebarScrollbar) {
-      return SidebarMouseCoordinator(*this).HandleDrag(event, drag_layout);
+      const bool handled = SidebarMouseCoordinator(*this).HandleDrag(event, drag_layout);
+      if (handled) {
+        ensure_redraw([this]() { RequestSidebarRedraw(); });
+      }
+      return handled;
     }
 
     if (surface_.drag_target == DragTarget::OverlayScrollbar && surface_.overlay_visible) {
@@ -262,14 +322,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                               surface_.drag_scrollbar_offset))),
                      0, list_layout.max_scroll);
       surface_.focus = FocusTarget::Overlay;
+      ensure_redraw([this]() { RequestOverlayRedraw(); });
       return true;
     }
 
     if (CompareMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
     if (EditorMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
@@ -279,6 +342,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (PanelMouseCoordinator(*this).HandleMotion(event)) {
+    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -286,6 +350,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     hover_visual_changed =
         hover_visual_changed ||
         MergeMouseCoordinator(*this).HandleHoverMotion(event, layout);
+  }
+
+  if (hover_visual_changed) {
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
 
   if (!surface_.mouse_selecting || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
@@ -297,25 +365,45 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (ActiveTabIsCompare()) {
-    return CompareMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+    const bool handled = CompareMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return handled;
   }
 
   if (ActiveTabIsMerge()) {
-    return MergeMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+    const bool handled = MergeMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return handled;
   }
 
-  return EditorMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+  const bool handled = EditorMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+  if (handled) {
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+  }
+  return handled;
 }
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
+  const auto ensure_redraw = [this](auto request_redraw) {
+    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+      request_redraw();
+    }
+  };
   if (prompts_.dirty_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
   if (prompts_.surface_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
   if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
+    ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;
   }
 
@@ -341,31 +429,47 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   const WorkspaceLayout layout = *layout_state;
 
   if (ChromeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (TabMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (SidebarMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
+    ensure_redraw([this]() { RequestSidebarRedraw(); });
     return true;
   }
 
   if (PanelMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
+    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
   if (Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     if (ActiveTabIsCompare()) {
-      return CompareMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks,
-                                                        horizontal_ticks);
+      const bool handled =
+          CompareMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
+      if (handled) {
+        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      }
+      return handled;
     }
     if (ActiveTabIsMerge()) {
-      return MergeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks,
-                                                      horizontal_ticks);
+      const bool handled =
+          MergeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
+      if (handled) {
+        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      }
+      return handled;
     }
-    return EditorMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks);
+    const bool handled = EditorMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks);
+    if (handled) {
+      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    }
+    return handled;
   }
 
   return false;

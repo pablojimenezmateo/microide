@@ -333,6 +333,7 @@ int WorkspaceShell::NextEnabledMenuItemIndex(MenuId id, int current_index, int d
 }
 
 void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
+  RequestChromeRedraw();
   if (id == MenuId::None) {
     CloseMenuBar();
     return;
@@ -343,9 +344,11 @@ void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
   surface_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
   surface_.active_menu_anchor_rect.reset();
   CloseSubmenu();
+  RequestChromeRedraw();
 }
 
 void WorkspaceShell::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
+  RequestChromeRedraw();
   if (id == MenuId::None) {
     CloseMenuBar();
     return;
@@ -356,26 +359,33 @@ void WorkspaceShell::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
   surface_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
   surface_.active_menu_anchor_rect = anchor_rect;
   CloseSubmenu();
+  RequestChromeRedraw();
 }
 
 void WorkspaceShell::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
+  RequestChromeRedraw();
   surface_.active_submenu_id = id;
   surface_.active_submenu_item_index = FirstEnabledMenuItemIndex(id);
   surface_.active_submenu_anchor_rect = anchor_rect;
+  RequestChromeRedraw();
 }
 
 void WorkspaceShell::CloseSubmenu() {
+  RequestChromeRedraw();
   surface_.active_submenu_id = MenuId::None;
   surface_.active_submenu_item_index = -1;
   surface_.active_submenu_anchor_rect.reset();
+  RequestChromeRedraw();
 }
 
 void WorkspaceShell::CloseMenuBar() {
+  RequestChromeRedraw();
   surface_.menu_bar_open = false;
   surface_.active_menu_id = MenuId::None;
   surface_.active_menu_item_index = -1;
   surface_.active_menu_anchor_rect.reset();
   CloseSubmenu();
+  RequestChromeRedraw();
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu_bar) const {
@@ -482,16 +492,20 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
 void WorkspaceShell::OpenTreeContextMenu(TreeContextTargetKind target,
                                          const std::filesystem::path& path,
                                          const SDL_FRect& anchor_rect) {
+  RequestChromeRedraw();
   CloseMenuBar();
   surface_.tree_context_menu.open = true;
   surface_.tree_context_menu.target = target;
   surface_.tree_context_menu.path = path.lexically_normal();
   surface_.tree_context_menu.anchor_rect = anchor_rect;
   surface_.tree_context_menu.active_item_index = FirstEnabledTreeContextMenuItemIndex();
+  RequestChromeRedraw();
 }
 
 void WorkspaceShell::CloseTreeContextMenu() {
+  RequestChromeRedraw();
   surface_.tree_context_menu = TreeContextMenuState{};
+  RequestChromeRedraw();
 }
 
 bool WorkspaceShell::ExecuteTreeContextMenuItem(std::size_t item_index) {

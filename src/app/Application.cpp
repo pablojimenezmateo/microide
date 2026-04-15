@@ -44,6 +44,18 @@ std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect, int width, int h
   return SDL_Rect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
 }
 
+std::optional<SDL_FRect> UnionDirtyRect(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
+  if (!lhs.has_value()) {
+    return rhs;
+  }
+
+  const float x0 = std::min(lhs->x, rhs.x);
+  const float y0 = std::min(lhs->y, rhs.y);
+  const float x1 = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
+  const float y1 = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
+  return SDL_FRect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
+}
+
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
     SDL_Window* window,
     SDL_Renderer* renderer,
@@ -121,9 +133,15 @@ int Application::Run() {
     }
 
     do {
-      if (HandleEvent(event)) {
-        full_redraw_pending = true;
-        redraw_reason = "event";
+      const auto result = HandleEvent(event);
+      if (result.handled) {
+        if (result.redraw.full) {
+          full_redraw_pending = true;
+          dirty_rect.reset();
+        } else if (result.redraw.rect.has_value() && !full_redraw_pending) {
+          dirty_rect = UnionDirtyRect(dirty_rect, *result.redraw.rect);
+        }
+        redraw_reason = result.redraw.full ? "event-full" : "event-partial";
       }
     } while (SDL_PollEvent(&event));
   }
@@ -240,20 +258,29 @@ void Application::Shutdown() {
   initialized_ = false;
 }
 
-bool Application::HandleEvent(const SDL_Event& event) {
+workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event& event) {
   switch (event.type) {
     case SDL_EVENT_QUIT:
       workspace_shell_.RequestQuit();
       if (workspace_shell_.ConsumeQuitRequested()) {
         running_ = false;
       }
-      return true;
+      return workspace::WorkspaceShell::EventResult{
+          .handled = true,
+          .redraw = {},
+      };
     case SDL_EVENT_WINDOW_EXPOSED:
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       UpdateRendererPresentation();
-      return true;
+      return workspace::WorkspaceShell::EventResult{
+          .handled = true,
+          .redraw = workspace::WorkspaceShell::RenderInvalidation{
+              .full = true,
+              .rect = std::nullopt,
+          },
+      };
     case SDL_EVENT_WINDOW_FOCUS_LOST:
       StopWindowDrag();
       break;
@@ -261,12 +288,18 @@ bool Application::HandleEvent(const SDL_Event& event) {
 
   if (window_drag_active_) {
     if (event.type == SDL_EVENT_MOUSE_MOTION) {
-      return UpdateWindowDrag();
+      return workspace::WorkspaceShell::EventResult{
+          .handled = UpdateWindowDrag(),
+          .redraw = {},
+      };
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_UP &&
         event.button.button == SDL_BUTTON_LEFT) {
       StopWindowDrag();
-      return true;
+      return workspace::WorkspaceShell::EventResult{
+          .handled = true,
+          .redraw = {},
+      };
     }
   }
 
@@ -284,16 +317,22 @@ bool Application::HandleEvent(const SDL_Event& event) {
       workspace_shell_.WindowDragRegionContains(converted_event.button.x,
                                                 converted_event.button.y);
 
-  const bool handled = workspace_shell_.HandleEvent(converted_event);
+  const auto result = workspace_shell_.HandleEvent(converted_event);
   ConsumeWindowActions();
   if (workspace_shell_.ConsumeQuitRequested()) {
     running_ = false;
-    return true;
+    return workspace::WorkspaceShell::EventResult{
+        .handled = true,
+        .redraw = result.redraw,
+    };
   }
   if (start_window_drag && StartWindowDrag(converted_event)) {
-    return true;
+    return workspace::WorkspaceShell::EventResult{
+        .handled = true,
+        .redraw = result.redraw,
+    };
   }
-  return handled;
+  return result;
 }
 
 bool Application::StartWindowDrag(const SDL_Event& converted_event) {

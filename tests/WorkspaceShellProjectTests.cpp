@@ -560,7 +560,7 @@ void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
   event.button.x = 320;
   event.button.y = 140;
 
-  Expect(shell.HandleEvent(event),
+  Expect(shell.HandleEvent(event).handled,
          "right-clicking the editor should be handled");
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
          "right-clicking the editor should open a popup menu");
@@ -945,7 +945,7 @@ void TestWorkspaceShellProjectTabWheelScrollsStrip() {
   event.wheel.mouse_x = first_rect.x + first_rect.w * 0.5f;
   event.wheel.mouse_y = first_rect.y + first_rect.h * 0.5f;
 
-  Expect(shell.HandleEvent(event), "mouse wheel over the project strip should be handled");
+  Expect(shell.HandleEvent(event).handled, "mouse wheel over the project strip should be handled");
   Expect(WorkspaceShellTestAccess::ProjectTabScrollIndex(shell) == 2,
          "mouse wheel over the project strip should update the project strip scroll index");
 }
@@ -974,7 +974,7 @@ void TestWorkspaceShellEditorTabWheelScrollsStrip() {
   event.wheel.mouse_x = first_rect.x + first_rect.w * 0.5f;
   event.wheel.mouse_y = first_rect.y + first_rect.h * 0.5f;
 
-  Expect(shell.HandleEvent(event), "mouse wheel over the editor strip should be handled");
+  Expect(shell.HandleEvent(event).handled, "mouse wheel over the editor strip should be handled");
   Expect(WorkspaceShellTestAccess::EditorTabScrollIndex(shell) == 3,
          "mouse wheel over the editor strip should update the editor strip scroll index");
 }

@@ -65,6 +65,18 @@ SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bott
   return SDL_HITTEST_NORMAL;
 }
 
+std::optional<SDL_FRect> UnionRects(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
+  if (!lhs.has_value()) {
+    return rhs;
+  }
+
+  const float x0 = std::min(lhs->x, rhs.x);
+  const float y0 = std::min(lhs->y, rhs.y);
+  const float x1 = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
+  const float y1 = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
+  return MakeRect(x0, y0, x1 - x0, y1 - y0);
+}
+
 }  // namespace
 
 std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
@@ -348,6 +360,129 @@ const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeStat
   return window_presentation_.chrome;
 }
 
+WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidation() {
+  const RenderInvalidation result = pending_render_invalidation_;
+  pending_render_invalidation_ = RenderInvalidation{};
+  return result;
+}
+
+void WorkspaceShell::RequestFullRedraw() {
+  pending_render_invalidation_.full = true;
+  pending_render_invalidation_.rect.reset();
+}
+
+void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
+  if (pending_render_invalidation_.full || rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  pending_render_invalidation_.rect = UnionRects(pending_render_invalidation_.rect, rect);
+}
+
+void WorkspaceShell::RequestWindowRedraw() {
+  if (const auto window_rect = CurrentWindowRect(); window_rect.has_value()) {
+    RequestRedrawRect(*window_rect);
+  } else {
+    RequestFullRedraw();
+  }
+}
+
+void WorkspaceShell::RequestChromeRedraw() {
+  if (const auto rect = CurrentChromeRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+  } else {
+    RequestWindowRedraw();
+  }
+}
+
+void WorkspaceShell::RequestSidebarRedraw() {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && surface_.sidebar_visible) {
+    RequestRedrawRect(layout->sidebar);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestEditorSurfaceRedraw() {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+    RequestRedrawRect(layout->editor_surface);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestBottomPanelRedraw() {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
+    RequestRedrawRect(layout->bottom_panel);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestOverlayRedraw() {
+  if (const auto rect = CurrentOverlayRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestPromptRedraw() {
+  if (const auto rect = CurrentPromptRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return std::nullopt;
+  }
+
+  std::optional<SDL_FRect> rect = layout->menu_bar;
+  if (surface_.menu_bar_open) {
+    if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, surface_.active_menu_id);
+        popup_rect.has_value()) {
+      rect = UnionRects(rect, *popup_rect);
+    }
+    if (const auto submenu_rect = ActiveSubmenuRect(layout->menu_bar);
+        submenu_rect.has_value()) {
+      rect = UnionRects(rect, *submenu_rect);
+    }
+  }
+  if (surface_.tree_context_menu.open) {
+    if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {
+      rect = UnionRects(rect, *tree_menu_rect);
+    }
+  }
+  return rect;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value() || !surface_.overlay_visible) {
+    return std::nullopt;
+  }
+  return ComputeOverlayRect(layout->editor_area);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
+  const auto window_rect = CurrentWindowRect();
+  if (!window_rect.has_value()) {
+    return std::nullopt;
+  }
+
+  std::optional<SDL_FRect> rect;
+  if (prompts_.dirty_visible) {
+    rect = ComputeDirtyPromptRect(*window_rect);
+  }
+  if (prompts_.surface_visible) {
+    rect = UnionRects(rect, ComputePromptSurfaceRect(*window_rect));
+  }
+  return rect;
+}
+
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
   if (!CurrentWindowChromeState().custom_enabled) {
     return SDL_HITTEST_NORMAL;
@@ -600,6 +735,7 @@ void WorkspaceShell::MoveFileFinderSelection(int delta) {
     }
     RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
   }
+  RequestOverlayRedraw();
 }
 
 WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const {

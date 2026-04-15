@@ -33,6 +33,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleButtonDown(
         shell_.OpenAnchoredMenu(MenuId::SidebarMode, sidebar_mode_rect);
       }
       shell_.surface_.focus = FocusTarget::Sidebar;
+      shell_.RequestChromeRedraw();
       return true;
     }
   }
@@ -80,6 +81,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   } else {
     shell_.MoveFileFinderSelection(-overlay_ticks);
   }
+  shell_.RequestOverlayRedraw();
   return true;
 }
 
@@ -109,6 +111,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
         shell_.RequestQuit();
         break;
     }
+    shell_.RequestChromeRedraw();
     return true;
   }
 
@@ -122,6 +125,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
       } else {
         shell_.OpenMenuBarMenu(item.id);
       }
+      shell_.RequestChromeRedraw();
       return true;
     }
 
@@ -139,8 +143,10 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
         if (!item.separator && item.enabled) {
           shell_.ExecuteMenuItem(shell_.surface_.active_submenu_id, item.index);
         }
+        shell_.RequestChromeRedraw();
         return true;
       }
+      shell_.RequestChromeRedraw();
       return true;
     }
 
@@ -158,12 +164,15 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
         if (!item.separator && item.enabled) {
           shell_.ExecuteMenuItem(shell_.surface_.active_menu_id, item.index);
         }
+        shell_.RequestChromeRedraw();
         return true;
       }
+      shell_.RequestChromeRedraw();
       return true;
     }
 
     shell_.CloseMenuBar();
+    shell_.RequestChromeRedraw();
     return true;
   }
 
@@ -174,12 +183,14 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
   for (const VisibleMenuBarItem& item : menu_bar_items) {
     if (Contains(item.rect, event.button.x, event.button.y)) {
       shell_.OpenMenuBarMenu(item.id);
+      shell_.RequestChromeRedraw();
       return true;
     }
   }
   if (event.button.clicks >= 2) {
     shell_.pending_window_action_ = WindowAction::ToggleMaximize;
   }
+  shell_.RequestChromeRedraw();
   return true;
 }
 
@@ -198,6 +209,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
     if (item.id != shell_.surface_.active_menu_id) {
       shell_.OpenMenuBarMenu(item.id);
     }
+    shell_.RequestChromeRedraw();
     return true;
   }
 
@@ -213,6 +225,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
         break;
       }
     }
+    shell_.RequestChromeRedraw();
     return true;
   }
 
@@ -239,10 +252,12 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
         break;
       }
     }
+    shell_.RequestChromeRedraw();
     return true;
   }
 
   shell_.surface_.active_menu_item_index = -1;
+  shell_.RequestChromeRedraw();
   return true;
 }
 
@@ -256,6 +271,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
   const SDL_FRect overlay = shell_.ComputeOverlayRect(layout.editor_area);
   if (!Contains(overlay, event.button.x, event.button.y)) {
     shell_.DismissOverlay();
+    shell_.RequestOverlayRedraw();
     return true;
   }
 
@@ -274,6 +290,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
             shell_.surface_.drag_scrollbar_offset))),
         0, list_layout.max_scroll);
     shell_.surface_.focus = FocusTarget::Overlay;
+    shell_.RequestOverlayRedraw();
     return true;
   }
 
@@ -288,6 +305,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
     }
   }
   shell_.surface_.focus = FocusTarget::Overlay;
+  shell_.RequestOverlayRedraw();
   return true;
 }
 
@@ -311,12 +329,15 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
       if (event.button.button == SDL_BUTTON_LEFT && !item.separator && item.enabled) {
         shell_.ExecuteTreeContextMenuItem(item.index);
       }
+      shell_.RequestChromeRedraw();
       return true;
     }
+    shell_.RequestChromeRedraw();
     return true;
   }
 
   shell_.CloseTreeContextMenu();
+  shell_.RequestChromeRedraw();
   return false;
 }
 
@@ -339,10 +360,12 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuMotion(
         break;
       }
     }
+    shell_.RequestChromeRedraw();
     return true;
   }
 
   shell_.surface_.tree_context_menu.active_item_index = -1;
+  shell_.RequestChromeRedraw();
   return true;
 }
 

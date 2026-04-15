@@ -430,12 +430,12 @@ struct WorkspaceShellTestAccess {
     event.type = SDL_EVENT_KEY_DOWN;
     event.key.key = key;
     event.key.mod = modifiers;
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static bool HandleWindowFocusEvent(WorkspaceShell& shell, bool focused) {
     SDL_Event event{};
     event.type = focused ? SDL_EVENT_WINDOW_FOCUS_GAINED : SDL_EVENT_WINDOW_FOCUS_LOST;
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static bool HandleMouseButtonDown(WorkspaceShell& shell, float x, float y, Uint8 button) {
     SDL_Event event{};
@@ -443,7 +443,7 @@ struct WorkspaceShellTestAccess {
     event.button.button = button;
     event.button.x = x;
     event.button.y = y;
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static bool HandleMouseButtonDown(WorkspaceShell& shell,
                                     float x,
@@ -456,7 +456,7 @@ struct WorkspaceShellTestAccess {
     event.button.x = x;
     event.button.y = y;
     event.button.clicks = clicks;
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static bool HandleMouseButtonUp(WorkspaceShell& shell, float x, float y, Uint8 button) {
     SDL_Event event{};
@@ -464,7 +464,7 @@ struct WorkspaceShellTestAccess {
     event.button.button = button;
     event.button.x = x;
     event.button.y = y;
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static bool HandleMouseMotion(WorkspaceShell& shell, float x, float y, SDL_MouseButtonFlags state) {
     SDL_Event event{};
@@ -472,7 +472,7 @@ struct WorkspaceShellTestAccess {
     event.motion.x = x;
     event.motion.y = y;
     event.motion.state = state;
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static bool HandleMouseWheel(WorkspaceShell& shell,
                                float x,
@@ -487,7 +487,7 @@ struct WorkspaceShellTestAccess {
     event.wheel.integer_y = vertical_ticks;
     event.wheel.x = static_cast<float>(horizontal_ticks);
     event.wheel.y = static_cast<float>(vertical_ticks);
-    return shell.HandleEvent(event);
+    return shell.HandleEvent(event).handled;
   }
   static int ProjectTabScrollIndex(const WorkspaceShell& shell) {
     return shell.project_catalog_.tab_scroll_index;
@@ -850,6 +850,9 @@ struct WorkspaceShellTestAccess {
   static bool CaretVisibleNow(const WorkspaceShell& shell) { return shell.CaretVisibleNow(); }
   static std::optional<SDL_FRect> CurrentCaretDirtyRect(const WorkspaceShell& shell) {
     return shell.CurrentCaretDirtyRect();
+  }
+  static WorkspaceShell::RenderInvalidation ConsumePendingRenderInvalidation(WorkspaceShell& shell) {
+    return shell.ConsumePendingRenderInvalidation();
   }
   static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {

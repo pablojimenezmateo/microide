@@ -21,7 +21,7 @@ class Application {
  private:
   bool Initialize();
   void Shutdown();
-  bool HandleEvent(const SDL_Event& event);
+  workspace::WorkspaceShell::EventResult HandleEvent(const SDL_Event& event);
   void Render(std::optional<SDL_FRect> dirty_rect = std::nullopt,
               const char* reason = "full");
   bool StartWindowDrag(const SDL_Event& converted_event);

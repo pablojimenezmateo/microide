@@ -272,6 +272,8 @@ void WorkspaceShell::ReapExitedTerminalTabs() {
 }
 
 void WorkspaceShell::ConsumeTerminalSessionUpdates() {
+  const bool panel_visible_before = BottomPanelVisible();
+  const std::size_t tab_count_before = terminal_tabs_.size();
   for (const auto& terminal_tab : terminal_tabs_) {
     if (terminal_tab == nullptr) {
       continue;
@@ -285,6 +287,11 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   }
   ReapExitedTerminalTabs();
   SyncTerminalFocusState();
+  if (BottomPanelVisible() != panel_visible_before || terminal_tabs_.size() != tab_count_before) {
+    RequestWindowRedraw();
+  } else if (panel_visible_before) {
+    RequestBottomPanelRedraw();
+  }
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {

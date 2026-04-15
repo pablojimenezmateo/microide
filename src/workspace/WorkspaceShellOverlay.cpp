@@ -22,15 +22,19 @@ WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
 }
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
+  RequestOverlayRedraw();
   surface_.overlay_visible = true;
   surface_.overlay_mode = mode;
   surface_.focus = FocusTarget::Overlay;
   ResetOverlayScroll();
+  RequestOverlayRedraw();
 }
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
+  RequestOverlayRedraw();
   surface_.overlay_visible = false;
   surface_.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
+  RequestOverlayRedraw();
 }
 
 void WorkspaceShell::OpenBufferSearch() {
@@ -72,6 +76,8 @@ void WorkspaceShell::RefreshBufferSearch() {
     text_viewport_.MoveCursorTo(match.start.line, match.start.column);
   }
   ResetOverlayScroll();
+  RequestOverlayRedraw();
+  RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::RefreshProjectSearch() {
@@ -83,6 +89,7 @@ void WorkspaceShell::RefreshProjectSearch() {
 
   if (project_root_.empty() || overlay_workflow_.project_search.query.empty()) {
     ResetOverlayScroll();
+    RequestSidebarRedraw();
     return;
   }
 
@@ -90,6 +97,7 @@ void WorkspaceShell::RefreshProjectSearch() {
   project_search_runtime_.Start(project_root_, overlay_workflow_.project_search.query,
                                 overlay_workflow_.project_search.options);
   ResetOverlayScroll();
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::StopProjectSearch() {
@@ -126,10 +134,12 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }
   }
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::ResetOverlayScroll() {
   surface_.overlay_scroll_row = 0;
+  RequestOverlayRedraw();
 }
 
 float WorkspaceShell::OverlayListStartOffset() const {
@@ -214,6 +224,11 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
       break;
     }
   }
+  RequestOverlayRedraw();
+  if (surface_.overlay_mode == OverlayMode::BufferSearch ||
+      surface_.overlay_mode == OverlayMode::BufferReplace) {
+    RequestEditorSurfaceRedraw();
+  }
 }
 
 void WorkspaceShell::ClampOverlayScrollRow(const SDL_FRect& overlay) {
@@ -229,6 +244,7 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
   const auto layout = ComputeOverlayListLayout(overlay);
   const int selected = static_cast<int>(std::min(OverlaySelectedIndex(), OverlayItemCount() - 1));
   surface_.overlay_scroll_row = RevealScrollableListIndex(layout, selected);
+  RequestOverlayRedraw();
 }
 
 bool WorkspaceShell::ActivateOverlaySelection() {
@@ -270,6 +286,7 @@ void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
   overlay_workflow_.project_search.edit_buffer =
       field == ProjectSearchEditField::Query ? overlay_workflow_.project_search.query : overlay_workflow_.project_search.replace_text;
   overlay_workflow_.project_search.editing = true;
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::CommitProjectSearchEdit() {
@@ -281,6 +298,7 @@ void WorkspaceShell::CommitProjectSearchEdit() {
   }
 
   overlay_workflow_.project_search.replace_text = overlay_workflow_.project_search.edit_buffer;
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::CancelProjectSearchEdit() {
@@ -288,6 +306,7 @@ void WorkspaceShell::CancelProjectSearchEdit() {
       overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query ? overlay_workflow_.project_search.query
                                                                   : overlay_workflow_.project_search.replace_text;
   overlay_workflow_.project_search.editing = false;
+  RequestSidebarRedraw();
 }
 
 SDL_FRect WorkspaceShell::ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const {
@@ -376,6 +395,7 @@ void WorkspaceShell::ToggleProjectSearchPatternMode() {
           ? project::ProjectSearchPatternMode::Regex
           : project::ProjectSearchPatternMode::Literal;
   RefreshProjectSearch();
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::CycleProjectSearchCaseMode() {
@@ -391,11 +411,13 @@ void WorkspaceShell::CycleProjectSearchCaseMode() {
       break;
   }
   RefreshProjectSearch();
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
   overlay_workflow_.project_search.options.show_hidden = !overlay_workflow_.project_search.options.show_hidden;
   RefreshProjectSearch();
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
@@ -541,6 +563,7 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }
   }
+  RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::MoveProjectSearchSelection(int delta) {
@@ -557,6 +580,7 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }
   }
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
@@ -577,6 +601,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
     const auto& next_match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
     text_viewport_.MoveCursorTo(next_match.start.line, next_match.start.column);
   }
+  RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
@@ -586,6 +611,7 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
 
   text_viewport_.ReplaceAll(overlay_workflow_.buffer_search.query, overlay_workflow_.buffer_search.replace_text);
   RefreshBufferSearch();
+  RequestEditorSurfaceRedraw();
 }
 
 std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() const {

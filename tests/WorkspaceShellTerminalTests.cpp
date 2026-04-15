@@ -13,6 +13,11 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 
+bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
+         lhs.y + lhs.h > rhs.y;
+}
+
 void TestWorkspaceShellCtrlShiftVPastesBracketedClipboard() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -177,6 +182,24 @@ void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
          "terminal caret dirty rects should have a visible size");
 }
 
+void TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_KEY_DOWN;
+  event.key.key = SDLK_UP;
+  const auto result = shell.HandleEvent(event);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+
+  Expect(result.handled, "terminal navigation keys should be handled");
+  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+         "terminal navigation should request a partial redraw");
+  Expect(RectsIntersect(*result.redraw.rect, layout.bottom_panel),
+         "terminal key redraws should stay scoped to the bottom panel");
+}
+
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -326,7 +349,7 @@ void TestWorkspaceShellTerminalTabRightClickOpensContextMenu() {
   event.button.x = static_cast<float>(tab_rect.x + tab_rect.w * 0.5f);
   event.button.y = static_cast<float>(tab_rect.y + tab_rect.h * 0.5f);
 
-  Expect(shell.HandleEvent(event), "right-clicking a terminal tab should be handled");
+  Expect(shell.HandleEvent(event).handled, "right-clicking a terminal tab should be handled");
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
          "right-clicking a terminal tab should open a popup menu");
   Expect(WorkspaceShellTestAccess::TerminalTabContextMenuOpen(shell),
@@ -345,7 +368,7 @@ void TestWorkspaceShellTerminalPanelRightClickOpensContextMenu() {
   event.button.x = static_cast<float>(panel_rect.x + 12.0f);
   event.button.y = static_cast<float>(panel_rect.y + 12.0f);
 
-  Expect(shell.HandleEvent(event), "right-clicking the terminal panel should be handled");
+  Expect(shell.HandleEvent(event).handled, "right-clicking the terminal panel should be handled");
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
          "right-clicking the terminal panel should open a popup menu");
   Expect(WorkspaceShellTestAccess::TerminalContextMenuOpen(shell),
@@ -579,6 +602,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking);
   AddTest(tests, "WorkspaceShell/TerminalCaretDirtyRectTracksVisibleCursor",
           TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor);
+  AddTest(tests, "WorkspaceShell/TerminalKeysReturnPartialPanelInvalidation",
+          TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation);
   AddTest(tests, "WorkspaceShell/TypingReenablesTerminalTailFollow",
           TestWorkspaceShellTypingReenablesTerminalTailFollow);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",

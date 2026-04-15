@@ -67,15 +67,26 @@ class WorkspaceShell {
     WindowChromeState chrome{};
   };
 
+  struct RenderInvalidation {
+    bool full = false;
+    std::optional<SDL_FRect> rect;
+  };
+
+  struct EventResult {
+    bool handled = false;
+    RenderInvalidation redraw{};
+  };
+
   WorkspaceShell();
 
   static std::vector<std::string> DocumentedCommandUsages();
   bool Initialize(const std::filesystem::path& project_root);
   void Shutdown();
-  bool HandleEvent(const SDL_Event& event);
+  EventResult HandleEvent(const SDL_Event& event);
   void Render(SDL_Renderer* renderer, int width, int height);
   std::optional<Uint32> NextAnimationDelayMs() const;
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
+  RenderInvalidation ConsumePendingRenderInvalidation();
   void RequestQuit();
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
@@ -1474,6 +1485,18 @@ class WorkspaceShell {
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
   const WindowChromeState& CurrentWindowChromeState() const;
+  void RequestFullRedraw();
+  void RequestRedrawRect(const SDL_FRect& rect);
+  void RequestWindowRedraw();
+  void RequestChromeRedraw();
+  void RequestSidebarRedraw();
+  void RequestEditorSurfaceRedraw();
+  void RequestBottomPanelRedraw();
+  void RequestOverlayRedraw();
+  void RequestPromptRedraw();
+  std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
+  std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
+  std::optional<SDL_FRect> CurrentPromptRedrawRect() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;
@@ -1540,6 +1563,7 @@ class WorkspaceShell {
   TextInputSurface active_text_input_surface_ = TextInputSurface::None;
   TextCompositionState text_composition_;
   Uint64 caret_blink_epoch_ms_ = 0;
+  RenderInvalidation pending_render_invalidation_;
   TabDragState tab_drag_state_;
   CursorKind cursor_kind_ = CursorKind::Default;
   SDL_Cursor* text_cursor_ = nullptr;

@@ -89,6 +89,7 @@ void WorkspaceShell::CompareInteractionCoordinator::RefreshPicker() {
     shell_.overlay_workflow_.compare_picker.matches.push_back(commit);
   }
   shell_.ResetOverlayScroll();
+  shell_.RequestOverlayRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::MovePickerSelection(int delta) {
@@ -106,6 +107,7 @@ void WorkspaceShell::CompareInteractionCoordinator::MovePickerSelection(int delt
       shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout->editor_area));
     }
   }
+  shell_.RequestOverlayRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::OpenSelectedCommit() {
@@ -169,6 +171,7 @@ void WorkspaceShell::CompareInteractionCoordinator::MoveCompareSelection(int del
   compare_tab->selected_row =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   shell_.RevealActiveCompareSelection();
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::JumpCompareHunk(int delta) {
@@ -189,6 +192,7 @@ void WorkspaceShell::CompareInteractionCoordinator::JumpCompareHunk(int delta) {
   compare_tab->selected_row = static_cast<std::size_t>(
       compare_tab->model.hunks[static_cast<std::size_t>(target)].start_row);
   shell_.RevealActiveCompareSelection();
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareRows(int delta) {
@@ -209,6 +213,7 @@ void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareRows(int delta)
   compare_tab->scroll_row =
       std::clamp(scroll_layout.vertical_scroll + delta, 0, scroll_layout.max_vertical_scroll);
   shell_.SyncCompareViewportScroll(*compare_tab);
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
@@ -232,6 +237,7 @@ void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareColumns(int del
       std::clamp(target_scroll, 0LL,
                  static_cast<long long>(scroll_layout.max_horizontal_scroll)));
   shell_.SyncCompareViewportScroll(*compare_tab);
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::MoveMergeSelection(int delta) {
@@ -245,6 +251,7 @@ void WorkspaceShell::CompareInteractionCoordinator::MoveMergeSelection(int delta
   merge_tab->selected_hunk =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   shell_.RevealActiveMergeSelection();
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
@@ -269,6 +276,7 @@ void WorkspaceShell::CompareInteractionCoordinator::ScrollMergeColumns(int delta
                  static_cast<long long>(scroll_layout.max_horizontal_scroll)));
   merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice) {
@@ -309,6 +317,7 @@ void WorkspaceShell::CompareInteractionCoordinator::ApplyMergeChoice(compare::Me
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   shell_.RevealActiveMergeSelection();
+  shell_.RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::OpenComparePicker() {
