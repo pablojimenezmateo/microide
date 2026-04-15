@@ -1650,6 +1650,15 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       DrawRect(renderer, input_rect, theme_.border);
       draw_vcentered_text_on(input_rect, 6.0f, theme_.text_primary, theme_.surface_background,
                              TruncateLabel(prompts_.surface.input, input_rect.w - 12.0f));
+      if (surface_.window_has_input_focus && text_composition_.text.empty() &&
+          active_text_input_visual.has_value() &&
+          active_text_input_visual->surface == TextInputSurface::PromptInput) {
+        DrawFilledRect(renderer,
+                       MakeRect(active_text_input_visual->cursor_x,
+                                active_text_input_visual->text_y - 1.0f, 1.5f,
+                                text_renderer_.LineHeight()),
+                       theme_.cursor);
+      }
     }
 
     const auto buttons = ComputePromptSurfaceButtonRects(dialog);

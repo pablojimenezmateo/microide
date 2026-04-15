@@ -108,6 +108,11 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
             .press_x = static_cast<float>(event.button.x),
             .press_y = static_cast<float>(event.button.y),
         };
+      } else if (event.button.button == SDL_BUTTON_RIGHT) {
+        shell_.ActivateTab(tab.index);
+        shell_.OpenAnchoredMenu(MenuId::EditorTabContext,
+                                MakeRect(static_cast<float>(event.button.x),
+                                         static_cast<float>(event.button.y), 1.0f, 1.0f));
       }
       return true;
     }

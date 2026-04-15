@@ -261,6 +261,10 @@ struct WorkspaceShellTestAccess {
       std::function<bool(std::string_view)> writer) {
     shell.primary_selection_text_writer_ = std::move(writer);
   }
+  static void SetExternalUrlOpener(WorkspaceShell& shell,
+                                   std::function<bool(std::string_view)> opener) {
+    shell.external_url_opener_ = std::move(opener);
+  }
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
@@ -327,6 +331,26 @@ struct WorkspaceShellTestAccess {
   }
   static bool ExecuteCloseAllTabs(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CloseAllTabs, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteCloseOtherTabs(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseOtherTabs, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteCloseTabsToRight(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseTabsToRight, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteCloseTabsToLeft(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseTabsToLeft, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteTreeRefresh(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::TreeRefresh, {},
+                               WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteGitRefresh(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::GitRefresh, {},
                                WorkspaceShell::ActionSource::Menu);
   }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
@@ -824,6 +848,10 @@ struct WorkspaceShellTestAccess {
   }
   static bool FileMenuOpen(const WorkspaceShell& shell) {
     return shell.surface_.menu_bar_open && shell.surface_.active_menu_id == WorkspaceShell::MenuId::File;
+  }
+  static bool EditorTabContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.surface_.menu_bar_open &&
+           shell.surface_.active_menu_id == WorkspaceShell::MenuId::EditorTabContext;
   }
   static bool SidebarModeMenuOpen(const WorkspaceShell& shell) {
     return shell.surface_.menu_bar_open &&

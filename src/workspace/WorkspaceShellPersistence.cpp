@@ -314,12 +314,35 @@ bool WorkspaceShell::RestoreSessionState() {
 
     for (const PersistedEditorViewState& persisted_view : persisted_tab.views) {
       std::filesystem::path view_path = persisted_view.path;
-      if (view_path.is_relative()) {
+      if (!view_path.empty() && view_path.is_relative()) {
         view_path = project_root_ / view_path;
       }
       view_path = view_path.lexically_normal();
 
-      if (!std::filesystem::exists(view_path)) {
+      if (persisted_view.dirty_snapshot) {
+        editor::TextViewport restored_view;
+        restored_view.LoadContent(SerializeLines(persisted_view.buffer_lines,
+                                                 persisted_view.line_ending),
+                                  view_path, persisted_view.line_ending);
+        restored_view.MoveCursorTo(persisted_view.cursor_line, persisted_view.cursor_column);
+        restored_view.SetScrollLine(persisted_view.scroll_line);
+        restored_view.SetHorizontalScroll(persisted_view.horizontal_scroll);
+        restored_view.SetDirty(true);
+        ApplyEditorPreferences(restored_view);
+        editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
+            .leaf_id = persisted_view.leaf_id,
+            .viewport = std::move(restored_view),
+            .restored_path = view_path,
+            .restored_cursor_line = persisted_view.cursor_line,
+            .restored_cursor_column = persisted_view.cursor_column,
+            .restored_scroll_line = persisted_view.scroll_line,
+            .restored_horizontal_scroll = persisted_view.horizontal_scroll,
+            .needs_restore = false,
+        });
+        continue;
+      }
+
+      if (view_path.empty() || !std::filesystem::exists(view_path)) {
         continue;
       }
       editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
@@ -611,7 +634,12 @@ std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedEditorTabSt
     const std::filesystem::path normalized_path =
         view.needs_restore ? view.restored_path.lexically_normal()
                            : persisted_viewport->path().lexically_normal();
+    const bool dirty_snapshot = !view.needs_restore && persisted_viewport->dirty();
     if (normalized_path.empty()) {
+      if (!dirty_snapshot) {
+        continue;
+      }
+    } else if (view.needs_restore && !dirty_snapshot) {
       continue;
     }
     const std::size_t cursor_line =
@@ -630,6 +658,9 @@ std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedEditorTabSt
         .cursor_column = cursor_column,
         .scroll_line = scroll_line,
         .horizontal_scroll = horizontal_scroll,
+        .dirty_snapshot = dirty_snapshot,
+        .line_ending = persisted_viewport->line_ending(),
+        .buffer_lines = dirty_snapshot ? persisted_viewport->lines() : std::vector<std::string>{},
     });
   }
 

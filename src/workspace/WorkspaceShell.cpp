@@ -104,6 +104,12 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return !open_tabs_.empty();
     case ActionId::CloseAllTabs:
       return !open_tabs_.empty();
+    case ActionId::CloseOtherTabs:
+      return open_tabs_.size() > 1;
+    case ActionId::CloseTabsToRight:
+      return !open_tabs_.empty() && active_tab_index_ + 1 < open_tabs_.size();
+    case ActionId::CloseTabsToLeft:
+      return !open_tabs_.empty() && active_tab_index_ > 0;
     case ActionId::CompareHead:
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
@@ -250,6 +256,12 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       item(ActionId::CopySelection),
       item(ActionId::PasteClipboard),
   });
+  static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
+      item(ActionId::CloseActiveTab, "Close Tab"),
+      item(ActionId::CloseOtherTabs),
+      item(ActionId::CloseTabsToRight),
+      item(ActionId::CloseTabsToLeft),
+  });
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       item(ActionId::CopyLastTerminalCommand),
   });
@@ -259,6 +271,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", BuiltinSidebarModeMenuItems()},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
+      MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
       MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
   });
@@ -1028,6 +1041,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     if (ActiveTerminalTab() != nullptr &&
         y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
+      if (TerminalUrlAtPoint(x, y).has_value()) {
+        return CursorKind::Pointer;
+      }
       return CursorKind::Text;
     }
     return CursorKind::Default;

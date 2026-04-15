@@ -15,8 +15,27 @@ void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
   prompts_.dirty_previous_focus = surface_.focus;
   prompts_.dirty.kind = DirtyPromptState::Kind::CloseTab;
   prompts_.dirty.tab_index = index;
+  prompts_.dirty.target_tabs = {index};
   prompts_.dirty.dirty_tabs = {index};
   prompts_.dirty.dirty_count = 1;
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
+  surface_.focus = FocusTarget::Overlay;
+}
+
+void WorkspaceShell::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
+                                            std::vector<std::size_t> dirty_tabs) {
+  if (target_tabs.empty() || dirty_tabs.empty()) {
+    return;
+  }
+
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = surface_.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::CloseTabs;
+  prompts_.dirty.tab_index = target_tabs.front();
+  prompts_.dirty.target_tabs = std::move(target_tabs);
+  prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
+  prompts_.dirty.dirty_count = prompts_.dirty.dirty_tabs.size();
   prompts_.dirty.path.clear();
   prompts_.dirty.selected_action = 0;
   surface_.focus = FocusTarget::Overlay;
@@ -79,6 +98,7 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
   if (prompts_.dirty.kind == DirtyPromptState::Kind::Quit ||
+      prompts_.dirty.kind == DirtyPromptState::Kind::CloseTabs ||
       prompts_.dirty.kind == DirtyPromptState::Kind::CloseProject ||
       prompts_.dirty.kind == DirtyPromptState::Kind::RenamePath ||
       prompts_.dirty.kind == DirtyPromptState::Kind::DeletePath) {
@@ -95,6 +115,9 @@ std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
 std::string WorkspaceShell::DirtyPromptTitle() const {
   if (prompts_.dirty.kind == DirtyPromptState::Kind::Quit) {
     return "Unsaved changes before quit";
+  }
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::CloseTabs) {
+    return "Unsaved changes before closing tabs";
   }
   if (prompts_.dirty.kind == DirtyPromptState::Kind::CloseProject) {
     return "Unsaved changes before closing project";
@@ -123,6 +146,13 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
                ? "Save the dirty tab before closing " + label + "?"
                : "Save the " + std::to_string(prompts_.dirty.dirty_count) +
                      " dirty tabs before closing " + label + "?";
+  }
+
+  if (prompts_.dirty.kind == DirtyPromptState::Kind::CloseTabs) {
+    return prompts_.dirty.dirty_count == 1
+               ? "Save the dirty tab before closing the selected tabs?"
+               : "Save the " + std::to_string(prompts_.dirty.dirty_count) +
+                     " dirty tabs before closing the selected tabs?";
   }
 
   if (prompts_.dirty.kind == DirtyPromptState::Kind::RenamePath ||

@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 
@@ -25,6 +26,12 @@ namespace microide::terminal {
 namespace {
 
 constexpr std::size_t kMaxScrollbackLines = 2000;
+#if defined(__unix__) || defined(__APPLE__)
+constexpr auto kTerminalHangupGrace = std::chrono::milliseconds(75);
+constexpr auto kTerminalTerminateGrace = std::chrono::milliseconds(150);
+constexpr auto kTerminalKillGrace = std::chrono::milliseconds(100);
+constexpr auto kTerminalWaitPollInterval = std::chrono::milliseconds(10);
+#endif
 
 SDL_Color MakeColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xff) {
   return SDL_Color{r, g, b, a};
@@ -143,6 +150,72 @@ std::optional<std::string> DecodeBase64(std::string_view text) {
 
   return decoded;
 }
+
+#if defined(__unix__) || defined(__APPLE__)
+bool SendSignalToTerminalProcessGroup(int child_pid, int signal_number) {
+  if (child_pid <= 0) {
+    return true;
+  }
+  if (kill(-child_pid, signal_number) == 0) {
+    return true;
+  }
+  if (kill(child_pid, signal_number) == 0) {
+    return true;
+  }
+  return errno == ESRCH;
+}
+
+bool ReapTerminalChildNoHang(int child_pid) {
+  if (child_pid <= 0) {
+    return true;
+  }
+
+  int status = 0;
+  while (true) {
+    const pid_t result = waitpid(child_pid, &status, WNOHANG);
+    if (result == child_pid) {
+      return true;
+    }
+    if (result == 0) {
+      return false;
+    }
+    if (result < 0 && errno == EINTR) {
+      continue;
+    }
+    return result < 0 && errno == ECHILD;
+  }
+}
+
+bool WaitForTerminalChildExit(int child_pid, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (ReapTerminalChildNoHang(child_pid)) {
+      return true;
+    }
+    std::this_thread::sleep_for(kTerminalWaitPollInterval);
+  }
+  return ReapTerminalChildNoHang(child_pid);
+}
+
+void RequestTerminalChildShutdown(int child_pid) {
+  if (child_pid <= 0 || ReapTerminalChildNoHang(child_pid)) {
+    return;
+  }
+
+  SendSignalToTerminalProcessGroup(child_pid, SIGHUP);
+  if (WaitForTerminalChildExit(child_pid, kTerminalHangupGrace)) {
+    return;
+  }
+
+  SendSignalToTerminalProcessGroup(child_pid, SIGTERM);
+  if (WaitForTerminalChildExit(child_pid, kTerminalTerminateGrace)) {
+    return;
+  }
+
+  SendSignalToTerminalProcessGroup(child_pid, SIGKILL);
+  WaitForTerminalChildExit(child_pid, kTerminalKillGrace);
+}
+#endif
 
 std::string DefaultShellPath() {
   if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
@@ -423,9 +496,7 @@ void TerminalSession::Stop() {
   if (master_fd >= 0) {
     close(master_fd);
   }
-  if (child_pid > 0) {
-    kill(child_pid, SIGHUP);
-  }
+  RequestTerminalChildShutdown(child_pid);
 
   if (reader_thread_.joinable()) {
     reader_thread_.join();

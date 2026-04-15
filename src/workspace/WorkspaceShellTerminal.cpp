@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <string_view>
 
@@ -60,6 +61,52 @@ std::string TerminalLineText(const terminal::TerminalLine& line) {
 std::string FirstLine(std::string_view text) {
   const std::size_t newline = text.find('\n');
   return std::string(text.substr(0, newline));
+}
+
+bool IsTerminalUrlTerminator(char character) {
+  return std::isspace(static_cast<unsigned char>(character)) != 0 || character == '"' ||
+         character == '\'' || character == '<' || character == '>';
+}
+
+std::string TrimTerminalUrl(std::string url) {
+  while (!url.empty()) {
+    const char tail = url.back();
+    if (tail == '.' || tail == ',' || tail == ';' || tail == ':' || tail == '!' ||
+        tail == '?' || tail == ')' || tail == ']' || tail == '}') {
+      url.pop_back();
+      continue;
+    }
+    break;
+  }
+  return url;
+}
+
+std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_t column) {
+  static constexpr std::string_view kSchemes[] = {
+      "https://",
+      "http://",
+      "ftp://",
+      "file://",
+      "git://",
+  };
+
+  for (std::string_view scheme : kSchemes) {
+    std::size_t start = text.find(scheme);
+    while (start != std::string_view::npos) {
+      std::size_t end = start + scheme.size();
+      while (end < text.size() && !IsTerminalUrlTerminator(text[end])) {
+        ++end;
+      }
+      std::string url = TrimTerminalUrl(std::string(text.substr(start, end - start)));
+      const std::size_t trimmed_end = start + url.size();
+      if (column >= start && column < trimmed_end && !url.empty()) {
+        return url;
+      }
+      start = text.find(scheme, start + 1);
+    }
+  }
+
+  return std::nullopt;
 }
 
 struct CapturedTerminalInvocation {
@@ -263,6 +310,33 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
                                                                visible_rows);
   }
   return 0;
+}
+
+std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) const {
+  const auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return std::nullopt;
+  }
+
+  const auto lines = terminal_tab->session.SnapshotLines();
+  const auto position =
+      TerminalSelectionPositionForPoint(static_cast<int>(std::lround(x)),
+                                        static_cast<int>(std::lround(y)), lines);
+  if (!position.has_value() || position->row >= lines.size()) {
+    return std::nullopt;
+  }
+
+  return TerminalUrlAtColumn(TerminalLineText(lines[position->row]), position->column);
+}
+
+bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {
+  if (url.empty()) {
+    return false;
+  }
+  if (external_url_opener_) {
+    return external_url_opener_(url);
+  }
+  return SDL_OpenURL(std::string(url).c_str());
 }
 
 void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,

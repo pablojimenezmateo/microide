@@ -602,12 +602,14 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
         return reject("No active project");
       }
       RefreshProjectFiles();
+      ReloadCleanOpenBuffersFromDisk();
       return ActionDispatchResult::Handled;
     case ActionId::GitRefresh:
       if (project_root_.empty()) {
         return reject("No active project");
       }
       RefreshProjectFiles();
+      ReloadCleanOpenBuffersFromDisk();
       return ActionDispatchResult::Handled;
     case ActionId::CreateFile:
     case ActionId::CreateDirectory: {
@@ -1001,6 +1003,36 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteTabAction(
     case ActionId::CloseAllTabs:
       CloseAllTabs();
       return ActionDispatchResult::Handled;
+    case ActionId::CloseOtherTabs: {
+      std::vector<std::size_t> indices;
+      if (!open_tabs_.empty()) {
+        indices.reserve(open_tabs_.size() - 1);
+      }
+      for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+        if (i != active_tab_index_) {
+          indices.push_back(i);
+        }
+      }
+      RequestCloseTabs(std::move(indices));
+      return ActionDispatchResult::Handled;
+    }
+    case ActionId::CloseTabsToRight: {
+      std::vector<std::size_t> indices;
+      for (std::size_t i = active_tab_index_ + 1; i < open_tabs_.size(); ++i) {
+        indices.push_back(i);
+      }
+      RequestCloseTabs(std::move(indices));
+      return ActionDispatchResult::Handled;
+    }
+    case ActionId::CloseTabsToLeft: {
+      std::vector<std::size_t> indices;
+      indices.reserve(active_tab_index_);
+      for (std::size_t i = 0; i < active_tab_index_; ++i) {
+        indices.push_back(i);
+      }
+      RequestCloseTabs(std::move(indices));
+      return ActionDispatchResult::Handled;
+    }
     default:
       return ActionDispatchResult::Unhandled;
   }

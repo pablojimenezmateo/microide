@@ -95,6 +95,28 @@ bool ParseFloatToken(std::string_view text, float* value) {
   }
 }
 
+std::string LineEndingSessionLabel(editor::TextViewport::LineEnding line_ending) {
+  switch (line_ending) {
+    case editor::TextViewport::LineEnding::CRLF:
+      return "crlf";
+    case editor::TextViewport::LineEnding::CR:
+      return "cr";
+    case editor::TextViewport::LineEnding::LF:
+    default:
+      return "lf";
+  }
+}
+
+editor::TextViewport::LineEnding ParseLineEndingSessionLabel(std::string_view text) {
+  if (text == "crlf") {
+    return editor::TextViewport::LineEnding::CRLF;
+  }
+  if (text == "cr") {
+    return editor::TextViewport::LineEnding::CR;
+  }
+  return editor::TextViewport::LineEnding::LF;
+}
+
 }  // namespace
 
 std::string UiScaleLabel(float scale) {
@@ -339,6 +361,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
   }
 
   bool version_ok = false;
+  int version = 0;
   state->tabs.clear();
   std::optional<PersistedEditorTabState> current_tab;
   std::istringstream stream{std::string(text)};
@@ -352,7 +375,8 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     const std::vector<ParsedCommandToken>& tokens = parsed.tokens;
     const std::string& command = tokens.front().text;
     if (command == "version") {
-      version_ok = tokens.size() == 2 && tokens[1].text == "1";
+      version_ok = tokens.size() == 2 && (tokens[1].text == "1" || tokens[1].text == "2");
+      version = version_ok ? std::stoi(tokens[1].text) : 0;
       continue;
     }
     if (!version_ok) {
@@ -404,6 +428,34 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
         view_state.path = std::filesystem::path(tokens[2].text);
         current_tab->views.push_back(std::move(view_state));
       }
+      continue;
+    }
+    if (version >= 2 && command == "view-dirty" && tokens.size() == 3) {
+      std::size_t leaf_id = 0;
+      if (!ParseSizeToken(tokens[1].text, &leaf_id)) {
+        continue;
+      }
+      auto it = std::find_if(current_tab->views.begin(), current_tab->views.end(),
+                             [leaf_id](const auto& view) { return view.leaf_id == leaf_id; });
+      if (it == current_tab->views.end()) {
+        continue;
+      }
+      it->dirty_snapshot = true;
+      it->line_ending = ParseLineEndingSessionLabel(tokens[2].text);
+      continue;
+    }
+    if (version >= 2 && command == "view-buffer-line" && tokens.size() == 3) {
+      std::size_t leaf_id = 0;
+      if (!ParseSizeToken(tokens[1].text, &leaf_id)) {
+        continue;
+      }
+      auto it = std::find_if(current_tab->views.begin(), current_tab->views.end(),
+                             [leaf_id](const auto& view) { return view.leaf_id == leaf_id; });
+      if (it == current_tab->views.end()) {
+        continue;
+      }
+      it->dirty_snapshot = true;
+      it->buffer_lines.push_back(tokens[2].text);
       continue;
     }
     if (command == "compare-path" && tokens.size() == 2) {
@@ -510,7 +562,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
 
 std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   std::ostringstream stream;
-  stream << "version 1\n";
+  stream << "version 2\n";
   stream << "sidebar-visible " << (state.sidebar_visible ? 1 : 0) << '\n';
   stream << "sidebar-width " << state.sidebar_width << '\n';
   stream << "bottom-panel-height " << state.bottom_panel_height << '\n';
@@ -555,6 +607,14 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
         stream << "view " << view.leaf_id << ' ' << QuoteCommandArg(view.path.lexically_normal().string())
                << ' ' << view.cursor_line << ' ' << view.cursor_column << ' ' << view.scroll_line
                << ' ' << view.horizontal_scroll << '\n';
+        if (view.dirty_snapshot) {
+          stream << "view-dirty " << view.leaf_id << ' '
+                 << QuoteCommandArg(LineEndingSessionLabel(view.line_ending)) << '\n';
+          for (const auto& line : view.buffer_lines) {
+            stream << "view-buffer-line " << view.leaf_id << ' '
+                   << QuoteCommandArg(line) << '\n';
+          }
+        }
       }
       for (const auto& node : tab.split_nodes) {
         stream << "split-node " << EncodeSessionNodePath(node.path) << ' '

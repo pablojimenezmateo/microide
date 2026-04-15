@@ -415,6 +415,9 @@ void TestWorkspaceSharedPersistenceSerializers() {
       .cursor_column = 4,
       .scroll_line = 8,
       .horizontal_scroll = 2,
+      .dirty_snapshot = false,
+      .line_ending = microide::editor::TextViewport::LineEnding::LF,
+      .buffer_lines = {},
   });
   editor_tab.split_nodes.push_back(PersistedSplitNodeState{
       .path = {},

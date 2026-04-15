@@ -135,13 +135,7 @@ void WorkspaceShell::LifecycleCoordinator::RequestQuit() {
     shell_.surface_.focus = FocusTarget::Overlay;
     return;
   }
-
-  if (DirtyProjectTabCount() == 0) {
-    shell_.quit_requested_ = true;
-    return;
-  }
-
-  shell_.ShowDirtyPromptForQuit();
+  shell_.quit_requested_ = true;
 }
 
 bool WorkspaceShell::LifecycleCoordinator::ConsumeQuitRequested() {

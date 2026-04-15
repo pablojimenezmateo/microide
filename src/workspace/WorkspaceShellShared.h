@@ -43,6 +43,9 @@ struct PersistedEditorViewState {
   std::size_t cursor_column = 0;
   std::size_t scroll_line = 0;
   std::size_t horizontal_scroll = 0;
+  bool dirty_snapshot = false;
+  editor::TextViewport::LineEnding line_ending = editor::TextViewport::LineEnding::LF;
+  std::vector<std::string> buffer_lines;
 };
 
 struct PersistedSplitNodeState {

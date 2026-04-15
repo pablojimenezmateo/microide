@@ -82,8 +82,8 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
                           ? menu_bar.x + menu_bar.w - 8.0f
                           : window_buttons.front().rect.x - 8.0f;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (spec.id == MenuId::SidebarMode || spec.id == MenuId::TerminalContext ||
-        spec.id == MenuId::TerminalTabContext) {
+    if (spec.id == MenuId::SidebarMode || spec.id == MenuId::EditorTabContext ||
+        spec.id == MenuId::TerminalContext || spec.id == MenuId::TerminalTabContext) {
       continue;
     }
     const float width =

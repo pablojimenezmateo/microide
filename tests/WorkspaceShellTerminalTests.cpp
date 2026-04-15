@@ -492,6 +492,31 @@ void TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes(
          "middle-clicking the terminal panel should paste the primary selection");
 }
 
+void TestWorkspaceShellTerminalLeftClickOpensUrls() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "visit https://example.com/path?a=1");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(
+      shell, [&](std::string_view url) {
+        opened_url = std::string(url);
+        return true;
+      });
+
+  const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 10);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point.x, point.y,
+                                                         SDL_BUTTON_LEFT),
+         "left-clicking a terminal URL should be handled");
+  Expect(opened_url == "https://example.com/path?a=1",
+         "left-clicking a terminal URL should open the detected link target");
+  Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),
+         "opening a terminal URL should not start a text selection");
+}
+
 void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -563,6 +588,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
   AddTest(tests, "WorkspaceShell/TerminalSelectionWritesPrimaryBufferAndMiddleClickPastes",
           TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes);
+  AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
+          TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShell/TerminalMouseCaptureSendsButtonEvents",
           TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents);
 }

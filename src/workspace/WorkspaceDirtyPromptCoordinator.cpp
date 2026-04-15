@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <vector>
 
@@ -29,6 +30,9 @@ void WorkspaceShell::DirtyPromptCoordinator::Confirm() {
   switch (prompt.kind) {
     case DirtyPromptState::Kind::CloseTab:
       ConfirmCloseTab(prompt);
+      return;
+    case DirtyPromptState::Kind::CloseTabs:
+      ConfirmCloseTabs(prompt);
       return;
     case DirtyPromptState::Kind::CloseProject:
       ConfirmCloseProject(prompt);
@@ -77,6 +81,20 @@ void WorkspaceShell::DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptSt
   }
   shell_.DismissDirtyPrompt(false);
   shell_.CloseTab(prompt.tab_index);
+}
+
+void WorkspaceShell::DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
+  if (prompt.selected_action == 0 && !SaveDirtyTabs(prompt.dirty_tabs)) {
+    return;
+  }
+
+  shell_.DismissDirtyPrompt(false);
+  std::vector<std::size_t> indices = prompt.target_tabs;
+  std::sort(indices.begin(), indices.end());
+  indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+  for (std::size_t i = indices.size(); i > 0; --i) {
+    shell_.CloseTab(indices[i - 1]);
+  }
 }
 
 void WorkspaceShell::DirtyPromptCoordinator::ConfirmCloseProject(

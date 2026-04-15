@@ -121,6 +121,7 @@ class WorkspaceShell {
     View,
     SidebarMode,
     Search,
+    EditorTabContext,
     Project,
     Terminal,
     TerminalContext,
@@ -470,6 +471,7 @@ class WorkspaceShell {
   struct DirtyPromptState {
     enum class Kind {
       CloseTab,
+      CloseTabs,
       CloseProject,
       Quit,
       RenamePath,
@@ -479,6 +481,7 @@ class WorkspaceShell {
     Kind kind = Kind::CloseTab;
     std::size_t tab_index = 0;
     std::size_t project_index = 0;
+    std::vector<std::size_t> target_tabs;
     std::vector<std::size_t> dirty_tabs;
     std::size_t dirty_count = 0;
     std::filesystem::path path;
@@ -613,6 +616,9 @@ class WorkspaceShell {
     Vsplit,
     CloseActiveTab,
     CloseAllTabs,
+    CloseOtherTabs,
+    CloseTabsToRight,
+    CloseTabsToLeft,
     CopyLastTerminalCommand,
     CopySelection,
     CopySelectionWithContext,
@@ -956,6 +962,7 @@ class WorkspaceShell {
   void ActivateTab(std::size_t index);
   void CloseTab(std::size_t index);
   void RequestCloseTab(std::size_t index);
+  void RequestCloseTabs(std::vector<std::size_t> indices);
   void SyncActiveEditorTab();
   bool SaveTab(std::size_t index);
   bool TabIsDirty(std::size_t index) const;
@@ -965,6 +972,8 @@ class WorkspaceShell {
   static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
   void ShowDirtyPromptForTab(std::size_t index);
+  void ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
+                              std::vector<std::size_t> dirty_tabs);
   void ShowDirtyPromptForQuit();
   void DismissDirtyPrompt(bool restore_focus);
   void ConfirmDirtyPrompt();
@@ -1347,6 +1356,7 @@ class WorkspaceShell {
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   void CloseAllTabs();
+  void ReloadCleanOpenBuffersFromDisk();
   void AppendTerminalPendingInput(std::string_view input);
   void EraseLastTerminalPendingInputCodepoint();
   void SubmitTerminalPendingInput();
@@ -1370,6 +1380,7 @@ class WorkspaceShell {
   void SetBottomPanelScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
   void ClearTerminalSelection();
   bool TerminalHasSelection() const;
+  std::optional<std::string> TerminalUrlAtPoint(float x, float y) const;
   std::optional<TerminalSelectionPosition> TerminalSelectionPositionForPoint(
       int x,
       int y,
@@ -1378,6 +1389,7 @@ class WorkspaceShell {
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
   std::string SelectedTerminalText(const std::vector<terminal::TerminalLine>& lines) const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
+  bool OpenExternalUrl(std::string_view url) const;
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
@@ -1484,6 +1496,7 @@ class WorkspaceShell {
   std::function<bool(std::string_view)> clipboard_text_writer_;
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
+  std::function<bool(std::string_view)> external_url_opener_;
   SDL_Window* dialog_window_ = nullptr;
   bool project_open_dialog_active_ = false;
   std::mutex project_open_dialog_mutex_;

@@ -731,16 +731,70 @@ WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface
 }
 
 void WorkspaceShell::RequestCloseTab(std::size_t index) {
-  if (index >= open_tabs_.size()) {
+  RequestCloseTabs({index});
+}
+
+void WorkspaceShell::RequestCloseTabs(std::vector<std::size_t> indices) {
+  indices.erase(std::remove_if(indices.begin(), indices.end(), [&](std::size_t index) {
+                  return index >= open_tabs_.size();
+                }),
+                indices.end());
+  std::sort(indices.begin(), indices.end());
+  indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+  if (indices.empty()) {
     return;
   }
 
-  if (TabIsDirty(index)) {
-    ShowDirtyPromptForTab(index);
+  std::vector<std::size_t> dirty_indices;
+  dirty_indices.reserve(indices.size());
+  for (std::size_t index : indices) {
+    if (TabIsDirty(index)) {
+      dirty_indices.push_back(index);
+    }
+  }
+
+  if (!dirty_indices.empty()) {
+    if (indices.size() == 1) {
+      ShowDirtyPromptForTab(indices.front());
+    } else {
+      ShowDirtyPromptForTabs(std::move(indices), std::move(dirty_indices));
+    }
     return;
   }
 
-  CloseTab(index);
+  for (std::size_t i = indices.size(); i > 0; --i) {
+    CloseTab(indices[i - 1]);
+  }
+}
+
+void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
+  SyncActiveEditorTab();
+  std::vector<std::filesystem::path> paths;
+  for (const auto& tab : open_tabs_) {
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+      continue;
+    }
+    for (const auto& view : tab.editor_state->views) {
+      const std::filesystem::path path = EditorViewPath(view);
+      if (!path.empty()) {
+        paths.push_back(path.lexically_normal());
+      }
+    }
+  }
+  std::sort(paths.begin(), paths.end());
+  paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+  for (const auto& path : paths) {
+    ReloadCleanEditorTabsForPath(path);
+  }
+}
+
+void WorkspaceShell::CloseAllTabs() {
+  std::vector<std::size_t> indices;
+  indices.reserve(open_tabs_.size());
+  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+    indices.push_back(i);
+  }
+  RequestCloseTabs(std::move(indices));
 }
 
 void WorkspaceShell::CloseTab(std::size_t index) {
@@ -800,16 +854,6 @@ void WorkspaceShell::CloseTab(std::size_t index) {
   tab_scroll_index_ =
       std::clamp(tab_scroll_index_, 0, std::max(0, static_cast<int>(open_tabs_.size()) - 1));
   EnsureActiveTabVisible();
-}
-
-void WorkspaceShell::CloseAllTabs() {
-  SyncActiveEditorTab();
-  for (std::size_t i = open_tabs_.size(); i > 0; --i) {
-    if (TabIsDirty(i - 1)) {
-      continue;
-    }
-    CloseTab(i - 1);
-  }
 }
 
 }  // namespace microide::workspace

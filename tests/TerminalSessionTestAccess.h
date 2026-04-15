@@ -69,6 +69,12 @@ struct TerminalSessionTestAccess {
     session.running_ = running;
   }
 
+  static void SetChildProcess(microide::terminal::TerminalSession& session, int child_pid) {
+    std::scoped_lock lock(session.mutex_);
+    session.child_pid_ = child_pid;
+    session.running_ = child_pid > 0;
+  }
+
   static void SetMouseTracking(microide::terminal::TerminalSession& session,
                                bool normal,
                                bool drag,

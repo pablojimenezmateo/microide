@@ -20,6 +20,7 @@ class WorkspaceShell::DirtyPromptCoordinator {
   bool SaveDirtyTabs(std::span<const std::size_t> tab_indices);
   bool SwitchProjectByRoot(const std::filesystem::path& root);
   void ConfirmCloseTab(const DirtyPromptState& prompt);
+  void ConfirmCloseTabs(const DirtyPromptState& prompt);
   void ConfirmCloseProject(const DirtyPromptState& prompt);
   void ConfirmQuit(const DirtyPromptState& prompt);
 

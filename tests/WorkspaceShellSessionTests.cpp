@@ -347,6 +347,210 @@ void TestWorkspaceShellReopenFileReloadsCleanEditorTab() {
          "reopening a clean editor should keep the tab clean");
 }
 
+void TestWorkspaceShellRefreshReloadsCleanOpenEditorBuffers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(1, 1);
+  editor.SetScrollLine(1);
+
+  WriteFile(source, "alpha refreshed\nbeta refreshed\n");
+  Expect(WorkspaceShellTestAccess::ExecuteTreeRefresh(shell),
+         "tree refresh should execute");
+
+  const auto& refreshed = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(refreshed.lines()[0] == "alpha refreshed",
+         "tree refresh should reload clean open editor buffers from disk");
+  Expect(refreshed.lines()[1] == "beta refreshed",
+         "tree refresh should refresh every line in the clean open buffer");
+  Expect(refreshed.cursor_line() == 1 && refreshed.cursor_column() == 1,
+         "tree refresh should preserve cursor state while reloading the buffer");
+}
+
+void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(1, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "dirty "),
+         "dirty editor-session fixture should accept text input");
+  editor.SetScrollLine(1);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WriteFile(source, "alpha disk replacement\nbeta disk replacement\n");
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "dirty editor-session restore should succeed");
+  WorkspaceShellTestAccess::ActivateTab(restored, 0);
+
+  const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened.lines()[1] == "dirty beta",
+         "dirty editor-session restore should prefer the unsaved in-memory buffer over disk changes");
+  Expect(reopened.dirty(),
+         "dirty editor-session restore should preserve the dirty state");
+  Expect(reopened.cursor_line() == 1 && reopened.cursor_column() == 6,
+         "dirty editor-session restore should preserve the caret location");
+  Expect(reopened.scroll_line() == 1,
+         "dirty editor-session restore should preserve the scroll position");
+}
+
+void TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"),
+         "untitled session fixture should open a new untitled tab");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "scratch buffer"),
+         "untitled session fixture should accept text input");
+  editor.SetScrollLine(0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "untitled session restore should succeed");
+  WorkspaceShellTestAccess::ActivateTab(restored, 0);
+
+  const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened.path().empty(),
+         "untitled session restore should preserve the missing file path");
+  Expect(reopened.lines().size() == 1 && reopened.lines()[0] == "scratch buffer",
+         "untitled session restore should reopen the unsaved untitled buffer contents");
+  Expect(reopened.dirty(),
+         "untitled session restore should preserve the dirty state");
+}
+
+void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "quit session fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& file_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  file_editor.MoveCursorTo(1, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "dirty "),
+         "quit session fixture should dirty the file-backed editor");
+  file_editor.SetScrollLine(1);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"),
+         "quit session fixture should open an untitled tab");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "scratch buffer"),
+         "quit session fixture should dirty the untitled editor");
+
+  WorkspaceShellTestAccess::RequestQuit(shell);
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "quit should not show the dirty prompt for dirty editors");
+  Expect(WorkspaceShellTestAccess::ConsumeQuitRequested(shell),
+         "quit should signal shutdown immediately");
+
+  shell.Shutdown();
+
+  Expect(ReadFile(source) == "alpha\nbeta\n",
+         "quit session persistence should not write dirty file-backed buffers to disk");
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored),
+         "workspace session restore after quit should succeed");
+  Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 1,
+         "workspace session restore after quit should reopen the saved project");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(restored) == root.lexically_normal(),
+         "workspace session restore after quit should reactivate the original project");
+
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(tabs.size() == 2,
+         "workspace session restore after quit should reopen both dirty editor tabs");
+
+  std::size_t file_tab_index = tabs.size();
+  std::size_t untitled_tab_index = tabs.size();
+  for (std::size_t i = 0; i < tabs.size(); ++i) {
+    if (tabs[i].path == source.lexically_normal()) {
+      file_tab_index = i;
+    }
+    if (tabs[i].path.empty()) {
+      untitled_tab_index = i;
+    }
+  }
+
+  Expect(file_tab_index < tabs.size(),
+         "workspace session restore after quit should reopen the dirty file-backed editor");
+  Expect(untitled_tab_index < tabs.size(),
+         "workspace session restore after quit should reopen the dirty untitled editor");
+
+  WorkspaceShellTestAccess::ActivateTab(restored, file_tab_index);
+  const auto& reopened_file = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened_file.lines()[1] == "dirty beta",
+         "workspace session restore after quit should preserve the unsaved file-backed buffer");
+  Expect(reopened_file.dirty(),
+         "workspace session restore after quit should keep the file-backed editor dirty");
+  Expect(reopened_file.cursor_line() == 1 && reopened_file.cursor_column() == 6,
+         "workspace session restore after quit should preserve the file-backed caret position");
+  Expect(reopened_file.scroll_line() == 1,
+         "workspace session restore after quit should preserve the file-backed scroll position");
+
+  WorkspaceShellTestAccess::ActivateTab(restored, untitled_tab_index);
+  const auto& reopened_untitled = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened_untitled.path().empty(),
+         "workspace session restore after quit should preserve the untitled editor path");
+  Expect(reopened_untitled.lines().size() == 1 &&
+             reopened_untitled.lines()[0] == "scratch buffer",
+         "workspace session restore after quit should preserve the untitled buffer contents");
+  Expect(reopened_untitled.dirty(),
+         "workspace session restore after quit should keep the untitled editor dirty");
+}
+
 void TestWorkspaceShellReopenWorkingTreeComparisonRefreshesExistingTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -993,6 +1197,14 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/ReopenFileReloadsCleanEditorTab",
           TestWorkspaceShellReopenFileReloadsCleanEditorTab);
+  AddTest(tests, "WorkspaceShell/RefreshReloadsCleanOpenEditorBuffers",
+          TestWorkspaceShellRefreshReloadsCleanOpenEditorBuffers);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",
+          TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyUntitledBufferContent",
+          TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent);
+  AddTest(tests, "WorkspaceShell/QuitShutdownPersistsDirtyEditorBuffers",
+          TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers);
   AddTest(tests, "WorkspaceShell/ReopenWorkingTreeComparisonRefreshesExistingTab",
           TestWorkspaceShellReopenWorkingTreeComparisonRefreshesExistingTab);
   AddTest(tests, "WorkspaceShell/CompareSyntaxTokensAreDeferredUntilRender",

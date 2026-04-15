@@ -49,7 +49,7 @@ void TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs() {
          "close all tabs should close every clean editor tab");
 }
 
-void TestWorkspaceShellDoubleClickTitleBarRequestsFullscreenToggle() {
+void TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
@@ -61,8 +61,8 @@ void TestWorkspaceShellDoubleClickTitleBarRequestsFullscreenToggle() {
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, 640.0f, 10.0f, SDL_BUTTON_LEFT, 2),
          "double-clicking an empty title-bar region should be handled");
   Expect(WorkspaceShellTestAccess::ConsumeWindowAction(shell) ==
-             WorkspaceShell::WindowAction::ToggleFullscreen,
-         "double-clicking the title bar should request a fullscreen toggle");
+             WorkspaceShell::WindowAction::ToggleMaximize,
+         "double-clicking the title bar should request the same maximize toggle as the chrome button");
 }
 
 void TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest() {
@@ -118,6 +118,77 @@ void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
          "hovering the Edit menu should switch the active popup");
 }
 
+void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "left.txt";
+  const std::filesystem::path right = root / "right.txt";
+  WriteFile(left, "left\n");
+  WriteFile(right, "right\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, left);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, right),
+         "tab context-menu fixture should open a second editor tab");
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f,
+             SDL_BUTTON_RIGHT),
+         "right-clicking an editor tab should be handled");
+  Expect(WorkspaceShellTestAccess::EditorTabContextMenuOpen(shell),
+         "right-clicking an editor tab should open the editor tab context menu");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "right-clicking an editor tab should retarget the active tab before menu actions run");
+}
+
+void TestWorkspaceShellTabContextActionsCloseAdjacentTabs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path one = root / "one.txt";
+  const std::filesystem::path two = root / "two.txt";
+  const std::filesystem::path three = root / "three.txt";
+  WriteFile(one, "one\n");
+  WriteFile(two, "two\n");
+  WriteFile(three, "three\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, one);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, two),
+         "tab close fixture should open the middle tab");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, three),
+         "tab close fixture should open the final tab");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::ExecuteCloseTabsToRight(shell),
+         "close tabs to the right should execute");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2,
+         "close tabs to the right should remove tabs after the active tab");
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 1).find("two.txt") != std::string::npos,
+         "close tabs to the right should keep the active tab in place");
+
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, three),
+         "tab close fixture should reopen the right-side tab");
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::ExecuteCloseTabsToLeft(shell),
+         "close tabs to the left should execute");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2,
+         "close tabs to the left should remove tabs before the active tab");
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 0).find("two.txt") != std::string::npos,
+         "close tabs to the left should keep the active tab after compaction");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::ExecuteCloseOtherTabs(shell),
+         "close other tabs should execute");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
+         "close other tabs should keep only the active tab");
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 0).find("two.txt") != std::string::npos,
+         "close other tabs should preserve the selected tab");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
@@ -125,10 +196,14 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
+  AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",
+          TestWorkspaceShellEditorTabRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
+          TestWorkspaceShellTabContextActionsCloseAdjacentTabs);
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);
-  AddTest(tests, "WorkspaceShell/DoubleClickTitleBarRequestsFullscreenToggle",
-          TestWorkspaceShellDoubleClickTitleBarRequestsFullscreenToggle);
+  AddTest(tests, "WorkspaceShell/DoubleClickTitleBarRequestsMaximizeToggle",
+          TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle);
   AddTest(tests, "WorkspaceShell/FullscreenStateDisablesResizableFrameHitTest",
           TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest);
   AddTest(tests, "WorkspaceShell/WindowPresentationStateUpdatesChromeAndSize",

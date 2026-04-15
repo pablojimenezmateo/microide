@@ -99,6 +99,13 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
     const SDL_FRect panel_content =
         BottomPanelContentRect(layout, shell_.surface_.command_mode);
     if (Contains(panel_content, event.button.x, event.button.y)) {
+      if (const std::optional<std::string> url =
+              shell_.TerminalUrlAtPoint(static_cast<float>(event.button.x),
+                                        static_cast<float>(event.button.y));
+          url.has_value() && shell_.OpenExternalUrl(*url)) {
+        shell_.surface_.focus = FocusTarget::Panel;
+        return true;
+      }
       const auto terminal_lines = shell_.ActiveTerminalTab() != nullptr
                                       ? shell_.ActiveTerminalTab()->session.SnapshotLines()
                                       : std::vector<terminal::TerminalLine>{};

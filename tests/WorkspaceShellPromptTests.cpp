@@ -581,7 +581,7 @@ void TestWorkspaceShellRenamePreservesMergeTabState() {
          "merge tab should preserve the live result buffer across rename");
 }
 
-void TestWorkspaceShellQuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActiveProject() {
+void TestWorkspaceShellQuitDoesNotPromptForDirtyTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
   const std::filesystem::path root_b = temp_dir.path() / "beta-project";
@@ -603,18 +603,14 @@ void TestWorkspaceShellQuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActivePr
 
   WorkspaceShellTestAccess::RequestQuit(shell);
 
-  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
-         "quit with dirty tabs across projects should show the dirty prompt");
-  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
-
-  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
-         "save-all quit should restore the originally active project before quitting");
-  Expect(ReadFile(file_a) == "saved alpha\n",
-         "save-all quit should persist dirty tabs from the first project");
-  Expect(ReadFile(file_b) == "saved beta\n",
-         "save-all quit should persist dirty tabs from the active project");
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "quit with dirty tabs should not show the dirty prompt");
+  Expect(ReadFile(file_a) == "alpha\n",
+         "quit should not flush unsaved file-backed changes to disk");
+  Expect(ReadFile(file_b) == "beta\n",
+         "quit should leave file-backed dirty tabs unsaved on disk");
   Expect(WorkspaceShellTestAccess::ConsumeQuitRequested(shell),
-         "save-all quit should set the pending quit request after saving");
+         "quit should set the pending quit request immediately");
 }
 
 void TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject() {
@@ -678,8 +674,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenamePreservesBranchCompareSemantics);
   AddTest(tests, "WorkspaceShell/RenamePreservesMergeTabState",
           TestWorkspaceShellRenamePreservesMergeTabState);
-  AddTest(tests, "WorkspaceShell/QuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActiveProject",
-          TestWorkspaceShellQuitPromptSavesDirtyTabsAcrossProjectsAndRestoresActiveProject);
+  AddTest(tests, "WorkspaceShell/QuitDoesNotPromptForDirtyTabs",
+          TestWorkspaceShellQuitDoesNotPromptForDirtyTabs);
   AddTest(tests, "WorkspaceShell/CloseInactiveDirtyProjectPreservesOriginalActiveProject",
           TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject);
   AddTest(tests, "WorkspaceShell/LargeFileBreadcrumbLabel",

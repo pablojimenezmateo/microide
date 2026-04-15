@@ -2,8 +2,16 @@
 
 #include "TerminalSessionTestAccess.h"
 
+#include <chrono>
 #include <string_view>
 #include <vector>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <cerrno>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace microide::tests {
 
@@ -377,6 +385,42 @@ void TestTerminalSessionTracksInverseVideoStyle() {
          "SGR 27 should clear inverse video for later cells");
 }
 
+#if defined(__unix__) || defined(__APPLE__)
+void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
+  microide::terminal::TerminalSession session;
+
+  const pid_t child_pid = fork();
+  Expect(child_pid >= 0, "terminal stubborn-child fixture should fork successfully");
+  if (child_pid == 0) {
+    setsid();
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
+    for (;;) {
+      pause();
+    }
+  }
+
+  TerminalSessionTestAccess::SetChildProcess(session, child_pid);
+
+  const auto start = std::chrono::steady_clock::now();
+  session.Stop();
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                            start);
+
+  Expect(elapsed < std::chrono::milliseconds(1000),
+         "terminal stop should not block for long when the child ignores hangup and terminate");
+  Expect(!session.running(),
+         "terminal stop should clear the running flag after forcing the child down");
+
+  int status = 0;
+  errno = 0;
+  const pid_t waited = waitpid(child_pid, &status, WNOHANG);
+  Expect(waited == -1 && errno == ECHILD,
+         "terminal stop should reap the stubborn child process instead of leaving it behind");
+}
+#endif
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
@@ -436,6 +480,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionGroupsUtf8GlyphsIntoSingleCells);
   AddTest(tests, "TerminalSession/TracksInverseVideoStyle",
           TestTerminalSessionTracksInverseVideoStyle);
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
+          TestTerminalSessionStopEscalatesToKillForStubbornChild);
+#endif
 }
 
 }  // namespace microide::tests
