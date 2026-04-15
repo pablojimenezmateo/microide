@@ -111,11 +111,14 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
           text.has_value()) {
         const std::vector<std::string> before_lines = compare_tab->right_viewport.lines();
         const bool was_dirty = compare_tab->right_viewport.dirty();
+        const std::size_t cursor_before_line = compare_tab->right_viewport.cursor_line();
         compare_tab->right_viewport.InsertText(*text);
         shell_.RefreshCompareTabDerivedState(*compare_tab);
         shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
         shell_.RequestActiveEditableChangeRedraw(before_lines, compare_tab->right_viewport.lines());
         if (compare_tab->right_viewport.dirty() != was_dirty) {
+          shell_.RequestActiveEditableBlameNeighborhoodRedraw(
+              cursor_before_line, compare_tab->right_viewport.cursor_line());
           shell_.RequestTabStripRedraw();
         }
       }

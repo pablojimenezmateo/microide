@@ -33,6 +33,7 @@ constexpr float kOverlayMinWidth = 520.0f;
 constexpr float kOverlayMaxWidth = 840.0f;
 constexpr float kOverlayMinHeight = 220.0f;
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
+constexpr std::size_t kBlameNeighborhoodRadius = 1;
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
 }
@@ -478,6 +479,25 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
   } else {
     RequestEditorLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
   }
+}
+
+void WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
+                                                                  std::size_t after_line) {
+  const std::size_t min_line = std::min(before_line, after_line);
+  const std::size_t max_line = std::max(before_line, after_line);
+  const std::size_t start_line =
+      min_line > kBlameNeighborhoodRadius ? min_line - kBlameNeighborhoodRadius : 0;
+  const std::size_t end_line = max_line + kBlameNeighborhoodRadius + 1;
+
+  if (ActiveTabIsCompare()) {
+    RequestCompareRightLineRangeRedraw(start_line, end_line);
+    return;
+  }
+  if (ActiveTabIsMerge()) {
+    RequestMergeResultLineRangeRedraw(start_line, end_line);
+    return;
+  }
+  RequestEditorLineRangeRedraw(start_line, end_line);
 }
 
 void WorkspaceShell::RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row) {

@@ -292,6 +292,7 @@ void WorkspaceShell::CompareInteractionCoordinator::ApplyMergeChoice(compare::Me
   }
 
   const bool was_dirty = merge_tab->result_viewport.dirty();
+  const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
   const std::size_t selected_hunk =
       std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
   auto& conflict = merge_tab->conflicts[selected_hunk];
@@ -326,6 +327,8 @@ void WorkspaceShell::CompareInteractionCoordinator::ApplyMergeChoice(compare::Me
   shell_.RevealActiveMergeSelection();
   shell_.RequestMergeResultLineToBottomRedraw(conflict.start_line);
   if (merge_tab->result_viewport.dirty() != was_dirty) {
+    shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
+                                                        merge_tab->result_viewport.cursor_line());
     shell_.RequestTabStripRedraw();
   }
 }

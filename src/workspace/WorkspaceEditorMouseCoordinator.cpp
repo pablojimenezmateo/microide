@@ -101,11 +101,14 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
     if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
         text.has_value()) {
       const bool was_dirty = shell_.text_viewport_.dirty();
+      const std::size_t cursor_before_line = shell_.text_viewport_.cursor_line();
       const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
       shell_.text_viewport_.InsertText(*text);
       shell_.ResetCaretBlink();
       shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
       if (shell_.text_viewport_.dirty() != was_dirty) {
+        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
+                                                            shell_.text_viewport_.cursor_line());
         shell_.RequestTabStripRedraw();
       }
     }

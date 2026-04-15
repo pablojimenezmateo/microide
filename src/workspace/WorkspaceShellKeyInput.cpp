@@ -726,6 +726,7 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     auto& viewport = compare_tab->right_viewport;
     const auto apply_compare_edit = [&](auto&& edit) {
       const bool was_dirty = viewport.dirty();
+      const std::size_t cursor_before_line = viewport.cursor_line();
       const std::vector<std::string> before_lines = viewport.lines();
       edit();
       RefreshCompareTabDerivedState(*compare_tab);
@@ -733,6 +734,7 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       ResetCaretBlink();
       RequestActiveEditableChangeRedraw(before_lines, viewport.lines());
       if (viewport.dirty() != was_dirty) {
+        RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line, viewport.cursor_line());
         RequestTabStripRedraw();
       }
       return true;
@@ -916,6 +918,7 @@ bool WorkspaceShell::HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keym
   auto& viewport = merge_tab->result_viewport;
   const auto apply_merge_edit = [&](auto&& edit) {
     const bool was_dirty = viewport.dirty();
+    const std::size_t cursor_before_line = viewport.cursor_line();
     const std::vector<std::string> before_lines = viewport.lines();
     const std::optional<editor::SelectionRange> selection_before = viewport.selection_range();
     const editor::TextPosition cursor_before{viewport.cursor_line(), viewport.cursor_column()};
@@ -925,6 +928,7 @@ bool WorkspaceShell::HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keym
     ResetCaretBlink();
     RequestActiveEditableChangeRedraw(before_lines, viewport.lines());
     if (viewport.dirty() != was_dirty) {
+      RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line, viewport.cursor_line());
       RequestTabStripRedraw();
     }
     return true;
@@ -1027,11 +1031,14 @@ bool WorkspaceShell::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_TAB:
       {
         const bool was_dirty = text_viewport_.dirty();
+        const std::size_t cursor_before_line = text_viewport_.cursor_line();
         const std::vector<std::string> before_lines = text_viewport_.lines();
         text_viewport_.InsertTab();
         ResetCaretBlink();
         RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
         if (text_viewport_.dirty() != was_dirty) {
+          RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
+                                                      text_viewport_.cursor_line());
           RequestTabStripRedraw();
         }
         return true;
@@ -1040,11 +1047,14 @@ bool WorkspaceShell::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_KP_ENTER:
       {
         const bool was_dirty = text_viewport_.dirty();
+        const std::size_t cursor_before_line = text_viewport_.cursor_line();
         const std::vector<std::string> before_lines = text_viewport_.lines();
         text_viewport_.InsertNewline();
         ResetCaretBlink();
         RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
         if (text_viewport_.dirty() != was_dirty) {
+          RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
+                                                      text_viewport_.cursor_line());
           RequestTabStripRedraw();
         }
         return true;
@@ -1052,11 +1062,14 @@ bool WorkspaceShell::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_BACKSPACE:
       {
         const bool was_dirty = text_viewport_.dirty();
+        const std::size_t cursor_before_line = text_viewport_.cursor_line();
         const std::vector<std::string> before_lines = text_viewport_.lines();
         text_viewport_.Backspace();
         ResetCaretBlink();
         RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
         if (text_viewport_.dirty() != was_dirty) {
+          RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
+                                                      text_viewport_.cursor_line());
           RequestTabStripRedraw();
         }
         return true;
@@ -1064,11 +1077,14 @@ bool WorkspaceShell::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_DELETE:
       {
         const bool was_dirty = text_viewport_.dirty();
+        const std::size_t cursor_before_line = text_viewport_.cursor_line();
         const std::vector<std::string> before_lines = text_viewport_.lines();
         text_viewport_.DeleteForward();
         ResetCaretBlink();
         RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
         if (text_viewport_.dirty() != was_dirty) {
+          RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
+                                                      text_viewport_.cursor_line());
           RequestTabStripRedraw();
         }
         return true;

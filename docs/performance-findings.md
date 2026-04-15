@@ -125,6 +125,8 @@ Implemented:
   presenting, so disjoint updates stay disjoint
 - normal editor edits now invalidate the affected line band, or the changed line to the bottom of
   the active pane when line insertion or deletion shifts everything below it
+- editor dirty-state transitions also invalidate the local blame-shadow neighborhood so stale
+  inline blame text is cleared when a clean tracked buffer becomes dirty
 - compare selection changes now invalidate only the affected row bands, and compare edits redraw
   only the changed rows or the changed row-to-bottom region when row alignment shifts
 - merge selection and hover changes now invalidate only the affected conflict bands, while merge

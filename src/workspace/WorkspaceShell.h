@@ -1504,6 +1504,8 @@ class WorkspaceShell {
   void RequestEditorLineToBottomRedraw(std::size_t start_line);
   void RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                          const std::vector<std::string>& after_lines);
+  void RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
+                                                    std::size_t after_line);
   void RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row);
   void RequestCompareRowToBottomRedraw(std::size_t start_row);
   void RequestCompareRightLineRangeRedraw(std::size_t start_line, std::size_t end_line);

@@ -17,6 +17,16 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 
+bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
+         lhs.y + lhs.h > rhs.y;
+}
+
+bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+  return std::any_of(rects.begin(), rects.end(),
+                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
+}
+
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
@@ -99,6 +109,42 @@ void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   Expect(std::any_of(overlay->lines.begin(), overlay->lines.end(),
                      [](const auto& line) { return line.text == "Saved changes"; }),
          "saved tracked editor should still mark working-tree-only lines as saved changes");
+}
+
+void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame redraw fixture", "editor blame redraw fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
+  Expect(overlay.has_value() && overlay->lines.size() == 3,
+         "clean tracked editor should expose three blame lines before editing");
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_TEXT_INPUT;
+  const std::string text = "x";
+  event.text.text = text.c_str();
+  const auto result = shell.HandleEvent(event);
+
+  Expect(result.handled, "editor typing should be handled for blame redraw checks");
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+         "editor typing should stay on the partial redraw path");
+  Expect(!WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell).has_value(),
+         "dirty editor buffers should suppress blame immediately after typing");
+  Expect(AnyRectIntersects(result.redraw.rects, overlay->lines.front().rect),
+         "dirty-state redraw should include the blame line above the caret");
+  Expect(AnyRectIntersects(result.redraw.rects, overlay->lines.back().rect),
+         "dirty-state redraw should include the blame line below the caret");
 }
 
 void TestWorkspaceShellEditorBlameSuppressesNarrowPanes() {
@@ -219,6 +265,8 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
   AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndResumesAfterSave",
           TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave);
+  AddTest(tests, "WorkspaceShell/EditorDirtyTransitionRedrawsBlameNeighborhood",
+          TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood);
   AddTest(tests, "WorkspaceShell/EditorBlameSuppressesNarrowPanes",
           TestWorkspaceShellEditorBlameSuppressesNarrowPanes);
   AddTest(tests, "WorkspaceShell/EditorBlameHoverPopupCopiesCommitSha",

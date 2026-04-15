@@ -214,6 +214,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
       if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
           text.has_value()) {
         const bool was_dirty = merge_tab->result_viewport.dirty();
+        const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
         const std::vector<std::string> before_lines = merge_tab->result_viewport.lines();
         const std::optional<editor::SelectionRange> selection_before =
             merge_tab->result_viewport.selection_range();
@@ -224,6 +225,8 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
                                                     cursor_before);
         shell_.RequestActiveEditableChangeRedraw(before_lines, merge_tab->result_viewport.lines());
         if (merge_tab->result_viewport.dirty() != was_dirty) {
+          shell_.RequestActiveEditableBlameNeighborhoodRedraw(
+              cursor_before_line, merge_tab->result_viewport.cursor_line());
           shell_.RequestTabStripRedraw();
         }
       }

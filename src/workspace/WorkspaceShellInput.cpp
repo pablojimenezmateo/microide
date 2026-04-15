@@ -382,6 +382,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     ResetCaretBlink();
     RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
     if (viewport->dirty() != was_dirty) {
+      RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line, viewport->cursor_line());
       RequestTabStripRedraw();
     }
     return true;
