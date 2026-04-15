@@ -193,6 +193,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
   }
 
   if (Contains(interaction.result.rect, event.button.x, event.button.y)) {
+    const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
     const std::size_t line =
         ClampTextGridLineAtY(interaction.result.text, event.button.y);
     const std::size_t visual_column =
@@ -212,6 +213,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
     if (event.button.button == SDL_BUTTON_MIDDLE) {
       if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
           text.has_value()) {
+        const bool was_dirty = merge_tab->result_viewport.dirty();
         const std::vector<std::string> before_lines = merge_tab->result_viewport.lines();
         const std::optional<editor::SelectionRange> selection_before =
             merge_tab->result_viewport.selection_range();
@@ -220,8 +222,18 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
         merge_tab->result_viewport.InsertText(*text);
         shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                                     cursor_before);
+        shell_.RequestActiveEditableChangeRedraw(before_lines, merge_tab->result_viewport.lines());
+        if (merge_tab->result_viewport.dirty() != was_dirty) {
+          shell_.RequestTabStripRedraw();
+        }
       }
       return true;
+    }
+    if (merge_tab->selected_hunk != previous_selected_hunk) {
+      shell_.RequestMergeConflictRedraw(previous_selected_hunk);
+      shell_.RequestMergeConflictRedraw(merge_tab->selected_hunk);
+    } else {
+      shell_.RequestFocusedEditorRedraw();
     }
     shell_.surface_.mouse_selecting = true;
     return true;
@@ -236,6 +248,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
 
   const std::size_t line = static_cast<std::size_t>(
       std::max(0, merge_tab->scroll_row + clicked_row));
+  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   if (event.button.x < surface_layout.center_x) {
     if (const auto conflict_index =
             shell_.FindMergeTrackedConflictAtSourceLine(*merge_tab, line, true);
@@ -250,6 +263,10 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
       merge_tab->selected_hunk = *conflict_index;
       shell_.RevealActiveMergeSelection();
     }
+  }
+  if (merge_tab->selected_hunk != previous_selected_hunk) {
+    shell_.RequestMergeConflictRedraw(previous_selected_hunk);
+    shell_.RequestMergeConflictRedraw(merge_tab->selected_hunk);
   }
   shell_.surface_.focus = FocusTarget::Editor;
   return true;
@@ -387,7 +404,16 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleHoverMotion(
   }
 
   merge_tab->hover_state = next_hover;
-  return !MergeHoverStatesEqual(previous_hover, merge_tab->hover_state);
+  if (MergeHoverStatesEqual(previous_hover, merge_tab->hover_state)) {
+    return false;
+  }
+  if (previous_hover.has_value()) {
+    shell_.RequestMergeConflictRedraw(previous_hover->conflict_index);
+  }
+  if (merge_tab->hover_state.has_value()) {
+    shell_.RequestMergeConflictRedraw(merge_tab->hover_state->conflict_index);
+  }
+  return true;
 }
 
 bool WorkspaceShell::MergeMouseCoordinator::HandleSelectionMotion(
@@ -415,12 +441,23 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleSelectionMotion(
 
   const std::size_t line =
       ClampTextGridLineAtY(interaction.result.text, event.motion.y);
+  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   const std::size_t visual_column =
       TextGridVisualColumnAtX(interaction.result.text, event.motion.x);
   merge_tab->result_viewport.MoveCursorToVisualColumn(line, visual_column, true);
+  if (const auto conflict_index = shell_.FindMergeTrackedConflictAtResultLine(*merge_tab, line);
+      conflict_index.has_value()) {
+    merge_tab->selected_hunk = *conflict_index;
+  }
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   shell_.ResetCaretBlink();
+  if (merge_tab->selected_hunk != previous_selected_hunk) {
+    shell_.RequestMergeConflictRedraw(previous_selected_hunk);
+    shell_.RequestMergeConflictRedraw(merge_tab->selected_hunk);
+  } else {
+    shell_.RequestFocusedEditorRedraw();
+  }
   shell_.surface_.focus = FocusTarget::Editor;
   return true;
 }

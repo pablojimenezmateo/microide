@@ -368,6 +368,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
 
 void WorkspaceShell::RequestFullRedraw() {
   pending_render_invalidation_.full = true;
+  pending_render_invalidation_.rects.clear();
   pending_render_invalidation_.rect.reset();
 }
 
@@ -375,7 +376,10 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   if (pending_render_invalidation_.full || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
-  pending_render_invalidation_.rect = UnionRects(pending_render_invalidation_.rect, rect);
+  pending_render_invalidation_.rects.push_back(rect);
+  if (!pending_render_invalidation_.rect.has_value()) {
+    pending_render_invalidation_.rect = rect;
+  }
 }
 
 void WorkspaceShell::RequestWindowRedraw() {
@@ -420,6 +424,120 @@ void WorkspaceShell::RequestEditorSurfaceRedraw() {
 
 void WorkspaceShell::RequestFocusedEditorRedraw() {
   if (const auto rect = CurrentFocusedEditorRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::RequestEditorLineRangeRedraw(std::size_t start_line, std::size_t end_line) {
+  if (const auto rect = CurrentEditorLineRangeRect(start_line, end_line); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::RequestEditorLineToBottomRedraw(std::size_t start_line) {
+  if (const auto rect = CurrentEditorLineToBottomRect(start_line); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
+                                                       const std::vector<std::string>& after_lines) {
+  const auto changed_span = ComputeChangedLineSpan(before_lines, after_lines);
+  if (!changed_span.has_value()) {
+    RequestFocusedEditorRedraw();
+    return;
+  }
+
+  const std::size_t start_line = changed_span->old_start;
+  if (ActiveTabIsCompare()) {
+    if (before_lines.size() != after_lines.size()) {
+      RequestCompareRightLineToBottomRedraw(start_line);
+    } else {
+      RequestCompareRightLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
+    }
+    return;
+  }
+
+  if (ActiveTabIsMerge()) {
+    if (before_lines.size() != after_lines.size()) {
+      RequestMergeResultLineToBottomRedraw(start_line);
+    } else {
+      RequestMergeResultLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
+    }
+    return;
+  }
+
+  if (before_lines.size() != after_lines.size()) {
+    RequestEditorLineToBottomRedraw(start_line);
+  } else {
+    RequestEditorLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
+  }
+}
+
+void WorkspaceShell::RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row) {
+  if (const auto rect = CurrentCompareRowRangeRect(start_row, end_row); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::RequestCompareRowToBottomRedraw(std::size_t start_row) {
+  if (const auto rect = CurrentCompareRowToBottomRect(start_row); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::RequestCompareRightLineRangeRedraw(std::size_t start_line,
+                                                        std::size_t end_line) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr) {
+    RequestFocusedEditorRedraw();
+    return;
+  }
+  const std::size_t start_row = CompareRowIndexForRightLine(*compare_tab, start_line);
+  const std::size_t end_lookup_line =
+      end_line > start_line ? end_line - 1 : start_line;
+  const std::size_t end_row = CompareRowIndexForRightLine(*compare_tab, end_lookup_line) + 1;
+  RequestCompareRowRangeRedraw(start_row, std::max(start_row + 1, end_row));
+}
+
+void WorkspaceShell::RequestCompareRightLineToBottomRedraw(std::size_t start_line) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr) {
+    RequestFocusedEditorRedraw();
+    return;
+  }
+  RequestCompareRowToBottomRedraw(CompareRowIndexForRightLine(*compare_tab, start_line));
+}
+
+void WorkspaceShell::RequestMergeResultLineRangeRedraw(std::size_t start_line,
+                                                       std::size_t end_line) {
+  if (const auto rect = CurrentMergeResultLineRangeRect(start_line, end_line); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::RequestMergeResultLineToBottomRedraw(std::size_t start_line) {
+  if (const auto rect = CurrentMergeResultLineToBottomRect(start_line); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::RequestMergeConflictRedraw(std::size_t conflict_index) {
+  if (const auto rect = CurrentMergeConflictRect(conflict_index); rect.has_value()) {
     RequestRedrawRect(*rect);
     return;
   }
@@ -529,6 +647,48 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const 
                                     : std::optional<SDL_FRect>(layout->editor_surface);
 }
 
+std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t start_line,
+                                                                    std::size_t end_line) const {
+  if (!ActiveTabIsEditor()) {
+    return std::nullopt;
+  }
+
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return std::nullopt;
+  }
+
+  auto* editor_tab = const_cast<WorkspaceShell*>(this)->ActiveEditorTab();
+  if (editor_tab != nullptr) {
+    const_cast<WorkspaceShell*>(this)->SyncActiveEditorTab();
+    const_cast<WorkspaceShell*>(this)->NormalizeEditorSplitTree(*editor_tab);
+  }
+  const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
+  const auto active_pane =
+      std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
+  const SDL_FRect pane_rect =
+      active_pane != panes.end() ? active_pane->rect : layout->editor_surface;
+  const editor::EditorViewMetrics metrics =
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, pane_rect);
+  const VisibleLineRangeLayout line_layout = {
+      .first_line_y = metrics.first_line_y,
+      .line_height = metrics.line_height,
+      .scroll_line = text_viewport_.scroll_line(),
+      .visible_rows = metrics.visible_rows,
+  };
+  return ComputeVisibleLineRangeRect(pane_rect, line_layout, start_line, end_line);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineToBottomRect(std::size_t start_line) const {
+  const auto line_rect = CurrentEditorLineRangeRect(start_line, std::numeric_limits<std::size_t>::max());
+  if (!line_rect.has_value()) {
+    return std::nullopt;
+  }
+  const SDL_FRect pane_rect = CurrentFocusedEditorRedrawRect().value_or(*line_rect);
+  return MakeRect(pane_rect.x, line_rect->y, pane_rect.w,
+                  std::max(0.0f, pane_rect.y + pane_rect.h - line_rect->y));
+}
+
 std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value() || !BottomPanelVisible()) {
@@ -559,6 +719,32 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
     rect = UnionRects(rect, ComputePromptSurfaceRect(*window_rect));
   }
   return rect;
+}
+
+std::optional<WorkspaceShell::ChangedLineSpan> WorkspaceShell::ComputeChangedLineSpan(
+    const std::vector<std::string>& before_lines,
+    const std::vector<std::string>& after_lines) {
+  std::size_t prefix = 0;
+  while (prefix < before_lines.size() && prefix < after_lines.size() &&
+         before_lines[prefix] == after_lines[prefix]) {
+    ++prefix;
+  }
+  if (prefix == before_lines.size() && prefix == after_lines.size()) {
+    return std::nullopt;
+  }
+
+  std::size_t suffix = 0;
+  while (suffix < before_lines.size() - prefix && suffix < after_lines.size() - prefix &&
+         before_lines[before_lines.size() - 1 - suffix] ==
+             after_lines[after_lines.size() - 1 - suffix]) {
+    ++suffix;
+  }
+
+  return ChangedLineSpan{
+      .old_start = prefix,
+      .old_end = before_lines.size() - suffix,
+      .new_end = after_lines.size() - suffix,
+  };
 }
 
 SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {

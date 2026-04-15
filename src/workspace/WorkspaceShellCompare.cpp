@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 
 #include "editor/SyntaxHighlighter.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -29,37 +30,6 @@ std::size_t MaxVisualColumnsForLines(const std::vector<std::string>& lines) {
     max_columns = std::max(max_columns, Utf8CodepointCount(line));
   }
   return max_columns;
-}
-
-struct ChangedLineSpan {
-  std::size_t old_start = 0;
-  std::size_t old_end = 0;
-  std::size_t new_end = 0;
-};
-
-std::optional<ChangedLineSpan> ComputeChangedLineSpan(const std::vector<std::string>& before_lines,
-                                                      const std::vector<std::string>& after_lines) {
-  std::size_t prefix = 0;
-  while (prefix < before_lines.size() && prefix < after_lines.size() &&
-         before_lines[prefix] == after_lines[prefix]) {
-    ++prefix;
-  }
-  if (prefix == before_lines.size() && prefix == after_lines.size()) {
-    return std::nullopt;
-  }
-
-  std::size_t suffix = 0;
-  while (suffix < before_lines.size() - prefix && suffix < after_lines.size() - prefix &&
-         before_lines[before_lines.size() - 1 - suffix] ==
-             after_lines[after_lines.size() - 1 - suffix]) {
-    ++suffix;
-  }
-
-  return ChangedLineSpan{
-      .old_start = prefix,
-      .old_end = before_lines.size() - suffix,
-      .new_end = after_lines.size() - suffix,
-  };
 }
 
 bool MatchesLineSegment(const std::vector<std::string>& lines,
@@ -699,6 +669,56 @@ TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
       text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
       compare_tab.model.rows.size(), compare_tab.horizontal_scroll,
       static_cast<std::size_t>(surface.visible_rows), surface.right_visible_columns);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t start_row,
+                                                                    std::size_t end_row) const {
+  const auto layout = CurrentWorkspaceLayout();
+  const CompareTabState* compare_tab = ActiveCompareTab();
+  if (!layout.has_value() || compare_tab == nullptr || end_row <= start_row) {
+    return std::nullopt;
+  }
+
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
+  const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab->scroll_row));
+  const std::size_t visible_end_row = scroll_row + static_cast<std::size_t>(surface_layout.visible_rows);
+  const std::size_t rect_start = std::max(start_row, scroll_row);
+  const std::size_t rect_end = std::min(end_row, visible_end_row);
+  if (rect_end <= rect_start) {
+    return std::nullopt;
+  }
+
+  const float y = surface_layout.rows_y +
+                  static_cast<float>(rect_start - scroll_row) * surface_layout.line_height;
+  const float h = static_cast<float>(rect_end - rect_start) * surface_layout.line_height;
+  const float width = surface_layout.gutter_width + surface_layout.left_width +
+                      surface_layout.divider_width + surface_layout.gutter_width +
+                      surface_layout.right_width;
+  return MakeRect(surface_layout.left_x, y - 1.0f, width, h);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowToBottomRect(std::size_t start_row) const {
+  const auto row_rect =
+      CurrentCompareRowRangeRect(start_row, std::numeric_limits<std::size_t>::max());
+  if (!row_rect.has_value()) {
+    return std::nullopt;
+  }
+
+  const auto layout = CurrentWorkspaceLayout();
+  const CompareTabState* compare_tab = ActiveCompareTab();
+  if (!layout.has_value() || compare_tab == nullptr) {
+    return row_rect;
+  }
+
+  const CompareSurfaceLayout surface_layout =
+      ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
+  const SDL_FRect content_rect = MakeRect(surface_layout.left_x, surface_layout.rows_y,
+                                          row_rect->w,
+                                          static_cast<float>(surface_layout.visible_rows) *
+                                              surface_layout.line_height);
+  return MakeRect(content_rect.x, row_rect->y, content_rect.w,
+                  std::max(0.0f, content_rect.y + content_rect.h - row_rect->y));
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {

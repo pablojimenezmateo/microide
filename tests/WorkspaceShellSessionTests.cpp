@@ -22,6 +22,19 @@ bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
          lhs.y + lhs.h > rhs.y;
 }
 
+bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+  return std::any_of(rects.begin(), rects.end(),
+                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
+}
+
+float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
+  float max_height = 0.0f;
+  for (const SDL_FRect& rect : rects) {
+    max_height = std::max(max_height, rect.h);
+  }
+  return max_height;
+}
+
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -262,6 +275,44 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
          "merge horizontal navigation should repaint the result pane");
   Expect(!RectsIntersect(*result.redraw.rect, left_rect),
          "merge horizontal navigation should avoid repainting the incoming pane");
+}
+
+void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "output.txt";
+  WriteFile(base, "line 1\nline 2\nline 3\nline 4\nline 5\n");
+  WriteFile(incoming, "line 1\nincoming 2\nline 3\nincoming 4\nline 5\n");
+  WriteFile(current, "line 1\ncurrent 2\nline 3\ncurrent 4\nline 5\n");
+  WriteFile(output,
+            "<<<<<<< ours\ncurrent 2\n=======\nincoming 2\n>>>>>>> theirs\n"
+            "line 3\n"
+            "<<<<<<< ours\ncurrent 4\n=======\nincoming 4\n>>>>>>> theirs\n"
+            "line 5\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge conflict invalidation fixture should open");
+
+  const auto previous_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 0);
+  WorkspaceShellTestAccess::MoveMergeSelection(shell, 1);
+  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  const auto next_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 1);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+
+  Expect(!redraw.full && !redraw.rects.empty(),
+         "merge conflict navigation should stay on a partial redraw path");
+  Expect(previous_conflict_rect.has_value() && AnyRectIntersects(redraw.rects, *previous_conflict_rect),
+         "merge conflict navigation should repaint the previously selected conflict");
+  Expect(next_conflict_rect.has_value() && AnyRectIntersects(redraw.rects, *next_conflict_rect),
+         "merge conflict navigation should repaint the newly selected conflict");
+  Expect(MaxRectHeight(redraw.rects) < layout.editor_surface.h,
+         "merge conflict navigation should redraw less than the full merge surface height");
 }
 
 void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
@@ -1282,6 +1333,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeToolbarButtonsNavigateConflicts);
   AddTest(tests, "WorkspaceShell/MergeHorizontalNavigationInvalidatesResultPane",
           TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane);
+  AddTest(tests, "WorkspaceShell/MoveMergeSelectionInvalidatesConflictBand",
+          TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",

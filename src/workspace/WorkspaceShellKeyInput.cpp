@@ -726,11 +726,12 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     auto& viewport = compare_tab->right_viewport;
     const auto apply_compare_edit = [&](auto&& edit) {
       const bool was_dirty = viewport.dirty();
+      const std::vector<std::string> before_lines = viewport.lines();
       edit();
       RefreshCompareTabDerivedState(*compare_tab);
       SyncCompareSelectionFromViewport(*compare_tab, true);
       ResetCaretBlink();
-      RequestEditorSurfaceRedraw();
+      RequestActiveEditableChangeRedraw(before_lines, viewport.lines());
       if (viewport.dirty() != was_dirty) {
         RequestTabStripRedraw();
       }
@@ -740,7 +741,8 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       SyncCompareSelectionFromViewport(*compare_tab, true);
       ResetCaretBlink();
       if (compare_tab->selected_row != previous_selected_row) {
-        RequestEditorSurfaceRedraw();
+        RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+        RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
       } else {
         RequestFocusedEditorRedraw();
       }
@@ -857,17 +859,23 @@ bool WorkspaceShell::HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       return true;
     case SDLK_HOME:
       if (auto* active_compare_tab = ActiveCompareTab(); active_compare_tab != nullptr) {
+        const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = 0;
         RevealActiveCompareSelection();
-        RequestEditorSurfaceRedraw();
+        RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+        RequestCompareRowRangeRedraw(active_compare_tab->selected_row,
+                                     active_compare_tab->selected_row + 1);
       }
       return true;
     case SDLK_END:
       if (auto* active_compare_tab = ActiveCompareTab();
           active_compare_tab != nullptr && !active_compare_tab->model.rows.empty()) {
+        const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = active_compare_tab->model.rows.size() - 1;
         RevealActiveCompareSelection();
-        RequestEditorSurfaceRedraw();
+        RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+        RequestCompareRowRangeRedraw(active_compare_tab->selected_row,
+                                     active_compare_tab->selected_row + 1);
       }
       return true;
     case SDLK_LEFTBRACKET:
@@ -915,7 +923,7 @@ bool WorkspaceShell::HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keym
     UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                          cursor_before);
     ResetCaretBlink();
-    RequestFocusedEditorRedraw();
+    RequestActiveEditableChangeRedraw(before_lines, viewport.lines());
     if (viewport.dirty() != was_dirty) {
       RequestTabStripRedraw();
     }
@@ -1019,47 +1027,51 @@ bool WorkspaceShell::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_TAB:
       {
         const bool was_dirty = text_viewport_.dirty();
-      text_viewport_.InsertTab();
-      ResetCaretBlink();
-      RequestFocusedEditorRedraw();
-      if (text_viewport_.dirty() != was_dirty) {
-        RequestTabStripRedraw();
-      }
-      return true;
+        const std::vector<std::string> before_lines = text_viewport_.lines();
+        text_viewport_.InsertTab();
+        ResetCaretBlink();
+        RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
+        if (text_viewport_.dirty() != was_dirty) {
+          RequestTabStripRedraw();
+        }
+        return true;
       }
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       {
         const bool was_dirty = text_viewport_.dirty();
-      text_viewport_.InsertNewline();
-      ResetCaretBlink();
-      RequestFocusedEditorRedraw();
-      if (text_viewport_.dirty() != was_dirty) {
-        RequestTabStripRedraw();
-      }
-      return true;
+        const std::vector<std::string> before_lines = text_viewport_.lines();
+        text_viewport_.InsertNewline();
+        ResetCaretBlink();
+        RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
+        if (text_viewport_.dirty() != was_dirty) {
+          RequestTabStripRedraw();
+        }
+        return true;
       }
     case SDLK_BACKSPACE:
       {
         const bool was_dirty = text_viewport_.dirty();
-      text_viewport_.Backspace();
-      ResetCaretBlink();
-      RequestFocusedEditorRedraw();
-      if (text_viewport_.dirty() != was_dirty) {
-        RequestTabStripRedraw();
-      }
-      return true;
+        const std::vector<std::string> before_lines = text_viewport_.lines();
+        text_viewport_.Backspace();
+        ResetCaretBlink();
+        RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
+        if (text_viewport_.dirty() != was_dirty) {
+          RequestTabStripRedraw();
+        }
+        return true;
       }
     case SDLK_DELETE:
       {
         const bool was_dirty = text_viewport_.dirty();
-      text_viewport_.DeleteForward();
-      ResetCaretBlink();
-      RequestFocusedEditorRedraw();
-      if (text_viewport_.dirty() != was_dirty) {
-        RequestTabStripRedraw();
-      }
-      return true;
+        const std::vector<std::string> before_lines = text_viewport_.lines();
+        text_viewport_.DeleteForward();
+        ResetCaretBlink();
+        RequestActiveEditableChangeRedraw(before_lines, text_viewport_.lines());
+        if (text_viewport_.dirty() != was_dirty) {
+          RequestTabStripRedraw();
+        }
+        return true;
       }
     default:
       break;

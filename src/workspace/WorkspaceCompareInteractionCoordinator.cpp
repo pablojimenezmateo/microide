@@ -166,12 +166,14 @@ void WorkspaceShell::CompareInteractionCoordinator::MoveCompareSelection(int del
     return;
   }
 
+  const std::size_t previous_selected_row = compare_tab->selected_row;
   const int current = static_cast<int>(compare_tab->selected_row);
   const int max_index = static_cast<int>(compare_tab->model.rows.size()) - 1;
   compare_tab->selected_row =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   shell_.RevealActiveCompareSelection();
-  shell_.RequestEditorSurfaceRedraw();
+  shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+  shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::JumpCompareHunk(int delta) {
@@ -188,11 +190,13 @@ void WorkspaceShell::CompareInteractionCoordinator::JumpCompareHunk(int delta) {
     }
     target = static_cast<int>(i);
   }
+  const std::size_t previous_selected_row = compare_tab->selected_row;
   target = std::clamp(target + delta, 0, static_cast<int>(compare_tab->model.hunks.size()) - 1);
   compare_tab->selected_row = static_cast<std::size_t>(
       compare_tab->model.hunks[static_cast<std::size_t>(target)].start_row);
   shell_.RevealActiveCompareSelection();
-  shell_.RequestEditorSurfaceRedraw();
+  shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+  shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollCompareRows(int delta) {
@@ -246,12 +250,14 @@ void WorkspaceShell::CompareInteractionCoordinator::MoveMergeSelection(int delta
     return;
   }
 
+  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   const int current = static_cast<int>(merge_tab->selected_hunk);
   const int max_index = static_cast<int>(merge_tab->conflicts.size()) - 1;
   merge_tab->selected_hunk =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   shell_.RevealActiveMergeSelection();
-  shell_.RequestEditorSurfaceRedraw();
+  shell_.RequestMergeConflictRedraw(previous_selected_hunk);
+  shell_.RequestMergeConflictRedraw(merge_tab->selected_hunk);
 }
 
 void WorkspaceShell::CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
@@ -285,6 +291,7 @@ void WorkspaceShell::CompareInteractionCoordinator::ApplyMergeChoice(compare::Me
     return;
   }
 
+  const bool was_dirty = merge_tab->result_viewport.dirty();
   const std::size_t selected_hunk =
       std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
   auto& conflict = merge_tab->conflicts[selected_hunk];
@@ -317,7 +324,10 @@ void WorkspaceShell::CompareInteractionCoordinator::ApplyMergeChoice(compare::Me
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
   shell_.RevealActiveMergeSelection();
-  shell_.RequestEditorSurfaceRedraw();
+  shell_.RequestMergeResultLineToBottomRedraw(conflict.start_line);
+  if (merge_tab->result_viewport.dirty() != was_dirty) {
+    shell_.RequestTabStripRedraw();
+  }
 }
 
 void WorkspaceShell::OpenComparePicker() {

@@ -100,11 +100,18 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
   if (event.button.button == SDL_BUTTON_MIDDLE) {
     if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
         text.has_value()) {
+      const bool was_dirty = shell_.text_viewport_.dirty();
+      const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
       shell_.text_viewport_.InsertText(*text);
       shell_.ResetCaretBlink();
+      shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
+      if (shell_.text_viewport_.dirty() != was_dirty) {
+        shell_.RequestTabStripRedraw();
+      }
     }
     return true;
   }
+  shell_.RequestFocusedEditorRedraw();
   shell_.surface_.mouse_selecting = true;
   return true;
 }
@@ -260,6 +267,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleSelectionMotion(
 
   shell_.text_viewport_.MoveCursorToVisualColumn(line, visual_column, true);
   shell_.ResetCaretBlink();
+  shell_.RequestFocusedEditorRedraw();
   shell_.surface_.focus = FocusTarget::Editor;
   return true;
 }

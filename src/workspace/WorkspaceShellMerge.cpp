@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string_view>
 
@@ -16,6 +17,18 @@ constexpr float kMergeToolbarHeight = 36.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr float kMinMergePaneWidth = 140.0f;
+
+std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
+  if (!lhs.has_value()) {
+    return rhs;
+  }
+
+  const float x = std::min(lhs->x, rhs.x);
+  const float y = std::min(lhs->y, rhs.y);
+  const float right = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
+  const float bottom = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
+  return MakeRect(x, y, right - x, bottom - y);
+}
 
 }  // namespace
 
@@ -220,6 +233,89 @@ WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayo
           ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
       },
   };
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineRangeRect(std::size_t start_line,
+                                                                         std::size_t end_line) const {
+  const auto layout = CurrentWorkspaceLayout();
+  MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();
+  if (!layout.has_value() || merge_tab == nullptr) {
+    return std::nullopt;
+  }
+
+  const MergeSurfaceLayout surface_layout =
+      ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
+  const MergeInteractionLayout interaction =
+      BuildMergeInteractionLayout(layout->editor_surface, surface_layout, *merge_tab);
+  return ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, start_line,
+                                     end_line);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineToBottomRect(
+    std::size_t start_line) const {
+  const auto line_rect =
+      CurrentMergeResultLineRangeRect(start_line, std::numeric_limits<std::size_t>::max());
+  if (!line_rect.has_value()) {
+    return std::nullopt;
+  }
+
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return line_rect;
+  }
+  return MakeRect(layout->editor_surface.x, line_rect->y, layout->editor_surface.w,
+                  std::max(0.0f, layout->editor_surface.y + layout->editor_surface.h - line_rect->y));
+}
+
+std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t conflict_index) const {
+  const auto layout = CurrentWorkspaceLayout();
+  MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();
+  if (!layout.has_value() || merge_tab == nullptr || conflict_index >= merge_tab->conflicts.size()) {
+    return std::nullopt;
+  }
+
+  const MergeSurfaceLayout surface_layout =
+      ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
+  const MergeInteractionLayout interaction =
+      BuildMergeInteractionLayout(layout->editor_surface, surface_layout, *merge_tab);
+  const MergeTrackedConflict& conflict = merge_tab->conflicts[conflict_index];
+  const VisibleLineRangeLayout source_lines = {
+      .first_line_y = surface_layout.rows_y,
+      .line_height = surface_layout.line_height,
+      .scroll_line = static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)),
+      .visible_rows = static_cast<std::size_t>(surface_layout.visible_rows),
+  };
+  const TextGridInteractionLayout incoming_layout =
+      BuildMergeSourceInteractionLayout(surface_layout, *merge_tab, true);
+  const TextGridInteractionLayout current_layout =
+      BuildMergeSourceInteractionLayout(surface_layout, *merge_tab, false);
+
+  std::optional<SDL_FRect> rect = ComputeVisibleLineRangeRect(
+      incoming_layout.rect, source_lines, conflict.incoming_start_line,
+      std::max(conflict.incoming_end_line, conflict.incoming_start_line + std::size_t{1}));
+  if (const auto current_rect = ComputeVisibleLineRangeRect(
+          current_layout.rect, source_lines, conflict.current_start_line,
+          std::max(conflict.current_end_line, conflict.current_start_line + std::size_t{1}));
+      current_rect.has_value()) {
+    rect = UnionOptionalRects(rect, *current_rect);
+  }
+  if (const auto result_rect = ComputeVisibleLineRangeRect(
+          interaction.result.rect, interaction.result.lines, conflict.start_line,
+          std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
+      result_rect.has_value()) {
+    rect = UnionOptionalRects(rect, *result_rect);
+  }
+  rect = UnionOptionalRects(rect,
+                            BuildMergeSourceActionButtonRect(surface_layout, interaction, conflict, true));
+  rect = UnionOptionalRects(rect,
+                            BuildMergeSourceActionButtonRect(surface_layout, interaction, conflict, false));
+  if (conflict.valid) {
+    for (const SDL_FRect action_rect :
+         BuildMergeResultActionButtonRects(surface_layout, interaction, conflict)) {
+      rect = UnionOptionalRects(rect, action_rect);
+    }
+  }
+  return rect;
 }
 
 std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtSourceLine(

@@ -631,6 +631,32 @@ struct WorkspaceShellTestAccess {
     return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,
                                                                 shell.text_viewport_, pane);
   }
+  static std::optional<SDL_FRect> ActiveEditorLineRangeRect(WorkspaceShell& shell,
+                                                            std::size_t start_line,
+                                                            std::size_t end_line) {
+    return shell.CurrentEditorLineRangeRect(start_line, end_line);
+  }
+  static std::optional<SDL_FRect> ActiveEditorLineToBottomRect(WorkspaceShell& shell,
+                                                               std::size_t start_line) {
+    return shell.CurrentEditorLineToBottomRect(start_line);
+  }
+  static std::optional<SDL_FRect> ActiveCompareRowRangeRect(WorkspaceShell& shell,
+                                                            std::size_t start_row,
+                                                            std::size_t end_row) {
+    return shell.CurrentCompareRowRangeRect(start_row, end_row);
+  }
+  static std::optional<SDL_FRect> ActiveCompareRowToBottomRect(WorkspaceShell& shell,
+                                                               std::size_t start_row) {
+    return shell.CurrentCompareRowToBottomRect(start_row);
+  }
+  static std::optional<SDL_FRect> ActiveMergeConflictRect(WorkspaceShell& shell,
+                                                          std::size_t conflict_index) {
+    return shell.CurrentMergeConflictRect(conflict_index);
+  }
+  static std::optional<SDL_FRect> ActiveMergeResultLineToBottomRect(WorkspaceShell& shell,
+                                                                    std::size_t start_line) {
+    return shell.CurrentMergeResultLineToBottomRect(start_line);
+  }
   static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
   static SDL_HitTestResult WindowHitTest(WorkspaceShell& shell, float x, float y) {
     return shell.WindowHitTest(x, y);
@@ -878,6 +904,8 @@ struct WorkspaceShellTestAccess {
   static WorkspaceShell::RenderInvalidation ConsumePendingRenderInvalidation(WorkspaceShell& shell) {
     return shell.ConsumePendingRenderInvalidation();
   }
+  static void MoveMergeSelection(WorkspaceShell& shell, int delta) { shell.MoveMergeSelection(delta); }
+  static void MoveCompareSelection(WorkspaceShell& shell, int delta) { shell.MoveCompareSelection(delta); }
   static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Overlay;

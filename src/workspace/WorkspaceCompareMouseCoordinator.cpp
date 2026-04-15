@@ -91,6 +91,8 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
     return false;
   }
 
+  const std::size_t previous_selected_row = compare_tab->selected_row;
+  const bool previous_right_view_active = compare_tab->right_view_active;
   compare_tab->selected_row = static_cast<std::size_t>(model_row);
   if (compare_tab->right_editable && event.button.x >= surface_layout.right_x) {
     compare_tab->right_view_active = true;
@@ -107,9 +109,15 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
     if (event.button.button == SDL_BUTTON_MIDDLE) {
       if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
           text.has_value()) {
+        const std::vector<std::string> before_lines = compare_tab->right_viewport.lines();
+        const bool was_dirty = compare_tab->right_viewport.dirty();
         compare_tab->right_viewport.InsertText(*text);
         shell_.RefreshCompareTabDerivedState(*compare_tab);
         shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
+        shell_.RequestActiveEditableChangeRedraw(before_lines, compare_tab->right_viewport.lines());
+        if (compare_tab->right_viewport.dirty() != was_dirty) {
+          shell_.RequestTabStripRedraw();
+        }
       }
       shell_.surface_.focus = FocusTarget::Editor;
       return true;
@@ -117,6 +125,12 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
     shell_.surface_.mouse_selecting = true;
   } else {
     compare_tab->right_view_active = false;
+  }
+  if (compare_tab->selected_row != previous_selected_row) {
+    shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+    shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+  } else if (compare_tab->right_view_active != previous_right_view_active) {
+    shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
   }
   shell_.surface_.focus = FocusTarget::Editor;
   return true;
@@ -219,11 +233,18 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleSelectionMotion(
 
   const std::size_t line =
       shell_.CompareRightLineForRow(*compare_tab, *hovered_row);
+  const std::size_t previous_selected_row = compare_tab->selected_row;
   const std::size_t visual_column =
       TextGridVisualColumnAtX(right_interaction, event.motion.x);
   compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, true);
   shell_.SyncCompareSelectionFromViewport(*compare_tab, false);
   shell_.ResetCaretBlink();
+  if (compare_tab->selected_row != previous_selected_row) {
+    shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
+    shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+  } else {
+    shell_.RequestFocusedEditorRedraw();
+  }
   shell_.surface_.focus = FocusTarget::Editor;
   return true;
 }

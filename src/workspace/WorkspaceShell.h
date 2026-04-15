@@ -69,6 +69,7 @@ class WorkspaceShell {
 
   struct RenderInvalidation {
     bool full = false;
+    std::vector<SDL_FRect> rects;
     std::optional<SDL_FRect> rect;
   };
 
@@ -342,6 +343,12 @@ class WorkspaceShell {
     float incoming_accept_button_width = 0.0f;
     float current_accept_button_width = 0.0f;
     std::array<float, 4> result_action_widths{};
+  };
+
+  struct ChangedLineSpan {
+    std::size_t old_start = 0;
+    std::size_t old_end = 0;
+    std::size_t new_end = 0;
   };
 
   struct BottomPanelLogLayout {
@@ -1493,15 +1500,39 @@ class WorkspaceShell {
   void RequestTabStripRedraw();
   void RequestEditorSurfaceRedraw();
   void RequestFocusedEditorRedraw();
+  void RequestEditorLineRangeRedraw(std::size_t start_line, std::size_t end_line);
+  void RequestEditorLineToBottomRedraw(std::size_t start_line);
+  void RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
+                                         const std::vector<std::string>& after_lines);
+  void RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row);
+  void RequestCompareRowToBottomRedraw(std::size_t start_row);
+  void RequestCompareRightLineRangeRedraw(std::size_t start_line, std::size_t end_line);
+  void RequestCompareRightLineToBottomRedraw(std::size_t start_line);
+  void RequestMergeResultLineRangeRedraw(std::size_t start_line, std::size_t end_line);
+  void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
+  void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
   void RequestBottomPanelContentRedraw();
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
+  std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,
+                                                      std::size_t end_line) const;
+  std::optional<SDL_FRect> CurrentEditorLineToBottomRect(std::size_t start_line) const;
+  std::optional<SDL_FRect> CurrentCompareRowRangeRect(std::size_t start_row,
+                                                      std::size_t end_row) const;
+  std::optional<SDL_FRect> CurrentCompareRowToBottomRect(std::size_t start_row) const;
+  std::optional<SDL_FRect> CurrentMergeResultLineRangeRect(std::size_t start_line,
+                                                           std::size_t end_line) const;
+  std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
+  std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   std::optional<SDL_FRect> CurrentPromptRedrawRect() const;
+  static std::optional<ChangedLineSpan> ComputeChangedLineSpan(
+      const std::vector<std::string>& before_lines,
+      const std::vector<std::string>& after_lines);
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;

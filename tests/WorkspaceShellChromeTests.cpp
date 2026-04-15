@@ -202,6 +202,7 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   const auto result = shell.HandleEvent(event);
   const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   const SDL_FRect inactive_pane = WorkspaceShellTestAccess::InactiveEditorPaneRect(shell);
+  const auto edited_line_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
 
   Expect(result.handled, "editor typing should be handled");
   Expect(!result.redraw.full && result.redraw.rect.has_value(),
@@ -210,6 +211,10 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "editor typing redraws should include the active editor pane");
   Expect(!RectsIntersect(*result.redraw.rect, inactive_pane),
          "editor typing redraws should avoid repainting the inactive split pane");
+  Expect(edited_line_rect.has_value() && RectsIntersect(*result.redraw.rect, *edited_line_rect),
+         "editor typing redraws should include the edited line band");
+  Expect(result.redraw.rect->h < active_pane.h,
+         "single-line editor typing should redraw less than the full active pane");
 }
 
 void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {

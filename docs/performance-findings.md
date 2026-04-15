@@ -107,6 +107,37 @@ Impact:
 - dirty-state indicators remain explicit and correct instead of being refreshed incidentally by
   over-broad invalidation
 
+### Multi-rect retained redraws and row-band invalidation
+
+Problem:
+
+- a single union dirty rect was still too coarse once the shell started invalidating narrow editor
+  bands and disjoint chrome areas explicitly
+- tab-strip dirty indicators and row-local editor redraws could only be represented as one bounding
+  box, which erased the locality benefit
+- compare row selection and merge conflict selection still repainted larger surfaces than needed
+
+Implemented:
+
+- `RenderInvalidation` now carries a small set of dirty rects instead of collapsing every event
+  into one bounding box
+- the retained-scene renderer now replays shell rendering once per dirty clip rect before
+  presenting, so disjoint updates stay disjoint
+- normal editor edits now invalidate the affected line band, or the changed line to the bottom of
+  the active pane when line insertion or deletion shifts everything below it
+- compare selection changes now invalidate only the affected row bands, and compare edits redraw
+  only the changed rows or the changed row-to-bottom region when row alignment shifts
+- merge selection and hover changes now invalidate only the affected conflict bands, while merge
+  result edits redraw from the changed line to the bottom of the merge surface when downstream rows
+  can shift
+
+Impact:
+
+- explicit dirty-state chrome updates no longer force bounding-box redraws through unrelated panes
+- editor, compare, and merge interactions now keep more updates on narrow row-band paths
+- the retained redraw model is now expressive enough to stay correct without falling back to
+  heuristic widening
+
 ### Faster ASCII text draws
 
 Problem:
@@ -128,14 +159,16 @@ Impact:
 
 ### Finer-grained surface invalidation
 
-Dirty-rect ownership is now explicit and broad enough to keep the common interaction paths off the
-full-frame fallback, but the shell still invalidates at pane or major-surface granularity. The
-highest-value remaining UI work is now:
+Dirty-rect ownership is now explicit and the retained-scene path supports multiple disjoint dirty
+rects, but there is still room to make individual surfaces cheaper. The highest-value remaining UI
+work is now:
 
-- editor edits and selections that repaint less than the full active pane
-- compare and merge redraws that invalidate only the affected rows inside the active pane
 - bottom-panel updates that repaint less than the full content area when only one row or caret
   changed
+- finer-grained row or token invalidation inside merge and compare editing paths that still redraw
+  from the changed row to the bottom when downstream rows may shift
+- broader measurement of whether the remaining repaint cost is now dominated by text rendering
+  rather than scene invalidation
 
 Relevant code:
 

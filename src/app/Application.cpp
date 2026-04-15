@@ -44,18 +44,6 @@ std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect, int width, int h
   return SDL_Rect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
 }
 
-std::optional<SDL_FRect> UnionDirtyRect(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
-  if (!lhs.has_value()) {
-    return rhs;
-  }
-
-  const float x0 = std::min(lhs->x, rhs.x);
-  const float y0 = std::min(lhs->y, rhs.y);
-  const float x1 = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
-  const float y1 = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
-  return SDL_FRect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
-}
-
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
     SDL_Window* window,
     SDL_Renderer* renderer,
@@ -105,14 +93,14 @@ int Application::Run() {
 
   running_ = true;
   bool full_redraw_pending = true;
-  std::optional<SDL_FRect> dirty_rect;
+  std::vector<SDL_FRect> dirty_rects;
   const char* redraw_reason = "startup";
 
   while (running_) {
-    if (full_redraw_pending || dirty_rect.has_value()) {
-      Render(full_redraw_pending ? std::nullopt : dirty_rect, redraw_reason);
+    if (full_redraw_pending || !dirty_rects.empty()) {
+      Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
       full_redraw_pending = false;
-      dirty_rect.reset();
+      dirty_rects.clear();
       redraw_reason = "event";
     }
 
@@ -123,9 +111,15 @@ int Application::Run() {
                                : SDL_WaitEvent(&event);
     if (!has_event) {
       if (next_delay.has_value()) {
-        dirty_rect = workspace_shell_.CurrentCaretDirtyRect();
-        full_redraw_pending = !dirty_rect.has_value();
-        redraw_reason = dirty_rect.has_value() ? "caret-blink" : "animation";
+        dirty_rects.clear();
+        if (const auto caret_rect = workspace_shell_.CurrentCaretDirtyRect(); caret_rect.has_value()) {
+          dirty_rects.push_back(*caret_rect);
+          full_redraw_pending = false;
+          redraw_reason = "caret-blink";
+        } else {
+          full_redraw_pending = true;
+          redraw_reason = "animation";
+        }
         continue;
       }
       SDL_Log("SDL_WaitEvent failed: %s", SDL_GetError());
@@ -137,9 +131,9 @@ int Application::Run() {
       if (result.handled) {
         if (result.redraw.full) {
           full_redraw_pending = true;
-          dirty_rect.reset();
-        } else if (result.redraw.rect.has_value() && !full_redraw_pending) {
-          dirty_rect = UnionDirtyRect(dirty_rect, *result.redraw.rect);
+          dirty_rects.clear();
+        } else if (!full_redraw_pending) {
+          dirty_rects.insert(dirty_rects.end(), result.redraw.rects.begin(), result.redraw.rects.end());
         }
         redraw_reason = result.redraw.full ? "event-full" : "event-partial";
       }
@@ -278,6 +272,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
           .handled = true,
           .redraw = workspace::WorkspaceShell::RenderInvalidation{
               .full = true,
+              .rects = {},
               .rect = std::nullopt,
           },
       };
@@ -380,7 +375,7 @@ void Application::StopWindowDrag() {
   SDL_CaptureMouse(false);
 }
 
-void Application::Render(std::optional<SDL_FRect> dirty_rect, const char* reason) {
+void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason) {
   if (renderer_ == nullptr) {
     return;
   }
@@ -396,7 +391,7 @@ void Application::Render(std::optional<SDL_FRect> dirty_rect, const char* reason
     return;
   }
 
-  const bool full_redraw = !dirty_rect.has_value() || !scene_texture_valid_;
+  const bool full_redraw = dirty_rects.empty() || !scene_texture_valid_;
   const Uint64 render_start = SDL_GetTicksNS();
   if (EnsureSceneTexture(width, height)) {
     if (!SDL_SetRenderTarget(renderer_, scene_texture_)) {
@@ -404,33 +399,41 @@ void Application::Render(std::optional<SDL_FRect> dirty_rect, const char* reason
       DestroySceneTexture();
       workspace_shell_.Render(renderer_, width, height);
       SDL_RenderPresent(renderer_);
-      RecordRenderStats(true, std::nullopt, "fallback-full", SDL_GetTicksNS() - render_start);
+      RecordRenderStats(true, 0, "fallback-full", SDL_GetTicksNS() - render_start);
       first_render_complete_ = true;
       return;
     }
 
-    if (!full_redraw) {
-      const auto clip_rect = ToRenderClipRect(*dirty_rect, width, height);
-      if (clip_rect.has_value()) {
+    if (full_redraw) {
+      workspace_shell_.Render(renderer_, width, height);
+    } else {
+      bool rendered_partial = false;
+      for (const SDL_FRect& dirty_rect : dirty_rects) {
+        const auto clip_rect = ToRenderClipRect(dirty_rect, width, height);
+        if (!clip_rect.has_value()) {
+          continue;
+        }
         SDL_SetRenderClipRect(renderer_, &*clip_rect);
-      } else {
-        dirty_rect.reset();
+        workspace_shell_.Render(renderer_, width, height);
+        rendered_partial = true;
+      }
+      if (!rendered_partial) {
+        workspace_shell_.Render(renderer_, width, height);
+        dirty_rects.clear();
       }
     }
-
-    workspace_shell_.Render(renderer_, width, height);
 
     SDL_SetRenderClipRect(renderer_, nullptr);
     SDL_SetRenderTarget(renderer_, nullptr);
     SDL_RenderTexture(renderer_, scene_texture_, nullptr, nullptr);
     SDL_RenderPresent(renderer_);
     scene_texture_valid_ = true;
-    RecordRenderStats(full_redraw || !dirty_rect.has_value(), dirty_rect, reason,
+    RecordRenderStats(full_redraw || dirty_rects.empty(), dirty_rects.size(), reason,
                       SDL_GetTicksNS() - render_start);
   } else {
     workspace_shell_.Render(renderer_, width, height);
     SDL_RenderPresent(renderer_);
-    RecordRenderStats(true, std::nullopt, "fallback-full", SDL_GetTicksNS() - render_start);
+    RecordRenderStats(true, 0, "fallback-full", SDL_GetTicksNS() - render_start);
   }
   first_render_complete_ = true;
 }
@@ -498,7 +501,7 @@ void Application::DestroySceneTexture() {
 }
 
 void Application::RecordRenderStats(bool full_redraw,
-                                    std::optional<SDL_FRect> dirty_rect,
+                                    std::size_t dirty_rect_count,
                                     const char* reason,
                                     Uint64 elapsed_ns) {
   if (!redraw_trace_enabled_) {
@@ -507,7 +510,7 @@ void Application::RecordRenderStats(bool full_redraw,
 
   ++redraw_trace_frames_;
   redraw_trace_total_ns_ += elapsed_ns;
-  if (full_redraw || !dirty_rect.has_value()) {
+  if (full_redraw || dirty_rect_count == 0) {
     ++redraw_trace_full_frames_;
   } else {
     ++redraw_trace_partial_frames_;

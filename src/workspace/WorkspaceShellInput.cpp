@@ -380,7 +380,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
       UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
     }
     ResetCaretBlink();
-    RequestFocusedEditorRedraw();
+    RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
     if (viewport->dirty() != was_dirty) {
       RequestTabStripRedraw();
     }
