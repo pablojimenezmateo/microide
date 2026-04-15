@@ -16,6 +16,7 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
 void RegisterRegexUtilTests(std::vector<TestCase>& tests);
 void RegisterStringUtilTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
+void RegisterTextRendererTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests);
@@ -48,6 +49,7 @@ int main() {
   microide::tests::RegisterTerminalSessionTests(tests);
   microide::tests::RegisterRegexUtilTests(tests);
   microide::tests::RegisterStringUtilTests(tests);
+  microide::tests::RegisterTextRendererTests(tests);
   microide::tests::RegisterTextViewportTests(tests);
   microide::tests::RegisterWindowPresentationTests(tests);
   microide::tests::RegisterWorkspaceShellChromeTests(tests);

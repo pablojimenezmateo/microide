@@ -235,6 +235,7 @@ add_executable(microide_tests
   tests/TestSupport.cpp
   tests/PluginHostTests.cpp
   tests/StringUtilTests.cpp
+  tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceShellChromeTests.cpp

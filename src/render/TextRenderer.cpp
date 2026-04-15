@@ -1,5 +1,8 @@
 #include "render/TextRenderer.h"
 
+#include <algorithm>
+#include <vector>
+
 #include "render/DebugTextBackend.h"
 #include "util/StartupTrace.h"
 
@@ -10,6 +13,8 @@
 namespace microide::render {
 
 namespace {
+
+constexpr std::size_t kWidthCacheCapacity = 512;
 
 std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset) {
   if (offset >= text.size()) {
@@ -97,6 +102,16 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
   if (backend_ != nullptr) {
     backend_->SetPresentationScale(presentation_scale_x, presentation_scale_y);
   }
+
+  const std::string backend_name = backend_ != nullptr ? std::string(backend_->Name()) : "unknown";
+  if (!width_cache_initialized_ || width_cache_backend_name_ != backend_name ||
+      width_cache_scale_x_ != presentation_scale_x || width_cache_scale_y_ != presentation_scale_y) {
+    ClearWidthCache();
+    width_cache_backend_name_ = backend_name;
+    width_cache_scale_x_ = presentation_scale_x;
+    width_cache_scale_y_ = presentation_scale_y;
+    width_cache_initialized_ = true;
+  }
 }
 
 float TextRenderer::CharWidth() const {
@@ -108,8 +123,19 @@ float TextRenderer::LineHeight() const {
 }
 
 float TextRenderer::MeasureWidth(std::string_view text) const {
-  return backend_ != nullptr ? backend_->MeasureWidth(text)
-                             : static_cast<float>(text.size()) * 8.0f;
+  if (text.empty()) {
+    return 0.0f;
+  }
+
+  const auto cached = width_cache_.find(std::string(text));
+  if (cached != width_cache_.end()) {
+    return cached->second;
+  }
+
+  const float width = backend_ != nullptr ? backend_->MeasureWidth(text)
+                                          : static_cast<float>(text.size()) * 8.0f;
+  RememberMeasuredWidth(std::string(text), width);
+  return width;
 }
 
 std::string_view TextRenderer::BackendName() const {
@@ -130,16 +156,27 @@ std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width
     return {};
   }
 
+  std::vector<std::size_t> boundaries;
+  boundaries.reserve(text.size());
+  for (std::size_t offset = 0; offset < text.size();) {
+    offset += Utf8SequenceLength(text, offset);
+    boundaries.push_back(offset);
+  }
+
   std::size_t fit_length = 0;
-  for (std::size_t prefix_length = 0; prefix_length < text.size();) {
-    prefix_length += Utf8SequenceLength(text, prefix_length);
+  std::size_t low = 0;
+  std::size_t high = boundaries.size();
+  while (low < high) {
+    const std::size_t mid = low + (high - low) / 2;
+    const std::size_t prefix_length = boundaries[mid];
     const std::string candidate =
         std::string(text.substr(0, prefix_length)) + std::string(kEllipsis);
     if (MeasureWidth(candidate) <= max_width) {
       fit_length = prefix_length;
-      continue;
+      low = mid + 1;
+    } else {
+      high = mid;
     }
-    break;
   }
 
   return std::string(text.substr(0, fit_length)) + std::string(kEllipsis);
@@ -166,6 +203,25 @@ void TextRenderer::DrawStringOn(SDL_Renderer* renderer,
     return;
   }
   backend_->DrawStringOn(renderer, x, y, color, background, text);
+}
+
+void TextRenderer::ClearWidthCache() const {
+  width_cache_.clear();
+  width_cache_order_.clear();
+}
+
+void TextRenderer::RememberMeasuredWidth(std::string text, float width) const {
+  auto [it, inserted] = width_cache_.emplace(std::move(text), width);
+  if (!inserted) {
+    it->second = width;
+    return;
+  }
+
+  width_cache_order_.push_back(it->first);
+  while (width_cache_order_.size() > kWidthCacheCapacity) {
+    width_cache_.erase(width_cache_order_.front());
+    width_cache_order_.pop_front();
+  }
 }
 
 }  // namespace microide::render
