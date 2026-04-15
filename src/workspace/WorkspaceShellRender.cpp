@@ -651,16 +651,47 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     }
 
     const float char_width = std::max(1.0f, text_renderer_.CharWidth());
-    const std::size_t max_chars =
-        std::max<std::size_t>(1, static_cast<std::size_t>(std::floor(width / char_width)));
-    for (std::size_t column = 0; column < line.cells.size() && column < max_chars; ++column) {
+    const std::size_t visible_columns = std::min(
+        line.cells.size(),
+        std::max<std::size_t>(1, static_cast<std::size_t>(std::floor(width / char_width))));
+    if (visible_columns == 0) {
+      return;
+    }
+
+    // Paint backgrounds for the visible row first so slight glyph overhang from the fast ASCII
+    // path is not erased by the next cell's background fill.
+    for (std::size_t column = 0; column < visible_columns;) {
+      const auto& cell = line.cells[column];
+      const bool selected = TerminalCellSelected(row_index, column);
+      const SDL_Color background = resolve_terminal_colors(cell.style, selected).first;
+
+      std::size_t run_end = column + 1;
+      while (run_end < visible_columns) {
+        const auto& next_cell = line.cells[run_end];
+        const bool next_selected = TerminalCellSelected(row_index, run_end);
+        const SDL_Color next_background = resolve_terminal_colors(next_cell.style, next_selected).first;
+        if (next_background.r != background.r || next_background.g != background.g ||
+            next_background.b != background.b || next_background.a != background.a) {
+          break;
+        }
+        ++run_end;
+      }
+
+      const float run_x = x + static_cast<float>(column) * char_width;
+      DrawFilledRect(renderer,
+                     MakeRect(run_x, y - 1.0f,
+                              static_cast<float>(run_end - column) * char_width,
+                              text_renderer_.LineHeight()),
+                     background);
+      column = run_end;
+    }
+
+    for (std::size_t column = 0; column < visible_columns; ++column) {
       const auto& cell = line.cells[column];
       const bool selected = TerminalCellSelected(row_index, column);
       const auto [foreground, background] = resolve_terminal_colors(cell.style, selected);
+      (void) background;
       const float cell_x = x + static_cast<float>(column) * char_width;
-      DrawFilledRect(renderer,
-                     MakeRect(cell_x, y - 1.0f, char_width, text_renderer_.LineHeight()),
-                     background);
       const std::string_view display_text = cell.DisplayText();
       if (display_text.empty() || display_text == " ") {
         continue;

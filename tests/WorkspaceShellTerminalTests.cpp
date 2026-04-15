@@ -3,6 +3,13 @@
 #include "TerminalSessionTestAccess.h"
 #include "WorkspaceShellTestAccess.h"
 
+#include "render/TextRenderer.h"
+#include "render/Theme.h"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -13,9 +20,61 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 
+void EnsureDummySdlVideo() {
+  static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");
+  static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
+  Expect(initialized, "SDL should initialize with the dummy video driver");
+}
+
+class SoftwareCanvas final {
+ public:
+  SoftwareCanvas(int width, int height) {
+    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+    Expect(surface_ != nullptr, "terminal renderer regression test should allocate a software surface");
+    renderer_ = SDL_CreateSoftwareRenderer(surface_);
+    Expect(renderer_ != nullptr, "terminal renderer regression test should create a software renderer");
+  }
+
+  ~SoftwareCanvas() {
+    if (renderer_ != nullptr) {
+      SDL_DestroyRenderer(renderer_);
+    }
+    if (surface_ != nullptr) {
+      SDL_DestroySurface(surface_);
+    }
+  }
+
+  SDL_Renderer* renderer() const { return renderer_; }
+
+ private:
+  SDL_Surface* surface_ = nullptr;
+  SDL_Renderer* renderer_ = nullptr;
+};
+
 bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
          lhs.y + lhs.h > rhs.y;
+}
+
+int CountNonBackgroundPixels(SDL_Surface* surface,
+                             const SDL_Rect& rect,
+                             SDL_Color background) {
+  Expect(surface != nullptr, "pixel counting should receive a readable surface");
+  int count = 0;
+  for (int y = rect.y; y < rect.y + rect.h; ++y) {
+    for (int x = rect.x; x < rect.x + rect.w; ++x) {
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
+      Uint8 a = 0;
+      Expect(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
+             "pixel counting should read render output");
+      if (r != background.r || g != background.g || b != background.b || a != background.a) {
+        ++count;
+      }
+    }
+  }
+  return count;
 }
 
 void TestWorkspaceShellCtrlShiftVPastesBracketedClipboard() {
@@ -200,6 +259,96 @@ void TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation() {
          "terminal key redraws should include the terminal content area");
   Expect(result.redraw.rect->y >= panel_content.y,
          "terminal key redraws should avoid repainting the terminal tab strip");
+}
+
+void TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#else
+  EnsureDummySdlVideo();
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetCursorVisible(session, false);
+
+  const std::string prompt = "pablo@victus ~/Documents/projects/dolfin-app";
+  TerminalSessionTestAccess::AppendOutput(session, prompt);
+
+  SoftwareCanvas shell_canvas(1280, 720);
+  shell.Render(shell_canvas.renderer(), 1280, 720);
+
+  const SDL_FPoint text_origin = WorkspaceShellTestAccess::BottomPanelTextOrigin(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float line_height = WorkspaceShellTestAccess::TextLineHeight(shell);
+
+  SoftwareCanvas reference_canvas(1280, 720);
+  microide::render::TextRenderer reference_renderer;
+  reference_renderer.EnsureInitialized(reference_canvas.renderer());
+  Expect(reference_renderer.BackendName() == "sdl3_ttf",
+         "terminal renderer regression test should exercise the real font backend");
+  const float text_x = text_origin.x;
+  const float text_y = text_origin.y;
+
+  const microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  SDL_SetRenderDrawColor(reference_canvas.renderer(), theme.surface_background.r,
+                         theme.surface_background.g, theme.surface_background.b,
+                         theme.surface_background.a);
+  Expect(SDL_RenderClear(reference_canvas.renderer()),
+         "terminal renderer regression test should clear the reference canvas");
+  for (std::size_t column = 0; column < prompt.size(); ++column) {
+    const float cell_x = text_x + static_cast<float>(column) * char_width;
+    SDL_SetRenderDrawColor(reference_canvas.renderer(), theme.surface_background.r,
+                           theme.surface_background.g, theme.surface_background.b,
+                           theme.surface_background.a);
+    const SDL_FRect cell_rect = SDL_FRect{cell_x, text_y - 1.0f, char_width, line_height};
+    Expect(SDL_RenderFillRect(reference_canvas.renderer(), &cell_rect),
+           "terminal renderer regression test should paint legacy cell backgrounds");
+    if (prompt[column] != ' ') {
+      reference_renderer.DrawString(reference_canvas.renderer(), cell_x, text_y, theme.text_muted,
+                                    std::string_view(prompt.data() + column, 1));
+    }
+  }
+
+  SDL_Surface* actual_pixels = SDL_RenderReadPixels(shell_canvas.renderer(), nullptr);
+  SDL_Surface* legacy_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+
+  const auto column_band = [&](std::size_t column, std::size_t span = 1) {
+    return SDL_Rect{
+        .x = std::max(0, static_cast<int>(std::floor(text_x + static_cast<float>(column) * char_width - 1.0f))),
+        .y = std::max(0, static_cast<int>(std::floor(text_y - 1.0f))),
+        .w = std::max(1, static_cast<int>(std::ceil(static_cast<float>(span) * char_width + 2.0f))),
+        .h = std::max(1, static_cast<int>(std::ceil(line_height + 1.0f))),
+    };
+  };
+  const int actual_pablo = CountNonBackgroundPixels(actual_pixels, column_band(2, 3),
+                                                    theme.surface_background);
+  const int legacy_pablo = CountNonBackgroundPixels(legacy_pixels, column_band(2, 3),
+                                                    theme.surface_background);
+  const int actual_documents = CountNonBackgroundPixels(actual_pixels, column_band(15),
+                                                        theme.surface_background);
+  const int legacy_documents = CountNonBackgroundPixels(legacy_pixels, column_band(15),
+                                                        theme.surface_background);
+  const int actual_tail = CountNonBackgroundPixels(actual_pixels, column_band(prompt.size() - 1),
+                                                   theme.surface_background);
+  const int legacy_tail = CountNonBackgroundPixels(legacy_pixels, column_band(prompt.size() - 1),
+                                                   theme.surface_background);
+
+  Expect(actual_pablo > legacy_pablo,
+         "terminal ASCII rendering should preserve more of the early prompt glyphs than the legacy per-cell painter");
+  Expect(actual_documents > legacy_documents,
+         "terminal ASCII rendering should preserve the leading edge of Documents");
+  Expect(actual_tail > legacy_tail,
+         "terminal ASCII rendering should preserve the trailing edge of the final prompt character");
+
+  if (actual_pixels != nullptr) {
+    SDL_DestroySurface(actual_pixels);
+  }
+  if (legacy_pixels != nullptr) {
+    SDL_DestroySurface(legacy_pixels);
+  }
+#endif
 }
 
 void TestWorkspaceShellTypingReenablesTerminalTailFollow() {
@@ -606,6 +755,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor);
   AddTest(tests, "WorkspaceShell/TerminalKeysReturnPartialPanelInvalidation",
           TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation);
+  AddTest(tests, "WorkspaceShell/TerminalAsciiPromptMatchesDirectStringRendering",
+          TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering);
   AddTest(tests, "WorkspaceShell/TypingReenablesTerminalTailFollow",
           TestWorkspaceShellTypingReenablesTerminalTailFollow);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",

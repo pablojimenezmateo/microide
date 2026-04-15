@@ -517,6 +517,14 @@ struct WorkspaceShellTestAccess {
              panel_layout.line_height * 0.5f,
     };
   }
+  static SDL_FPoint BottomPanelTextOrigin(WorkspaceShell& shell) {
+    const auto* terminal_tab = shell.ActiveTerminalTab();
+    const std::size_t line_count =
+        terminal_tab != nullptr ? terminal_tab->session.LineCount() : 0;
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto panel_layout = shell.ComputeBottomPanelLogLayout(layout, line_count);
+    return SDL_FPoint{.x = panel_layout.text_x, .y = panel_layout.text_y};
+  }
   static bool TerminalHasSelection(const WorkspaceShell& shell) {
     return shell.TerminalHasSelection();
   }
@@ -658,6 +666,7 @@ struct WorkspaceShellTestAccess {
     return shell.CurrentMergeResultLineToBottomRect(start_line);
   }
   static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
+  static float TextLineHeight(WorkspaceShell& shell) { return shell.text_renderer_.LineHeight(); }
   static SDL_HitTestResult WindowHitTest(WorkspaceShell& shell, float x, float y) {
     return shell.WindowHitTest(x, y);
   }

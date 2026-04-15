@@ -64,19 +64,11 @@ class CountingTextBackend final : public microide::render::TextRendererBackend {
 
 #if MICROIDE_HAS_SDL3_TTF
 
-class ScopedSdl final {
- public:
-  ScopedSdl() : video_driver_("SDL_VIDEODRIVER", "dummy") {
-    Expect(SDL_Init(SDL_INIT_VIDEO), "SDL should initialize with the dummy video driver");
-  }
-
-  ~ScopedSdl() {
-    SDL_Quit();
-  }
-
- private:
-  ScopedEnvVar video_driver_;
-};
+void EnsureDummySdlVideo() {
+  static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");
+  static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
+  Expect(initialized, "SDL should initialize with the dummy video driver");
+}
 
 class SoftwareCanvas final {
  public:
@@ -112,7 +104,7 @@ bool IsGreenDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
 }
 
 void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
-  ScopedSdl sdl;
+  EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
 
   microide::render::TextRenderer renderer;

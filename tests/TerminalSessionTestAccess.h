@@ -70,6 +70,11 @@ struct TerminalSessionTestAccess {
     session.running_ = running;
   }
 
+  static void SetCursorVisible(microide::terminal::TerminalSession& session, bool visible) {
+    std::scoped_lock lock(session.mutex_);
+    session.cursor_visible_ = visible;
+  }
+
   static void SetChildProcess(microide::terminal::TerminalSession& session, int child_pid) {
     std::scoped_lock lock(session.mutex_);
     session.child_pid_ = child_pid;
