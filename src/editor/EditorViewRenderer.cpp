@@ -74,7 +74,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     const float row_y_start = title_y + text_renderer.LineHeight() + 8.0f;
     const float row_step = text_renderer.LineHeight() + 1.0f;
 
-    text_renderer.DrawStringOn(renderer, inset_x, title_y, theme.text_primary,
+    text_renderer.DrawStringOn(renderer, inset_x, title_y, theme.surface_text,
                                theme.surface_background, title);
 
     float row_y = row_y_start;
@@ -85,7 +85,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
 
       if (!row.label.empty() && key_width > 0.0f) {
         text_renderer.DrawStringOn(
-            renderer, inset_x, row_y, theme.text_primary, theme.surface_background,
+            renderer, inset_x, row_y, theme.surface_text, theme.surface_background,
             text_renderer.TruncateToWidth(row.key, key_width - 8.0f));
         text_renderer.DrawStringOn(
             renderer, inset_x + key_width, row_y, theme.text_secondary,

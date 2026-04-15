@@ -1,5 +1,5 @@
 color-link color-column "#2d0023"
-color-link comment "#886484,#2d0023"
+color-link comment "#8B98AB,#2d0023"
 color-link constant.bool "#fd971f,#2d0023"
 color-link constant "#fd971f,#2d0023"
 color-link constant.string "#a0f000,#2d0023"

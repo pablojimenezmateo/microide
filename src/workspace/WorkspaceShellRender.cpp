@@ -711,7 +711,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                      theme_.accent);
     }
     draw_vcentered_text_on(item.rect, 10.0f,
-                           item.active ? theme_.text_primary : theme_.text_secondary, background,
+                           item.active ? theme_.chrome_active_text : theme_.chrome_text, background,
                            menu->label);
   }
 
@@ -729,13 +729,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         std::floor(layout.menu_bar.x + (layout.menu_bar.w - title_width) * 0.5f);
     if (title_x >= left_limit && title_x + title_width <= right_limit) {
       draw_vcentered_text_on(MakeRect(title_x, layout.menu_bar.y, title_width, layout.menu_bar.h),
-                             0.0f, theme_.text_muted, theme_.chrome_background, title);
+                             0.0f, theme_.chrome_text_secondary, theme_.chrome_background, title);
     }
   }
 
   for (const VisibleWindowControlButton& button : window_buttons) {
     SDL_Color background = button.hovered ? theme_.row_highlight : theme_.chrome_background;
-    SDL_Color glyph = button.hovered ? theme_.text_primary : theme_.text_secondary;
+    SDL_Color glyph = button.hovered ? theme_.text_primary : theme_.chrome_text_secondary;
     if (button.id == WindowControlButtonId::Close && button.hovered) {
       background = theme_.diff_deleted;
       glyph = theme_.text_primary;
@@ -794,12 +794,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     if (tab.active) {
       DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f), theme_.accent);
     }
-    draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
+    draw_vcentered_text_on(tab.rect, 10.0f,
+                           tab.active ? theme_.chrome_active_text : theme_.surface_text,
                            tab.active ? theme_.chrome_active : theme_.surface_raised,
                            TruncateLabel(tab.display_title, tab.rect.w - 46.0f));
     draw_tab_close_button(tab.close_rect,
-                          tab.active ? theme_.text_secondary : theme_.text_disabled,
-                          tab.active ? theme_.text_primary : theme_.text_secondary);
+                          tab.active ? theme_.chrome_text_secondary : theme_.text_disabled,
+                          tab.active ? theme_.chrome_active_text : theme_.surface_text);
   }
 
   if (!project_root_.empty() && open_tabs_.empty()) {
@@ -809,7 +810,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawFilledRect(renderer, placeholder_tab, theme_.chrome_active);
     DrawFilledRect(renderer, MakeRect(placeholder_tab.x, placeholder_tab.y, placeholder_tab.w, 2.0f),
                    theme_.accent);
-    draw_vcentered_text_on(placeholder_tab, 10.0f, theme_.text_primary, theme_.chrome_active,
+    draw_vcentered_text_on(placeholder_tab, 10.0f, theme_.chrome_active_text, theme_.chrome_active,
                            "welcome");
   } else if (!project_root_.empty()) {
     for (const VisibleStripTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
@@ -818,12 +819,13 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
                        theme_.accent);
       }
-      draw_vcentered_text_on(tab.rect, 10.0f, tab.active ? theme_.text_primary : theme_.text_secondary,
+      draw_vcentered_text_on(tab.rect, 10.0f,
+                             tab.active ? theme_.chrome_active_text : theme_.surface_text,
                              tab.active ? theme_.chrome_active : theme_.surface_raised,
                              TruncateLabel(tab.display_title, tab.rect.w - 46.0f));
       draw_tab_close_button(tab.close_rect,
-                            tab.active ? theme_.text_secondary : theme_.text_disabled,
-                            tab.active ? theme_.text_primary : theme_.text_secondary);
+                            tab.active ? theme_.chrome_text_secondary : theme_.text_disabled,
+                            tab.active ? theme_.chrome_active_text : theme_.surface_text);
     }
   }
 
@@ -835,7 +837,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       std::max(0.0f, layout.breadcrumb.x + layout.breadcrumb.w - 12.0f - breadcrumb_text_x);
   draw_vcentered_text_on(
       MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
-      0.0f, theme_.text_primary, theme_.chrome_background,
+      0.0f, theme_.chrome_text, theme_.chrome_background,
       TruncateLabel(BreadcrumbLabel(), breadcrumb_text_width));
   if (!hovered_tab_tooltip.empty()) {
     const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
@@ -1162,7 +1164,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       if (!root_label.empty()) {
         draw_centered_text_on(
             MakeRect(root_label_left, layout.sidebar.y + 4.0f, root_label_max_width, 18.0f),
-            theme_.text_muted, theme_.chrome_background, root_label);
+            theme_.chrome_text_secondary, theme_.chrome_background, root_label);
       }
 
       const auto& entries = directory_tree_.entries();
@@ -1420,7 +1422,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         }
 
         const SDL_Color background = tab.active ? theme_.chrome_active : theme_.surface_raised;
-        const SDL_Color foreground = tab.active ? theme_.text_primary : theme_.text_secondary;
+        const SDL_Color foreground =
+            tab.active ? theme_.chrome_active_text : theme_.surface_text;
         DrawFilledRect(renderer, tab.rect, background);
         if (tab.active) {
           DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
@@ -1428,14 +1431,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
         }
         draw_vcentered_text_on(tab.rect, 8.0f, foreground, background,
                                TruncateLabel(tab.display_title, tab.rect.w - 40.0f));
-        draw_tab_close_button(tab.close_rect, foreground, theme_.text_primary);
+        draw_tab_close_button(tab.close_rect, foreground, theme_.chrome_active_text);
       }
       const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
       DrawFilledRect(renderer, new_tab_rect, theme_.surface_raised);
       DrawRect(renderer, new_tab_rect, theme_.border);
-      draw_centered_text_on(new_tab_rect, theme_.text_secondary, theme_.surface_raised, "+");
+      draw_centered_text_on(new_tab_rect, theme_.surface_text, theme_.surface_raised, "+");
     } else {
-      draw_vcentered_text_on(panel_header, 12.0f, theme_.text_secondary, theme_.chrome_background,
+      draw_vcentered_text_on(panel_header, 12.0f, theme_.chrome_text, theme_.chrome_background,
                              "Command");
     }
 
@@ -1511,7 +1514,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 
       SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
-      draw_vcentered_text_on(prompt_rect, 6.0f, theme_.text_primary, theme_.chrome_active,
+      draw_vcentered_text_on(prompt_rect, 6.0f, theme_.chrome_active_text, theme_.chrome_active,
                              "> " + command_.input);
     }
 
@@ -1639,7 +1642,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     DrawFilledRect(renderer, header, theme_.chrome_background);
     DrawFilledRect(renderer, MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
                    theme_.border);
-    draw_vcentered_text_on(header, 16.0f, theme_.text_primary, theme_.chrome_background,
+    draw_vcentered_text_on(header, 16.0f, theme_.chrome_text, theme_.chrome_background,
                            PromptSurfaceTitle());
     draw_text_on(message_rect.x, message_rect.y, theme_.text_muted, theme_.overlay_background,
                  TruncateLabel(PromptSurfaceMessage(), message_rect.w));
@@ -1648,7 +1651,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       DrawFilledRect(renderer, input_rect, theme_.surface_background);
       DrawRect(renderer, input_rect, theme_.border);
-      draw_vcentered_text_on(input_rect, 6.0f, theme_.text_primary, theme_.surface_background,
+      draw_vcentered_text_on(input_rect, 6.0f, theme_.surface_text, theme_.surface_background,
                              TruncateLabel(prompts_.surface.input, input_rect.w - 12.0f));
       if (surface_.window_has_input_focus && text_composition_.text.empty() &&
           active_text_input_visual.has_value() &&
@@ -1668,7 +1671,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
       const SDL_Color background = selected ? theme_.chrome_active : theme_.surface_raised;
       DrawFilledRect(renderer, buttons[i], background);
       DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
-      draw_centered_text_on(buttons[i], theme_.text_primary, background, labels[i]);
+      draw_centered_text_on(buttons[i],
+                            selected ? theme_.chrome_active_text : theme_.surface_text,
+                            background, labels[i]);
     }
   }
 
@@ -1689,7 +1694,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                    MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
                    theme_.border);
 
-    draw_vcentered_text_on(header, 12.0f, theme_.text_primary, theme_.chrome_background,
+    draw_vcentered_text_on(header, 12.0f, theme_.chrome_text, theme_.chrome_background,
                            DirtyPromptTitle());
     draw_text_on(message_rect.x, message_rect.y, theme_.text_secondary, theme_.overlay_background,
                  TruncateLabel(DirtyPromptMessage(), message_rect.w));
@@ -1704,7 +1709,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                      selected ? theme_.chrome_active : theme_.surface_raised);
       DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
       draw_centered_text_on(buttons[i],
-                            selected ? theme_.text_primary : theme_.text_secondary,
+                            selected ? theme_.chrome_active_text : theme_.surface_text,
                             selected ? theme_.chrome_active : theme_.surface_raised, labels[i]);
     }
 

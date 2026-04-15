@@ -1,5 +1,5 @@
 color-link default "#CCCCCC,#242424"
-color-link comment "#707070,#242424"
+color-link comment "#8B98AB,#242424"
 color-link identifier "#FFC66D,#242424"
 color-link constant "#7A9EC2,#242424"
 color-link constant.string "#6A8759,#242424"

@@ -17,6 +17,30 @@
 
 namespace microide::render {
 
+float RelativeLuminance(SDL_Color color) {
+  auto srgb_to_linear = [](Uint8 value) -> float {
+    float v = static_cast<float>(value) / 255.0f;
+    if (v <= 0.04045f) {
+      return v / 12.92f;
+    }
+    return std::pow((v + 0.055f) / 1.055f, 2.4f);
+  };
+
+  float r = srgb_to_linear(color.r);
+  float g = srgb_to_linear(color.g);
+  float b = srgb_to_linear(color.b);
+  return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+}
+
+float Contrast(SDL_Color c1, SDL_Color c2) {
+  float l1 = RelativeLuminance(c1);
+  float l2 = RelativeLuminance(c2);
+  if (l1 < l2) {
+    std::swap(l1, l2);
+  }
+  return (l1 + 0.05f) / (l2 + 0.05f);
+}
+
 namespace {
 
 struct ThemeStyle {
@@ -54,13 +78,47 @@ SDL_Color Darken(SDL_Color color, float amount) {
   return Mix(color, MakeColor(0x00, 0x00, 0x00, color.a), amount);
 }
 
-float RelativeLuminance(SDL_Color color) {
-  return 0.2126f * static_cast<float>(color.r) + 0.7152f * static_cast<float>(color.g) +
-         0.0722f * static_cast<float>(color.b);
+bool IsLight(SDL_Color color) {
+  return RelativeLuminance(color) >= 0.179f;
 }
 
-bool IsLight(SDL_Color color) {
-  return RelativeLuminance(color) >= 140.0f;
+bool SamePolarity(SDL_Color left, SDL_Color right) {
+  return IsLight(left) == IsLight(right);
+}
+
+SDL_Color EnsureContrast(SDL_Color foreground, SDL_Color background, float minimum_contrast) {
+  if (Contrast(foreground, background) >= minimum_contrast) {
+    return foreground;
+  }
+
+  const SDL_Color target =
+      IsLight(background) ? MakeColor(0x00, 0x00, 0x00, foreground.a)
+                          : MakeColor(0xff, 0xff, 0xff, foreground.a);
+  SDL_Color best = foreground;
+  float best_contrast = Contrast(foreground, background);
+  for (int step = 1; step <= 24; ++step) {
+    const float t = static_cast<float>(step) / 24.0f;
+    SDL_Color candidate = Mix(foreground, target, t);
+    candidate.a = foreground.a;
+    const float candidate_contrast = Contrast(candidate, background);
+    if (candidate_contrast > best_contrast) {
+      best = candidate;
+      best_contrast = candidate_contrast;
+    }
+    if (candidate_contrast >= minimum_contrast) {
+      return candidate;
+    }
+  }
+  return best;
+}
+
+SDL_Color EnsureBackgroundSeparation(SDL_Color background,
+                                     SDL_Color reference,
+                                     float minimum_contrast) {
+  if (Contrast(background, reference) >= minimum_contrast) {
+    return background;
+  }
+  return IsLight(reference) ? Darken(background, 0.12f) : Lighten(background, 0.12f);
 }
 
 std::string Trim(std::string_view text) {
@@ -320,7 +378,7 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
     return {};
   }
 
-  const std::filesystem::path direct_path = theme_directory / (std::string(name) + ".micro");
+  const std::filesystem::path direct_path = theme_directory / (std::string(name) + ".microide");
   if (std::filesystem::exists(direct_path)) {
     return direct_path.lexically_normal();
   }
@@ -332,7 +390,7 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
       continue;
     }
     const auto& candidate = it->path();
-    if (candidate.extension() != ".micro") {
+    if (candidate.extension() != ".microide") {
       continue;
     }
     if (ToLower(candidate.stem().string()) == ToLower(name)) {
@@ -375,6 +433,35 @@ SDL_Color ResolveBackground(const ThemeStyleMap& styles,
     return *style->background;
   }
   return fallback;
+}
+
+std::optional<SDL_Color> ResolveForegroundOverride(const ThemeStyleMap& styles,
+                                                   std::string_view key) {
+  if (const ThemeStyle* style = LookupThemeStyle(styles, key);
+      style != nullptr && style->foreground.has_value()) {
+    return *style->foreground;
+  }
+  return std::nullopt;
+}
+
+std::optional<SDL_Color> ResolveBackgroundOverride(const ThemeStyleMap& styles,
+                                                   std::string_view key) {
+  if (const ThemeStyle* style = LookupThemeStyle(styles, key);
+      style != nullptr && style->background.has_value()) {
+    return *style->background;
+  }
+  return std::nullopt;
+}
+
+SDL_Color ResolveUiBackground(const ThemeStyleMap& styles,
+                              std::string_view key,
+                              SDL_Color reference,
+                              SDL_Color fallback) {
+  const std::optional<SDL_Color> candidate = ResolveBackgroundOverride(styles, key);
+  if (!candidate.has_value()) {
+    return fallback;
+  }
+  return SamePolarity(*candidate, reference) ? *candidate : fallback;
 }
 
 bool LoadThemeStyles(const std::filesystem::path& theme_directory,
@@ -434,16 +521,23 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
 
   const SDL_Color default_foreground = ResolveForeground(styles, "default", theme.text_primary);
   const SDL_Color default_background = ResolveBackground(styles, "default", theme.editor_background);
+  const SDL_Color derived_chrome_background =
+      Darken(default_background, IsLight(default_background) ? 0.06f : 0.1f);
   const SDL_Color tabbar_background =
-      ResolveBackground(styles, "tabbar",
-                        Darken(default_background, IsLight(default_background) ? 0.06f : 0.1f));
+      ResolveUiBackground(styles, "tabbar", default_background, derived_chrome_background);
+  const SDL_Color tabbar_foreground = ResolveForeground(styles, "tabbar", default_foreground);
   const SDL_Color statusline_background =
-      ResolveBackground(styles, "statusline", tabbar_background);
+      ResolveUiBackground(styles, "statusline", default_background, tabbar_background);
+  const SDL_Color statusline_foreground = ResolveForeground(styles, "statusline", tabbar_foreground);
   const SDL_Color chrome_active =
-      ResolveBackground(styles, "tabbar.active",
-                        ResolveBackground(styles, "cursor-line",
-                                          Lighten(tabbar_background,
-                                                  IsLight(tabbar_background) ? 0.04f : 0.08f)));
+      ResolveUiBackground(styles, "tabbar.active", tabbar_background,
+                          ResolveUiBackground(
+                              styles, "cursor-line", tabbar_background,
+                              Lighten(tabbar_background,
+                                      IsLight(tabbar_background) ? 0.04f : 0.08f)));
+  const SDL_Color chrome_active_foreground =
+      ResolveForeground(styles, "tabbar.active",
+                        ResolveForeground(styles, "statusline", default_foreground));
   const SDL_Color accent =
       ResolveBackground(styles, "match-brace",
                         ResolveForeground(styles, "special",
@@ -451,7 +545,8 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
                                                             ResolveForeground(styles, "statement",
                                                                               theme.accent))));
   const SDL_Color line_number_background =
-      ResolveBackground(styles, "line-number", Mix(default_background, tabbar_background, 0.45f));
+      ResolveUiBackground(styles, "line-number", default_background,
+                          Mix(default_background, tabbar_background, 0.45f));
   const SDL_Color line_number_foreground =
       ResolveForeground(styles, "line-number",
                         Mix(default_foreground, default_background, 0.55f));
@@ -472,33 +567,54 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
                                               IsLight(default_background) ? 0.3f : 0.5f)));
 
   theme.window_background = Darken(default_background, IsLight(default_background) ? 0.05f : 0.18f);
-  theme.chrome_background = statusline_background;
-  theme.chrome_active = chrome_active;
-  theme.surface_background = Mix(default_background, statusline_background, 0.18f);
-  theme.surface_raised = Mix(theme.surface_background, chrome_active, 0.55f);
+  theme.chrome_background =
+      EnsureBackgroundSeparation(statusline_background, default_background, 1.08f);
+  theme.chrome_active =
+      EnsureBackgroundSeparation(chrome_active, theme.chrome_background, 1.12f);
+  theme.chrome_text = EnsureContrast(statusline_foreground, theme.chrome_background, 4.5f);
+  theme.chrome_active_text =
+      EnsureContrast(chrome_active_foreground, theme.chrome_active, 4.5f);
+  theme.chrome_text_secondary =
+      EnsureContrast(Mix(theme.chrome_text, theme.chrome_background, 0.25f),
+                     theme.chrome_background, 3.0f);
+  theme.surface_background = EnsureBackgroundSeparation(
+      Mix(default_background, theme.chrome_background, 0.18f), default_background, 1.04f);
+  theme.surface_raised = EnsureBackgroundSeparation(
+      Mix(theme.surface_background, theme.chrome_active, 0.55f), theme.surface_background, 1.08f);
+  theme.surface_text = EnsureContrast(
+      ResolveForegroundOverride(styles, "tabbar").value_or(default_foreground),
+      theme.surface_background, 4.5f);
   theme.editor_background = default_background;
   theme.gutter_background = line_number_background;
   theme.overlay_background = WithAlpha(theme.surface_raised, 0xf6);
   theme.overlay_backdrop =
       WithAlpha(Darken(default_background, IsLight(default_background) ? 0.28f : 0.36f), 0x94);
-  theme.border = Mix(default_foreground, default_background, 0.72f);
+  theme.border = EnsureContrast(Mix(default_foreground, default_background, 0.72f),
+                                theme.surface_background, 1.5f);
   theme.accent = accent;
-  theme.text_primary = default_foreground;
-  theme.text_secondary = Mix(default_foreground, default_background, 0.22f);
-  theme.text_muted = Mix(default_foreground, default_background, 0.4f);
-  theme.text_disabled = Mix(default_foreground, default_background, 0.58f);
+  theme.text_primary = EnsureContrast(default_foreground, theme.editor_background, 4.5f);
+  theme.text_secondary =
+      EnsureContrast(Mix(default_foreground, default_background, 0.22f), theme.editor_background,
+                     3.0f);
+  theme.text_muted =
+      EnsureContrast(Mix(default_foreground, default_background, 0.4f), theme.editor_background,
+                     2.2f);
+  theme.text_disabled =
+      EnsureContrast(Mix(default_foreground, default_background, 0.58f), theme.editor_background,
+                     1.7f);
   theme.row_highlight = row_highlight;
   theme.selection_fill = WithAlpha(selection, 0xb4);
   theme.search_match = WithAlpha(search_match, 0x8f);
   theme.search_match_active =
       WithAlpha(Lighten(search_match, IsLight(search_match) ? 0.04f : 0.12f), 0xc8);
-  theme.cursor = default_foreground;
+  theme.cursor = EnsureContrast(default_foreground, theme.editor_background, 4.5f);
   theme.syntax_keyword = ResolveForeground(styles, "statement", theme.accent);
   theme.syntax_type = ResolveForeground(styles, "type", theme.text_primary);
   theme.syntax_string =
       ResolveForeground(styles, "constant.string",
                         ResolveForeground(styles, "constant", theme.text_primary));
-  theme.syntax_comment = ResolveForeground(styles, "comment", theme.text_muted);
+  theme.syntax_comment = EnsureContrast(
+      ResolveForeground(styles, "comment", theme.text_muted), theme.editor_background, 2.1f);
   theme.syntax_number =
       ResolveForeground(styles, "constant.number",
                         ResolveForeground(styles, "constant", theme.text_primary));
@@ -510,8 +626,9 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
       ResolveForeground(styles, "symbol.operator",
                         ResolveForeground(styles, "symbol",
                                           ResolveForeground(styles, "statement", theme.accent)));
-  theme.line_number = line_number_foreground;
-  theme.current_line_number = current_line_number;
+  theme.line_number = EnsureContrast(line_number_foreground, theme.gutter_background, 2.3f);
+  theme.current_line_number =
+      EnsureContrast(current_line_number, theme.gutter_background, 4.0f);
   theme.diff_added = ResolveForeground(styles, "diff-added", theme.diff_added);
   theme.diff_modified = ResolveForeground(styles, "diff-modified", theme.diff_modified);
   theme.diff_deleted = ResolveForeground(styles, "diff-deleted", theme.diff_deleted);
@@ -525,8 +642,12 @@ Theme MakeDefaultTheme() {
       .window_background = SDL_Color{0x0a, 0x0d, 0x14, 0xff},
       .chrome_background = SDL_Color{0x1a, 0x1f, 0x2b, 0xff},
       .chrome_active = SDL_Color{0x24, 0x2b, 0x3a, 0xff},
+      .chrome_text = SDL_Color{0xda, 0xe0, 0xe8, 0xff},
+      .chrome_active_text = SDL_Color{0xff, 0xff, 0xff, 0xff},
+      .chrome_text_secondary = SDL_Color{0xb4, 0xbe, 0xcc, 0xff},
       .surface_background = SDL_Color{0x16, 0x1b, 0x26, 0xff},
       .surface_raised = SDL_Color{0x1d, 0x23, 0x31, 0xff},
+      .surface_text = SDL_Color{0xda, 0xe0, 0xe8, 0xff},
       .editor_background = SDL_Color{0x11, 0x15, 0x1d, 0xff},
       .gutter_background = SDL_Color{0x0f, 0x13, 0x1b, 0xff},
       .overlay_background = SDL_Color{0x1a, 0x20, 0x2c, 0xf6},
@@ -593,7 +714,7 @@ std::vector<std::string> ListAvailableThemeNames(const std::filesystem::path& th
       continue;
     }
     const auto& path = it->path();
-    if (path.extension() != ".micro") {
+    if (path.extension() != ".microide") {
       continue;
     }
     names.push_back(path.stem().string());

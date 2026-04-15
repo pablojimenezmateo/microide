@@ -13,8 +13,12 @@ struct Theme {
   SDL_Color window_background;
   SDL_Color chrome_background;
   SDL_Color chrome_active;
+  SDL_Color chrome_text;
+  SDL_Color chrome_active_text;
+  SDL_Color chrome_text_secondary;
   SDL_Color surface_background;
   SDL_Color surface_raised;
+  SDL_Color surface_text;
   SDL_Color editor_background;
   SDL_Color gutter_background;
   SDL_Color overlay_background;
@@ -46,6 +50,8 @@ struct Theme {
 };
 
 Theme MakeDefaultTheme();
+float RelativeLuminance(SDL_Color color);
+float Contrast(SDL_Color c1, SDL_Color c2);
 std::filesystem::path FindThemeDirectory();
 std::vector<std::string> ListAvailableThemeNames(
     const std::filesystem::path& theme_directory = {});
