@@ -268,8 +268,8 @@ void SdlTtfTextBackend::DrawFastAsciiString(SDL_Renderer* renderer,
       SDL_SetTextureColorMod(glyph->texture, color.r, color.g, color.b);
       SDL_SetTextureAlphaMod(glyph->texture, color.a);
       const SDL_FRect destination = SDL_FRect{
-          std::round(cursor_x + static_cast<float>(glyph->minx) / scale_x),
-          std::round(y),
+          cursor_x + static_cast<float>(glyph->minx) / scale_x,
+          y,
           static_cast<float>(glyph->width) / scale_x,
           static_cast<float>(glyph->height) / scale_y,
       };

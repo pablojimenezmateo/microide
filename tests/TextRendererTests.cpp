@@ -6,10 +6,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+#if MICROIDE_HAS_SDL3_TTF
+#include <SDL3_ttf/SDL_ttf.h>
+#endif
 
 namespace microide::tests {
 
@@ -101,6 +106,163 @@ bool IsRedDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
 
 bool IsGreenDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
   return a > 0 && g >= 24 && g > r + 12 && g > b + 12;
+}
+
+void EnsureReferenceTtfInitialized() {
+  if (TTF_WasInit() > 0) {
+    return;
+  }
+  Expect(TTF_Init(), "SDL_ttf should initialize for renderer reference checks");
+}
+
+struct PixelBounds {
+  int left = 0;
+  int right = -1;
+  int top = 0;
+  int bottom = -1;
+
+  bool valid() const { return right >= left && bottom >= top; }
+  int width() const { return valid() ? right - left + 1 : 0; }
+};
+
+PixelBounds NonBackgroundBounds(SDL_Surface* surface, SDL_Color background) {
+  Expect(surface != nullptr, "pixel bounds should receive a readable surface");
+  PixelBounds bounds;
+  bool found = false;
+  for (int y = 0; y < surface->h; ++y) {
+    for (int x = 0; x < surface->w; ++x) {
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
+      Uint8 a = 0;
+      Expect(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
+             "pixel bounds should read software pixels");
+      if (r == background.r && g == background.g && b == background.b && a == background.a) {
+        continue;
+      }
+      if (!found) {
+        bounds.left = bounds.right = x;
+        bounds.top = bounds.bottom = y;
+        found = true;
+      } else {
+        bounds.left = std::min(bounds.left, x);
+        bounds.right = std::max(bounds.right, x);
+        bounds.top = std::min(bounds.top, y);
+        bounds.bottom = std::max(bounds.bottom, y);
+      }
+    }
+  }
+  return bounds;
+}
+
+int MaxInteriorGap(SDL_Surface* surface, SDL_Color background, const PixelBounds& bounds) {
+  if (surface == nullptr || !bounds.valid()) {
+    return 0;
+  }
+
+  int current_gap = 0;
+  int max_gap = 0;
+  bool seen_occupied = false;
+  for (int x = bounds.left; x <= bounds.right; ++x) {
+    bool occupied = false;
+    for (int y = bounds.top; y <= bounds.bottom; ++y) {
+      Uint8 r = 0;
+      Uint8 g = 0;
+      Uint8 b = 0;
+      Uint8 a = 0;
+      Expect(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
+             "gap checks should read software pixels");
+      if (r != background.r || g != background.g || b != background.b || a != background.a) {
+        occupied = true;
+        break;
+      }
+    }
+
+    if (occupied) {
+      seen_occupied = true;
+      max_gap = std::max(max_gap, current_gap);
+      current_gap = 0;
+      continue;
+    }
+    if (seen_occupied) {
+      ++current_gap;
+    }
+  }
+  return max_gap;
+}
+
+void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
+  EnsureDummySdlVideo();
+  EnsureReferenceTtfInitialized();
+
+  const std::filesystem::path font_path = TestRoot().parent_path() / "assets" / "fonts" /
+                                          "JetBrainsMono-Regular.ttf";
+  Expect(std::filesystem::exists(font_path),
+         "renderer reference check should find the bundled monospace font");
+  const SDL_Color background = SDL_Color{0x00, 0x00, 0x00, 0xff};
+  const SDL_Color foreground = SDL_Color{0xff, 0xff, 0xff, 0xff};
+
+  const auto expect_label_matches = [&](std::string_view label) {
+    SoftwareCanvas actual_canvas(256, 96);
+    SoftwareCanvas reference_canvas(256, 96);
+
+    microide::render::TextRenderer renderer;
+    renderer.EnsureInitialized(actual_canvas.renderer());
+    Expect(renderer.BackendName() == "sdl3_ttf",
+           "UI label spacing regression test should exercise the real font backend");
+
+    Expect(SDL_SetRenderDrawColor(actual_canvas.renderer(), background.r, background.g,
+                                  background.b, background.a),
+           "UI label spacing test should set the actual canvas background");
+    Expect(SDL_RenderClear(actual_canvas.renderer()),
+           "UI label spacing test should clear the actual canvas");
+    Expect(SDL_SetRenderDrawColor(reference_canvas.renderer(), background.r, background.g,
+                                  background.b, background.a),
+           "UI label spacing test should set the reference canvas background");
+    Expect(SDL_RenderClear(reference_canvas.renderer()),
+           "UI label spacing test should clear the reference canvas");
+
+    renderer.DrawString(actual_canvas.renderer(), 12.0f, 18.0f, foreground, label);
+
+    TTF_Font* reference_font = TTF_OpenFont(font_path.string().c_str(), 13.0f);
+    Expect(reference_font != nullptr, "UI label spacing test should open the bundled font");
+    TTF_SetFontHinting(reference_font, TTF_HINTING_LIGHT_SUBPIXEL);
+    SDL_Surface* reference_surface =
+        TTF_RenderText_Blended(reference_font, label.data(), label.size(), foreground);
+    Expect(reference_surface != nullptr,
+           "UI label spacing test should render the reference SDL_ttf string");
+    SDL_Texture* reference_texture =
+        SDL_CreateTextureFromSurface(reference_canvas.renderer(), reference_surface);
+    Expect(reference_texture != nullptr,
+           "UI label spacing test should upload the reference SDL_ttf string");
+    const SDL_FRect destination =
+        SDL_FRect{12.0f, 18.0f, static_cast<float>(reference_surface->w),
+                  static_cast<float>(reference_surface->h)};
+    SDL_RenderTexture(reference_canvas.renderer(), reference_texture, nullptr, &destination);
+
+    SDL_DestroyTexture(reference_texture);
+    SDL_DestroySurface(reference_surface);
+    TTF_CloseFont(reference_font);
+
+    SDL_Surface* actual_pixels = SDL_RenderReadPixels(actual_canvas.renderer(), nullptr);
+    SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+    const PixelBounds actual_bounds = NonBackgroundBounds(actual_pixels, background);
+    const PixelBounds reference_bounds = NonBackgroundBounds(reference_pixels, background);
+
+    Expect(actual_bounds.valid() && reference_bounds.valid(),
+           "UI label spacing test should see drawn pixels on both canvases");
+    Expect(std::abs(actual_bounds.width() - reference_bounds.width()) <= 1,
+           "fast ASCII UI labels should keep the same overall width as SDL_ttf string rendering");
+    Expect(MaxInteriorGap(actual_pixels, background, actual_bounds) <=
+               MaxInteriorGap(reference_pixels, background, reference_bounds) + 1,
+           "fast ASCII UI labels should not introduce larger internal glyph gaps than SDL_ttf string rendering");
+
+    SDL_DestroySurface(actual_pixels);
+    SDL_DestroySurface(reference_pixels);
+  };
+
+  expect_label_matches("bash");
+  expect_label_matches("dolfin-app");
 }
 
 void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
@@ -216,6 +378,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
           "TextRenderer truncation uses bounded width probes",
           TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements);
 #if MICROIDE_HAS_SDL3_TTF
+  AddTest(tests,
+          "TextRenderer SDL_ttf ASCII UI labels avoid extra glyph gaps",
+          TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps);
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII glyphs stay within line bands",
           TestSdlTtfAsciiGlyphsStayWithinLineBands);

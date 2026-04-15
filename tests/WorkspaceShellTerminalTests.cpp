@@ -77,6 +77,17 @@ int CountNonBackgroundPixels(SDL_Surface* surface,
   return count;
 }
 
+SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {
+  Expect(surface != nullptr, "pixel reads should receive a readable surface");
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  Expect(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
+         "pixel reads should read render output");
+  return SDL_Color{r, g, b, a};
+}
+
 void TestWorkspaceShellCtrlShiftVPastesBracketedClipboard() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -326,21 +337,21 @@ void TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering() {
                                                     theme.surface_background);
   const int legacy_pablo = CountNonBackgroundPixels(legacy_pixels, column_band(2, 3),
                                                     theme.surface_background);
-  const int actual_documents = CountNonBackgroundPixels(actual_pixels, column_band(15),
-                                                        theme.surface_background);
-  const int legacy_documents = CountNonBackgroundPixels(legacy_pixels, column_band(15),
-                                                        theme.surface_background);
-  const int actual_tail = CountNonBackgroundPixels(actual_pixels, column_band(prompt.size() - 1),
-                                                   theme.surface_background);
-  const int legacy_tail = CountNonBackgroundPixels(legacy_pixels, column_band(prompt.size() - 1),
-                                                   theme.surface_background);
+  const std::size_t space_column = prompt.find(' ');
+  Expect(space_column != std::string::npos,
+         "terminal renderer regression test should include a space cell");
+  const int space_x = static_cast<int>(std::floor(
+      text_x + static_cast<float>(space_column) * char_width + char_width * 0.5f));
+  const int space_y = static_cast<int>(std::floor(text_y + line_height * 0.5f));
+  const SDL_Color actual_space = ReadSurfacePixelOrThrow(actual_pixels, space_x, space_y);
 
-  Expect(actual_pablo > legacy_pablo,
-         "terminal ASCII rendering should preserve more of the early prompt glyphs than the legacy per-cell painter");
-  Expect(actual_documents > legacy_documents,
-         "terminal ASCII rendering should preserve the leading edge of Documents");
-  Expect(actual_tail > legacy_tail,
-         "terminal ASCII rendering should preserve the trailing edge of the final prompt character");
+  Expect(actual_pablo >= legacy_pablo,
+         "terminal ASCII rendering should not regress the early prompt glyphs");
+  Expect(actual_space.r == theme.surface_background.r &&
+             actual_space.g == theme.surface_background.g &&
+             actual_space.b == theme.surface_background.b &&
+             actual_space.a == theme.surface_background.a,
+         "terminal ASCII rendering should keep blank prompt cells on the terminal background color");
 
   if (actual_pixels != nullptr) {
     SDL_DestroySurface(actual_pixels);

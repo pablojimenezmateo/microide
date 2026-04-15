@@ -663,13 +663,14 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     for (std::size_t column = 0; column < visible_columns;) {
       const auto& cell = line.cells[column];
       const bool selected = TerminalCellSelected(row_index, column);
-      const SDL_Color background = resolve_terminal_colors(cell.style, selected).first;
+      const SDL_Color background = resolve_terminal_colors(cell.style, selected).second;
 
       std::size_t run_end = column + 1;
       while (run_end < visible_columns) {
         const auto& next_cell = line.cells[run_end];
         const bool next_selected = TerminalCellSelected(row_index, run_end);
-        const SDL_Color next_background = resolve_terminal_colors(next_cell.style, next_selected).first;
+        const SDL_Color next_background =
+            resolve_terminal_colors(next_cell.style, next_selected).second;
         if (next_background.r != background.r || next_background.g != background.g ||
             next_background.b != background.b || next_background.a != background.a) {
           break;

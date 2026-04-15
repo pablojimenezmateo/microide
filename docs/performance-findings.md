@@ -153,6 +153,8 @@ Implemented:
 - ASCII width measurement now uses fixed-cell width directly instead of calling into `TTF_GetStringSize`
 - the ASCII glyph path now preserves the same per-line top alignment as the string-render path, so
   retained-scene row-band redraws do not leave stale glyph fragments behind adjacent lines
+- the ASCII glyph path now keeps glyph destination X placement aligned with `SDL_ttf` string
+  rendering, avoiding artificial seams inside short UI labels such as tab titles
 - terminal row rendering now paints visible cell backgrounds before glyphs, coalescing identical
   background runs so prompt text and transcript ASCII cells do not get clipped by the next cell's
   background fill
@@ -162,6 +164,7 @@ Impact:
 - editor, compare, merge, and terminal code paths that mostly draw ASCII text now avoid some of the
   heavier per-string backend work
 - fast text draws now honor the same line-band redraw contract as the rest of the text renderer
+- short ASCII UI labels now keep the same intra-word spacing as whole-string `SDL_ttf` rendering
 - terminal prompt and transcript rendering now preserve glyph edges that extend slightly beyond a
   single fixed cell
 
