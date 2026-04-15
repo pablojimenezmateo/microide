@@ -80,7 +80,7 @@ class WorkspaceShell {
   void SetWindowPresentationState(WindowPresentationState state);
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
-  bool WindowDragRegionContains(float x, float y) const;
+ bool WindowDragRegionContains(float x, float y) const;
   WindowAction ConsumeWindowAction();
 
  private:
@@ -91,6 +91,7 @@ class WorkspaceShell {
     Overlay,
   };
 
+ public:
   enum class SidebarMode {
     None,
     Tree,
@@ -98,6 +99,7 @@ class WorkspaceShell {
     Git,
   };
 
+ private:
   enum class OverlayMode {
     FileFinder,
     BufferSearch,
@@ -556,6 +558,7 @@ class WorkspaceShell {
     bool soft_tabs = false;
   };
 
+ public:
   enum class ActionId {
     Colorscheme,
     Compare,
@@ -659,6 +662,7 @@ class WorkspaceShell {
     std::span<const MenuItemSpec> items;
   };
 
+ private:
   struct VisiblePopupMenuItem {
     std::size_t index = 0;
     SDL_FRect rect{};

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 
+#include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -129,15 +130,11 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 }
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
-  switch (surface_.sidebar_mode) {
-    case SidebarMode::Search:
-      return "Search";
-    case SidebarMode::Git:
-      return "Source Control";
-    case SidebarMode::Tree:
-    default:
-      return "Project";
+  if (const SidebarToolSpec* tool = FindBuiltinSidebarTool(surface_.sidebar_mode);
+      tool != nullptr) {
+    return std::string(tool->label);
   }
+  return "Project";
 }
 
 SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) const {

@@ -15,7 +15,8 @@
 #include <string>
 #include <string_view>
 
-#include "workspace/WorkspaceConstants.h"
+#include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -67,119 +68,23 @@ SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bott
 }  // namespace
 
 std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
-  static const auto kSpecs = std::to_array<ActionSpec>({
-      ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]", "Colorscheme",
-                 ""},
-      ActionSpec{ActionId::Compare, "compare", "compare [path] [commit-prefix]",
-                 "Compare Against...", ""},
-      ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},
-      ActionSpec{ActionId::Merge, "merge", "merge <base> <incoming> <current> [output]",
-                 "Merge Editor", ""},
-      ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
-      ActionSpec{ActionId::CopyRelativePath, "", "", "Copy Relative Path", ""},
-      ActionSpec{ActionId::CreateDirectory, "", "", "New Folder...", ""},
-      ActionSpec{ActionId::CreateFile, "", "", "New File...", ""},
-      ActionSpec{ActionId::DeletePath, "", "", "Delete...", ""},
-      ActionSpec{ActionId::Files, "files", "files [root]", "Find File", "F6"},
-      ActionSpec{ActionId::Find, "find", "find <query>", "Find File By Query", ""},
-      ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
-      ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
-      ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Refresh Git", ""},
-      ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width",
-                 ""},
-      ActionSpec{ActionId::Jump, "jump", "jump <line[:col]>", "Jump Relative", ""},
-      ActionSpec{ActionId::Open, "open", "open <path>", "Open File", ""},
-      ActionSpec{ActionId::OpenSelectedTreeItem, "", "", "Open", ""},
-      ActionSpec{ActionId::OpenSelectedTreeItemInNewTab, "", "", "Open in New Tab", ""},
-      ActionSpec{ActionId::ProjectClose, "project-close", "project-close", "Close Project", ""},
-      ActionSpec{ActionId::ProjectNext, "project-next", "project-next", "Next Project", ""},
-      ActionSpec{ActionId::ProjectOpen, "project-open", "project-open [path]", "Open Project",
-                 ""},
-      ActionSpec{ActionId::ProjectPrev, "project-prev", "project-prev", "Previous Project", ""},
-      ActionSpec{ActionId::ProjectSearch, "project-search", "project-search [query]",
-                 "Find in Project", "Ctrl+Shift+F"},
-      ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
-      ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
-      ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},
-      ActionSpec{ActionId::Save, "save", "save", "Save", "Ctrl+S"},
-      ActionSpec{ActionId::Search, "search", "search <query>", "Find in Buffer", "Ctrl+F"},
-      ActionSpec{ActionId::SidebarClose, "sidebar-close", "sidebar-close", "Close Sidebar", ""},
-      ActionSpec{ActionId::SidebarHide, "sidebar-hide", "sidebar-hide", "Hide Sidebar", ""},
-      ActionSpec{ActionId::SidebarShow, "sidebar-show", "sidebar-show [tool]", "Show Sidebar",
-                 ""},
-      ActionSpec{ActionId::SidebarToggle, "sidebar-toggle", "sidebar-toggle [tool]",
-                 "Toggle Sidebar", "F8", true},
-      ActionSpec{ActionId::SidebarWidth, "sidebar-width", "sidebar-width <n>", "Sidebar Width",
-                 ""},
-      ActionSpec{ActionId::SoftTabs, "soft-tabs", "soft-tabs [on|off]", "Soft Tabs", ""},
-      ActionSpec{ActionId::SplitFirst, "split-first", "split-first", "First Split", ""},
-      ActionSpec{ActionId::SplitLast, "split-last", "split-last", "Last Split", ""},
-      ActionSpec{ActionId::SplitNext, "split-next", "split-next", "Next Split", ""},
-      ActionSpec{ActionId::SplitPrev, "split-prev", "split-prev", "Previous Split", ""},
-      ActionSpec{ActionId::Tab, "tab", "tab [path]", "New Tab", ""},
-      ActionSpec{ActionId::TabSize, "tab-size", "tab-size [n]", "Tab Size", ""},
-      ActionSpec{ActionId::TabMove, "tabmove", "tabmove <n>", "Move Tab", ""},
-      ActionSpec{ActionId::TabSwitch, "tabswitch", "tabswitch <tab>", "Switch Tab", ""},
-      ActionSpec{ActionId::Term, "term", "term [command]", "New Terminal", ""},
-      ActionSpec{ActionId::Tree, "tree", "tree [root]", "Show Tree", ""},
-      ActionSpec{ActionId::TreeRefresh, "tree-refresh", "tree-refresh", "Refresh Tree", ""},
-      ActionSpec{ActionId::UiScale, "ui-scale", "ui-scale [n|up|down|reset]", "UI Scale", ""},
-      ActionSpec{ActionId::Unsplit, "unsplit", "unsplit", "Close Split", ""},
-      ActionSpec{ActionId::Vsplit, "vsplit", "vsplit [path]", "Split Right", ""},
-      ActionSpec{ActionId::CloseActiveTab, "", "", "Close Tab", "Ctrl+W"},
-      ActionSpec{ActionId::CloseAllTabs, "", "", "Close All Tabs", ""},
-      ActionSpec{ActionId::CopyLastTerminalCommand, "", "", "Copy Last Command + Output", ""},
-      ActionSpec{ActionId::CopySelection, "", "", "Copy", "Ctrl+C"},
-      ActionSpec{ActionId::CopySelectionWithContext, "", "", "Copy with Context", ""},
-      ActionSpec{ActionId::CutSelection, "", "", "Cut", "Ctrl+X"},
-      ActionSpec{ActionId::OpenCommandPrompt, "", "", "Command Prompt", "Ctrl+E"},
-      ActionSpec{ActionId::PasteClipboard, "", "", "Paste", "Ctrl+V"},
-      ActionSpec{ActionId::Redo, "", "", "Redo", "Ctrl+Y / Ctrl+Shift+Z"},
-      ActionSpec{ActionId::ReplaceInBuffer, "", "", "Replace in Buffer", "Ctrl+H"},
-      ActionSpec{ActionId::SelectAll, "", "", "Select All", "Ctrl+A"},
-      ActionSpec{ActionId::Undo, "", "", "Undo", "Ctrl+Z"},
-  });
-  return kSpecs;
+  return WorkspaceCommandSpecs();
 }
 
 const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionSpec(ActionId id) {
-  const auto specs = ActionSpecs();
-  const auto it = std::find_if(specs.begin(), specs.end(),
-                               [id](const ActionSpec& spec) { return spec.id == id; });
-  return it == specs.end() ? nullptr : &(*it);
+  return FindWorkspaceActionSpec(id);
 }
 
 const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionByCommand(std::string_view command_name) {
-  const auto specs = ActionSpecs();
-  const auto it = std::find_if(specs.begin(), specs.end(), [command_name](const ActionSpec& spec) {
-    return !spec.command_name.empty() && spec.command_name == command_name;
-  });
-  return it == specs.end() ? nullptr : &(*it);
+  return FindWorkspaceActionByCommand(command_name);
 }
 
 const std::vector<std::string>& WorkspaceShell::CommandNames() {
-  static const std::vector<std::string> kNames = [] {
-    std::vector<std::string> names;
-    for (const ActionSpec& spec : ActionSpecs()) {
-      if (!spec.command_name.empty()) {
-        names.emplace_back(spec.command_name);
-      }
-    }
-    return names;
-  }();
-  return kNames;
+  return WorkspaceCommandNames();
 }
 
 std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
-  std::vector<std::string> usages;
-  for (const ActionSpec& spec : ActionSpecs()) {
-    if (spec.command_name.empty()) {
-      continue;
-    }
-    usages.push_back(spec.command_usage.empty() ? std::string(spec.command_name)
-                                                : std::string(spec.command_usage));
-  }
-  return usages;
+  return WorkspaceDocumentedCommandUsages();
 }
 
 bool WorkspaceShell::IsActionEnabled(ActionId id) const {
@@ -334,14 +239,6 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       item(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
            std::array<std::string_view, 2>{"reset", {}}, 1),
   });
-  static const auto kSidebarModeItems = std::to_array<MenuItemSpec>({
-      item(ActionId::SidebarShow, "Project", {}, std::array<std::string_view, 2>{"tree", {}}, 1,
-           true),
-      item(ActionId::SidebarShow, "Search", {}, std::array<std::string_view, 2>{"search", {}}, 1,
-           true),
-      item(ActionId::SidebarShow, "Source Control", {},
-           std::array<std::string_view, 2>{"git", {}}, 1, true),
-  });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({
       item(ActionId::Search),
       item(ActionId::ReplaceInBuffer),
@@ -359,7 +256,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
       MenuSpec{MenuId::View, "View", kViewItems},
-      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", kSidebarModeItems},
+      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", BuiltinSidebarModeMenuItems()},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
       MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},

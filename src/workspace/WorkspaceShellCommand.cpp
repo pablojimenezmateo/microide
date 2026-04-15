@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "workspace/WorkspaceConstants.h"
+#include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -90,7 +92,7 @@ void WorkspaceShell::CompleteCommandInput() {
       starts_new_token || parsed.tokens.empty() ? command_.input.size() : parsed.tokens.back().start;
   const std::filesystem::path completion_root =
       project_root_.empty() ? std::filesystem::current_path() : project_root_;
-  const std::vector<std::string>& command_names = CommandNames();
+  const std::vector<std::string>& command_names = WorkspaceCommandNames();
 
   std::vector<CommandCompletionCandidate> candidates;
   if (active_index == 0) {
@@ -134,7 +136,7 @@ void WorkspaceShell::CompleteCommandInput() {
     candidates = CompletePath(completion_root, active_prefix, true);
   } else if (command == "sidebar-show" || command == "sidebar-toggle") {
     if (active_index == 1) {
-      candidates = CompleteFromList(active_prefix, kSidebarToolNames);
+      candidates = CompleteFromValues(active_prefix, BuiltinSidebarToolNames());
     } else if (parsed.tokens.size() >= 2 && parsed.tokens[1].text == "tree" && active_index == 2) {
       candidates = CompletePath(completion_root, active_prefix, true);
     }
@@ -206,7 +208,7 @@ bool WorkspaceShell::ExecuteCommand(const std::string& command_line) {
   PushCommandHistory(command_line);
   ClearCommandFeedback();
   const std::string& command = parsed.tokens.front().text;
-  const ActionSpec* action = FindActionByCommand(command);
+  const ActionSpec* action = FindWorkspaceActionByCommand(command);
   if (action == nullptr) {
     command_.feedback_text = "Unknown command: " + command;
     return false;

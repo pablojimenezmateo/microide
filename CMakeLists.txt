@@ -105,6 +105,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceChromeMouseCoordinator.cpp
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
+  src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
@@ -137,6 +138,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellShared.cpp
   src/workspace/WorkspaceShellTerminal.cpp
+  src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceShell.cpp
 )
 

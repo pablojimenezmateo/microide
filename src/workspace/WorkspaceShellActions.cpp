@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -110,40 +111,6 @@ std::optional<std::size_t> ParseClampedSizeArgument(const std::string& text,
   } catch (...) {
     return std::nullopt;
   }
-}
-
-enum class SidebarToolKind {
-  Default,
-  Git,
-  Tree,
-  Search,
-};
-
-struct SidebarToolRequest {
-  SidebarToolKind tool = SidebarToolKind::Default;
-  std::filesystem::path root;
-  std::string query;
-};
-
-SidebarToolRequest BuildSidebarToolRequest(const std::vector<std::string>& args) {
-  SidebarToolRequest request;
-  if (args.empty()) {
-    return request;
-  }
-  if (args[0] == "git") {
-    request.tool = SidebarToolKind::Git;
-    return request;
-  }
-  if (args[0] == "tree") {
-    request.tool = SidebarToolKind::Tree;
-    request.root = args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
-    return request;
-  }
-  if (args[0] == "search") {
-    request.tool = SidebarToolKind::Search;
-    request.query = JoinCommandArguments(args, 1);
-  }
-  return request;
 }
 
 struct SidebarWidthRequest {
@@ -562,25 +529,28 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
 
   switch (id) {
     case ActionId::SidebarToggle: {
-      const SidebarToolRequest request = BuildSidebarToolRequest(args);
-      if (request.tool == SidebarToolKind::Git) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Git) {
+      const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Git) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
           CloseSidebar();
         } else {
           ShowGitSidebar();
         }
         return ActionDispatchResult::Handled;
       }
-      if (request.tool == SidebarToolKind::Tree) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Tree) {
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Tree) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
           CloseSidebar();
         } else {
           ShowTreeSidebar(request.root);
         }
         return ActionDispatchResult::Handled;
       }
-      if (request.tool == SidebarToolKind::Search) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Search) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode &&
             !surface_.sidebar_temporary) {
           CloseSidebar();
         } else {
@@ -592,16 +562,19 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
       return ActionDispatchResult::Handled;
     }
     case ActionId::SidebarShow: {
-      const SidebarToolRequest request = BuildSidebarToolRequest(args);
-      if (request.tool == SidebarToolKind::Git) {
+      const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Git) {
         ShowGitSidebar();
         return ActionDispatchResult::Handled;
       }
-      if (request.tool == SidebarToolKind::Tree) {
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Tree) {
         ShowTreeSidebar(request.root);
         return ActionDispatchResult::Handled;
       }
-      if (request.tool == SidebarToolKind::Search) {
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Search) {
         ShowSearchSidebar(request.query, false);
         return ActionDispatchResult::Handled;
       }

@@ -1,8 +1,11 @@
 #include "TestSupport.h"
 
+#include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <sstream>
@@ -22,9 +25,17 @@ using microide::workspace::CommonPrefix;
 using microide::workspace::DecodeSessionNodePath;
 using microide::workspace::DetectLineEnding;
 using microide::workspace::EncodeSessionNodePath;
+using microide::workspace::SidebarToolRequest;
+using microide::workspace::SidebarToolSpec;
+using microide::workspace::FindBuiltinSidebarTool;
+using microide::workspace::FindWorkspaceActionByCommand;
+using microide::workspace::FindWorkspaceActionSpec;
 using microide::workspace::FormatCommandCompletionToken;
+using microide::workspace::BuiltinSidebarModeMenuItems;
+using microide::workspace::BuiltinSidebarToolNames;
 using microide::workspace::JoinCommandArguments;
 using microide::workspace::ParseCommandLine;
+using microide::workspace::ParseBuiltinSidebarToolRequest;
 using microide::workspace::ParseProjectConfigText;
 using microide::workspace::ParseProjectSessionText;
 using microide::workspace::ParseUiScaleValue;
@@ -52,6 +63,8 @@ using microide::workspace::SplitSyntaxLines;
 using microide::workspace::ToLower;
 using microide::workspace::Utf8ByteOffsetForCodepointCount;
 using microide::workspace::Utf8CodepointCount;
+using microide::workspace::WorkspaceCommandNames;
+using microide::workspace::WorkspaceDocumentedCommandUsages;
 using microide::workspace::WriteTextFileAtomically;
 using microide::workspace::WorkspaceShell;
 
@@ -187,6 +200,65 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
          "formatted completion should quote spaced tokens and append a space");
   Expect(JoinCommandArguments({"cmd", "left", "right value"}, 1) == "left right value",
          "joined command arguments should preserve argument order");
+}
+
+void TestWorkspaceCommandRegistry() {
+  const WorkspaceShell::ActionSpec* save = FindWorkspaceActionSpec(WorkspaceShell::ActionId::Save);
+  Expect(save != nullptr, "command registry should expose built-in save metadata");
+  Expect(save->command_name == "save", "save metadata should preserve the command name");
+
+  const WorkspaceShell::ActionSpec* sidebar_toggle =
+      FindWorkspaceActionByCommand("sidebar-toggle");
+  Expect(sidebar_toggle != nullptr,
+         "command registry should resolve actions by command name");
+  Expect(sidebar_toggle->id == WorkspaceShell::ActionId::SidebarToggle,
+         "command registry should map sidebar-toggle to the toggle action");
+
+  const std::vector<std::string>& command_names = WorkspaceCommandNames();
+  Expect(std::find(command_names.begin(), command_names.end(), "project-open") !=
+             command_names.end(),
+         "command registry should expose project-open completion data");
+
+  Expect(WorkspaceDocumentedCommandUsages() == WorkspaceShell::DocumentedCommandUsages(),
+         "workspace shell command docs should delegate to the registry");
+}
+
+void TestWorkspaceSidebarRegistry() {
+  const SidebarToolSpec* tree = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Tree);
+  Expect(tree != nullptr, "sidebar registry should expose the tree tool");
+  Expect(tree->command_name == "tree" && tree->label == "Project",
+         "tree sidebar tool metadata mismatch");
+
+  const SidebarToolSpec* git = FindBuiltinSidebarTool("git");
+  Expect(git != nullptr && git->mode == WorkspaceShell::SidebarMode::Git,
+         "sidebar registry should resolve the git tool by command name");
+
+  const std::vector<std::string>& tool_names = BuiltinSidebarToolNames();
+  Expect(tool_names.size() == 3 && tool_names[0] == "git" && tool_names[2] == "tree",
+         "sidebar registry should preserve built-in tool completion names");
+
+  const SidebarToolRequest search_request =
+      ParseBuiltinSidebarToolRequest({"search", "lint", "errors"});
+  Expect(search_request.tool != nullptr &&
+             search_request.tool->mode == WorkspaceShell::SidebarMode::Search,
+         "sidebar request parser should resolve the search tool");
+  Expect(search_request.query == "lint errors",
+         "sidebar request parser should join search queries");
+
+  const SidebarToolRequest tree_request =
+      ParseBuiltinSidebarToolRequest({"tree", "plugins"});
+  Expect(tree_request.tool != nullptr &&
+             tree_request.tool->mode == WorkspaceShell::SidebarMode::Tree,
+         "sidebar request parser should resolve the tree tool");
+  Expect(tree_request.root == std::filesystem::path("plugins"),
+         "sidebar request parser should keep explicit tree roots");
+
+  const auto menu_items = BuiltinSidebarModeMenuItems();
+  Expect(menu_items.size() == 3, "sidebar registry should expose three built-in sidebar menu items");
+  Expect(menu_items[0].label == "Project" && menu_items[0].args[0] == "tree",
+         "sidebar mode menu should keep the project item first");
+  Expect(menu_items[2].label == "Source Control" && menu_items[2].args[0] == "git",
+         "sidebar mode menu should keep the source-control item");
 }
 
 void TestWorkspaceSharedPathAndCaseHelpers() {
@@ -440,6 +512,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
+  AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);
+  AddTest(tests, "Workspace/SidebarRegistry", TestWorkspaceSidebarRegistry);
   AddTest(tests, "WorkspaceShared/PathAndCaseHelpers", TestWorkspaceSharedPathAndCaseHelpers);
   AddTest(tests, "WorkspaceShared/PathMutationHelpers", TestWorkspaceSharedPathMutationHelpers);
   AddTest(tests, "WorkspaceShared/Utf8Editing", TestWorkspaceSharedUtf8Editing);
