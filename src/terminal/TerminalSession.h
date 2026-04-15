@@ -84,6 +84,7 @@ class TerminalSession {
   bool running() const;
   std::size_t LineCount() const;
   std::vector<TerminalLine> SnapshotLines() const;
+  std::vector<TerminalLine> SnapshotLineRange(std::size_t start_row, std::size_t max_lines) const;
   std::string LaunchLabel() const;
   std::size_t rows() const;
   std::size_t columns() const;

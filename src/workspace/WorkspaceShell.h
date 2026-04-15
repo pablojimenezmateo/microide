@@ -1403,7 +1403,8 @@ class WorkspaceShell {
   std::optional<TerminalSelectionPosition> TerminalSelectionPositionForPoint(
       int x,
       int y,
-      const std::vector<terminal::TerminalLine>& lines) const;
+      const std::vector<terminal::TerminalLine>& lines,
+      std::size_t first_row = 0) const;
   std::optional<TerminalSelectionPosition> TerminalViewportPositionForPoint(int x, int y) const;
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
   std::string SelectedTerminalText(const std::vector<terminal::TerminalLine>& lines) const;

@@ -318,15 +318,26 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
     return std::nullopt;
   }
 
-  const auto lines = terminal_tab->session.SnapshotLines();
+  const std::size_t line_count = terminal_tab->session.LineCount();
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(*layout_state, line_count);
+  const std::size_t first_row =
+      static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
+  const auto lines = terminal_tab->session.SnapshotLineRange(
+      first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)));
   const auto position =
       TerminalSelectionPositionForPoint(static_cast<int>(std::lround(x)),
-                                        static_cast<int>(std::lround(y)), lines);
-  if (!position.has_value() || position->row >= lines.size()) {
+                                        static_cast<int>(std::lround(y)), lines, first_row);
+  if (!position.has_value() || position->row < first_row ||
+      position->row - first_row >= lines.size()) {
     return std::nullopt;
   }
 
-  return TerminalUrlAtColumn(TerminalLineText(lines[position->row]), position->column);
+  return TerminalUrlAtColumn(TerminalLineText(lines[position->row - first_row]),
+                             position->column);
 }
 
 bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {
@@ -477,7 +488,8 @@ std::optional<WorkspaceShell::TerminalSelectionPosition>
 WorkspaceShell::TerminalSelectionPositionForPoint(
     int x,
     int y,
-    const std::vector<terminal::TerminalLine>& lines) const {
+    const std::vector<terminal::TerminalLine>& lines,
+    std::size_t first_row) const {
   if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || lines.empty()) {
     return std::nullopt;
   }
@@ -500,15 +512,14 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
   }
 
   const std::size_t row =
-      std::min<std::size_t>(static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
-                                                     local_row),
-                            lines.size() - 1);
+      std::min<std::size_t>(first_row + static_cast<std::size_t>(local_row),
+                            first_row + lines.size() - 1);
   const float local_x = std::max(0.0f, static_cast<float>(x) - panel_layout.text_x);
   const std::size_t column = static_cast<std::size_t>(
       std::max(0L, std::lround(local_x / std::max(1.0f, text_renderer_.CharWidth()))));
   return TerminalSelectionPosition{
       .row = row,
-      .column = std::min(column, lines[row].cells.size()),
+      .column = std::min(column, lines[row - first_row].cells.size()),
   };
 }
 

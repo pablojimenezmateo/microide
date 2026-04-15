@@ -27,7 +27,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
   if (event.button.button == SDL_BUTTON_LEFT && shell_.BottomPanelVisible()) {
     const std::size_t line_count =
         shell_.ActiveTerminalTab() != nullptr
-            ? shell_.ActiveTerminalTab()->session.SnapshotLines().size()
+            ? shell_.ActiveTerminalTab()->session.LineCount()
             : 0;
     const BottomPanelLogLayout panel_layout =
         shell_.ComputeBottomPanelLogLayout(layout, line_count);
@@ -106,11 +106,15 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
         shell_.surface_.focus = FocusTarget::Panel;
         return true;
       }
-      const auto terminal_lines = shell_.ActiveTerminalTab() != nullptr
-                                      ? shell_.ActiveTerminalTab()->session.SnapshotLines()
-                                      : std::vector<terminal::TerminalLine>{};
+      const std::size_t line_count = shell_.ActiveTerminalTab()->session.LineCount();
+      const BottomPanelLogLayout panel_layout =
+          shell_.ComputeBottomPanelLogLayout(layout, line_count);
+      const std::size_t first_row =
+          static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
+      const auto terminal_lines = shell_.ActiveTerminalTab()->session.SnapshotLineRange(
+          first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)));
       if (const auto position = shell_.TerminalSelectionPositionForPoint(
-              event.button.x, event.button.y, terminal_lines);
+              event.button.x, event.button.y, terminal_lines, first_row);
           position.has_value()) {
         if (auto* terminal_tab = shell_.ActiveTerminalTab(); terminal_tab != nullptr) {
           terminal_tab->selection_anchor = *position;
@@ -180,7 +184,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
 
   const std::size_t line_count =
       shell_.ActiveTerminalTab() != nullptr
-          ? shell_.ActiveTerminalTab()->session.SnapshotLines().size()
+          ? shell_.ActiveTerminalTab()->session.LineCount()
           : 0;
   const BottomPanelLogLayout panel_layout =
       shell_.ComputeBottomPanelLogLayout(layout, line_count);
@@ -246,9 +250,15 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleMotion(const SDL_Event& event)
       return false;
     }
 
-    const auto terminal_lines = terminal_tab->session.SnapshotLines();
+    const std::size_t line_count = terminal_tab->session.LineCount();
+    const BottomPanelLogLayout panel_layout =
+        shell_.ComputeBottomPanelLogLayout(layout, line_count);
+    const std::size_t first_row =
+        static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
+    const auto terminal_lines = terminal_tab->session.SnapshotLineRange(
+        first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)));
     if (const auto position = shell_.TerminalSelectionPositionForPoint(
-            event.motion.x, event.motion.y, terminal_lines);
+            event.motion.x, event.motion.y, terminal_lines, first_row);
         position.has_value()) {
       terminal_tab->selection_head = *position;
       shell_.surface_.focus = FocusTarget::Panel;
@@ -291,7 +301,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
 
   const std::size_t line_count =
       shell_.ActiveTerminalTab() != nullptr
-          ? shell_.ActiveTerminalTab()->session.SnapshotLines().size()
+          ? shell_.ActiveTerminalTab()->session.LineCount()
           : 0;
   const BottomPanelLogLayout panel_layout =
       shell_.ComputeBottomPanelLogLayout(layout, line_count);

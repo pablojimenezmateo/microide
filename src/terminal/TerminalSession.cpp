@@ -713,6 +713,18 @@ std::vector<TerminalLine> TerminalSession::SnapshotLines() const {
   return lines_;
 }
 
+std::vector<TerminalLine> TerminalSession::SnapshotLineRange(std::size_t start_row,
+                                                             std::size_t max_lines) const {
+  std::scoped_lock lock(mutex_);
+  if (start_row >= lines_.size() || max_lines == 0) {
+    return {};
+  }
+
+  const std::size_t end_row = std::min(lines_.size(), start_row + max_lines);
+  return std::vector<TerminalLine>(lines_.begin() + static_cast<std::ptrdiff_t>(start_row),
+                                   lines_.begin() + static_cast<std::ptrdiff_t>(end_row));
+}
+
 std::string TerminalSession::LaunchLabel() const {
   std::scoped_lock lock(mutex_);
   return launch_label_;

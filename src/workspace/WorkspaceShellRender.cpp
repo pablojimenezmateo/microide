@@ -221,10 +221,8 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   SDL_GetMouseState(&mouse_x, &mouse_y);
   SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
   UpdateMouseCursor(mouse_x, mouse_y);
-  const std::vector<terminal::TerminalLine> terminal_lines =
-      ActiveTerminalTab() != nullptr
-          ? ActiveTerminalTab()->session.SnapshotLines()
-          : std::vector<terminal::TerminalLine>{};
+  const std::size_t terminal_line_count =
+      ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
   std::optional<SDL_FRect> active_editor_pane_rect;
   visible_editor_blame_overlay_.reset();
   const bool draw_editor_caret =
@@ -1501,11 +1499,19 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                              "Command");
     }
 
-    const std::size_t panel_line_count = terminal_panel ? terminal_lines.size() : 0;
+    const std::size_t panel_line_count = terminal_panel ? terminal_line_count : 0;
     const BottomPanelLogLayout panel_layout =
         ComputeBottomPanelLogLayout(layout, panel_line_count);
     SetBottomPanelScrollRow(panel_layout.scroll.vertical_scroll, panel_line_count,
                             panel_layout.scroll.visible_rows);
+    const std::size_t first_terminal_row =
+        static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
+    const std::vector<terminal::TerminalLine> terminal_lines =
+        terminal_panel && ActiveTerminalTab() != nullptr
+            ? ActiveTerminalTab()->session.SnapshotLineRange(
+                  first_terminal_row,
+                  static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)))
+            : std::vector<terminal::TerminalLine>{};
     for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
       const int index = panel_layout.scroll.vertical_scroll + row;
       if (index >= static_cast<int>(panel_line_count)) {
@@ -1515,7 +1521,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
           panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
       if (terminal_panel) {
         draw_terminal_line(panel_layout.text_x, line_y, panel_layout.text_width,
-                           terminal_lines[static_cast<std::size_t>(index)],
+                           terminal_lines[static_cast<std::size_t>(index) - first_terminal_row],
                            static_cast<std::size_t>(index));
       }
     }
@@ -1541,8 +1547,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
             DrawFilledRect(renderer,
                            MakeRect(cursor_x, cursor_y - 1.0f, char_width, panel_layout.line_height),
                            theme_.cursor);
-            if (cursor_row < terminal_lines.size()) {
-              const auto& line = terminal_lines[cursor_row];
+            if (cursor_row >= first_terminal_row &&
+                cursor_row - first_terminal_row < terminal_lines.size()) {
+              const auto& line = terminal_lines[cursor_row - first_terminal_row];
               if (cursor_column < line.cells.size()) {
                 const auto& cell = line.cells[cursor_column];
                 const auto display_text = cell.DisplayText();

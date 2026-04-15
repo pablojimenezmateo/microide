@@ -370,6 +370,18 @@ void TestTerminalSessionGroupsUtf8GlyphsIntoSingleCells() {
          "terminal lines should preserve pasted utf-8 symbols instead of splitting raw bytes");
 }
 
+void TestTerminalSessionSnapshotsLineRanges() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 5, 8);
+
+  TerminalSessionTestAccess::AppendOutput(session, "A\nB\nC\nD\nE");
+
+  const auto lines = session.SnapshotLineRange(1, 2);
+  Expect(lines.size() == 2, "terminal range snapshots should return only the requested rows");
+  ExpectLineText(lines, 0, "B", "terminal range snapshots should start at the requested row");
+  ExpectLineText(lines, 1, "C", "terminal range snapshots should preserve row order");
+}
+
 void TestTerminalSessionTracksInverseVideoStyle() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -478,6 +490,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionTracksCellForegroundAndBackgroundStyles);
   AddTest(tests, "TerminalSession/GroupsUtf8GlyphsIntoSingleCells",
           TestTerminalSessionGroupsUtf8GlyphsIntoSingleCells);
+  AddTest(tests, "TerminalSession/SnapshotsLineRanges",
+          TestTerminalSessionSnapshotsLineRanges);
   AddTest(tests, "TerminalSession/TracksInverseVideoStyle",
           TestTerminalSessionTracksInverseVideoStyle);
 #if defined(__unix__) || defined(__APPLE__)
