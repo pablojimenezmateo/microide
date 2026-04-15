@@ -21,6 +21,7 @@ This scaffold provides:
 - nested shared-buffer editor split trees
 - project-local session restore for editor tabs, compare tabs, and workspace chrome
 - project-local editor preferences for tab size, indent width, and soft-tabs
+- manual Lua 5.4 plugin loading from global and project-local plugin directories, with lifecycle hooks, plugin commands, and `plugins-reload`
 - tab-aware text layout with visual-column cursor positioning
 - editor load/save now preserves detected line endings
 - editor large-file mode disables syntax highlighting above size or line-count thresholds
@@ -154,6 +155,7 @@ Current commands:
 - `project-open [path]`
 - `project-prev`
 - `project-search [query]`
+- `plugins-reload`
 - `quit`
 - `reopen`
 - `save`
@@ -188,6 +190,15 @@ Project state:
 
 - per-project config and session files now live under `~/.local/state/microide/projects/<project-name>-<hash>/`
 - each project gets a persisted default base accent color on first open; override it in the per-project `config` file with `project-base-color "#rrggbb"`
+
+Plugin runtime:
+
+- manual plugins load from `~/.config/microide/plugins/<plugin-id>/init.lua`
+- project-local plugins load from `<project-root>/.microide/plugins/<plugin-id>/init.lua`
+- plugin entry points return `require("microide").plugin({...})`
+- current lifecycle hooks are `setup`, `on_project_open`, `on_project_close`, `on_buffer_open`, `on_buffer_save`, and `shutdown`
+- the current host API is intentionally small: plugin command registration, `workspace.project_root()`, `workspace.open_file(path)`, and `ctx.log(...)`
+- `plugins-reload` rebuilds the active plugin host and reloads commands for the current project
 
 Diff benchmark:
 

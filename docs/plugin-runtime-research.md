@@ -15,6 +15,15 @@ Phase 0 status:
 - added `src/workspace/WorkspaceSidebarRegistry.*` for built-in sidebar tool metadata, parsing, and menu items
 - kept runtime behavior stable; this pass does not add plugin loading yet
 
+Phase 1 status:
+
+- implemented on 2026-04-15 in the host codebase
+- added `src/plugin/PluginHost.*` for manual Lua plugin discovery, Lua runtime ownership, lifecycle dispatch, and plugin command registration
+- plugins now load from `~/.config/microide/plugins/<plugin-id>/init.lua`
+- project-local plugins now load from `<project-root>/.microide/plugins/<plugin-id>/init.lua`
+- the current host API is intentionally narrow: `log`, plugin command registration, `workspace.project_root()`, and `workspace.open_file(path)`
+- the shell now exposes a built-in `plugins-reload` command and forwards project activation plus buffer open/save events into the plugin host
+
 Constraints for this pass:
 
 - plugins are installed manually
@@ -818,8 +827,34 @@ That remaining work is still the right seam for Phase 2 sidebar providers. Phase
 
 - add `src/plugin/*`
 - load manual plugins from global and project-local directories
-- support `setup`, `on_project_open`, `on_buffer_open`, `on_buffer_save`, `shutdown`
+- support `setup`, `on_project_open`, `on_project_close`, `on_buffer_open`, `on_buffer_save`, `shutdown`
 - add `plugins-reload`
+
+### Phase 1: Landed Core Plugin Infrastructure
+
+This pass implemented the smallest useful version of the runtime:
+
+- `src/plugin/PluginHost.*` now owns plugin discovery, one Lua state per plugin, hook dispatch, and plugin command registration
+- the build now enables Lua plugins through `MICROIDE_ENABLE_LUA_PLUGINS` when Lua 5.4 is available
+- plugins load from both the global config directory and the active project's `.microide/plugins` directory
+- duplicate plugin ids are rejected with an explicit error
+- the shell now reloads the active plugin set when the active project changes and forwards buffer-open and buffer-save events to the runtime
+- built-in command completion and command dispatch now include plugin-registered commands
+
+The current Lua surface stays intentionally narrow:
+
+- `require("microide").plugin({...})` for plugin descriptors
+- `ctx.log(...)`
+- `ctx.commands.add(name, fn)`
+- `ctx.workspace.project_root()`
+- `ctx.workspace.open_file(path)`
+
+What this phase still does not include:
+
+- sidebar provider registration
+- diagnostics, underlines, or hover decoration APIs
+- syntax contribution loading
+- process spawning for tool integrations such as ESLint
 
 ### Phase 2: High-Value Contribution Points
 

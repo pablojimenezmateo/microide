@@ -36,6 +36,7 @@ These are done and should not be treated as open migration work:
 - `[x]` project-local editor preferences and colorscheme persistence
 - `[x]` project-local session restore for editor, compare, and merge tabs plus core workspace chrome
 - `[x]` app-level user config for UI scale
+- `[x]` manual Lua 5.4 plugin loading from global and project-local directories, plus lifecycle hooks, plugin commands, and `plugins-reload`
 - `[x]` fixture-driven tests for compare, merge, git services, file operations, and workspace shared helpers
 
 ## Remaining Work
@@ -118,7 +119,7 @@ These are done and should not be treated as open migration work:
 ## Intentional Scope Cuts
 
 - `[-]` debugging
-- `[-]` plugin runtimes, plugin marketplaces, and Micro-plugin compatibility
+- `[-]` plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - `[-]` cloud, collaboration, account, or assistant surfaces
 
 ## Notes

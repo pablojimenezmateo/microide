@@ -173,7 +173,7 @@ The highest-value remaining performance work is:
 These are not roadmap items for the current product:
 
 - debugging
-- plugin runtimes or marketplaces
+- plugin marketplaces, remote install flows, or Micro-plugin compatibility
 - cloud sync and collaboration
 - built-in chat surfaces
 - recent project or recent file affordances
