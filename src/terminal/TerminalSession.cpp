@@ -349,6 +349,9 @@ TerminalSession::~TerminalSession() {
 void TerminalSession::SetWakeEventType(Uint32 event_type) {
   std::scoped_lock lock(mutex_);
   wake_event_type_ = event_type;
+  if (event_type == 0) {
+    wake_event_pending_ = false;
+  }
 }
 
 bool TerminalSession::Start(const std::filesystem::path& working_directory, std::string_view command) {
@@ -363,6 +366,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     lines_ = {TerminalLine{}};
     running_ = false;
     stop_requested_ = false;
+    wake_event_pending_ = false;
     current_style_ = TerminalStyle{};
     escape_sequence_buffer_.clear();
     pending_utf8_sequence_.clear();
@@ -450,6 +454,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     child_pid_ = child_pid;
     running_ = true;
     stop_requested_ = false;
+    wake_event_pending_ = false;
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
     pending_clipboard_text_.reset();
@@ -758,6 +763,13 @@ bool TerminalSession::cursor_visible() const {
 bool TerminalSession::using_alternate_screen() const {
   std::scoped_lock lock(mutex_);
   return use_alternate_screen_;
+}
+
+bool TerminalSession::ConsumeWakeEvent() {
+  std::scoped_lock lock(mutex_);
+  const bool pending = wake_event_pending_;
+  wake_event_pending_ = false;
+  return pending;
 }
 
 bool TerminalSession::WantsMouseCapture() const {
@@ -1957,19 +1969,29 @@ void TerminalSession::TrimScrollbackLocked() {
   }
 }
 
+bool TerminalSession::ReserveWakeEvent(Uint32& event_type) const {
+  std::scoped_lock lock(mutex_);
+  if (wake_event_type_ == 0 || wake_event_pending_) {
+    return false;
+  }
+
+  wake_event_pending_ = true;
+  event_type = wake_event_type_;
+  return true;
+}
+
 void TerminalSession::PushWakeEvent() const {
   Uint32 event_type = 0;
-  {
-    std::scoped_lock lock(mutex_);
-    event_type = wake_event_type_;
-  }
-  if (event_type == 0) {
+  if (!ReserveWakeEvent(event_type)) {
     return;
   }
 
   SDL_Event event{};
   event.type = event_type;
-  SDL_PushEvent(&event);
+  if (!SDL_PushEvent(&event)) {
+    std::scoped_lock lock(mutex_);
+    wake_event_pending_ = false;
+  }
 }
 
 }  // namespace microide::terminal

@@ -643,12 +643,7 @@ void WorkspaceShell::SyncPrimarySelectionWithTerminalSelection() {
     return;
   }
 
-  const auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr) {
-    return;
-  }
-
-  const std::string text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
+  const std::string text = SelectedTerminalText();
   if (!text.empty()) {
     WritePrimarySelectionText(text);
   }

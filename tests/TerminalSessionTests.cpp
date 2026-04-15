@@ -397,6 +397,24 @@ void TestTerminalSessionTracksInverseVideoStyle() {
          "SGR 27 should clear inverse video for later cells");
 }
 
+void TestTerminalSessionCoalescesWakeEventsUntilConsumed() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  session.SetWakeEventType(SDL_EVENT_USER);
+
+  Uint32 event_type = 0;
+  Expect(TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
+         "terminal sessions should reserve the first wake event");
+  Expect(event_type == SDL_EVENT_USER,
+         "terminal wake reservations should preserve the configured SDL event type");
+  Expect(!TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
+         "terminal sessions should coalesce repeated wake requests until the UI consumes one");
+  Expect(session.ConsumeWakeEvent(),
+         "consuming terminal wake events should clear the pending wake marker");
+  Expect(TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
+         "terminal sessions should allow another wake request after the UI consumes the prior one");
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
   microide::terminal::TerminalSession session;
@@ -494,6 +512,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionSnapshotsLineRanges);
   AddTest(tests, "TerminalSession/TracksInverseVideoStyle",
           TestTerminalSessionTracksInverseVideoStyle);
+  AddTest(tests, "TerminalSession/CoalescesWakeEventsUntilConsumed",
+          TestTerminalSessionCoalescesWakeEventsUntilConsumed);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
           TestTerminalSessionStopEscalatesToKillForStubbornChild);

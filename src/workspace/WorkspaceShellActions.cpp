@@ -1147,9 +1147,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
     case ActionId::CopySelection: {
       std::string text;
       if (surface_.focus == FocusTarget::Panel && TerminalHasSelection()) {
-        if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
-          text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
-        }
+        text = SelectedTerminalText();
       } else if (ActiveEditableViewport() != nullptr) {
         text = ActiveEditableViewport()->SelectedText();
       }

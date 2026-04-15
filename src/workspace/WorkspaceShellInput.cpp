@@ -280,7 +280,7 @@ bool WorkspaceShell::HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_K
   const auto follow_terminal_tail = [&]() { terminal_tab->follow_tail = true; };
 
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && TerminalHasSelection()) {
-    const std::string text = SelectedTerminalText(terminal_tab->session.SnapshotLines());
+    const std::string text = SelectedTerminalText();
     if (!text.empty() && WriteClipboardText(text)) {
       WritePrimarySelectionText(text);
     }

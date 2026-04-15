@@ -516,10 +516,7 @@ struct WorkspaceShellTestAccess {
     return shell.TerminalHasSelection();
   }
   static std::string ActiveTerminalSelectedText(WorkspaceShell& shell) {
-    auto* terminal_tab = shell.ActiveTerminalTab();
-    return terminal_tab != nullptr
-               ? shell.SelectedTerminalText(terminal_tab->session.SnapshotLines())
-               : std::string{};
+    return shell.SelectedTerminalText();
   }
   static SDL_FRect ProjectSearchResultRect(WorkspaceShell& shell, std::size_t result_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);

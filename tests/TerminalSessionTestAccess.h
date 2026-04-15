@@ -28,6 +28,7 @@ struct TerminalSessionTestAccess {
     session.child_pid_ = -1;
     session.running_ = false;
     session.stop_requested_ = false;
+    session.wake_event_pending_ = false;
     session.escape_mode_ = microide::terminal::TerminalSession::EscapeMode::None;
     session.osc_escape_pending_ = false;
     session.use_alternate_screen_ = false;
@@ -93,6 +94,11 @@ struct TerminalSessionTestAccess {
     (void)session;
     return {};
 #endif
+  }
+
+  static bool ReserveWakeEvent(const microide::terminal::TerminalSession& session,
+                               Uint32& event_type) {
+    return session.ReserveWakeEvent(event_type);
   }
 };
 

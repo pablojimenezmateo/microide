@@ -1407,7 +1407,8 @@ class WorkspaceShell {
       std::size_t first_row = 0) const;
   std::optional<TerminalSelectionPosition> TerminalViewportPositionForPoint(int x, int y) const;
   terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
-  std::string SelectedTerminalText(const std::vector<terminal::TerminalLine>& lines) const;
+  std::optional<TerminalSelectionBounds> ActiveTerminalSelectionBounds() const;
+  std::string SelectedTerminalText() const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url) const;
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);

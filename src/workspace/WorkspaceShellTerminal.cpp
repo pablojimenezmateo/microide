@@ -144,6 +144,19 @@ CapturedTerminalInvocation CaptureVisibleTerminalInvocation(
   };
 }
 
+std::size_t FindWrappedInvocationStartRow(const terminal::TerminalSession& session,
+                                          std::size_t cursor_row) {
+  std::size_t start_row = cursor_row;
+  while (start_row > 0) {
+    const auto current_line = session.SnapshotLineRange(start_row, 1);
+    if (current_line.empty() || !current_line.front().wrapped_from_previous) {
+      break;
+    }
+    --start_row;
+  }
+  return start_row;
+}
+
 }  // namespace
 
 void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
@@ -263,6 +276,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     if (terminal_tab == nullptr) {
       continue;
     }
+    terminal_tab->session.ConsumeWakeEvent();
     const std::optional<std::string> clipboard_text =
         terminal_tab->session.ConsumePendingClipboardText();
     if (clipboard_text.has_value()) {
@@ -387,12 +401,15 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
     return;
   }
 
-  const auto lines = terminal_tab->session.SnapshotLines();
+  const std::size_t cursor_row = terminal_tab->session.cursor_row();
+  const std::size_t cursor_column = terminal_tab->session.cursor_column();
+  const std::size_t start_row =
+      FindWrappedInvocationStartRow(terminal_tab->session, cursor_row);
+  const auto lines =
+      terminal_tab->session.SnapshotLineRange(start_row, cursor_row - start_row + 1);
   const CapturedTerminalInvocation captured =
-      CaptureVisibleTerminalInvocation(lines,
-                                      terminal_tab->session.cursor_row(),
-                                      terminal_tab->session.cursor_column());
-  terminal_tab->last_command_start_row = captured.start_row;
+      CaptureVisibleTerminalInvocation(lines, cursor_row - start_row, cursor_column);
+  terminal_tab->last_command_start_row = start_row + captured.start_row;
   terminal_tab->last_command_invocation = captured.text;
   terminal_tab->last_command_prompt_prefix.clear();
   terminal_tab->has_last_command = !captured.text.empty();
@@ -416,15 +433,20 @@ std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
     return terminal_tab->last_command_invocation;
   }
 
-  const auto lines = terminal_tab->session.SnapshotLines();
-  if (lines.empty() || terminal_tab->last_command_start_row >= lines.size()) {
+  const std::size_t line_count = terminal_tab->session.LineCount();
+  if (terminal_tab->last_command_start_row >= line_count) {
+    return terminal_tab->last_command_invocation;
+  }
+  const auto lines = terminal_tab->session.SnapshotLineRange(
+      terminal_tab->last_command_start_row, line_count - terminal_tab->last_command_start_row);
+  if (lines.empty()) {
     return terminal_tab->last_command_invocation;
   }
 
   std::vector<std::string> rows;
-  rows.reserve(lines.size() - terminal_tab->last_command_start_row);
-  for (std::size_t row = terminal_tab->last_command_start_row; row < lines.size(); ++row) {
-    rows.push_back(TerminalLineText(lines[row]));
+  rows.reserve(lines.size());
+  for (const auto& line : lines) {
+    rows.push_back(TerminalLineText(line));
   }
 
   std::size_t end_row = rows.size();
@@ -465,20 +487,7 @@ std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
 }
 
 bool WorkspaceShell::TerminalHasSelection() const {
-  const auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr || !terminal_tab->selection_anchor.has_value() ||
-      !terminal_tab->selection_head.has_value()) {
-    return false;
-  }
-  const auto selection = NormalizeTerminalSelection(
-      TerminalSelectionPoint{
-          .row = terminal_tab->selection_anchor->row,
-          .column = terminal_tab->selection_anchor->column,
-      },
-      TerminalSelectionPoint{
-          .row = terminal_tab->selection_head->row,
-          .column = terminal_tab->selection_head->column,
-      });
+  const auto selection = ActiveTerminalSelectionBounds();
   return selection.has_value() &&
          (selection->start.row != selection->end.row ||
           selection->start.column != selection->end.column);
@@ -577,15 +586,14 @@ terminal::TerminalSession::MouseButton WorkspaceShell::TerminalMouseButtonForSdl
   return TerminalMouseButtonFromSdl(button);
 }
 
-std::string WorkspaceShell::SelectedTerminalText(
-    const std::vector<terminal::TerminalLine>& lines) const {
+std::optional<TerminalSelectionBounds> WorkspaceShell::ActiveTerminalSelectionBounds() const {
   const auto* terminal_tab = ActiveTerminalTab();
   if (terminal_tab == nullptr || !terminal_tab->selection_anchor.has_value() ||
       !terminal_tab->selection_head.has_value()) {
-    return {};
+    return std::nullopt;
   }
 
-  const std::optional<TerminalSelectionBounds> selection = NormalizeTerminalSelection(
+  return NormalizeTerminalSelection(
       TerminalSelectionPoint{
           .row = terminal_tab->selection_anchor->row,
           .column = terminal_tab->selection_anchor->column,
@@ -594,29 +602,34 @@ std::string WorkspaceShell::SelectedTerminalText(
           .row = terminal_tab->selection_head->row,
           .column = terminal_tab->selection_head->column,
       });
+}
+
+std::string WorkspaceShell::SelectedTerminalText() const {
+  const auto selection = ActiveTerminalSelectionBounds();
   if (!selection.has_value()) {
     return {};
   }
 
-  return ExtractTerminalSelectionText(lines, *selection);
+  const auto* terminal_tab = ActiveTerminalTab();
+  if (terminal_tab == nullptr) {
+    return {};
+  }
+
+  const std::size_t first_row = selection->start.row;
+  const auto lines = terminal_tab->session.SnapshotLineRange(
+      first_row, selection->end.row - first_row + 1);
+  if (lines.empty()) {
+    return {};
+  }
+
+  TerminalSelectionBounds rebased = *selection;
+  rebased.start.row -= first_row;
+  rebased.end.row -= first_row;
+  return ExtractTerminalSelectionText(lines, rebased);
 }
 
 bool WorkspaceShell::TerminalCellSelected(std::size_t row, std::size_t column) const {
-  const auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr || !terminal_tab->selection_anchor.has_value() ||
-      !terminal_tab->selection_head.has_value()) {
-    return false;
-  }
-
-  const std::optional<TerminalSelectionBounds> selection = NormalizeTerminalSelection(
-      TerminalSelectionPoint{
-          .row = terminal_tab->selection_anchor->row,
-          .column = terminal_tab->selection_anchor->column,
-      },
-      TerminalSelectionPoint{
-          .row = terminal_tab->selection_head->row,
-          .column = terminal_tab->selection_head->column,
-      });
+  const std::optional<TerminalSelectionBounds> selection = ActiveTerminalSelectionBounds();
   if (!selection.has_value()) {
     return false;
   }

@@ -92,6 +92,7 @@ class TerminalSession {
   std::size_t cursor_column() const;
   bool cursor_visible() const;
   bool using_alternate_screen() const;
+  bool ConsumeWakeEvent();
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
   bool WantsFocusEvents() const;
@@ -172,6 +173,7 @@ class TerminalSession {
   void ResetScreenLocked(bool fill_rows);
   void SetAlternateScreenLocked(bool enabled, bool clear);
   void TrimScrollbackLocked();
+  bool ReserveWakeEvent(Uint32& event_type) const;
   void PushWakeEvent() const;
 
   mutable std::mutex mutex_;
@@ -189,6 +191,7 @@ class TerminalSession {
   int child_pid_ = -1;
   bool running_ = false;
   bool stop_requested_ = false;
+  mutable bool wake_event_pending_ = false;
   EscapeMode escape_mode_ = EscapeMode::None;
   bool osc_escape_pending_ = false;
   bool use_alternate_screen_ = false;
