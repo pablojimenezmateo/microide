@@ -46,33 +46,17 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     int height = 0;
   };
 
-  struct GlyphEntry {
-    SDL_Texture* texture = nullptr;
-    int width = 0;
-    int height = 0;
-    int minx = 0;
-    bool loaded = false;
-  };
-
   SdlTtfTextBackend() = default;
 
   bool Initialize(SDL_Renderer* renderer);
   void RefreshMetrics();
   void ClearCache();
-  void ClearGlyphCache();
   static std::filesystem::path LocateFontFile();
   static std::vector<std::filesystem::path> LocateFallbackFontFiles(
       const std::filesystem::path& primary_font);
   void CloseFonts();
   void LoadFallbackFonts();
   bool CanUseFastAscii(std::string_view text) const;
-  void DrawFastAsciiString(SDL_Renderer* renderer,
-                           float x,
-                           float y,
-                           SDL_Color color,
-                           const SDL_Color* background,
-                           std::string_view text);
-  GlyphEntry* ResolveGlyph(unsigned char ch);
   CacheEntry* ResolveEntry(std::string_view text,
                            SDL_Color color,
                            const SDL_Color* background);
@@ -92,7 +76,6 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool ttf_initialized_ = false;
   std::unordered_map<std::string, CacheEntry> cache_;
   std::deque<std::string> cache_order_;
-  std::array<GlyphEntry, 128> glyph_cache_{};
 };
 
 }  // namespace microide::render

@@ -142,21 +142,22 @@ Impact:
 - the retained redraw model is now expressive enough to stay correct without broadening the
   semantic dirty regions that higher-frequency paths depend on
 
-### Faster ASCII text draws
+### Correct ASCII text rendering
 
 Problem:
 
-- many hot text paths still rendered small ASCII runs through full string shaping and texture
-  creation in `SDL_ttf`
+- the per-glyph ASCII shortcut in `SdlTtfTextBackend` did reduce some `SDL_ttf` work, but it also
+  reimplemented glyph placement badly enough to corrupt editor identifiers and prompt text
+- code like `function resolveInputPath(...)` could render with visibly wrong intra-word spacing,
+  clipped stems, or uneven gaps between neighboring glyphs
 
 Implemented:
 
-- `SdlTtfTextBackend` now has a cached ASCII glyph path for common monospaced runs
+- `SdlTtfTextBackend::DrawString` and `DrawStringOn` now always use the proper whole-string
+  `SDL_ttf` rendering path instead of composing ASCII text glyph-by-glyph
+- the shared rendered-string cache was expanded so backing out the glyph shortcut does not
+  immediately regress every hot text path into a cache-thrash scenario
 - ASCII width measurement now uses fixed-cell width directly instead of calling into `TTF_GetStringSize`
-- the ASCII glyph path now preserves the same per-line top alignment as the string-render path, so
-  retained-scene row-band redraws do not leave stale glyph fragments behind adjacent lines
-- the ASCII glyph path now keeps glyph destination X placement aligned with `SDL_ttf` string
-  rendering, avoiding artificial seams inside short UI labels such as tab titles
 - terminal row rendering now paints visible cell backgrounds before glyphs, coalescing identical
   background runs so prompt text and transcript ASCII cells do not get clipped by the next cell's
   background fill
@@ -165,10 +166,12 @@ Implemented:
 
 Impact:
 
-- editor, compare, merge, and terminal code paths that mostly draw ASCII text now avoid some of the
-  heavier per-string backend work
-- fast text draws now honor the same line-band redraw contract as the rest of the text renderer
-- short ASCII UI labels now keep the same intra-word spacing as whole-string `SDL_ttf` rendering
+- editor, compare, merge, and terminal ASCII text now matches `SDL_ttf` layout again instead of an
+  approximation
+- identifier-heavy code views no longer show the widened or crushed glyph gaps introduced by the
+  glyph shortcut
+- rendered-string caching still absorbs repeated whole-string draws while a better atlas or batching
+  design remains open
 - terminal prompt and transcript rendering now preserve glyph edges that extend slightly beyond a
   single fixed cell
 

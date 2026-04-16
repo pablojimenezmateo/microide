@@ -155,6 +155,35 @@ PixelBounds NonBackgroundBounds(SDL_Surface* surface, SDL_Color background) {
   return bounds;
 }
 
+std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
+  Expect(lhs != nullptr && rhs != nullptr,
+         "pixel comparisons should receive readable surfaces");
+  Expect(lhs->w == rhs->w && lhs->h == rhs->h,
+         "pixel comparisons should use canvases with matching dimensions");
+
+  std::size_t differences = 0;
+  for (int y = 0; y < lhs->h; ++y) {
+    for (int x = 0; x < lhs->w; ++x) {
+      Uint8 lhs_r = 0;
+      Uint8 lhs_g = 0;
+      Uint8 lhs_b = 0;
+      Uint8 lhs_a = 0;
+      Uint8 rhs_r = 0;
+      Uint8 rhs_g = 0;
+      Uint8 rhs_b = 0;
+      Uint8 rhs_a = 0;
+      Expect(SDL_ReadSurfacePixel(lhs, x, y, &lhs_r, &lhs_g, &lhs_b, &lhs_a),
+             "pixel comparisons should read actual pixels");
+      Expect(SDL_ReadSurfacePixel(rhs, x, y, &rhs_r, &rhs_g, &rhs_b, &rhs_a),
+             "pixel comparisons should read reference pixels");
+      if (lhs_r != rhs_r || lhs_g != rhs_g || lhs_b != rhs_b || lhs_a != rhs_a) {
+        ++differences;
+      }
+    }
+  }
+  return differences;
+}
+
 int MaxInteriorGap(SDL_Surface* surface, SDL_Color background, const PixelBounds& bounds) {
   if (surface == nullptr || !bounds.valid()) {
     return 0;
@@ -202,9 +231,9 @@ void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
   const SDL_Color background = SDL_Color{0x00, 0x00, 0x00, 0xff};
   const SDL_Color foreground = SDL_Color{0xff, 0xff, 0xff, 0xff};
 
-  const auto expect_label_matches = [&](std::string_view label) {
-    SoftwareCanvas actual_canvas(256, 96);
-    SoftwareCanvas reference_canvas(256, 96);
+  const auto expect_label_matches = [&](std::string_view label, bool draw_on_background) {
+    SoftwareCanvas actual_canvas(640, 96);
+    SoftwareCanvas reference_canvas(640, 96);
 
     microide::render::TextRenderer renderer;
     renderer.EnsureInitialized(actual_canvas.renderer());
@@ -222,13 +251,20 @@ void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
     Expect(SDL_RenderClear(reference_canvas.renderer()),
            "UI label spacing test should clear the reference canvas");
 
-    renderer.DrawString(actual_canvas.renderer(), 12.0f, 18.0f, foreground, label);
+    if (draw_on_background) {
+      renderer.DrawStringOn(actual_canvas.renderer(), 12.0f, 18.0f, foreground, background, label);
+    } else {
+      renderer.DrawString(actual_canvas.renderer(), 12.0f, 18.0f, foreground, label);
+    }
 
     TTF_Font* reference_font = TTF_OpenFont(font_path.string().c_str(), 13.0f);
     Expect(reference_font != nullptr, "UI label spacing test should open the bundled font");
     TTF_SetFontHinting(reference_font, TTF_HINTING_LIGHT_SUBPIXEL);
-    SDL_Surface* reference_surface =
-        TTF_RenderText_Blended(reference_font, label.data(), label.size(), foreground);
+    SDL_Surface* reference_surface = draw_on_background
+                                         ? TTF_RenderText_LCD(reference_font, label.data(),
+                                                              label.size(), foreground, background)
+                                         : TTF_RenderText_Blended(reference_font, label.data(),
+                                                                  label.size(), foreground);
     Expect(reference_surface != nullptr,
            "UI label spacing test should render the reference SDL_ttf string");
     SDL_Texture* reference_texture =
@@ -248,21 +284,29 @@ void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
     SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
     const PixelBounds actual_bounds = NonBackgroundBounds(actual_pixels, background);
     const PixelBounds reference_bounds = NonBackgroundBounds(reference_pixels, background);
+    const std::size_t pixel_differences =
+        CountPixelDifferences(actual_pixels, reference_pixels);
 
     Expect(actual_bounds.valid() && reference_bounds.valid(),
            "UI label spacing test should see drawn pixels on both canvases");
-    Expect(std::abs(actual_bounds.width() - reference_bounds.width()) <= 1,
-           "fast ASCII UI labels should keep the same overall width as SDL_ttf string rendering");
+    Expect(pixel_differences == 0,
+           "ASCII string rendering should match SDL_ttf exactly instead of approximating glyph spacing");
     Expect(MaxInteriorGap(actual_pixels, background, actual_bounds) <=
                MaxInteriorGap(reference_pixels, background, reference_bounds) + 1,
-           "fast ASCII UI labels should not introduce larger internal glyph gaps than SDL_ttf string rendering");
+           "ASCII string rendering should not introduce larger internal glyph gaps than SDL_ttf string rendering");
+    Expect(actual_bounds.width() == reference_bounds.width(),
+           "ASCII string rendering should keep the same overall width as SDL_ttf string rendering");
 
     SDL_DestroySurface(actual_pixels);
     SDL_DestroySurface(reference_pixels);
   };
 
-  expect_label_matches("bash");
-  expect_label_matches("dolfin-app");
+  for (std::string_view label :
+       {"bash", "dolfin-app", "function", "resolveInputPath", "path",
+        "return inputPath", "if (path.isAbsolute(inputPath))"}) {
+    expect_label_matches(label, false);
+    expect_label_matches(label, true);
+  }
 }
 
 void TestSdlTtfAsciiGlyphsStayWithinLineBands() {

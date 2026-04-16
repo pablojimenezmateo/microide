@@ -18,10 +18,8 @@ namespace microide::render {
 namespace {
 
 constexpr float kFontPointSize = 13.0f;
-constexpr std::size_t kMaxCacheEntries = 512;
+constexpr std::size_t kMaxCacheEntries = 2048;
 constexpr float kMinPresentationScale = 0.1f;
-constexpr SDL_Color kWhite = SDL_Color{0xff, 0xff, 0xff, 0xff};
-
 std::filesystem::path BasePath() {
   const char* raw_base_path = SDL_GetBasePath();
   if (raw_base_path == nullptr || raw_base_path[0] == '\0') {
@@ -183,11 +181,6 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
     return;
   }
 
-  if (CanUseFastAscii(text)) {
-    DrawFastAsciiString(renderer, x, y, color, nullptr, text);
-    return;
-  }
-
   CacheEntry* entry = ResolveEntry(text, color, nullptr);
   if (entry == nullptr || entry->texture == nullptr) {
     return;
@@ -209,11 +202,6 @@ void SdlTtfTextBackend::DrawStringOn(SDL_Renderer* renderer,
                                      SDL_Color background,
                                      std::string_view text) {
   if (renderer == nullptr || renderer != renderer_ || text.empty()) {
-    return;
-  }
-
-  if (CanUseFastAscii(text)) {
-    DrawFastAsciiString(renderer, x, y, color, &background, text);
     return;
   }
 
@@ -240,16 +228,6 @@ void SdlTtfTextBackend::ClearCache() {
   }
   cache_.clear();
   cache_order_.clear();
-  ClearGlyphCache();
-}
-
-void SdlTtfTextBackend::ClearGlyphCache() {
-  for (GlyphEntry& entry : glyph_cache_) {
-    if (entry.texture != nullptr) {
-      SDL_DestroyTexture(entry.texture);
-    }
-    entry = GlyphEntry{};
-  }
 }
 
 bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
@@ -263,83 +241,6 @@ bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
     }
   }
   return true;
-}
-
-void SdlTtfTextBackend::DrawFastAsciiString(SDL_Renderer* renderer,
-                                            float x,
-                                            float y,
-                                            SDL_Color color,
-                                            const SDL_Color* background,
-                                            std::string_view text) {
-  if (renderer == nullptr || text.empty()) {
-    return;
-  }
-
-  if (background != nullptr) {
-    const SDL_FRect background_rect =
-        SDL_FRect{x, y, static_cast<float>(text.size()) * char_width_, line_height_};
-    SDL_SetRenderDrawColor(renderer, background->r, background->g, background->b, background->a);
-    SDL_RenderFillRect(renderer, &background_rect);
-  }
-
-  float cursor_x = x;
-  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
-  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
-  for (const unsigned char ch : text) {
-    GlyphEntry* glyph = ResolveGlyph(ch);
-    if (glyph != nullptr && glyph->texture != nullptr) {
-      SDL_SetTextureColorMod(glyph->texture, color.r, color.g, color.b);
-      SDL_SetTextureAlphaMod(glyph->texture, color.a);
-      const SDL_FRect destination = SDL_FRect{
-          cursor_x + static_cast<float>(glyph->minx) / scale_x,
-          y,
-          static_cast<float>(glyph->width) / scale_x,
-          static_cast<float>(glyph->height) / scale_y,
-      };
-      SDL_RenderTexture(renderer, glyph->texture, nullptr, &destination);
-    }
-    cursor_x += char_width_;
-  }
-}
-
-SdlTtfTextBackend::GlyphEntry* SdlTtfTextBackend::ResolveGlyph(unsigned char ch) {
-  if (ch >= glyph_cache_.size()) {
-    return nullptr;
-  }
-
-  GlyphEntry& entry = glyph_cache_[ch];
-  if (entry.loaded) {
-    return &entry;
-  }
-
-  entry.loaded = true;
-  if (font_ == nullptr || ch == ' ') {
-    return &entry;
-  }
-
-  int minx = 0;
-  if (!TTF_GetGlyphMetrics(font_, ch, &minx, nullptr, nullptr, nullptr, nullptr)) {
-    return &entry;
-  }
-
-  SDL_Surface* surface = TTF_RenderGlyph_Blended(font_, ch, kWhite);
-  if (surface == nullptr) {
-    return &entry;
-  }
-
-  SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
-  if (texture == nullptr) {
-    SDL_DestroySurface(surface);
-    return &entry;
-  }
-  SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-
-  entry.texture = texture;
-  entry.width = surface->w;
-  entry.height = surface->h;
-  entry.minx = minx;
-  SDL_DestroySurface(surface);
-  return &entry;
 }
 
 std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
