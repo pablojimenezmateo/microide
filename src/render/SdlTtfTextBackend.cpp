@@ -113,16 +113,34 @@ void SdlTtfTextBackend::RefreshMetrics() {
     return;
   }
 
-  line_height_ =
-      static_cast<float>(TTF_GetFontHeight(font_)) / std::max(kMinPresentationScale, presentation_scale_y_);
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
+  const int font_height_pixels = TTF_GetFontHeight(font_);
+  line_height_ = static_cast<float>(font_height_pixels) / scale_y;
+
   static constexpr std::string_view kAdvanceProbe = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
   int probe_width = 0;
   int probe_height = 0;
   if (TTF_GetStringSize(font_, kAdvanceProbe.data(), kAdvanceProbe.size(), &probe_width,
                         &probe_height)) {
     char_width_ = static_cast<float>(probe_width) /
-                  static_cast<float>(kAdvanceProbe.size()) /
-                  std::max(kMinPresentationScale, presentation_scale_x_);
+                  static_cast<float>(kAdvanceProbe.size()) / scale_x;
+  }
+
+  int max_left_padding_pixels = 0;
+  int max_right_padding_pixels = 0;
+  for (unsigned char ch = 0x20; ch <= 0x7E; ++ch) {
+    int minx = 0;
+    int maxx = 0;
+    int miny = 0;
+    int maxy = 0;
+    int advance = 0;
+    if (!TTF_GetGlyphMetrics(font_, ch, &minx, &maxx, &miny, &maxy, &advance)) {
+      continue;
+    }
+    max_left_padding_pixels = std::max(max_left_padding_pixels, std::max(0, -minx));
+    max_right_padding_pixels =
+        std::max(max_right_padding_pixels, std::max(0, maxx - std::max(advance, 0)));
   }
 
   if (char_width_ <= 0.0f) {
@@ -131,6 +149,11 @@ void SdlTtfTextBackend::RefreshMetrics() {
   if (line_height_ <= 0.0f) {
     line_height_ = 14.0f;
   }
+
+  clip_padding_.left = static_cast<float>(max_left_padding_pixels) / scale_x;
+  clip_padding_.right = static_cast<float>(max_right_padding_pixels) / scale_x;
+  clip_padding_.top = 1.0f;
+  clip_padding_.bottom = 1.0f;
 }
 
 float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {

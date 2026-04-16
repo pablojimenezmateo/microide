@@ -44,6 +44,20 @@ std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect, int width, int h
   return SDL_Rect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
 }
 
+std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect,
+                                         const render::TextClipPadding& padding,
+                                         int width,
+                                         int height) {
+  return ToRenderClipRect(
+      SDL_FRect{
+          .x = rect.x - padding.left,
+          .y = rect.y - padding.top,
+          .w = rect.w + padding.left + padding.right,
+          .h = rect.h + padding.top + padding.bottom,
+      },
+      width, height);
+}
+
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
     SDL_Window* window,
     SDL_Renderer* renderer,
@@ -408,8 +422,11 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       workspace_shell_.Render(renderer_, width, height);
     } else {
       bool rendered_partial = false;
+      // Keep semantic dirty rects tight, but give raster text a small bleed halo so
+      // retained-scene partial redraws do not cache clipped glyph fringes.
+      const render::TextClipPadding clip_padding = workspace_shell_.PartialRedrawClipPadding();
       for (const SDL_FRect& dirty_rect : dirty_rects) {
-        const auto clip_rect = ToRenderClipRect(dirty_rect, width, height);
+        const auto clip_rect = ToRenderClipRect(dirty_rect, clip_padding, width, height);
         if (!clip_rect.has_value()) {
           continue;
         }

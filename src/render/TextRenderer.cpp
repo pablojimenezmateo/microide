@@ -122,6 +122,10 @@ float TextRenderer::LineHeight() const {
   return backend_ != nullptr ? backend_->LineHeight() : 14.0f;
 }
 
+TextClipPadding TextRenderer::ClipPadding() const {
+  return backend_ != nullptr ? backend_->ClipPadding() : TextClipPadding{};
+}
+
 float TextRenderer::MeasureWidth(std::string_view text) const {
   if (text.empty()) {
     return 0.0f;

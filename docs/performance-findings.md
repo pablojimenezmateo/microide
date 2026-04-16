@@ -123,6 +123,8 @@ Implemented:
   into one bounding box
 - the retained-scene renderer now replays shell rendering once per dirty clip rect before
   presenting, so disjoint updates stay disjoint
+- retained partial redraw clips now grow by a small font-derived bleed margin so tight caret or
+  row-band invalidations do not cache clipped glyph fringes at the dirty-rect edge
 - normal editor edits now invalidate the affected line band, or the changed line to the bottom of
   the active pane when line insertion or deletion shifts everything below it
 - editor dirty-state transitions also invalidate the local blame-shadow neighborhood so stale
@@ -137,8 +139,8 @@ Impact:
 
 - explicit dirty-state chrome updates no longer force bounding-box redraws through unrelated panes
 - editor, compare, and merge interactions now keep more updates on narrow row-band paths
-- the retained redraw model is now expressive enough to stay correct without falling back to
-  heuristic widening
+- the retained redraw model is now expressive enough to stay correct without broadening the
+  semantic dirty regions that higher-frequency paths depend on
 
 ### Faster ASCII text draws
 
@@ -158,6 +160,8 @@ Implemented:
 - terminal row rendering now paints visible cell backgrounds before glyphs, coalescing identical
   background runs so prompt text and transcript ASCII cells do not get clipped by the next cell's
   background fill
+- retained-scene redraws now preserve block-cursor and other narrow partial redraw transitions by
+  padding the clip rect with the backend's measured glyph bleed
 
 Impact:
 

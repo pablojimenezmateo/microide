@@ -77,6 +77,55 @@ int CountNonBackgroundPixels(SDL_Surface* surface,
   return count;
 }
 
+SDL_Rect InflateClipRect(const SDL_FRect& rect,
+                         microide::render::TextClipPadding padding,
+                         int width,
+                         int height) {
+  const int x0 =
+      std::max(0, static_cast<int>(std::floor(rect.x - padding.left)));
+  const int y0 =
+      std::max(0, static_cast<int>(std::floor(rect.y - padding.top)));
+  const int x1 = std::min(
+      width, static_cast<int>(std::ceil(rect.x + rect.w + padding.right)));
+  const int y1 = std::min(
+      height, static_cast<int>(std::ceil(rect.y + rect.h + padding.bottom)));
+  return SDL_Rect{
+      .x = x0,
+      .y = y0,
+      .w = std::max(0, x1 - x0),
+      .h = std::max(0, y1 - y0),
+  };
+}
+
+std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
+  Expect(lhs != nullptr && rhs != nullptr,
+         "surface comparisons should receive readable surfaces");
+  Expect(lhs->w == rhs->w && lhs->h == rhs->h,
+         "surface comparisons should use canvases with matching dimensions");
+
+  std::size_t differences = 0;
+  for (int y = 0; y < lhs->h; ++y) {
+    for (int x = 0; x < lhs->w; ++x) {
+      Uint8 lhs_r = 0;
+      Uint8 lhs_g = 0;
+      Uint8 lhs_b = 0;
+      Uint8 lhs_a = 0;
+      Uint8 rhs_r = 0;
+      Uint8 rhs_g = 0;
+      Uint8 rhs_b = 0;
+      Uint8 rhs_a = 0;
+      Expect(SDL_ReadSurfacePixel(lhs, x, y, &lhs_r, &lhs_g, &lhs_b, &lhs_a),
+             "surface comparisons should read actual pixels");
+      Expect(SDL_ReadSurfacePixel(rhs, x, y, &rhs_r, &rhs_g, &rhs_b, &rhs_a),
+             "surface comparisons should read reference pixels");
+      if (lhs_r != rhs_r || lhs_g != rhs_g || lhs_b != rhs_b || lhs_a != rhs_a) {
+        ++differences;
+      }
+    }
+  }
+  return differences;
+}
+
 SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {
   Expect(surface != nullptr, "pixel reads should receive a readable surface");
   Uint8 r = 0;
@@ -359,6 +408,82 @@ void TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering() {
   if (legacy_pixels != nullptr) {
     SDL_DestroySurface(legacy_pixels);
   }
+#endif
+}
+
+void TestWorkspaceShellTerminalCaretBlinkRetainedRedrawPreservesGlyphEdges() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#else
+  EnsureDummySdlVideo();
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+  const std::string prompt = "pablo@victus";
+  const std::size_t cursor_column = prompt.find('@');
+  Expect(cursor_column != std::string::npos,
+         "caret redraw regression test should target a visible prompt glyph");
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+    auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    TerminalSessionTestAccess::SetCursorVisible(session, true);
+    TerminalSessionTestAccess::AppendOutput(session, prompt);
+    TerminalSessionTestAccess::SetCursorPosition(session, 0, cursor_column);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+  WorkspaceShellTestAccess::ResetCaretBlink(retained_shell);
+  Expect(WorkspaceShellTestAccess::CaretVisibleNow(retained_shell),
+         "caret redraw regression test should begin from the visible blink phase");
+
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  const std::optional<SDL_FRect> caret_rect =
+      WorkspaceShellTestAccess::CurrentCaretDirtyRect(retained_shell);
+  Expect(caret_rect.has_value(),
+         "caret redraw regression test should have a terminal caret dirty rect");
+
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(retained_shell, SDL_GetTicks() - 530);
+  Expect(!WorkspaceShellTestAccess::CaretVisibleNow(retained_shell),
+         "caret redraw regression test should switch to the hidden blink phase");
+  const SDL_Rect clip_rect = InflateClipRect(
+      *caret_rect, retained_shell.PartialRedrawClipPadding(), kCanvasWidth, kCanvasHeight);
+  Expect(clip_rect.w > 0 && clip_rect.h > 0,
+         "caret redraw regression test should compute a non-empty partial clip");
+  Expect(SDL_SetRenderClipRect(retained_canvas.renderer(), &clip_rect),
+         "caret redraw regression test should set a retained-scene clip rect");
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  Expect(SDL_SetRenderClipRect(retained_canvas.renderer(), nullptr),
+         "caret redraw regression test should clear the retained-scene clip rect");
+
+  WorkspaceShell reference_shell;
+  configure_shell(reference_shell);
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(reference_shell, SDL_GetTicks() - 530);
+  Expect(!WorkspaceShellTestAccess::CaretVisibleNow(reference_shell),
+         "reference render should use the same hidden blink phase");
+
+  SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Surface* retained_pixels = SDL_RenderReadPixels(retained_canvas.renderer(), nullptr);
+  SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+  const std::size_t pixel_differences =
+      CountPixelDifferences(retained_pixels, reference_pixels);
+
+  if (retained_pixels != nullptr) {
+    SDL_DestroySurface(retained_pixels);
+  }
+  if (reference_pixels != nullptr) {
+    SDL_DestroySurface(reference_pixels);
+  }
+
+  Expect(pixel_differences == 0,
+         "retained caret redraws should match a full redraw after the terminal cursor blink toggles");
 #endif
 }
 
@@ -768,6 +893,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation);
   AddTest(tests, "WorkspaceShell/TerminalAsciiPromptMatchesDirectStringRendering",
           TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering);
+  AddTest(tests, "WorkspaceShell/TerminalCaretBlinkRetainedRedrawPreservesGlyphEdges",
+          TestWorkspaceShellTerminalCaretBlinkRetainedRedrawPreservesGlyphEdges);
   AddTest(tests, "WorkspaceShell/TypingReenablesTerminalTailFollow",
           TestWorkspaceShellTypingReenablesTerminalTailFollow);
   AddTest(tests, "WorkspaceShell/HandleEventPassesEscapeToTerminal",

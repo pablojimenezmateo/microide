@@ -337,6 +337,10 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   window_presentation_ = std::move(state);
 }
 
+render::TextClipPadding WorkspaceShell::PartialRedrawClipPadding() const {
+  return text_renderer_.ClipPadding();
+}
+
 std::optional<SDL_FRect> WorkspaceShell::CurrentWindowRect() const {
   if (window_presentation_.logical_width <= 0 || window_presentation_.logical_height <= 0) {
     return std::nullopt;

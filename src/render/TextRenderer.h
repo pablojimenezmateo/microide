@@ -26,6 +26,7 @@ class TextRenderer {
                          float presentation_scale_y = 1.0f);
   float CharWidth() const;
   float LineHeight() const;
+  TextClipPadding ClipPadding() const;
   float MeasureWidth(std::string_view text) const;
   std::string_view BackendName() const;
   std::string TruncateToWidth(std::string_view text, float max_width) const;

@@ -75,6 +75,15 @@ struct TerminalSessionTestAccess {
     session.cursor_visible_ = visible;
   }
 
+  static void SetCursorPosition(microide::terminal::TerminalSession& session,
+                                std::size_t row,
+                                std::size_t column) {
+    std::scoped_lock lock(session.mutex_);
+    session.cursor_row_ = std::min(row, session.rows_ == 0 ? std::size_t{0} : session.rows_ - 1);
+    session.cursor_column_ =
+        std::min(column, session.columns_ == 0 ? std::size_t{0} : session.columns_ - 1);
+  }
+
   static void SetChildProcess(microide::terminal::TerminalSession& session, int child_pid) {
     std::scoped_lock lock(session.mutex_);
     session.child_pid_ = child_pid;

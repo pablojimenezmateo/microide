@@ -906,6 +906,9 @@ struct WorkspaceShellTestAccess {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Panel;
   }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
+  static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
+    shell.caret_blink_epoch_ms_ = epoch_ms;
+  }
   static bool CaretVisibleNow(const WorkspaceShell& shell) { return shell.CaretVisibleNow(); }
   static std::optional<SDL_FRect> CurrentCaretDirtyRect(const WorkspaceShell& shell) {
     return shell.CurrentCaretDirtyRect();

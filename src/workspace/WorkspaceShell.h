@@ -91,6 +91,7 @@ class WorkspaceShell {
   void RequestQuit();
   bool ConsumeQuitRequested();
   float UiScale() const { return ui_scale_; }
+  render::TextClipPadding PartialRedrawClipPadding() const;
   void SetWindowPresentationState(WindowPresentationState state);
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;

@@ -25,6 +25,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void SetPresentationScale(float scale_x, float scale_y) override;
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
+  TextClipPadding ClipPadding() const override { return clip_padding_; }
   float MeasureWidth(std::string_view text) const override;
   void DrawString(SDL_Renderer* renderer,
                   float x,
@@ -85,6 +86,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   std::filesystem::path font_path_;
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
+  TextClipPadding clip_padding_{};
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;

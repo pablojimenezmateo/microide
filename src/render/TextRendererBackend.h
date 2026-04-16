@@ -7,6 +7,13 @@
 
 namespace microide::render {
 
+struct TextClipPadding {
+  float left = 0.0f;
+  float right = 0.0f;
+  float top = 0.0f;
+  float bottom = 0.0f;
+};
+
 class TextRendererBackend {
  public:
   virtual ~TextRendererBackend() = default;
@@ -18,6 +25,7 @@ class TextRendererBackend {
   }
   virtual float CharWidth() const = 0;
   virtual float LineHeight() const = 0;
+  virtual TextClipPadding ClipPadding() const { return {}; }
   virtual float MeasureWidth(std::string_view text) const = 0;
   virtual void DrawString(SDL_Renderer* renderer,
                           float x,
