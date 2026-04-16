@@ -103,6 +103,7 @@ add_library(microide_runtime_syntax_generated OBJECT
 target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 
 set(MICROIDE_CORE_SOURCES
+  src/editor/DecoratedTextGridRenderer.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
@@ -129,6 +130,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
+  src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   src/util/WindowPresentation.cpp
@@ -178,6 +180,7 @@ set(MICROIDE_CORE_SOURCES
 add_executable(microide
   src/app/main.cpp
   src/app/Application.cpp
+  src/app/DirtyRegionPolicy.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
 )
@@ -221,9 +224,11 @@ elseif(MSVC)
 endif()
 
 add_executable(microide_tests
+  src/app/DirtyRegionPolicy.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
   tests/CompareModelTests.cpp
+  tests/DirtyRegionPolicyTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitBlameServiceTests.cpp
@@ -287,18 +292,28 @@ add_test(NAME microide_tests COMMAND microide_tests)
 
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+  src/editor/DecoratedTextGridRenderer.cpp
+  src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
+  src/editor/TextLayout.cpp
+  src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
   src/project/GitCompareService.cpp
   src/project/GitPorcelainParser.cpp
   src/project/GitRepository.cpp
+  src/render/DebugTextBackend.cpp
+  src/render/TextRenderer.cpp
+  src/render/TextRendererBackend.cpp
+  src/render/Theme.cpp
+  src/util/PerformanceTrace.cpp
+  src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   tools/CompareBench.cpp
 )
 
 target_include_directories(microide_diff_bench PRIVATE src)
-target_link_libraries(microide_diff_bench PRIVATE PkgConfig::PCRE2)
+target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic)

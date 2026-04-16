@@ -6,9 +6,12 @@
 #include <cmath>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <string_view>
 
+#include "app/DirtyRegionPolicy.h"
 #include "util/StartupTrace.h"
+#include "util/PerformanceTrace.h"
 #include "util/WindowPresentation.h"
 
 namespace microide::app {
@@ -18,6 +21,7 @@ namespace {
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
 constexpr Uint64 kRenderTraceLogInterval = 120;
+constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
 
 bool CustomWindowChromeEnabled(SDL_Window* window) {
   return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) != 0;
@@ -30,32 +34,6 @@ bool FlagEnabled(const char* value) {
 
   const std::string_view text(value);
   return text != "0" && text != "false" && text != "FALSE" && text != "off" && text != "OFF";
-}
-
-std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect, int width, int height) {
-  const int x0 = std::max(0, static_cast<int>(std::floor(rect.x)));
-  const int y0 = std::max(0, static_cast<int>(std::floor(rect.y)));
-  const int x1 = std::min(width, static_cast<int>(std::ceil(rect.x + rect.w)));
-  const int y1 = std::min(height, static_cast<int>(std::ceil(rect.y + rect.h)));
-  if (x1 <= x0 || y1 <= y0) {
-    return std::nullopt;
-  }
-
-  return SDL_Rect{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
-}
-
-std::optional<SDL_Rect> ToRenderClipRect(const SDL_FRect& rect,
-                                         const render::TextClipPadding& padding,
-                                         int width,
-                                         int height) {
-  return ToRenderClipRect(
-      SDL_FRect{
-          .x = rect.x - padding.left,
-          .y = rect.y - padding.top,
-          .w = rect.w + padding.left + padding.right,
-          .h = rect.h + padding.top + padding.bottom,
-      },
-      width, height);
 }
 
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
@@ -113,6 +91,12 @@ int Application::Run() {
   while (running_) {
     if (full_redraw_pending || !dirty_rects.empty()) {
       Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
+      if (workspace_shell_.ConsumePostRenderFullRedrawRequest()) {
+        full_redraw_pending = true;
+        dirty_rects.clear();
+        redraw_reason = "render-settle";
+        continue;
+      }
       full_redraw_pending = false;
       dirty_rects.clear();
       redraw_reason = "event";
@@ -394,6 +378,9 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     return;
   }
 
+  const bool full_redraw_requested = dirty_rects.empty() || !scene_texture_valid_;
+  util::PerformanceTrace::Scope trace_scope(
+      full_redraw_requested ? "Application::Render(full)" : "Application::Render(partial)");
   std::optional<util::StartupTrace::Scope> first_render_scope;
   if (!first_render_complete_ && util::StartupTrace::Enabled()) {
     first_render_scope.emplace("Application::FirstRender");
@@ -401,40 +388,69 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
 
   int width = 0;
   int height = 0;
-  if (!UpdateRendererPresentation(&width, &height)) {
-    return;
+  {
+    util::PerformanceTrace::Scope presentation_scope("Application::UpdateRendererPresentation");
+    if (!UpdateRendererPresentation(&width, &height)) {
+      return;
+    }
   }
 
-  const bool full_redraw = dirty_rects.empty() || !scene_texture_valid_;
+  const std::size_t dirty_rect_count = dirty_rects.size();
+  const render::TextClipPadding clip_padding = workspace_shell_.PartialRedrawClipPadding();
+  const DirtyRegionAnalysis dirty_region_analysis =
+      AnalyzeDirtyRegions(dirty_rects, clip_padding, width, height);
+  const std::size_t merged_clip_count = dirty_region_analysis.merged_clip_rects.size();
+  const float dirty_coverage = dirty_region_analysis.coverage;
+  const bool promote_partial_to_full =
+      scene_texture_valid_ && ShouldPromotePartialFrameToFull(dirty_region_analysis);
+  const bool full_redraw = dirty_rects.empty() || !scene_texture_valid_ || promote_partial_to_full;
   const Uint64 render_start = SDL_GetTicksNS();
-  if (EnsureSceneTexture(width, height)) {
+  std::size_t rendered_clip_count = 0;
+  bool scene_texture_ready = false;
+  {
+    util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
+    scene_texture_ready = EnsureSceneTexture(width, height);
+  }
+  if (scene_texture_ready) {
     if (!SDL_SetRenderTarget(renderer_, scene_texture_)) {
       SDL_Log("SDL_SetRenderTarget(scene texture) failed: %s", SDL_GetError());
       DestroySceneTexture();
-      workspace_shell_.Render(renderer_, width, height);
+      {
+        util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
+        workspace_shell_.Render(renderer_, width, height);
+      }
       SDL_RenderPresent(renderer_);
-      RecordRenderStats(true, 0, "fallback-full", SDL_GetTicksNS() - render_start);
+        RecordRenderStats(true, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
       first_render_complete_ = true;
       return;
     }
 
     if (full_redraw) {
+      if (promote_partial_to_full && util::PerformanceTrace::Enabled()) {
+        SDL_Log(
+            "microide perf: promoting partial frame to full redraw (%zu dirty rects, %zu coalesced clip rects, %.1f%% coalesced coverage)",
+            dirty_rect_count, merged_clip_count, dirty_coverage * 100.0f);
+      }
+      util::PerformanceTrace::Scope workspace_scope("Application::WorkspaceRender(full)");
       workspace_shell_.Render(renderer_, width, height);
     } else {
       bool rendered_partial = false;
-      // Keep semantic dirty rects tight, but give raster text a small bleed halo so
-      // retained-scene partial redraws do not cache clipped glyph fringes.
-      const render::TextClipPadding clip_padding = workspace_shell_.PartialRedrawClipPadding();
-      for (const SDL_FRect& dirty_rect : dirty_rects) {
-        const auto clip_rect = ToRenderClipRect(dirty_rect, clip_padding, width, height);
-        if (!clip_rect.has_value()) {
-          continue;
-        }
-        SDL_SetRenderClipRect(renderer_, &*clip_rect);
+      const std::string partial_loop_label =
+          "Application::WorkspaceRender(partial-loop " + std::to_string(merged_clip_count) +
+          " coalesced clip rects from " + std::to_string(dirty_rect_count) +
+          " dirty rects)";
+      util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label);
+      for (const SDL_Rect& clip_rect : dirty_region_analysis.merged_clip_rects) {
+        SDL_SetRenderClipRect(renderer_, &clip_rect);
+        util::PerformanceTrace::Scope partial_scope(
+            "Application::WorkspaceRender(partial-clip)");
         workspace_shell_.Render(renderer_, width, height);
         rendered_partial = true;
+        ++rendered_clip_count;
       }
       if (!rendered_partial) {
+        util::PerformanceTrace::Scope partial_fallback_scope(
+            "Application::WorkspaceRender(partial-fallback-full)");
         workspace_shell_.Render(renderer_, width, height);
         dirty_rects.clear();
       }
@@ -442,15 +458,25 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
 
     SDL_SetRenderClipRect(renderer_, nullptr);
     SDL_SetRenderTarget(renderer_, nullptr);
-    SDL_RenderTexture(renderer_, scene_texture_, nullptr, nullptr);
-    SDL_RenderPresent(renderer_);
+    {
+      util::PerformanceTrace::Scope present_scope("Application::PresentRetainedScene");
+      SDL_RenderTexture(renderer_, scene_texture_, nullptr, nullptr);
+      SDL_RenderPresent(renderer_);
+    }
     scene_texture_valid_ = true;
-    RecordRenderStats(full_redraw || dirty_rects.empty(), dirty_rects.size(), reason,
-                      SDL_GetTicksNS() - render_start);
+    if (!full_redraw && util::PerformanceTrace::Enabled() &&
+        rendered_clip_count >= kRenderPerfPartialClipWarnThreshold) {
+      SDL_Log(
+          "microide perf: partial frame replayed %zu coalesced clip rects from %zu dirty rects",
+          rendered_clip_count, dirty_rect_count);
+    }
+    RecordRenderStats(full_redraw || dirty_rects.empty(), dirty_rect_count, rendered_clip_count,
+                      reason, SDL_GetTicksNS() - render_start);
   } else {
+    util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
     workspace_shell_.Render(renderer_, width, height);
     SDL_RenderPresent(renderer_);
-    RecordRenderStats(true, 0, "fallback-full", SDL_GetTicksNS() - render_start);
+    RecordRenderStats(true, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
   }
   first_render_complete_ = true;
 }
@@ -519,6 +545,7 @@ void Application::DestroySceneTexture() {
 
 void Application::RecordRenderStats(bool full_redraw,
                                     std::size_t dirty_rect_count,
+                                    std::size_t rendered_clip_count,
                                     const char* reason,
                                     Uint64 elapsed_ns) {
   if (!redraw_trace_enabled_) {
@@ -527,6 +554,11 @@ void Application::RecordRenderStats(bool full_redraw,
 
   ++redraw_trace_frames_;
   redraw_trace_total_ns_ += elapsed_ns;
+  redraw_trace_total_dirty_rects_ += dirty_rect_count;
+  redraw_trace_total_rendered_clips_ += rendered_clip_count;
+  redraw_trace_max_dirty_rects_ = std::max(redraw_trace_max_dirty_rects_, dirty_rect_count);
+  redraw_trace_max_rendered_clips_ =
+      std::max(redraw_trace_max_rendered_clips_, rendered_clip_count);
   if (full_redraw || dirty_rect_count == 0) {
     ++redraw_trace_full_frames_;
   } else {
@@ -539,10 +571,24 @@ void Application::RecordRenderStats(bool full_redraw,
 
   const double average_ms = static_cast<double>(redraw_trace_total_ns_) /
                             static_cast<double>(redraw_trace_frames_) / 1'000'000.0;
-  SDL_Log("microide redraw: %llu frames | %llu full | %llu partial | avg %.2f ms | last=%s",
+  const double average_dirty_rects =
+      redraw_trace_frames_ == 0
+          ? 0.0
+          : static_cast<double>(redraw_trace_total_dirty_rects_) /
+                static_cast<double>(redraw_trace_frames_);
+  const double average_rendered_clips =
+      redraw_trace_partial_frames_ == 0
+          ? 0.0
+          : static_cast<double>(redraw_trace_total_rendered_clips_) /
+                static_cast<double>(redraw_trace_partial_frames_);
+  SDL_Log(
+      "microide redraw: %llu frames | %llu full | %llu partial | avg %.2f ms | avg dirty %.2f "
+      "| avg clips %.2f | max dirty %zu | max clips %zu | last=%s",
           static_cast<unsigned long long>(redraw_trace_frames_),
           static_cast<unsigned long long>(redraw_trace_full_frames_),
           static_cast<unsigned long long>(redraw_trace_partial_frames_), average_ms,
+          average_dirty_rects, average_rendered_clips, redraw_trace_max_dirty_rects_,
+          redraw_trace_max_rendered_clips_,
           reason != nullptr ? reason : "unknown");
   LogRenderStatsIfNeeded(true);
 }
@@ -556,6 +602,10 @@ void Application::LogRenderStatsIfNeeded(bool force) {
   redraw_trace_full_frames_ = 0;
   redraw_trace_partial_frames_ = 0;
   redraw_trace_total_ns_ = 0;
+  redraw_trace_total_dirty_rects_ = 0;
+  redraw_trace_total_rendered_clips_ = 0;
+  redraw_trace_max_dirty_rects_ = 0;
+  redraw_trace_max_rendered_clips_ = 0;
 }
 
 void Application::ConsumeWindowActions() {

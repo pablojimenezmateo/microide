@@ -33,6 +33,7 @@ class Application {
   void DestroySceneTexture();
   void RecordRenderStats(bool full_redraw,
                          std::size_t dirty_rect_count,
+                         std::size_t rendered_clip_count,
                          const char* reason,
                          Uint64 elapsed_ns);
   void LogRenderStatsIfNeeded(bool force = false);
@@ -59,6 +60,10 @@ class Application {
   Uint64 redraw_trace_full_frames_ = 0;
   Uint64 redraw_trace_partial_frames_ = 0;
   Uint64 redraw_trace_total_ns_ = 0;
+  Uint64 redraw_trace_total_dirty_rects_ = 0;
+  Uint64 redraw_trace_total_rendered_clips_ = 0;
+  std::size_t redraw_trace_max_dirty_rects_ = 0;
+  std::size_t redraw_trace_max_rendered_clips_ = 0;
   float window_drag_mouse_x_ = 0.0f;
   float window_drag_mouse_y_ = 0.0f;
 
