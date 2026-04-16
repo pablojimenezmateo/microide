@@ -271,7 +271,6 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
           .redraw = workspace::WorkspaceShell::RenderInvalidation{
               .full = true,
               .rects = {},
-              .rect = std::nullopt,
           },
       };
     case SDL_EVENT_WINDOW_FOCUS_LOST:

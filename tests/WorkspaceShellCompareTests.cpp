@@ -197,13 +197,14 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RIGHT;
   const auto result = shell.HandleEvent(event);
+  const auto redraw_rect = result.redraw.SingleRectIfOnlyOne();
 
   Expect(result.handled, "compare horizontal navigation should be handled");
-  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+  Expect(!result.redraw.full && redraw_rect.has_value(),
          "compare horizontal navigation should stay on a partial redraw path");
-  Expect(RectsIntersect(*result.redraw.rect, editable_rect),
+  Expect(RectsIntersect(*redraw_rect, editable_rect),
          "compare horizontal navigation should repaint the editable pane");
-  Expect(!RectsIntersect(*result.redraw.rect, left_rect),
+  Expect(!RectsIntersect(*redraw_rect, left_rect),
          "compare horizontal navigation should avoid repainting the historical left pane");
 }
 

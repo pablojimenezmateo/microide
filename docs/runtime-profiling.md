@@ -63,6 +63,15 @@ The promotion log now reports coalesced clip count and coalesced coverage, not r
 area. Coverage is bounded to 100%, so a value above the promotion threshold is now a real measure
 of how much of the logical scene the retained redraw would touch.
 
+During active outer-layout resize, partial replay is no longer expected:
+
+- bottom-panel divider drags should promote directly to full redraw and may schedule bounded
+  follow-up settle redraws if terminal resize changes the layout during render
+- sidebar divider drags should also promote directly to full redraw while the divider is moving
+
+If resize tracing still shows large `partial-loop ...` storms during those drag paths, treat that
+as a regression in the active-resize policy rather than a threshold-tuning issue.
+
 The redraw summary now also reports partial-frame pressure directly:
 
 - average dirty rects per frame

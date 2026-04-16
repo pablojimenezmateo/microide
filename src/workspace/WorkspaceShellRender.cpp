@@ -225,7 +225,6 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   if (ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
-  blame_hover_refresh_pending_ = last_mouse_position_valid_;
   float mouse_x = last_mouse_x_;
   float mouse_y = last_mouse_y_;
   if (!last_mouse_position_valid_) {

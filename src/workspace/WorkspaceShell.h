@@ -70,7 +70,15 @@ class WorkspaceShell {
   struct RenderInvalidation {
     bool full = false;
     std::vector<SDL_FRect> rects;
-    std::optional<SDL_FRect> rect;
+
+    [[nodiscard]] bool HasAnyRedraw() const { return full || !rects.empty(); }
+
+    [[nodiscard]] std::optional<SDL_FRect> SingleRectIfOnlyOne() const {
+      if (rects.size() != 1) {
+        return std::nullopt;
+      }
+      return rects.front();
+    }
   };
 
   struct EventResult {
@@ -1501,6 +1509,7 @@ class WorkspaceShell {
   void RequestWindowRedraw();
   void RequestChromeRedraw();
   void RequestSidebarRedraw();
+  void RequestSidebarLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBreadcrumbRedraw();
   void RequestTabStripRedraw();
   void RequestEditorSurfaceRedraw();
@@ -1526,6 +1535,7 @@ class WorkspaceShell {
   void RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible);
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
+  void QueueBlameHoverRefresh();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
   std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,

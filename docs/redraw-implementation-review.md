@@ -14,6 +14,16 @@ Validation:
   terminal caret retained redraw, compare row-band redraw, merge conflict-band redraw, and editor
   blame-neighborhood redraw.
 
+Follow-up status:
+- Dirty-region coalescing and partial-to-full promotion are now shipped in `Application`.
+- One-time frame preparation is split from retained clip replay in `WorkspaceShell`.
+- `RenderInvalidation` now stores only the authoritative multi-rect payload, with helper accessors
+  instead of a stored legacy single-rect field.
+- Bottom-panel and sidebar divider drags now use coarse full redraws, backed by retained-vs-full
+  regression tests.
+- Retained redraw comparison tests that use SDL dummy video should be run serially because they
+  share global SDL state.
+
 ## Summary
 
 The redraw implementation is directionally good. The important structural choices are the right

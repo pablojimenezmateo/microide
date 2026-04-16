@@ -34,6 +34,13 @@ Bottom-panel resize currently requests redraw for the new bottom-panel rect, but
 
 This is the most likely cause of visual corruption during terminal resize.
 
+Status:
+
+- Completed for bottom-panel divider drags by promoting resize frames to full redraws and
+  scheduling bounded settle redraws when terminal resize mutates layout during render.
+- Completed for sidebar divider drags by promoting active resize frames to full redraws instead of
+  relying on fragmented partial invalidation.
+
 ### 2. Dirty coverage estimation is not trustworthy
 
 The current dirty-area estimate sums dirty rect areas without coalescing overlaps, so the computed "coverage" can exceed 100%. That makes the metric useful only as a rough fragmentation signal, not as a real coverage measurement.
@@ -48,9 +55,20 @@ Status:
 
 `WorkspaceShell::Render()` still performs some stateful maintenance work. In a retained partial frame, `Render()` may be called multiple times, once per clip rect. That increases the risk of subtle behavior differences between full and partial redraws.
 
+Status:
+
+- Partially completed by splitting frame preparation from clip replay.
+- Further narrowed in the current iteration by queuing blame-hover refresh from redraw requests
+  instead of marking it dirty on every prepared frame.
+
 ### 4. Stress coverage is still too narrow
 
 There are retained redraw comparison tests, but layout-changing stress cases are still under-covered. We need tests that specifically exercise resize-driven invalidation.
+
+Status:
+
+- Completed for the known resize-sensitive shell paths with retained-vs-full redraw regression
+  tests covering bottom-panel resize settle and sidebar divider dragging.
 
 ## Ordered work items
 
@@ -113,6 +131,13 @@ Implementation note:
 - Once coalescing is in place, thresholds should be based on coalesced clip count first, with coverage used as a tie-breaker for broad-but-still-fragmented redraws.
 - A single large coalesced region should usually stay partial. The pathological case is multiple large regions, not merely a high raw dirty-rect count.
 
+Status:
+
+- Post-coalescing validation did not expose a new ordinary-editing hotspot after the resize policy
+  fixes, so the current coalesced thresholds remain in place.
+- Active outer-layout resize now bypasses partial replay entirely, which removed the main remaining
+  pathological case that was likely to force further threshold tuning.
+
 ### 4. Move non-rendering state updates out of `WorkspaceShell::Render()`
 
 Scope:
@@ -131,7 +156,8 @@ Status:
 - Partially completed in the current iteration by splitting one-time frame preparation from draw replay.
 - `Application` now asks `WorkspaceShell` to prepare a frame once, then replays only the prepared draw path per coalesced clip rect.
 - Project-search updates, project-open dialog results, text-input surface sync, editor-tab normalization, terminal panel resize, and cursor refresh no longer run once per replayed clip.
-- Blame-hover refresh is still render-coupled, but it is now gated to one refresh per prepared frame instead of every clip replay.
+- Blame-hover refresh is still render-coupled, but it is now scheduled by redraw-producing state
+  changes instead of every prepared frame.
 
 ### 5. Add retained redraw regression tests for layout changes
 
@@ -143,6 +169,11 @@ Add tests that compare retained partial redraw output against a full redraw for:
 
 The target is simple: after a geometry change, retained redraw output must match a fresh full redraw.
 
+Status:
+
+- Completed for bottom-panel resize.
+- Completed for sidebar divider resize.
+
 ### 6. Consider explicit policy for active resize mode
 
 If traces still show poor behavior during drag-resize after the previous steps:
@@ -151,6 +182,12 @@ If traces still show poor behavior during drag-resize after the previous steps:
 - or force full redraw while a panel divider is actively dragged
 
 This is intentionally later in the plan. We should first fix the invalidation contract and improve dirty-region quality before adding a more aggressive mode switch.
+
+Status:
+
+- Completed for active outer-layout resize.
+- Bottom-panel and sidebar divider drags now use full redraw during the drag rather than replaying
+  retained partial clips through geometry changes.
 
 ## Success criteria
 
@@ -169,8 +206,13 @@ Completed:
 - geometry-aware invalidation for bottom-panel resize
 - redraw settle requests for render-time terminal layout changes
 - clip-space dirty-region coalescing with bounded coverage metrics
+- outer-layout active-resize full redraw policy for sidebar and bottom-panel divider drags
+- authoritative multi-rect invalidation contract with helper accessors instead of a stored legacy
+  single-rect field
+- redraw-request-driven blame-hover refresh scheduling
+- retained-vs-full redraw regression coverage for sidebar resize
 
 Current focus:
 
-- further promotion tuning based on traces from resize and ordinary editing flows
-- finishing the remaining render-coupled state updates that still cannot be cleanly staged before draw
+- monitor future traces for new ordinary-editing promotion hotspots
+- add app-level burst harnesses only if a new bug escapes the current shell-level redraw coverage

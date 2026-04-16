@@ -27,7 +27,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     };
   };
   const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+    if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
     }
   };

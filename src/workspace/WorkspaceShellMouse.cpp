@@ -17,7 +17,7 @@ namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+    if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
     }
   };
@@ -171,7 +171,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+    if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
     }
   };
@@ -224,7 +224,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
 
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+    if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
     }
   };
@@ -278,16 +278,16 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return false;
     }
 
+    const WorkspaceLayout drag_layout = layout;
+
     if (surface_.drag_target == DragTarget::SidebarDivider) {
       const float window_width =
           CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
       surface_.sidebar_width =
           ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
-      ensure_redraw([this]() { RequestWindowRedraw(); });
+      RequestSidebarLayoutChangeRedraw(drag_layout);
       return true;
     }
-
-    const WorkspaceLayout drag_layout = layout;
 
     if (surface_.drag_target == DragTarget::BottomPanelDivider) {
       if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
@@ -396,7 +396,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.full && !pending_render_invalidation_.rect.has_value()) {
+    if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
     }
   };

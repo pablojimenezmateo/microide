@@ -378,7 +378,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
 void WorkspaceShell::RequestFullRedraw() {
   pending_render_invalidation_.full = true;
   pending_render_invalidation_.rects.clear();
-  pending_render_invalidation_.rect.reset();
+  QueueBlameHoverRefresh();
 }
 
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
@@ -386,9 +386,7 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
     return;
   }
   pending_render_invalidation_.rects.push_back(rect);
-  if (!pending_render_invalidation_.rect.has_value()) {
-    pending_render_invalidation_.rect = rect;
-  }
+  QueueBlameHoverRefresh();
 }
 
 void WorkspaceShell::RequestWindowRedraw() {
@@ -413,6 +411,24 @@ void WorkspaceShell::RequestSidebarRedraw() {
     return;
   }
   RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
+    const WorkspaceLayout& previous_layout) {
+  const auto current_layout = CurrentWorkspaceLayout();
+  if (!current_layout.has_value()) {
+    RequestWindowRedraw();
+    return;
+  }
+
+  if (RectsEqual(previous_layout.sidebar, current_layout->sidebar) &&
+      RectsEqual(previous_layout.content, current_layout->content)) {
+    return;
+  }
+
+  // Sidebar dragging changes the outer workspace geometry. Repaint the whole scene while the
+  // divider is moving so retained redraw does not leave stale pixels in the newly exposed area.
+  RequestFullRedraw();
 }
 
 void WorkspaceShell::RequestBreadcrumbRedraw() {
@@ -653,6 +669,10 @@ void WorkspaceShell::RequestPromptRedraw() {
     return;
   }
   RequestWindowRedraw();
+}
+
+void WorkspaceShell::QueueBlameHoverRefresh() {
+  blame_hover_refresh_pending_ = last_mouse_position_valid_;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {

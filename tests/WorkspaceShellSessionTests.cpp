@@ -268,13 +268,14 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_RIGHT;
   const auto result = shell.HandleEvent(event);
+  const auto redraw_rect = result.redraw.SingleRectIfOnlyOne();
 
   Expect(result.handled, "merge horizontal navigation should be handled");
-  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+  Expect(!result.redraw.full && redraw_rect.has_value(),
          "merge horizontal navigation should stay on a partial redraw path");
-  Expect(RectsIntersect(*result.redraw.rect, result_rect),
+  Expect(RectsIntersect(*redraw_rect, result_rect),
          "merge horizontal navigation should repaint the result pane");
-  Expect(!RectsIntersect(*result.redraw.rect, left_rect),
+  Expect(!RectsIntersect(*redraw_rect, left_rect),
          "merge horizontal navigation should avoid repainting the incoming pane");
 }
 

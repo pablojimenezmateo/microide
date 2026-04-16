@@ -26,6 +26,14 @@ bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& tar
                      [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
 }
 
+float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
+  float max_height = 0.0f;
+  for (const SDL_FRect& rect : rects) {
+    max_height = std::max(max_height, rect.h);
+  }
+  return max_height;
+}
+
 #if MICROIDE_HAS_SDL3_TTF
 
 void EnsureDummySdlVideo() {
@@ -257,9 +265,9 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
   const auto open_result = shell.HandleEvent(click_event);
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   Expect(open_result.handled, "opening a menu should be handled");
-  Expect(!open_result.redraw.full && open_result.redraw.rect.has_value(),
+  Expect(!open_result.redraw.full && !open_result.redraw.rects.empty(),
          "opening a menu should request a partial redraw");
-  Expect(RectsIntersect(*open_result.redraw.rect, layout.menu_bar),
+  Expect(AnyRectIntersects(open_result.redraw.rects, layout.menu_bar),
          "menu redraws should include the chrome menu bar");
 
   SDL_Event motion_event{};
@@ -268,9 +276,9 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
   motion_event.motion.y = edit_rect->y + edit_rect->h * 0.5f;
   const auto hover_result = shell.HandleEvent(motion_event);
   Expect(hover_result.handled, "switching menu hover should be handled");
-  Expect(!hover_result.redraw.full && hover_result.redraw.rect.has_value(),
+  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
          "switching menu hover should stay on a partial redraw path");
-  Expect(RectsIntersect(*hover_result.redraw.rect, layout.menu_bar),
+  Expect(AnyRectIntersects(hover_result.redraw.rects, layout.menu_bar),
          "menu hover redraws should stay scoped to chrome");
 }
 
@@ -323,15 +331,15 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   const auto edited_line_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
 
   Expect(result.handled, "editor typing should be handled");
-  Expect(!result.redraw.full && result.redraw.rect.has_value(),
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
          "editor typing should request a partial redraw");
-  Expect(RectsIntersect(*result.redraw.rect, active_pane),
+  Expect(AnyRectIntersects(result.redraw.rects, active_pane),
          "editor typing redraws should include the active editor pane");
-  Expect(!RectsIntersect(*result.redraw.rect, inactive_pane),
+  Expect(!AnyRectIntersects(result.redraw.rects, inactive_pane),
          "editor typing redraws should avoid repainting the inactive split pane");
-  Expect(edited_line_rect.has_value() && RectsIntersect(*result.redraw.rect, *edited_line_rect),
+  Expect(edited_line_rect.has_value() && AnyRectIntersects(result.redraw.rects, *edited_line_rect),
          "editor typing redraws should include the edited line band");
-  Expect(result.redraw.rect->h < active_pane.h,
+  Expect(MaxRectHeight(result.redraw.rects) < active_pane.h,
          "single-line editor typing should redraw less than the full active pane");
 }
 
@@ -634,6 +642,108 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
          "retained tab-open redraws should match a full redraw");
 }
 
+void TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source,
+            "int main() {\n"
+            "  return 0;\n"
+            "}\n"
+            "// sidebar resize regression fixture\n");
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  };
+
+  const auto handle_divider_press = [&](WorkspaceShell& shell, float x, float y) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.x = x;
+    event.button.y = y;
+    return shell.HandleEvent(event);
+  };
+
+  const auto handle_divider_drag = [&](WorkspaceShell& shell, float x, float y) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = x;
+    event.motion.y = y;
+    event.motion.state = SDL_BUTTON_LMASK;
+    return shell.HandleEvent(event);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  const auto initial_layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
+  const SDL_FRect resize_handle = microide::workspace::SidebarResizeHandleRect(initial_layout);
+  const float drag_start_x = resize_handle.x + resize_handle.w * 0.5f;
+  const float drag_y = resize_handle.y + resize_handle.h * 0.5f;
+  const float drag_end_x = drag_start_x + 120.0f;
+
+  const auto retained_press = handle_divider_press(retained_shell, drag_start_x, drag_y);
+  Expect(retained_press.handled,
+         "sidebar resize regression should start dragging on the sidebar divider");
+  const auto retained_drag = handle_divider_drag(retained_shell, drag_end_x, drag_y);
+  Expect(retained_drag.handled,
+         "sidebar resize regression should handle divider drag motion");
+  Expect(retained_drag.redraw.full,
+         "sidebar resize should promote to a full redraw while the divider is moving");
+
+  const auto resized_layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
+  Expect(resized_layout.sidebar.w > initial_layout.sidebar.w,
+         "sidebar resize regression should widen the sidebar after dragging right");
+
+  RenderRetainedInvalidation(
+      retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, retained_drag.redraw);
+  Expect(!retained_shell.ConsumePostRenderFullRedrawRequest(),
+         "sidebar resize should not require terminal settle redraws");
+
+  WorkspaceShell reference_shell;
+  configure_shell(reference_shell);
+  SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  const auto reference_layout = WorkspaceShellTestAccess::CurrentLayout(reference_shell);
+  const SDL_FRect reference_handle =
+      microide::workspace::SidebarResizeHandleRect(reference_layout);
+  const float reference_drag_start_x = reference_handle.x + reference_handle.w * 0.5f;
+  const float reference_drag_y = reference_handle.y + reference_handle.h * 0.5f;
+  const float reference_drag_end_x = reference_drag_start_x + 120.0f;
+  Expect(handle_divider_press(reference_shell, reference_drag_start_x, reference_drag_y).handled,
+         "reference sidebar resize fixture should start divider dragging");
+  Expect(handle_divider_drag(reference_shell, reference_drag_end_x, reference_drag_y).handled,
+         "reference sidebar resize fixture should handle divider drag motion");
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Surface* retained_pixels = SDL_RenderReadPixels(retained_canvas.renderer(), nullptr);
+  SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+  const std::size_t pixel_differences =
+      CountPixelDifferences(retained_pixels, reference_pixels);
+
+  if (retained_pixels != nullptr) {
+    SDL_DestroySurface(retained_pixels);
+  }
+  if (reference_pixels != nullptr) {
+    SDL_DestroySurface(reference_pixels);
+  }
+
+  Expect(pixel_differences == 0,
+         "retained sidebar resize redraws should match a full redraw");
+}
+
 void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
   EnsureDummySdlVideo();
 
@@ -744,6 +854,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenFileInNewTabRetainedRedrawMatchesFullRender",
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/SidebarResizeRequestsFullRedrawAndMatchesFullRender",
+          TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender);
   AddTest(tests, "WorkspaceShell/BottomPanelResizeRequestsFullRedrawAndSettleFrames",
           TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames);
 #endif
