@@ -43,6 +43,7 @@ void WorkspaceShell::SidebarCoordinator::ShowMode(SidebarMode mode, bool tempora
   shell_.surface_.sidebar_visible = true;
   shell_.surface_.focus = FocusTarget::Sidebar;
   shell_.surface_.sidebar_scroll_row = 0;
+  shell_.RequestWindowRedraw();
 }
 
 void WorkspaceShell::SidebarCoordinator::ShowTree(const std::filesystem::path& root) {
@@ -86,6 +87,7 @@ bool WorkspaceShell::SidebarCoordinator::ShowPlugin(std::string_view id, bool te
 }
 
 void WorkspaceShell::SidebarCoordinator::Close() {
+  const bool was_visible = shell_.surface_.sidebar_visible;
   if (shell_.surface_.sidebar_mode == SidebarMode::Search) {
     shell_.StopProjectSearch();
   }
@@ -103,9 +105,13 @@ void WorkspaceShell::SidebarCoordinator::Close() {
   if (shell_.surface_.focus == FocusTarget::Sidebar) {
     shell_.surface_.focus = FocusTarget::Editor;
   }
+  if (was_visible) {
+    shell_.RequestWindowRedraw();
+  }
 }
 
 void WorkspaceShell::SidebarCoordinator::Toggle() {
+  const bool was_visible = shell_.surface_.sidebar_visible;
   if (shell_.surface_.sidebar_visible) {
     Close();
     return;
@@ -118,6 +124,9 @@ void WorkspaceShell::SidebarCoordinator::Toggle() {
   shell_.surface_.sidebar_temporary = false;
   shell_.surface_.sidebar_prev_plugin_id.clear();
   shell_.surface_.focus = FocusTarget::Sidebar;
+  if (!was_visible) {
+    shell_.RequestWindowRedraw();
+  }
 }
 
 void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
@@ -142,6 +151,7 @@ void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
   if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
     RefreshPlugin();
   }
+  shell_.RequestSidebarRedraw();
 }
 
 void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
@@ -151,6 +161,9 @@ void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
   shell_.file_finder_.SetIndex(&shell_.file_index_);
   RefreshGit();
   RefreshPlugin();
+  if (shell_.surface_.sidebar_visible) {
+    shell_.RequestSidebarRedraw();
+  }
 }
 
 void WorkspaceShell::SidebarCoordinator::RefreshGit() {
@@ -208,11 +221,17 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
         shell_.git_sidebar_.entries[i].section == previous_section) {
       shell_.git_sidebar_.selected_index = i;
       RevealSelectedGitLine();
+      if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Git) {
+        shell_.RequestSidebarRedraw();
+      }
       return;
     }
   }
 
   RevealSelectedGitLine();
+  if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Git) {
+    shell_.RequestSidebarRedraw();
+  }
 }
 
 bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
@@ -220,12 +239,18 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
   shell_.plugin_sidebar_.error.clear();
   shell_.plugin_sidebar_.selected_index = 0;
   if (shell_.surface_.sidebar_plugin_id.empty()) {
+    if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+      shell_.RequestSidebarRedraw();
+    }
     return false;
   }
   if (shell_.plugin_host_.FindSidebarProvider(shell_.surface_.sidebar_plugin_id) == nullptr) {
     shell_.surface_.sidebar_plugin_id.clear();
     if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
       shell_.surface_.sidebar_mode = SidebarMode::Tree;
+      if (shell_.surface_.sidebar_visible) {
+        shell_.RequestSidebarRedraw();
+      }
     }
     return false;
   }
@@ -234,6 +259,9 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
   if (!shell_.plugin_host_.SnapshotSidebar(shell_.surface_.sidebar_plugin_id,
                                            &shell_.plugin_sidebar_.items, &error_message)) {
     shell_.plugin_sidebar_.error = std::move(error_message);
+    if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+      shell_.RequestSidebarRedraw();
+    }
     return false;
   }
   if (!shell_.plugin_sidebar_.items.empty()) {
@@ -241,6 +269,9 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
         shell_.plugin_sidebar_.selected_index, shell_.plugin_sidebar_.items.size() - 1);
   }
   RevealSelectedPluginLine();
+  if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+    shell_.RequestSidebarRedraw();
+  }
   return true;
 }
 

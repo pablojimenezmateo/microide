@@ -411,6 +411,14 @@ void WorkspaceShell::RequestSidebarRedraw() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::RequestBreadcrumbRedraw() {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+    RequestRedrawRect(layout->breadcrumb);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
 void WorkspaceShell::RequestTabStripRedraw() {
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
     RequestRedrawRect(layout->tab_strip);
@@ -425,6 +433,15 @@ void WorkspaceShell::RequestEditorSurfaceRedraw() {
     return;
   }
   RequestWindowRedraw();
+}
+
+void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
+  RequestBreadcrumbRedraw();
+  RequestTabStripRedraw();
+  RequestEditorSurfaceRedraw();
+  if (include_tree_sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Tree) {
+    RequestSidebarRedraw();
+  }
 }
 
 void WorkspaceShell::RequestFocusedEditorRedraw() {

@@ -1498,8 +1498,10 @@ class WorkspaceShell {
   void RequestWindowRedraw();
   void RequestChromeRedraw();
   void RequestSidebarRedraw();
+  void RequestBreadcrumbRedraw();
   void RequestTabStripRedraw();
   void RequestEditorSurfaceRedraw();
+  void RequestActiveTabRedraw(bool include_tree_sidebar = false);
   void RequestFocusedEditorRedraw();
   void RequestEditorLineRangeRedraw(std::size_t start_line, std::size_t end_line);
   void RequestEditorLineToBottomRedraw(std::size_t start_line);

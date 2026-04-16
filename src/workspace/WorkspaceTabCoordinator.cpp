@@ -232,6 +232,7 @@ void WorkspaceShell::TabCoordinator::ReloadCleanEditorTabsForPath(
     if (reloaded_any && i == shell_.active_tab_index_) {
       shell_.NormalizeEditorSplitTree(*tab.editor_state);
       shell_.SyncActiveEditorTabMetadata();
+      shell_.RequestEditorSurfaceRedraw();
     }
   }
 }
@@ -259,6 +260,7 @@ bool WorkspaceShell::TabCoordinator::OpenUntitled() {
   shell_.EnsureActiveTabVisible();
   shell_.surface_.focus = FocusTarget::Editor;
   shell_.ResetCaretBlink();
+  shell_.RequestActiveTabRedraw(false);
   return true;
 }
 
@@ -308,6 +310,7 @@ bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::pat
   shell_.surface_.focus = FocusTarget::Editor;
   shell_.ResetCaretBlink();
   shell_.NotifyPluginBufferOpen(normalized_path);
+  shell_.RequestActiveTabRedraw(true);
   return true;
 }
 
@@ -331,6 +334,7 @@ bool WorkspaceShell::TabCoordinator::MoveActiveTo(std::size_t index) {
   shell_.active_tab_index_ = index;
   shell_.EnsureActiveTabVisible();
   shell_.surface_.focus = FocusTarget::Editor;
+  shell_.RequestTabStripRedraw();
   return true;
 }
 
@@ -455,6 +459,7 @@ bool WorkspaceShell::TabCoordinator::ReopenActive() {
   shell_.InvalidateEditorBlamePath(reopen_path);
   shell_.surface_.focus = FocusTarget::Editor;
   shell_.ResetCaretBlink();
+  shell_.RequestEditorSurfaceRedraw();
   return true;
 }
 

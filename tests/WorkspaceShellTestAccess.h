@@ -358,6 +358,10 @@ struct WorkspaceShellTestAccess {
     return shell.ExecuteAction(WorkspaceShell::ActionId::GitRefresh, {},
                                WorkspaceShell::ActionSource::Menu);
   }
+  static bool ExecuteShowGitSidebar(WorkspaceShell& shell) {
+    return shell.ExecuteAction(WorkspaceShell::ActionId::SidebarShow, {"git"},
+                               WorkspaceShell::ActionSource::Menu);
+  }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {

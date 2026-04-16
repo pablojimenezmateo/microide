@@ -68,6 +68,7 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
   EnsureActiveTabVisible();
   surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
+  RequestActiveTabRedraw(tab.kind == TabEntry::Kind::Editor && !text_viewport_.path().empty());
 }
 
 void WorkspaceShell::SyncActiveEditorTab() {
@@ -291,6 +292,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
     text_viewport_ = configured_view;
     SyncActiveEditorTabMetadata();
     ResetCaretBlink();
+    RequestActiveTabRedraw(!text_viewport_.path().empty());
     return true;
   }
   return false;
@@ -481,6 +483,7 @@ void WorkspaceShell::SetActiveEditorSplit(std::size_t index) {
     ResetCaretBlink();
   }
   surface_.focus = FocusTarget::Editor;
+  RequestActiveTabRedraw(!text_viewport_.path().empty());
 }
 
 bool WorkspaceShell::ActivateOrderedEditorSplit(std::size_t order_index) {
@@ -560,6 +563,7 @@ bool WorkspaceShell::SplitActiveEditor(EditorSplitOrientation orientation) {
   }
   surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
+  RequestEditorSurfaceRedraw();
   return true;
 }
 
@@ -580,6 +584,7 @@ bool WorkspaceShell::UnsplitActiveEditor() {
   text_viewport_ = preserved_view;
   surface_.focus = FocusTarget::Editor;
   ResetCaretBlink();
+  RequestEditorSurfaceRedraw();
   return true;
 }
 
@@ -801,6 +806,7 @@ void WorkspaceShell::CloseTab(std::size_t index) {
   if (index >= open_tabs_.size()) {
     return;
   }
+  const bool closing_active = index == active_tab_index_;
 
   if (active_tab_index_ < open_tabs_.size() && index != active_tab_index_) {
     SyncActiveEditorTab();
@@ -816,6 +822,7 @@ void WorkspaceShell::CloseTab(std::size_t index) {
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
     surface_.focus = FocusTarget::Editor;
+    RequestActiveTabRedraw(false);
     return;
   }
 
@@ -854,6 +861,11 @@ void WorkspaceShell::CloseTab(std::size_t index) {
   tab_scroll_index_ =
       std::clamp(tab_scroll_index_, 0, std::max(0, static_cast<int>(open_tabs_.size()) - 1));
   EnsureActiveTabVisible();
+  if (closing_active) {
+    RequestActiveTabRedraw(!text_viewport_.path().empty());
+  } else {
+    RequestTabStripRedraw();
+  }
 }
 
 }  // namespace microide::workspace

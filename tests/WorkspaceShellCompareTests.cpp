@@ -184,6 +184,7 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "compare invalidation fixture should open");
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   const SDL_FRect editable_rect = WorkspaceShellTestAccess::ActiveCompareEditableRect(shell);
@@ -221,6 +222,7 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "compare row invalidation fixture should open");
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
   const auto previous_row_rect = WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, 0, 1);
   SDL_Event event{};

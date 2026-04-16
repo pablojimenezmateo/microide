@@ -1,6 +1,6 @@
 # MicroIDE Performance Findings
 
-Last reviewed on 2026-04-15 after the terminal-focus freeze investigation and the follow-up
+Last reviewed on 2026-04-16 after the terminal-focus freeze investigation, the follow-up
 performance pass.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
@@ -175,6 +175,33 @@ Impact:
 - terminal prompt and transcript rendering now preserve glyph edges that extend slightly beyond a
   single fixed cell
 
+### Redraw ownership for view and tab transitions
+
+Problem:
+
+- retained redraws were still relying on whichever input path happened to call a workspace mutation
+- direct state changes such as opening a tab, switching the active tab, switching projects, or
+  swapping sidebar modes could update shell state without invalidating every affected surface
+- some tests and user-visible flows showed the real failure mode clearly: stale tree pixels behind
+  the source-control sidebar, or tab-strip labels lagging until another interaction forced a redraw
+
+Implemented:
+
+- sidebar mode transitions now invalidate themselves instead of relying on menu or mouse fallbacks
+- active-tab mutations now explicitly invalidate breadcrumb, tab-strip, editor, and tree-sidebar
+  surfaces when the active document changes
+- compare or merge tab activation and project catalog switches now also own their redraw requests
+- retained-render regression coverage now compares partial redraws against clean full redraws for
+  sidebar-mode switches and file-open tab transitions
+
+Impact:
+
+- tree clicks, sidebar tool switches, compare or merge tab opens, project switches, and similar
+  transitions now repaint immediately under the retained renderer instead of waiting for an
+  unrelated event
+- redraw ownership is more local to the state mutation, which makes the retained-scene path less
+  brittle as more call sites reuse those mutations
+
 ## Still Worth Doing
 
 ### Finer-grained surface invalidation
@@ -194,6 +221,8 @@ Relevant code:
 
 - `src/workspace/WorkspaceShell.cpp`
 - `src/workspace/WorkspaceShellInput.cpp`
+- `src/workspace/WorkspaceTabCoordinator.cpp`
+- `src/workspace/WorkspaceSidebarCoordinator.cpp`
 - `src/workspace/WorkspaceCompareInteractionCoordinator.cpp`
 
 ### Lower-cost text rendering backend

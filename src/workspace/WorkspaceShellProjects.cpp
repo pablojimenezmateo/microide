@@ -64,6 +64,7 @@ void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
   project_catalog_.tab_scroll_index = 0;
   ResetProjectScopedState(true);
   ReloadPluginsForCurrentProject();
+  RequestWindowRedraw();
 }
 
 WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(

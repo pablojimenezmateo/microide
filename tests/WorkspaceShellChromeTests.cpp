@@ -3,6 +3,7 @@
 #include "WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -18,6 +19,120 @@ bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
          lhs.y + lhs.h > rhs.y;
 }
+
+bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+  return std::any_of(rects.begin(), rects.end(),
+                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
+}
+
+#if MICROIDE_HAS_SDL3_TTF
+
+void EnsureDummySdlVideo() {
+  static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");
+  static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
+  Expect(initialized, "SDL should initialize with the dummy video driver");
+}
+
+class SoftwareCanvas final {
+ public:
+  SoftwareCanvas(int width, int height) {
+    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+    Expect(surface_ != nullptr, "workspace redraw regression test should allocate a software surface");
+    renderer_ = SDL_CreateSoftwareRenderer(surface_);
+    Expect(renderer_ != nullptr, "workspace redraw regression test should create a software renderer");
+  }
+
+  ~SoftwareCanvas() {
+    if (renderer_ != nullptr) {
+      SDL_DestroyRenderer(renderer_);
+    }
+    if (surface_ != nullptr) {
+      SDL_DestroySurface(surface_);
+    }
+  }
+
+  SDL_Renderer* renderer() const { return renderer_; }
+
+ private:
+  SDL_Surface* surface_ = nullptr;
+  SDL_Renderer* renderer_ = nullptr;
+};
+
+SDL_Rect InflateClipRect(const SDL_FRect& rect,
+                         microide::render::TextClipPadding padding,
+                         int width,
+                         int height) {
+  const int x0 = std::max(0, static_cast<int>(std::floor(rect.x - padding.left)));
+  const int y0 = std::max(0, static_cast<int>(std::floor(rect.y - padding.top)));
+  const int x1 = std::min(width, static_cast<int>(std::ceil(rect.x + rect.w + padding.right)));
+  const int y1 = std::min(height, static_cast<int>(std::ceil(rect.y + rect.h + padding.bottom)));
+  return SDL_Rect{
+      .x = x0,
+      .y = y0,
+      .w = std::max(0, x1 - x0),
+      .h = std::max(0, y1 - y0),
+  };
+}
+
+std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
+  Expect(lhs != nullptr && rhs != nullptr,
+         "surface comparisons should receive readable surfaces");
+  Expect(lhs->w == rhs->w && lhs->h == rhs->h,
+         "surface comparisons should use canvases with matching dimensions");
+
+  std::size_t differences = 0;
+  for (int y = 0; y < lhs->h; ++y) {
+    for (int x = 0; x < lhs->w; ++x) {
+      Uint8 lhs_r = 0;
+      Uint8 lhs_g = 0;
+      Uint8 lhs_b = 0;
+      Uint8 lhs_a = 0;
+      Uint8 rhs_r = 0;
+      Uint8 rhs_g = 0;
+      Uint8 rhs_b = 0;
+      Uint8 rhs_a = 0;
+      Expect(SDL_ReadSurfacePixel(lhs, x, y, &lhs_r, &lhs_g, &lhs_b, &lhs_a),
+             "surface comparisons should read retained-render pixels");
+      Expect(SDL_ReadSurfacePixel(rhs, x, y, &rhs_r, &rhs_g, &rhs_b, &rhs_a),
+             "surface comparisons should read full-render pixels");
+      if (lhs_r != rhs_r || lhs_g != rhs_g || lhs_b != rhs_b || lhs_a != rhs_a) {
+        ++differences;
+      }
+    }
+  }
+  return differences;
+}
+
+void RenderRetainedInvalidation(WorkspaceShell& shell,
+                                SoftwareCanvas& canvas,
+                                int width,
+                                int height,
+                                const WorkspaceShell::RenderInvalidation& redraw) {
+  if (redraw.full || redraw.rects.empty()) {
+    shell.Render(canvas.renderer(), width, height);
+    return;
+  }
+
+  bool rendered_partial = false;
+  for (const SDL_FRect& rect : redraw.rects) {
+    const SDL_Rect clip_rect =
+        InflateClipRect(rect, shell.PartialRedrawClipPadding(), width, height);
+    if (clip_rect.w <= 0 || clip_rect.h <= 0) {
+      continue;
+    }
+    Expect(SDL_SetRenderClipRect(canvas.renderer(), &clip_rect),
+           "workspace redraw regression test should set a retained-scene clip rect");
+    shell.Render(canvas.renderer(), width, height);
+    rendered_partial = true;
+  }
+  Expect(SDL_SetRenderClipRect(canvas.renderer(), nullptr),
+         "workspace redraw regression test should clear the retained-scene clip rect");
+  if (!rendered_partial) {
+    shell.Render(canvas.renderer(), width, height);
+  }
+}
+
+#endif
 
 void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
   WorkspaceShell shell;
@@ -194,6 +309,7 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "editor invalidation fixture should populate the active split");
   Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
          "editor invalidation fixture should activate the left split");
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
@@ -288,6 +404,128 @@ void TestWorkspaceShellTabContextActionsCloseAdjacentTabs() {
          "close other tabs should preserve the selected tab");
 }
 
+#if MICROIDE_HAS_SDL3_TTF
+void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "src" / "main.cpp", "int main() { return 0; }\n");
+  WriteFile(root / "README.md", "# demo\n");
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  Expect(WorkspaceShellTestAccess::ExecuteShowGitSidebar(retained_shell),
+         "sidebar redraw regression fixture should switch to the git sidebar");
+  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(retained_shell);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
+  Expect(!redraw.full && !redraw.rects.empty(),
+         "switching sidebar modes without geometry changes should stay on partial redraws");
+  Expect(AnyRectIntersects(redraw.rects, layout.sidebar),
+         "switching sidebar modes should invalidate the sidebar surface");
+
+  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
+
+  WorkspaceShell reference_shell;
+  configure_shell(reference_shell);
+  Expect(WorkspaceShellTestAccess::ExecuteShowGitSidebar(reference_shell),
+         "reference sidebar redraw fixture should switch to the git sidebar");
+  SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Surface* retained_pixels = SDL_RenderReadPixels(retained_canvas.renderer(), nullptr);
+  SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+  const std::size_t pixel_differences =
+      CountPixelDifferences(retained_pixels, reference_pixels);
+
+  if (retained_pixels != nullptr) {
+    SDL_DestroySurface(retained_pixels);
+  }
+  if (reference_pixels != nullptr) {
+    SDL_DestroySurface(reference_pixels);
+  }
+
+  Expect(pixel_differences == 0,
+         "retained sidebar mode redraws should match a full redraw");
+}
+
+void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.cpp";
+  const std::filesystem::path beta = root / "beta.cpp";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+    WorkspaceShellTestAccess::OpenFile(shell, alpha);
+    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(retained_shell, beta),
+         "tab redraw regression fixture should open a second file");
+  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(retained_shell);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
+  Expect(!redraw.full && !redraw.rects.empty(),
+         "opening a file in a new tab should stay on partial redraws");
+  Expect(AnyRectIntersects(redraw.rects, layout.breadcrumb),
+         "opening a file in a new tab should invalidate the breadcrumb");
+  Expect(AnyRectIntersects(redraw.rects, layout.tab_strip),
+         "opening a file in a new tab should invalidate the tab strip");
+  Expect(AnyRectIntersects(redraw.rects, layout.editor_surface),
+         "opening a file in a new tab should invalidate the editor surface");
+
+  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
+
+  WorkspaceShell reference_shell;
+  configure_shell(reference_shell);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(reference_shell, beta),
+         "reference tab redraw fixture should open a second file");
+  SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Surface* retained_pixels = SDL_RenderReadPixels(retained_canvas.renderer(), nullptr);
+  SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+  const std::size_t pixel_differences =
+      CountPixelDifferences(retained_pixels, reference_pixels);
+
+  if (retained_pixels != nullptr) {
+    SDL_DestroySurface(retained_pixels);
+  }
+  if (reference_pixels != nullptr) {
+    SDL_DestroySurface(reference_pixels);
+  }
+
+  Expect(pixel_differences == 0,
+         "retained tab-open redraws should match a full redraw");
+}
+#endif
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
@@ -305,6 +543,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
           TestWorkspaceShellTabContextActionsCloseAdjacentTabs);
+#if MICROIDE_HAS_SDL3_TTF
+  AddTest(tests, "WorkspaceShell/SidebarModeRetainedRedrawMatchesFullRender",
+          TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/OpenFileInNewTabRetainedRedrawMatchesFullRender",
+          TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
+#endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);
   AddTest(tests, "WorkspaceShell/DoubleClickTitleBarRequestsMaximizeToggle",

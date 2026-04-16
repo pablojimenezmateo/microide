@@ -55,6 +55,7 @@ void WorkspaceShell::DiffTabCoordinator::ActivateCompareTab(std::size_t index,
   } else {
     shell_.surface_.focus = FocusTarget::Editor;
   }
+  shell_.RequestActiveTabRedraw(false);
 }
 
 void WorkspaceShell::DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
@@ -62,6 +63,7 @@ void WorkspaceShell::DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
   shell_.RevealActiveMergeSelection();
   shell_.EnsureActiveTabVisible();
   shell_.surface_.focus = FocusTarget::Editor;
+  shell_.RequestActiveTabRedraw(false);
 }
 
 void WorkspaceShell::DiffTabCoordinator::RefreshExistingCompareTab(

@@ -254,6 +254,7 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge invalidation fixture should open");
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
   const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
   const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
@@ -298,6 +299,7 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge conflict invalidation fixture should open");
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
   const auto previous_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 0);
   WorkspaceShellTestAccess::MoveMergeSelection(shell, 1);

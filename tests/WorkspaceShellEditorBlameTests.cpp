@@ -129,6 +129,7 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
   const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
   Expect(overlay.has_value() && overlay->lines.size() == 3,
          "clean tracked editor should expose three blame lines before editing");
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;

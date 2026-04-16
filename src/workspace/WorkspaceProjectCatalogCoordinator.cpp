@@ -148,6 +148,7 @@ void WorkspaceShell::ProjectCatalogCoordinator::RestoreActivationCheckpoint(
 void WorkspaceShell::ProjectCatalogCoordinator::FinalizeMutation() {
   shell_.EnsureActiveProjectVisible();
   shell_.SaveWorkspaceSession();
+  shell_.RequestWindowRedraw();
 }
 
 }  // namespace microide::workspace
