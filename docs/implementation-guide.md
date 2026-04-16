@@ -1,7 +1,7 @@
 # MicroIDE Product Guide
 
 This file captures the durable product direction for the current C++/SDL3 codebase.
-Keep it shorter than `docs/todo.md` and `docs/roadmap.md`.
+Keep it shorter than `docs/active-work.md`.
 
 ## Scope
 
@@ -9,10 +9,10 @@ MicroIDE is a compact single-window desktop editor/IDE shell built in C++ with S
 It preserves the IDE-oriented workflows from the older Micro fork without carrying over the TUI
 rendering model.
 
-When tradeoffs conflict, prefer this order:
+When tradeoffs conflict after correctness, prefer this order:
 
-1. startup speed
-2. low idle CPU usage
+1. speed
+2. low CPU usage
 3. low memory footprint
 
 After that, optimize for low input latency, simple architecture, and dense keyboard-first
@@ -56,8 +56,7 @@ The current SDL shell already includes:
 - runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets
 - an optional `SDL3_ttf` backend with a debug-text fallback
 
-Current implementation status is tracked in `docs/todo.md`.
-Forward-looking work is tracked in `docs/roadmap.md`.
+Current implementation status and active priorities are tracked in `docs/active-work.md`.
 
 ## Durable Product Decisions
 
@@ -117,8 +116,11 @@ whether the backend is external or built in.
 
 ## Documentation Map
 
-- `docs/todo.md`: verified current status and remaining implementation gaps
-- `docs/roadmap.md`: forward-looking priorities and feature planning
-- `docs/blame-shadow-text.md`: design constraints for per-line git blame shadow text
+- `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
+- `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
+- `docs/plugin-runtime-research.md`: plugin architecture notes and external references
+- `docs/diff-editor-merge-rewrite-plan.md`: targeted diff and merge rewrite plan
+- `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
+- `docs/performance-findings.md`: shipped performance work worth preserving
 - `docs/startup-tracing.md`: how to measure startup work
-- `docs/best-coding-practices.md`: contributor-side engineering guardrails
+- `docs/runtime-profiling.md`: runtime and redraw profiling workflow

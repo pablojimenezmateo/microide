@@ -54,13 +54,16 @@ The recent cleanup passes have been moving the codebase toward smaller ownership
 
 That direction is useful because a plugin runtime only stays maintainable if the host already has narrow subsystem seams.
 
-At the same time, the current product docs still treat plugin runtimes as intentionally out of scope:
+Plugin support is now an intentional project phase.
+
+The single source of truth for current status and priorities is:
+
+- `docs/active-work.md`
+
+This note remains the deeper architecture record for plugin expansion. It complements:
 
 - `docs/implementation-guide.md`
-- `docs/roadmap.md`
-- `docs/todo.md`
-
-This note does not change current shipped scope by itself. It records what would need to change if plugin support becomes an intentional project phase.
+- `AGENTS.md`
 
 ## External Sources Studied
 

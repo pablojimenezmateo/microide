@@ -1,0 +1,143 @@
+# MicroIDE Active Work
+
+Reviewed on 2026-04-16.
+
+This is the single source of truth for:
+
+- the shipped baseline that matters for ongoing work
+- the current priority stack
+- accepted scope cuts and deferred work
+
+Use subsystem design docs for deep dives. Use this file to decide what is active, what is already
+good enough, and what is deliberately not being built.
+
+## Priority Order
+
+Engineering decisions should follow this order:
+
+1. correctness over compatibility
+2. speed
+3. low CPU usage
+4. low memory usage
+5. architectural clarity
+
+Broad refactors are acceptable when they improve the result. Do not preserve stale boundaries,
+legacy helpers, or accidental compatibility if they block correctness or performance.
+
+## Shipped Baseline
+
+These are implemented and should not be treated as open migration work:
+
+- SDL3/CMake desktop shell with an event-driven render loop
+- retained scene redraw path with shell-owned invalidation, coalesced dirty regions, partial-to-full promotion, and resize-safe full-redraw fallbacks for outer-layout drags
+- custom menu bar, project tabs, file tabs, breadcrumbs, persistent sidebar, overlays, and docked terminal-and-command pane
+- project-local workspace state plus app-level restore of open project tabs
+- normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
+- editor open/save/reopen, selection, clipboard, undo/redo, line numbers, horizontal scrolling, dirty tracking, IME hooks, and project-local preferences
+- filesystem tree with `.gitignore` handling, git markers, refresh, and trash-backed create/rename/delete flows
+- file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project for literal mode, capped-result feedback, and a standalone benchmark tool
+- git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
+- PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
+- runtime syntax highlighting from the in-tree generated syntax snapshot
+- manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, argv-based process helpers, and `plugins-reload`
+- targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
+
+## Active Phases
+
+### 1. Plugin Platform Expansion
+
+This is the dominant current phase and will be large.
+
+Current state:
+
+- manual Lua plugin loading is shipped
+- command and sidebar registries exist
+- the host already exposes narrow file, workspace, and process helpers
+
+Open work:
+
+- keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
+- continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
+- add async or background plugin task surfaces only if real plugin workloads require them
+- decide whether syntax, colorscheme, or other runtime asset contribution belongs in the same host-managed extension model
+- preserve the rule that editing, compare, merge, search, git, and terminal remain built-in product features even when plugins can extend around them
+
+### 2. Terminal Hardening
+
+Current state:
+
+- the embedded terminal is useful and already covers the important full-screen and shell workflows we have exercised so far
+
+Open work:
+
+- broaden real-world validation with actual terminal programs instead of extending escape coverage from guesswork
+- fill the remaining ANSI or control-sequence gaps only where real usage justifies them
+- keep resize, redraw, scrollback, and wake-event behavior robust under long-running output
+
+### 3. Editor Correctness And Scale
+
+Current state:
+
+- the editor is functionally strong, but the text model is still byte-oriented
+- large-file mode, blame shadow text, and retained redraw are shipped
+
+Open work:
+
+- continue UTF-8 and IME hardening while the underlying text storage is still byte-based
+- validate large-file thresholds on larger repositories and adjust only from measured behavior
+- validate blame shadow text on real repositories and keep it asynchronous, viewport-scoped, and cheap enough to preserve typing and scrolling latency
+- expand compare and merge workflow coverage where editor-side regressions are still too easy to miss
+
+### 4. Project And Git Service Hardening
+
+Current state:
+
+- search is already behind a built-in service boundary
+- file operations, blame, compare, and git state already have service seams
+
+Open work:
+
+- keep external tool usage behind `src/project/*` service boundaries
+- tighten subprocess handling and error reporting around the system `git` path
+- move avoidable filesystem and git refresh work off latency-sensitive UI paths
+- keep new plugin-facing capabilities layered on structured services rather than letting UI code or plugin glue parse command output directly
+
+### 5. Testing And Performance Discipline
+
+Current state:
+
+- retained redraw has comparison coverage against clean full redraws
+- search, tab ordering, context-copy flows, and many workspace mutations already have direct regression tests
+
+Open work:
+
+- add regression tests whenever a bug is fixed; do not rely on “should be covered already”
+- keep retained redraw comparison tests serial under SDL dummy video because they share global SDL state
+- keep profiling startup, redraw, typing, scrolling, and idle behavior with the tracing docs in this directory
+- preserve the current redraw architecture unless profiling shows a new hotspot; the remaining work is policy tuning and regression coverage, not a wholesale redraw rewrite
+- prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching the right bugs
+
+## Deferred Or Out Of Scope
+
+These are not current project work unless deliberately promoted into their own phase:
+
+- debugging
+- plugin marketplaces, remote install flows, and Micro-plugin compatibility
+- cloud or collaboration features
+- built-in AI or chat surfaces
+- recent-project and recent-file affordances
+- soft wrap
+- diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
+
+## Companion Docs
+
+Keep these when you need deeper design context:
+
+- `AGENTS.md`: repo-level engineering policy, iteration loop, and agent expectations
+- `docs/implementation-guide.md`: durable product direction
+- `docs/plugin-runtime-research.md`: deeper plugin architecture notes and external references
+- `docs/diff-editor-merge-rewrite-plan.md`: subsystem-specific rewrite plan for diff and merge presentation
+- `docs/production-tech-debt-review.md`: structural debt worth paying down as large phases proceed
+- `docs/performance-findings.md`: concrete shipped performance wins worth preserving
+- `docs/startup-tracing.md`: startup profiling workflow
+- `docs/runtime-profiling.md`: runtime and redraw profiling workflow
