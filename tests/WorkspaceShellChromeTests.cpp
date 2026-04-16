@@ -114,6 +114,7 @@ void RenderRetainedInvalidation(WorkspaceShell& shell,
     return;
   }
 
+  shell.PrepareRenderFrame(canvas.renderer(), width, height);
   bool rendered_partial = false;
   for (const SDL_FRect& rect : redraw.rects) {
     const SDL_Rect clip_rect =
@@ -123,13 +124,13 @@ void RenderRetainedInvalidation(WorkspaceShell& shell,
     }
     Expect(SDL_SetRenderClipRect(canvas.renderer(), &clip_rect),
            "workspace redraw regression test should set a retained-scene clip rect");
-    shell.Render(canvas.renderer(), width, height);
+    shell.RenderPrepared(canvas.renderer(), width, height);
     rendered_partial = true;
   }
   Expect(SDL_SetRenderClipRect(canvas.renderer(), nullptr),
          "workspace redraw regression test should clear the retained-scene clip rect");
   if (!rendered_partial) {
-    shell.Render(canvas.renderer(), width, height);
+    shell.RenderPrepared(canvas.renderer(), width, height);
   }
 }
 

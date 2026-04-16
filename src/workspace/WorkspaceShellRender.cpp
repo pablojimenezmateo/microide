@@ -197,12 +197,12 @@ std::string WorkspaceShell::TruncateLabel(std::string_view text, float max_width
   return text_renderer_.TruncateToWidth(text, max_width);
 }
 
-void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
+void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int height) {
   if (renderer == nullptr || width <= 0 || height <= 0) {
     return;
   }
 
-  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::Render");
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareRenderFrame");
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
@@ -225,6 +225,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   if (ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
+  blame_hover_refresh_pending_ = last_mouse_position_valid_;
   float mouse_x = last_mouse_x_;
   float mouse_y = last_mouse_y_;
   if (!last_mouse_position_valid_) {
@@ -232,6 +233,23 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
   }
   UpdateMouseCursor(mouse_x, mouse_y);
+}
+
+void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
+  PrepareRenderFrame(renderer, width, height);
+  RenderPrepared(renderer, width, height);
+}
+
+void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int height) {
+  if (renderer == nullptr || width <= 0 || height <= 0) {
+    return;
+  }
+
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::Render");
+  const WorkspaceLayout layout =
+      ComputeLayout(static_cast<float>(width), static_cast<float>(height), surface_.sidebar_visible,
+                    BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+  SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   const std::size_t terminal_line_count =
       ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
   std::optional<SDL_FRect> active_editor_pane_rect;
@@ -344,8 +362,9 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
                                    blame_overlay);
     }
   }
-  if (last_mouse_position_valid_) {
+  if (blame_hover_refresh_pending_ && last_mouse_position_valid_) {
     UpdateEditorBlameHover(last_mouse_x_, last_mouse_y_);
+    blame_hover_refresh_pending_ = false;
   }
 
   const auto draw_text_on =

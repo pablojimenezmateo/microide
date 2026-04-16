@@ -73,7 +73,9 @@ The redraw summary now also reports partial-frame pressure directly:
 The runtime profiler now covers the resize-sensitive path explicitly, including:
 
 - `Application::Render(...)`
+- `Application::WorkspacePrepareFrame`
 - retained-scene presentation updates and present
+- `WorkspaceShell::PrepareRenderFrame`
 - `WorkspaceShell::Render`
 - `WorkspaceShell::ResizeTerminalToPanel`
 - `WorkspaceShell::RenderBottomPanel`

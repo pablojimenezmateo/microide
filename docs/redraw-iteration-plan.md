@@ -126,6 +126,13 @@ Goal:
 
 This reduces the chance that replaying several clips in one frame diverges from a single full render.
 
+Status:
+
+- Partially completed in the current iteration by splitting one-time frame preparation from draw replay.
+- `Application` now asks `WorkspaceShell` to prepare a frame once, then replays only the prepared draw path per coalesced clip rect.
+- Project-search updates, project-open dialog results, text-input surface sync, editor-tab normalization, terminal panel resize, and cursor refresh no longer run once per replayed clip.
+- Blame-hover refresh is still render-coupled, but it is now gated to one refresh per prepared frame instead of every clip replay.
+
 ### 5. Add retained redraw regression tests for layout changes
 
 Add tests that compare retained partial redraw output against a full redraw for:
@@ -166,4 +173,4 @@ Completed:
 Current focus:
 
 - further promotion tuning based on traces from resize and ordinary editing flows
-- moving render-time state mutation out of `WorkspaceShell::Render()`
+- finishing the remaining render-coupled state updates that still cannot be cleanly staged before draw

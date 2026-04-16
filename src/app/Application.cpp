@@ -406,6 +406,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   const bool full_redraw = dirty_rects.empty() || !scene_texture_valid_ || promote_partial_to_full;
   const Uint64 render_start = SDL_GetTicksNS();
   std::size_t rendered_clip_count = 0;
+  {
+    util::PerformanceTrace::Scope prepare_scope("Application::WorkspacePrepareFrame");
+    workspace_shell_.PrepareRenderFrame(renderer_, width, height);
+  }
   bool scene_texture_ready = false;
   {
     util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
@@ -417,7 +421,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       DestroySceneTexture();
       {
         util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
-        workspace_shell_.Render(renderer_, width, height);
+        workspace_shell_.RenderPrepared(renderer_, width, height);
       }
       SDL_RenderPresent(renderer_);
         RecordRenderStats(true, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
@@ -432,7 +436,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
             dirty_rect_count, merged_clip_count, dirty_coverage * 100.0f);
       }
       util::PerformanceTrace::Scope workspace_scope("Application::WorkspaceRender(full)");
-      workspace_shell_.Render(renderer_, width, height);
+      workspace_shell_.RenderPrepared(renderer_, width, height);
     } else {
       bool rendered_partial = false;
       const std::string partial_loop_label =
@@ -444,14 +448,14 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
             "Application::WorkspaceRender(partial-clip)");
-        workspace_shell_.Render(renderer_, width, height);
+        workspace_shell_.RenderPrepared(renderer_, width, height);
         rendered_partial = true;
         ++rendered_clip_count;
       }
       if (!rendered_partial) {
         util::PerformanceTrace::Scope partial_fallback_scope(
             "Application::WorkspaceRender(partial-fallback-full)");
-        workspace_shell_.Render(renderer_, width, height);
+        workspace_shell_.RenderPrepared(renderer_, width, height);
         dirty_rects.clear();
       }
     }
@@ -474,7 +478,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                       reason, SDL_GetTicksNS() - render_start);
   } else {
     util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
-    workspace_shell_.Render(renderer_, width, height);
+    workspace_shell_.RenderPrepared(renderer_, width, height);
     SDL_RenderPresent(renderer_);
     RecordRenderStats(true, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
   }

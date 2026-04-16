@@ -84,7 +84,9 @@ class WorkspaceShell {
   bool Initialize(const std::filesystem::path& project_root);
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
+  void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
+  void RenderPrepared(SDL_Renderer* renderer, int width, int height);
   std::optional<Uint32> NextAnimationDelayMs() const;
   bool ConsumePostRenderFullRedrawRequest();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
@@ -1585,6 +1587,7 @@ class WorkspaceShell {
   project::GitBlameService git_blame_service_;
   std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
   std::optional<std::size_t> active_editor_blame_popup_line_;
+  bool blame_hover_refresh_pending_ = false;
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
   std::function<bool(std::string_view)> clipboard_text_writer_;
