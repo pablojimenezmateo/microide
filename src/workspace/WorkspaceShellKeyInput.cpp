@@ -226,17 +226,22 @@ bool WorkspaceShell::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
 
 bool WorkspaceShell::HandleCommandKeyDown(const SDL_KeyboardEvent& event) {
   switch (event.key) {
-    case SDLK_ESCAPE:
+    case SDLK_ESCAPE: {
+      const bool bottom_panel_was_visible = BottomPanelVisible();
       surface_.command_mode = false;
       command_.input.clear();
       ResetCommandSessionState();
+      RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
       return true;
+    }
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (command_.input.empty() || ExecuteCommand(command_.input)) {
+        const bool bottom_panel_was_visible = BottomPanelVisible();
         surface_.command_mode = false;
         command_.input.clear();
         ResetCommandSessionState();
+        RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
       }
       return true;
     case SDLK_BACKSPACE:

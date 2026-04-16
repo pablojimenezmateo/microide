@@ -98,13 +98,13 @@ void TestGitCompareFixture() {
       BuildCompareModel(ReadFile(base_dir / "src/session.cpp"), ReadFile(head_dir / "src/session.cpp"));
   const auto compare_summary = Summarize(compare_model);
   Expect(compare_model.hunks.size() == 3, "git session fixture should produce 3 hunks");
-  Expect(compare_model.rows.size() == 27,
+  Expect(compare_model.rows.size() == 28,
          "git session fixture should preserve the terminal empty row");
   Expect(compare_summary.unchanged == 19,
          "git session fixture should keep unchanged rows plus the terminal empty row");
-  Expect(compare_summary.modified == 2, "git session fixture should produce 2 modified rows");
-  Expect(compare_summary.added == 6, "git session fixture should produce 6 added rows");
-  Expect(compare_summary.deleted == 0, "git session fixture should produce 0 deleted rows");
+  Expect(compare_summary.modified == 1, "git session fixture should produce 1 modified row");
+  Expect(compare_summary.added == 7, "git session fixture should produce 7 added rows");
+  Expect(compare_summary.deleted == 1, "git session fixture should produce 1 deleted row");
 }
 
 void TestGitWorkingTreeStatusAndActions() {

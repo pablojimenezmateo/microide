@@ -7,9 +7,10 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/DecoratedTextGridRenderer.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
-#include "util/StringUtil.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -28,50 +29,6 @@ SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
       blend(base.b, tint.b),
       0xff,
   };
-}
-
-struct VisibleTextWindow {
-  std::string_view text;
-  std::size_t byte_offset = 0;
-};
-
-VisibleTextWindow SliceVisibleColumns(std::string_view text,
-                                      std::size_t start_column,
-                                      std::size_t visible_columns) {
-  const std::size_t byte_offset = Utf8ByteOffsetForCodepointCount(text, start_column);
-  const std::size_t byte_length =
-      Utf8ByteOffsetForCodepointCount(text.substr(byte_offset), visible_columns);
-  return VisibleTextWindow{
-      .text = text.substr(byte_offset, byte_length),
-      .byte_offset = byte_offset,
-  };
-}
-
-SDL_Color CompareTokenColor(const render::Theme& theme,
-                            editor::SyntaxTokenKind kind,
-                            SDL_Color fallback,
-                            bool selected) {
-  switch (kind) {
-    case editor::SyntaxTokenKind::Keyword:
-      return theme.syntax_keyword;
-    case editor::SyntaxTokenKind::Type:
-      return theme.syntax_type;
-    case editor::SyntaxTokenKind::String:
-      return theme.syntax_string;
-    case editor::SyntaxTokenKind::Comment:
-      return theme.syntax_comment;
-    case editor::SyntaxTokenKind::Number:
-      return theme.syntax_number;
-    case editor::SyntaxTokenKind::Constant:
-      return theme.syntax_constant;
-    case editor::SyntaxTokenKind::Preprocessor:
-      return theme.syntax_preprocessor;
-    case editor::SyntaxTokenKind::Operator:
-      return theme.syntax_operator;
-    case editor::SyntaxTokenKind::Plain:
-    default:
-      return selected ? theme.text_primary : fallback;
-  }
 }
 
 SDL_Color MergeMarkerColor(const render::Theme& theme,
@@ -256,7 +213,9 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
     return;
   }
 
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::RenderMergeSurface");
   static const std::vector<editor::SyntaxTokenKind> kEmptyTokens;
+  static const editor::DecoratedTextGridRenderer kDecoratedRowRenderer;
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
@@ -299,57 +258,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
     text_renderer_.DrawStringOn(renderer, text_x, text_y,
                                 selected ? theme_.text_primary : theme_.text_secondary,
                                 background, display);
-  };
-  const auto draw_source_text = [&](float x,
-                                    float y,
-                                    SDL_Color plain_color,
-                                    SDL_Color background,
-                                    const std::string& text,
-                                    const std::vector<editor::SyntaxTokenKind>& full_tokens) {
-    if (text.empty()) {
-      return;
-    }
-
-    const VisibleTextWindow window =
-        SliceVisibleColumns(text, merge_tab->horizontal_scroll, surface.visible_columns);
-    if (window.text.empty()) {
-      return;
-    }
-
-    const auto token_kind_at = [&](std::size_t byte_offset) {
-      const std::size_t absolute_offset = window.byte_offset + byte_offset;
-      if (absolute_offset < full_tokens.size()) {
-        return full_tokens[absolute_offset];
-      }
-      return editor::SyntaxTokenKind::Plain;
-    };
-
-    float segment_x = x;
-    for (std::size_t segment_start = 0; segment_start < window.text.size();) {
-      const editor::SyntaxTokenKind kind = token_kind_at(segment_start);
-      std::size_t segment_end = segment_start;
-      while (segment_end < window.text.size()) {
-        const std::size_t next =
-            segment_end + util::Utf8SequenceLength(window.text, segment_end);
-        if (next >= window.text.size()) {
-          segment_end = window.text.size();
-          break;
-        }
-        if (token_kind_at(next) != kind) {
-          segment_end = next;
-          break;
-        }
-        segment_end = next;
-      }
-
-      const std::string_view segment_text(window.text.data() + segment_start,
-                                          segment_end - segment_start);
-      text_renderer_.DrawStringOn(
-          renderer, segment_x, y, CompareTokenColor(theme_, kind, plain_color, false), background,
-          segment_text);
-      segment_x += text_renderer_.MeasureWidth(segment_text);
-      segment_start = segment_end;
-    }
   };
   const auto conflict_at_source_line =
       [&](std::size_t line, bool incoming) -> const MergeTrackedConflict* {
@@ -434,14 +342,23 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
               : (selected_incoming ? theme_.row_highlight : theme_.editor_background);
       const SDL_Color number_color =
           selected_incoming ? theme_.current_line_number : theme_.line_number;
-      text_renderer_.DrawStringOn(renderer, surface.left_x, y, number_color, background,
-                                  std::to_string(line_index + 1));
+      editor::DecoratedTextRow incoming_row;
+      incoming_row.fills.push_back(editor::DecoratedTextFill{
+          .rect = MakeRect(surface.left_x, y - 1.0f,
+                           surface.gutter_width + surface.left_width, surface.line_height),
+          .color = background,
+      });
       const std::vector<editor::SyntaxTokenKind>& tokens =
           line_index < merge_tab->incoming_tokens.size() ? merge_tab->incoming_tokens[line_index]
                                                          : kEmptyTokens;
-      draw_source_text(surface.left_x + surface.gutter_width, y,
-                       incoming_conflict != nullptr ? theme_.diff_added : theme_.text_secondary,
-                       background, merge_tab->model.incoming_lines[line_index], tokens);
+      editor::AppendVisibleSyntaxTextRuns(
+          incoming_row, text_renderer_, theme_, surface.left_x + surface.gutter_width, y,
+          merge_tab->model.incoming_lines[line_index], merge_tab->horizontal_scroll,
+          surface.visible_columns,
+          incoming_conflict != nullptr ? theme_.diff_added : theme_.text_secondary, tokens);
+      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
+      text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
+                                std::to_string(line_index + 1));
     }
 
     if (line_index < merge_tab->model.current_lines.size()) {
@@ -453,14 +370,23 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
               : (selected_current ? theme_.row_highlight : theme_.editor_background);
       const SDL_Color number_color =
           selected_current ? theme_.current_line_number : theme_.line_number;
-      text_renderer_.DrawStringOn(renderer, surface.right_x, y, number_color, background,
-                                  std::to_string(line_index + 1));
+      editor::DecoratedTextRow current_row;
+      current_row.fills.push_back(editor::DecoratedTextFill{
+          .rect = MakeRect(surface.right_x, y - 1.0f,
+                           surface.gutter_width + surface.right_width, surface.line_height),
+          .color = background,
+      });
       const std::vector<editor::SyntaxTokenKind>& tokens =
           line_index < merge_tab->current_tokens.size() ? merge_tab->current_tokens[line_index]
                                                         : kEmptyTokens;
-      draw_source_text(surface.right_x + surface.gutter_width, y,
-                       current_conflict != nullptr ? theme_.diff_modified : theme_.text_secondary,
-                       background, merge_tab->model.current_lines[line_index], tokens);
+      editor::AppendVisibleSyntaxTextRuns(
+          current_row, text_renderer_, theme_, surface.right_x + surface.gutter_width, y,
+          merge_tab->model.current_lines[line_index], merge_tab->horizontal_scroll,
+          surface.visible_columns,
+          current_conflict != nullptr ? theme_.diff_modified : theme_.text_secondary, tokens);
+      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
+      text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
+                                std::to_string(line_index + 1));
     }
   }
 
@@ -513,9 +439,9 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
                                       theme_.editor_background,
                                       std::to_string(conflict.start_line + line + 1));
-          const VisibleTextWindow window =
-              SliceVisibleColumns(preview_lines[line], merge_tab->horizontal_scroll,
-                                  interaction.result.metrics.visible_columns);
+          const editor::VisibleTextWindow window =
+              editor::SliceVisibleColumns(preview_lines[line], merge_tab->horizontal_scroll,
+                                          interaction.result.metrics.visible_columns);
           if (window.text.empty()) {
             continue;
           }

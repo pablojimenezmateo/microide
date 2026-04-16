@@ -24,7 +24,6 @@ This scaffold provides:
 - manual Lua 5.4 plugin loading from global and project-local plugin directories, with lifecycle hooks, plugin commands, and `plugins-reload`
 - tab-aware text layout with visual-column cursor positioning
 - editor load/save now preserves detected line endings
-- editor large-file mode disables syntax highlighting above size or line-count thresholds
 - editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, loaded asynchronously per viewport window and cached by file or line span, with only the caret line plus one line above and below annotated inline and hover details for author, date, commit message, and SHA copy
 - extracted text renderer and editor view renderer modules
 - optional `SDL3_ttf` text backend with debug-text fallback
@@ -206,7 +205,15 @@ Diff benchmark:
 - build `microide_diff_bench` and run `./build/microide/microide_diff_bench /path/to/repo path/to/file`
 - example repro:
   `./build/microide/microide_diff_bench /path/to/repo src/main.cpp`
-- the benchmark reports read, diff-build, and syntax-highlight timings separately and uses the same large-file syntax-highlight cutoff as compare tabs
+- add `--runs=N` for repeated runs
+- the benchmark reports diff stage timings, compare syntax timing, shared row-decoration build and paint timing, warm editor render timing, and cache hit rates using the rewritten no-cutoff pipeline
+
+Runtime profiling:
+
+- live redraw and resize tracing is documented in `docs/runtime-profiling.md`
+- example live trace:
+  `env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1 ./build/microide/microide`
+- use it to inspect editor, compare, merge, terminal, and retained-scene resize redraw cost interactively
 
 Project search benchmark:
 

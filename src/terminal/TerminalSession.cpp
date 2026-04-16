@@ -1,5 +1,7 @@
 #include "terminal/TerminalSession.h"
 
+#include "util/PerformanceTrace.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -584,6 +586,7 @@ void TerminalSession::Stop() {
 }
 
 void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
+  util::PerformanceTrace::Scope trace_scope("TerminalSession::Resize");
   const std::size_t clamped_rows = std::max<std::size_t>(1, rows);
   const std::size_t clamped_columns = std::max<std::size_t>(1, columns);
 

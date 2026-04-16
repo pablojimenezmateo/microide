@@ -99,7 +99,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
     const SDL_FRect& rect,
     float minimum_pane_width) {
   if (project_root_.empty() || viewport.is_placeholder() || viewport.path().empty() ||
-      viewport.dirty() || viewport.large_file_mode() ||
+      viewport.dirty() ||
       !EditorBlameFitsPane(viewport, rect, minimum_pane_width)) {
     return std::nullopt;
   }
@@ -121,7 +121,6 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
       .visible_line_count = metrics.visible_rows,
       .total_line_count = viewport.line_count(),
       .dirty = viewport.dirty(),
-      .large_file_mode = viewport.large_file_mode(),
   };
 
   git_blame_service_.Request(request);
@@ -192,7 +191,6 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverl
                std::max(0.0f, rect.h - bottom_reserved));
   if (project_root_.empty() || compare_tab.right_viewport.is_placeholder() ||
       compare_tab.right_viewport.path().empty() || compare_tab.right_viewport.dirty() ||
-      compare_tab.right_viewport.large_file_mode() ||
       !EditorBlameFitsPane(compare_tab.right_viewport, pane_rect, 320.0f)) {
     return std::nullopt;
   }
@@ -213,7 +211,6 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverl
       .visible_line_count = static_cast<std::size_t>(surface.visible_rows),
       .total_line_count = compare_tab.right_viewport.line_count(),
       .dirty = compare_tab.right_viewport.dirty(),
-      .large_file_mode = compare_tab.right_viewport.large_file_mode(),
   };
 
   git_blame_service_.Request(request);

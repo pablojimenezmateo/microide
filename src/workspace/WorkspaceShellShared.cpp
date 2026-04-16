@@ -218,17 +218,12 @@ WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& pr
 
 std::string BuildEditorBreadcrumbLabel(const std::filesystem::path& project_root,
                                        const std::filesystem::path& path,
-                                       bool placeholder,
-                                       bool large_file_mode) {
+                                       bool placeholder) {
   if (path.empty()) {
     return placeholder ? "welcome" : "untitled";
   }
 
-  std::string label = RelativePathLabel(project_root, path);
-  if (large_file_mode) {
-    label += "  |  large file mode";
-  }
-  return label;
+  return RelativePathLabel(project_root, path);
 }
 
 std::string BuildCompareBreadcrumbLabel(const std::filesystem::path& project_root,

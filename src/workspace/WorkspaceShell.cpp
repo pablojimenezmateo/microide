@@ -78,6 +78,10 @@ std::optional<SDL_FRect> UnionRects(std::optional<SDL_FRect> lhs, const SDL_FRec
   return MakeRect(x0, y0, x1 - x0, y1 - y0);
 }
 
+bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+}
+
 }  // namespace
 
 std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
@@ -593,6 +597,40 @@ void WorkspaceShell::RequestBottomPanelRedraw() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::RequestBottomPanelCommandRedraw() {
+  if (const auto rect = CurrentBottomPanelCommandRedrawRect(); rect.has_value()) {
+    RequestRedrawRect(*rect);
+    return;
+  }
+  RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
+    const WorkspaceLayout& previous_layout) {
+  const auto current_layout = CurrentWorkspaceLayout();
+  if (!current_layout.has_value()) {
+    RequestWindowRedraw();
+    return;
+  }
+
+  if (RectsEqual(previous_layout.content, current_layout->content) &&
+      RectsEqual(previous_layout.bottom_panel, current_layout->bottom_panel)) {
+    return;
+  }
+
+  // Bottom-panel resize changes multiple surface boundaries at once. Until retained redraw
+  // can prove equivalence here, fall back to a full redraw for correctness.
+  RequestFullRedraw();
+}
+
+void WorkspaceShell::RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible) {
+  if (bottom_panel_was_visible != BottomPanelVisible()) {
+    RequestFullRedraw();
+    return;
+  }
+  RequestBottomPanelRedraw();
+}
+
 void WorkspaceShell::RequestBottomPanelContentRedraw() {
   if (const auto rect = CurrentBottomPanelContentRedrawRect(); rect.has_value()) {
     RequestRedrawRect(*rect);
@@ -738,6 +776,14 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
   return BottomPanelContentRect(*layout, surface_.command_mode);
 }
 
+std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() const {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value() || !surface_.command_mode) {
+    return std::nullopt;
+  }
+  return BottomPanelCommandAreaRect(*layout);
+}
+
 std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value() || !surface_.overlay_visible) {
@@ -871,6 +917,14 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   const Uint64 elapsed = SDL_GetTicks() - caret_blink_epoch_ms_;
   const Uint64 remaining = kCaretBlinkIntervalMs - (elapsed % kCaretBlinkIntervalMs);
   return static_cast<Uint32>(std::max<Uint64>(1, remaining));
+}
+
+bool WorkspaceShell::ConsumePostRenderFullRedrawRequest() {
+  if (post_render_full_redraws_remaining_ <= 0) {
+    return false;
+  }
+  --post_render_full_redraws_remaining_;
+  return true;
 }
 
 void WorkspaceShell::ResetCaretBlink() {
@@ -1233,8 +1287,7 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
                                      merge_tab->incoming_label, merge_tab->current_label);
   }
   return BuildEditorBreadcrumbLabel(project_root_, text_viewport_.path(),
-                                    text_viewport_.is_placeholder(),
-                                    text_viewport_.large_file_mode());
+                                    text_viewport_.is_placeholder());
 }
 
 std::string WorkspaceShell::ProjectLabel() const {

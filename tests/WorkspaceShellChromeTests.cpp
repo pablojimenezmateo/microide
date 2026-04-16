@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "TerminalSessionTestAccess.h"
 #include "WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -333,6 +334,113 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "single-line editor typing should redraw less than the full active pane");
 }
 
+void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  SDL_Event open_event{};
+  open_event.type = SDL_EVENT_KEY_DOWN;
+  open_event.key.key = SDLK_E;
+  open_event.key.mod = SDL_KMOD_CTRL;
+  const auto open_result = shell.HandleEvent(open_event);
+  Expect(open_result.handled,
+         "command prompt invalidation fixture should open command mode");
+  (void)open_result.redraw;
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_TEXT_INPUT;
+  const std::string text = "palette";
+  event.text.text = text.c_str();
+  const auto result = shell.HandleEvent(event);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect command_area = microide::workspace::BottomPanelCommandAreaRect(layout);
+
+  Expect(result.handled, "command prompt typing should be handled");
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+         "command prompt typing should stay on the partial redraw path");
+  Expect(AnyRectIntersects(result.redraw.rects, command_area),
+         "command prompt typing redraws should include the command area");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == text,
+         "command prompt typing should append to the visible command input");
+}
+
+void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha\nbeta\n");
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  };
+  const auto handle_shortcut = [](WorkspaceShell& shell, SDL_Keycode key) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_KEY_DOWN;
+    event.key.key = key;
+    event.key.mod = SDL_KMOD_CTRL;
+    return shell.HandleEvent(event);
+  };
+
+  WorkspaceShell cut_shell;
+  configure_shell(cut_shell);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      cut_shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(cut_shell,
+                                                          [](std::string_view) { return true; });
+
+  const SDL_FRect cut_editor_surface = WorkspaceShellTestAccess::CurrentLayout(cut_shell).editor_surface;
+  const std::vector<std::string> original_lines =
+      WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines();
+
+  const auto select_all = handle_shortcut(cut_shell, SDLK_A);
+  Expect(select_all.handled, "Ctrl+A should be handled by the editor");
+  Expect(!select_all.redraw.full && !select_all.redraw.rects.empty(),
+         "Ctrl+A should request a partial editor redraw");
+  Expect(AnyRectIntersects(select_all.redraw.rects, cut_editor_surface),
+         "Ctrl+A redraws should include the editor surface");
+  Expect(WorkspaceShellTestAccess::ActiveEditorHasSelection(cut_shell),
+         "Ctrl+A should select the active editor contents");
+
+  const auto cut = handle_shortcut(cut_shell, SDLK_X);
+  Expect(cut.handled, "Ctrl+X should be handled by the editor");
+  Expect(!cut.redraw.full && !cut.redraw.rects.empty(),
+         "Ctrl+X should request a partial editor redraw");
+  Expect(AnyRectIntersects(cut.redraw.rects, cut_editor_surface),
+         "Ctrl+X redraws should include the editor surface");
+  Expect(!clipboard_text.empty(),
+         "Ctrl+X should write the selected editor text to the clipboard");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines() != original_lines,
+         "Ctrl+X should modify the active editor buffer");
+
+  WorkspaceShell undo_shell;
+  configure_shell(undo_shell);
+
+  SDL_Event text_event{};
+  text_event.type = SDL_EVENT_TEXT_INPUT;
+  const std::string typed_text = "x";
+  text_event.text.text = typed_text.c_str();
+  const auto typed = undo_shell.HandleEvent(text_event);
+  Expect(typed.handled, "undo invalidation fixture should type into the editor first");
+  const SDL_FRect undo_editor_surface = WorkspaceShellTestAccess::CurrentLayout(undo_shell).editor_surface;
+  const auto undo = handle_shortcut(undo_shell, SDLK_Z);
+  Expect(undo.handled, "Ctrl+Z should be handled by the editor");
+  Expect(!undo.redraw.full && !undo.redraw.rects.empty(),
+         "Ctrl+Z should request a partial editor redraw");
+  Expect(AnyRectIntersects(undo.redraw.rects, undo_editor_surface),
+         "Ctrl+Z redraws should include the editor surface");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(undo_shell).lines() == original_lines,
+         "Ctrl+Z should restore the editor buffer after typing");
+}
+
 void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -524,6 +632,89 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
   Expect(pixel_differences == 0,
          "retained tab-open redraws should match a full redraw");
 }
+
+void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source,
+            "int main() {\n"
+            "  return 0;\n"
+            "}\n"
+            "// resize regression fixture\n");
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+    auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    TerminalSessionTestAccess::SetCursorVisible(session, false);
+    TerminalSessionTestAccess::AppendOutput(
+        session, "terminal resize\nkeeps stale pixels away\nthird line\n");
+    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  };
+
+  const auto handle_divider_press = [&](WorkspaceShell& shell, float x, float y) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.x = x;
+    event.button.y = y;
+    return shell.HandleEvent(event);
+  };
+
+  const auto handle_divider_drag = [&](WorkspaceShell& shell, float x, float y) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = x;
+    event.motion.y = y;
+    event.motion.state = SDL_BUTTON_LMASK;
+    return shell.HandleEvent(event);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  const auto initial_layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
+  const SDL_FRect resize_handle = microide::workspace::BottomPanelResizeHandleRect(initial_layout);
+  const float drag_x = resize_handle.x + resize_handle.w * 0.5f;
+  const float drag_start_y = resize_handle.y + resize_handle.h * 0.5f;
+  const float drag_end_y = drag_start_y + 80.0f;
+
+  const auto retained_press = handle_divider_press(retained_shell, drag_x, drag_start_y);
+  Expect(retained_press.handled,
+         "bottom-panel resize regression should start dragging on the panel divider");
+  const auto retained_drag = handle_divider_drag(retained_shell, drag_x, drag_end_y);
+  Expect(retained_drag.handled,
+         "bottom-panel resize regression should handle divider drag motion");
+
+  const auto& redraw = retained_drag.redraw;
+  const auto resized_layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
+  Expect(resized_layout.bottom_panel.h < initial_layout.bottom_panel.h,
+         "bottom-panel resize regression should shrink the terminal panel");
+  Expect(redraw.full,
+         "bottom-panel resize should promote to a full redraw for correctness");
+
+  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
+  Expect(retained_shell.ConsumePostRenderFullRedrawRequest(),
+         "bottom-panel resize should schedule a follow-up redraw after the first full render");
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  Expect(retained_shell.ConsumePostRenderFullRedrawRequest(),
+         "bottom-panel resize should schedule a second settle redraw");
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  Expect(!retained_shell.ConsumePostRenderFullRedrawRequest(),
+         "bottom-panel resize should settle after the bounded follow-up redraws");
+}
 #endif
 
 }  // namespace
@@ -539,6 +730,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
   AddTest(tests, "WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation",
           TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
+  AddTest(tests, "WorkspaceShell/CommandTextInputReturnsPartialCommandInvalidation",
+          TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation);
+  AddTest(tests, "WorkspaceShell/ShortcutEditActionsReturnEditorInvalidation",
+          TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation);
   AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",
           TestWorkspaceShellEditorTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
@@ -548,6 +743,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenFileInNewTabRetainedRedrawMatchesFullRender",
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/BottomPanelResizeRequestsFullRedrawAndSettleFrames",
+          TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames);
 #endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);

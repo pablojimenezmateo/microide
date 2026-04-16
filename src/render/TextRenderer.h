@@ -16,6 +16,11 @@ struct TextRendererTestAccess;
 
 namespace microide::render {
 
+struct TextRendererCacheStats {
+  std::size_t width_cache_queries = 0;
+  std::size_t width_cache_hits = 0;
+};
+
 class TextRenderer {
  public:
   TextRenderer();
@@ -30,6 +35,8 @@ class TextRenderer {
   float MeasureWidth(std::string_view text) const;
   std::string_view BackendName() const;
   std::string TruncateToWidth(std::string_view text, float max_width) const;
+  TextRendererCacheStats CacheStats() const;
+  void ResetCacheStats() const;
 
   void DrawString(SDL_Renderer* renderer,
                   float x,
@@ -55,6 +62,8 @@ class TextRenderer {
   mutable float width_cache_scale_x_ = 1.0f;
   mutable float width_cache_scale_y_ = 1.0f;
   mutable bool width_cache_initialized_ = false;
+  mutable std::size_t width_cache_queries_ = 0;
+  mutable std::size_t width_cache_hits_ = 0;
 
 #ifdef MICROIDE_TESTING
   friend struct ::microide::tests::TextRendererTestAccess;

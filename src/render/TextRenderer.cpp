@@ -131,8 +131,10 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
     return 0.0f;
   }
 
+  ++width_cache_queries_;
   const auto cached = width_cache_.find(std::string(text));
   if (cached != width_cache_.end()) {
+    ++width_cache_hits_;
     return cached->second;
   }
 
@@ -184,6 +186,18 @@ std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width
   }
 
   return std::string(text.substr(0, fit_length)) + std::string(kEllipsis);
+}
+
+TextRendererCacheStats TextRenderer::CacheStats() const {
+  return TextRendererCacheStats{
+      .width_cache_queries = width_cache_queries_,
+      .width_cache_hits = width_cache_hits_,
+  };
+}
+
+void TextRenderer::ResetCacheStats() const {
+  width_cache_queries_ = 0;
+  width_cache_hits_ = 0;
 }
 
 void TextRenderer::DrawString(SDL_Renderer* renderer,

@@ -36,7 +36,6 @@ struct GitBlameRequest {
   std::size_t visible_line_count = 0;
   std::size_t total_line_count = 0;
   bool dirty = false;
-  bool large_file_mode = false;
 };
 
 struct GitBlameLine {

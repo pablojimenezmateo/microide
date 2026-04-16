@@ -15,6 +15,16 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
 
+bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
+         lhs.y + lhs.h > rhs.y;
+}
+
+bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+  return std::any_of(rects.begin(), rects.end(),
+                     [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
+}
+
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
@@ -108,6 +118,49 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
          "hovering the compact unstage button should expose the full action name");
 }
 
+void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path alpha = root / "src" / "alpha.cpp";
+  const std::filesystem::path beta = root / "src" / "beta.cpp";
+  WriteFile(alpha, "int alpha() {\n  return 1;\n}\n");
+  WriteFile(beta, "int beta() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git sidebar selection fixture", "git sidebar selection fixture");
+  WriteFile(alpha, "int alpha() {\n  return 10;\n}\n");
+  WriteFile(beta, "int beta() {\n  return 20;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(entries.size() == 2,
+         "git sidebar selection fixture should expose two modified entries");
+
+  const SDL_FRect row_rect = WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, 1);
+  Expect(row_rect.w > 0.0f && row_rect.h > 0.0f,
+         "git sidebar selection fixture should expose a clickable row rect");
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  event.button.button = SDL_BUTTON_LEFT;
+  event.button.x = row_rect.x + 12.0f;
+  event.button.y = row_rect.y + row_rect.h * 0.5f;
+  const auto result = shell.HandleEvent(event);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+
+  Expect(result.handled, "clicking a git sidebar entry should be handled");
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+         "opening a git sidebar entry should stay on a partial redraw path");
+  Expect(AnyRectIntersects(result.redraw.rects, layout.sidebar),
+         "opening a git sidebar entry should also invalidate the sidebar selection state");
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == entries[1].path.lexically_normal(),
+         "clicking a git sidebar entry should open the selected comparison target");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -115,6 +168,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
   AddTest(tests, "WorkspaceShell/GitSidebarCompactButtonsExposeHoverTooltips",
           TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
+  AddTest(tests, "WorkspaceShell/OpeningGitSidebarEntryAlsoInvalidatesSidebarSelection",
+          TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection);
 }
 
 }  // namespace microide::tests

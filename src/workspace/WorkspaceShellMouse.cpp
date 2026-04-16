@@ -289,6 +289,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     const WorkspaceLayout drag_layout = layout;
 
+    if (surface_.drag_target == DragTarget::BottomPanelDivider) {
+      if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+        RequestBottomPanelLayoutChangeRedraw(drag_layout);
+        return true;
+      }
+    }
+
     if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
       ensure_redraw([this]() { RequestBottomPanelRedraw(); });
       return true;

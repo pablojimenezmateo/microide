@@ -600,6 +600,19 @@ struct WorkspaceShellTestAccess {
     }
     return {};
   }
+  static SDL_FRect GitSidebarEntryRowRect(WorkspaceShell& shell, std::size_t entry_index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto lines = shell.BuildGitSidebarLines();
+    const auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      if (lines[i].entry_index < 0 || static_cast<std::size_t>(lines[i].entry_index) != entry_index) {
+        continue;
+      }
+      return ScrollableListRowRect(
+          list_layout, static_cast<int>(i) - list_layout.scroll_row);
+    }
+    return {};
+  }
   static SDL_FRect ActiveEditorPaneRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     if (!shell.ActiveTabIsEditor()) {

@@ -12,6 +12,13 @@
 
 namespace microide::editor {
 
+struct TextViewportCacheStats {
+  std::size_t visible_line_queries = 0;
+  std::size_t visible_line_hits = 0;
+  std::size_t highlight_queries = 0;
+  std::size_t highlight_hits = 0;
+};
+
 struct TextPosition {
   std::size_t line = 0;
   std::size_t column = 0;
@@ -101,10 +108,9 @@ class TextViewport {
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;
-  bool large_file_mode() const { return document_->large_file_mode; }
-  bool syntax_highlighting_enabled() const {
-    return !document_->placeholder && !document_->large_file_mode;
-  }
+  bool syntax_highlighting_enabled() const { return !document_->placeholder; }
+  TextViewportCacheStats CacheStats() const;
+  void ResetCacheStats() const;
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
   bool has_selection() const;
@@ -138,7 +144,6 @@ class TextViewport {
     TextEncoding encoding = TextEncoding::ASCII;
     bool placeholder = true;
     bool dirty = false;
-    bool large_file_mode = false;
     std::size_t layout_revision = 0;
   };
 
@@ -167,7 +172,6 @@ class TextViewport {
 
   void MarkDirty();
   void InvalidateLayoutCaches();
-  void RefreshLargeFileMode();
   void RefreshEncoding();
   void EnsureInitialHighlightState() const;
   void EnsureHighlightStatesThrough(std::size_t line_index) const;
@@ -187,7 +191,6 @@ class TextViewport {
   static bool IsValidUtf8(std::string_view content);
   static std::vector<std::string> SplitLines(const std::string& content);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
-  std::size_t SerializedByteSize() const;
 
   std::shared_ptr<DocumentState> document_;
   std::size_t cursor_line_ = 0;
@@ -209,6 +212,10 @@ class TextViewport {
   mutable std::vector<SyntaxState> line_highlight_states_;
   mutable std::optional<std::size_t> highlight_state_computed_through_;
   mutable std::size_t highlight_state_revision_ = 0;
+  mutable std::size_t visible_line_queries_ = 0;
+  mutable std::size_t visible_line_hits_ = 0;
+  mutable std::size_t highlight_queries_ = 0;
+  mutable std::size_t highlight_hits_ = 0;
   std::optional<TextPosition> selection_anchor_;
 };
 

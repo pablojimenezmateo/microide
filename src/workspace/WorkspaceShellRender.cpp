@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -167,12 +168,19 @@ void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
     return;
   }
 
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::ResizeTerminalToPanel");
   const int rows = BottomPanelVisibleRows(panel_rect.h);
   const float usable_width =
       std::max(16.0f, panel_rect.w - 24.0f - kWorkspaceScrollbarThickness - 6.0f);
   const int columns = std::max(
       1, static_cast<int>(std::floor(usable_width / std::max(1.0f, text_renderer_.CharWidth()))));
+  if (terminal_tab->session.rows() == static_cast<std::size_t>(rows) &&
+      terminal_tab->session.columns() == static_cast<std::size_t>(columns)) {
+    return;
+  }
   terminal_tab->session.Resize(static_cast<std::size_t>(rows), static_cast<std::size_t>(columns));
+  post_render_full_redraws_remaining_ =
+      std::max(post_render_full_redraws_remaining_, 2);
 }
 
 void WorkspaceShell::DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const {
@@ -194,6 +202,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
     return;
   }
 
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::Render");
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
@@ -216,10 +225,12 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   if (ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
-  float mouse_x = 0.0f;
-  float mouse_y = 0.0f;
-  SDL_GetMouseState(&mouse_x, &mouse_y);
-  SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
+  float mouse_x = last_mouse_x_;
+  float mouse_y = last_mouse_y_;
+  if (!last_mouse_position_valid_) {
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
+  }
   UpdateMouseCursor(mouse_x, mouse_y);
   const std::size_t terminal_line_count =
       ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
@@ -1498,6 +1509,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
   }
 
   if (BottomPanelVisible()) {
+    util::PerformanceTrace::Scope bottom_panel_scope("WorkspaceShell::RenderBottomPanel");
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kWorkspaceBottomPanelHeaderHeight);

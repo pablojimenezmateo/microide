@@ -119,7 +119,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   if (surface_.command_mode) {
     const bool handled = HandleCommandKeyDown(event.key);
     if (handled) {
-      ensure_redraw([this]() { RequestBottomPanelContentRedraw(); });
+      ensure_redraw([this]() { RequestBottomPanelCommandRedraw(); });
     }
     return finish(handled);
   }
@@ -239,7 +239,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
           RequestPromptRedraw();
           break;
         case TextInputSurface::Command:
-          RequestBottomPanelContentRedraw();
+          RequestBottomPanelCommandRedraw();
           break;
         case TextInputSurface::SidebarSearchQuery:
         case TextInputSurface::SidebarSearchReplace:
@@ -274,7 +274,7 @@ bool WorkspaceShell::HandleTextEditing(const SDL_TextEditingEvent& event) {
       RequestPromptRedraw();
       break;
     case TextInputSurface::Command:
-      RequestBottomPanelContentRedraw();
+      RequestBottomPanelCommandRedraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -320,7 +320,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     command_.history_index.reset();
     command_.history_pending_input.clear();
     ClearCommandFeedback();
-    RequestBottomPanelContentRedraw();
+    RequestBottomPanelCommandRedraw();
     return true;
   }
 

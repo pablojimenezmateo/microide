@@ -86,6 +86,7 @@ class WorkspaceShell {
   EventResult HandleEvent(const SDL_Event& event);
   void Render(SDL_Renderer* renderer, int width, int height);
   std::optional<Uint32> NextAnimationDelayMs() const;
+  bool ConsumePostRenderFullRedrawRequest();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
   RenderInvalidation ConsumePendingRenderInvalidation();
   void RequestQuit();
@@ -1517,7 +1518,10 @@ class WorkspaceShell {
   void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
   void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
+  void RequestBottomPanelCommandRedraw();
+  void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBottomPanelContentRedraw();
+  void RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible);
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
@@ -1532,6 +1536,7 @@ class WorkspaceShell {
                                                            std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
+  std::optional<SDL_FRect> CurrentBottomPanelCommandRedrawRect() const;
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   std::optional<SDL_FRect> CurrentPromptRedrawRect() const;
@@ -1605,6 +1610,7 @@ class WorkspaceShell {
   TextCompositionState text_composition_;
   Uint64 caret_blink_epoch_ms_ = 0;
   RenderInvalidation pending_render_invalidation_;
+  int post_render_full_redraws_remaining_ = 0;
   TabDragState tab_drag_state_;
   CursorKind cursor_kind_ = CursorKind::Default;
   SDL_Cursor* text_cursor_ = nullptr;

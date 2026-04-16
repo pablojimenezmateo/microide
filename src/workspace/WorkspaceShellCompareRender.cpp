@@ -6,9 +6,10 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/DecoratedTextGridRenderer.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
-#include "util/StringUtil.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -27,50 +28,6 @@ SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
       blend(base.b, tint.b),
       0xff,
   };
-}
-
-struct VisibleTextWindow {
-  std::string_view text;
-  std::size_t byte_offset = 0;
-};
-
-VisibleTextWindow SliceVisibleColumns(std::string_view text,
-                                      std::size_t start_column,
-                                      std::size_t visible_columns) {
-  const std::size_t byte_offset = Utf8ByteOffsetForCodepointCount(text, start_column);
-  const std::size_t byte_length =
-      Utf8ByteOffsetForCodepointCount(text.substr(byte_offset), visible_columns);
-  return VisibleTextWindow{
-      .text = text.substr(byte_offset, byte_length),
-      .byte_offset = byte_offset,
-  };
-}
-
-SDL_Color CompareTokenColor(const render::Theme& theme,
-                            editor::SyntaxTokenKind kind,
-                            SDL_Color fallback,
-                            bool selected) {
-  switch (kind) {
-    case editor::SyntaxTokenKind::Keyword:
-      return theme.syntax_keyword;
-    case editor::SyntaxTokenKind::Type:
-      return theme.syntax_type;
-    case editor::SyntaxTokenKind::String:
-      return theme.syntax_string;
-    case editor::SyntaxTokenKind::Comment:
-      return theme.syntax_comment;
-    case editor::SyntaxTokenKind::Number:
-      return theme.syntax_number;
-    case editor::SyntaxTokenKind::Constant:
-      return theme.syntax_constant;
-    case editor::SyntaxTokenKind::Preprocessor:
-      return theme.syntax_preprocessor;
-    case editor::SyntaxTokenKind::Operator:
-      return theme.syntax_operator;
-    case editor::SyntaxTokenKind::Plain:
-    default:
-      return selected ? theme.text_primary : fallback;
-  }
 }
 
 SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
@@ -206,7 +163,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
     return;
   }
 
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::RenderCompareSurface");
   static const std::vector<editor::SyntaxTokenKind> kEmptyTokens;
+  static const editor::DecoratedTextGridRenderer kDecoratedRowRenderer;
 
   DrawFilledRect(renderer, rect, theme_.editor_background);
 
@@ -269,105 +228,61 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
                      theme_.accent);
     }
 
-    const SDL_Color row_background = theme_.editor_background;
     const auto draw_text = [&](float x, float width, SDL_Color color, const std::string& text) {
       const std::string display_text = TruncateLabel(text, width);
       if (display_text.empty()) {
         return;
       }
-      text_renderer_.DrawStringOn(renderer, x, y, color, row_background, display_text);
+      text_renderer_.DrawString(renderer, x, y, color, display_text);
     };
-    const auto draw_syntax_text = [&](float x,
-                                      std::size_t visible_columns,
-                                      SDL_Color plain_color,
-                                      const std::string& text,
-                                      const std::vector<editor::SyntaxTokenKind>& full_tokens,
-                                      const std::vector<compare::CompareTextSpan>& changed_spans,
-                                      SDL_Color changed_background,
-                                      SDL_Color changed_marker,
-                                      bool suppress_background = false) {
-      if (text.empty()) {
-        return;
-      }
-
-      const VisibleTextWindow window =
-          SliceVisibleColumns(text, compare_tab->horizontal_scroll, visible_columns);
-      if (window.text.empty()) {
-        return;
-      }
-
-      const auto token_kind_at = [&](std::size_t byte_offset) {
-        const std::size_t absolute_offset = window.byte_offset + byte_offset;
-        if (absolute_offset < full_tokens.size()) {
-          return full_tokens[absolute_offset];
-        }
-        return editor::SyntaxTokenKind::Plain;
-      };
-      std::size_t changed_span_index = 0;
-      const auto byte_is_changed = [&](std::size_t byte_offset) {
-        const std::size_t absolute_offset = window.byte_offset + byte_offset;
-        while (changed_span_index < changed_spans.size() &&
-               changed_spans[changed_span_index].end <= absolute_offset) {
-          ++changed_span_index;
-        }
-        return changed_span_index < changed_spans.size() &&
-               absolute_offset >= changed_spans[changed_span_index].start &&
-               absolute_offset < changed_spans[changed_span_index].end;
-      };
-
-      float segment_x = x;
-      for (std::size_t segment_start = 0; segment_start < window.text.size();) {
-        const editor::SyntaxTokenKind kind = token_kind_at(segment_start);
-        const bool changed = byte_is_changed(segment_start);
-        std::size_t segment_end = segment_start;
-        while (segment_end < window.text.size()) {
-          const std::size_t next =
-              segment_end + util::Utf8SequenceLength(window.text, segment_end);
-          if (next >= window.text.size()) {
-            segment_end = window.text.size();
-            break;
+    const auto append_changed_underlines =
+        [&](editor::DecoratedTextRow& row_desc,
+            float x,
+            std::size_t visible_columns,
+            const std::string& text,
+            const std::vector<compare::CompareTextSpan>& changed_spans,
+            SDL_Color underline_color) {
+          if (text.empty() || changed_spans.empty()) {
+            return;
           }
-          if (token_kind_at(next) != kind || byte_is_changed(next) != changed) {
-            segment_end = next;
-            break;
+
+          const editor::VisibleTextWindow window =
+              editor::SliceVisibleColumns(text, compare_tab->horizontal_scroll, visible_columns);
+          if (window.text.empty()) {
+            return;
           }
-          segment_end = next;
-        }
+          const std::size_t window_end = window.byte_offset + window.text.size();
 
-        const std::string_view segment_text(window.text.data() + segment_start,
-                                            segment_end - segment_start);
-        const float segment_width = text_renderer_.MeasureWidth(segment_text);
-        if (suppress_background) {
-          text_renderer_.DrawString(renderer, segment_x, y,
-                                    CompareTokenColor(theme_, kind, plain_color, selected),
-                                    segment_text);
-        } else {
-          text_renderer_.DrawStringOn(
-              renderer, segment_x, y,
-              CompareTokenColor(theme_, kind, plain_color, selected),
-              changed ? changed_background : row_background, segment_text);
-        }
-        if (changed && segment_width > 0.0f) {
-          DrawFilledRect(renderer,
-                         MakeRect(segment_x, y + surface.line_height - 2.0f, segment_width, 1.0f),
-                         changed_marker);
-        }
-        segment_x += segment_width;
-        segment_start = segment_end;
-      }
-    };
+          for (const auto& span : changed_spans) {
+            if (span.end <= window.byte_offset) {
+              continue;
+            }
+            if (span.start >= window_end) {
+              break;
+            }
 
-    if (compare_row.left_line > 0) {
-      draw_text(surface.left_x, surface.gutter_width - 4.0f,
-                selected ? theme_.current_line_number : theme_.line_number,
-                std::to_string(compare_row.left_line));
-    }
-    if (compare_row.right_line > 0) {
-      draw_text(surface.right_x, surface.gutter_width - 4.0f,
-                selected ? theme_.current_line_number : theme_.line_number,
-                std::to_string(compare_row.right_line));
-    }
+            const std::size_t clipped_start = std::max(span.start, window.byte_offset);
+            const std::size_t clipped_end = std::min(span.end, window_end);
+            if (clipped_end <= clipped_start) {
+              continue;
+            }
 
+            const std::size_t local_start = clipped_start - window.byte_offset;
+            const std::size_t local_end = clipped_end - window.byte_offset;
+            const std::string_view prefix_text(window.text.data(), local_start);
+            const std::string_view changed_text(window.text.data() + local_start,
+                                                local_end - local_start);
+            const float start_x = x + text_renderer_.MeasureWidth(prefix_text);
+            const float span_width = text_renderer_.MeasureWidth(changed_text);
+            if (span_width <= 0.0f) {
+              continue;
+            }
+            row_desc.underlines.push_back(editor::DecoratedUnderline{
+                .rect = MakeRect(start_x, y + surface.line_height - 2.0f, span_width, 1.0f),
+                .color = underline_color,
+            });
+          }
+        };
     SDL_Color left_color = theme_.text_secondary;
     SDL_Color right_color = theme_.text_secondary;
     SDL_Color marker_color = selected ? theme_.text_secondary : theme_.text_muted;
@@ -393,30 +308,65 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       default:
         break;
     }
-
-    const SDL_Color left_changed_background = BlendColor(
-        row_background,
-        compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
-                                                             : theme_.diff_modified,
-        selected ? 0.42f : 0.28f);
-    const SDL_Color right_changed_background = BlendColor(
-        row_background,
-        compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
-                                                           : theme_.diff_modified,
-        selected ? 0.42f : 0.28f);
+    const SDL_Color left_row_background = [&]() {
+      const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
+      switch (compare_row.kind) {
+        case compare::CompareRowKind::Deleted:
+          return BlendColor(base, theme_.diff_deleted, selected ? 0.42f : 0.28f);
+        case compare::CompareRowKind::Modified:
+          return BlendColor(base, theme_.diff_modified, selected ? 0.42f : 0.28f);
+        case compare::CompareRowKind::Added:
+        case compare::CompareRowKind::Unchanged:
+        default:
+          return base;
+      }
+    }();
+    const SDL_Color right_row_background = [&]() {
+      const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
+      switch (compare_row.kind) {
+        case compare::CompareRowKind::Added:
+          return BlendColor(base, theme_.diff_added, selected ? 0.42f : 0.28f);
+        case compare::CompareRowKind::Modified:
+          return BlendColor(base, theme_.diff_modified, selected ? 0.42f : 0.28f);
+        case compare::CompareRowKind::Deleted:
+        case compare::CompareRowKind::Unchanged:
+        default:
+          return base;
+      }
+    }();
 
     if (compare_row.left_line > 0) {
+      editor::DecoratedTextRow left_row;
+      left_row.fills.push_back(editor::DecoratedTextFill{
+          .rect = MakeRect(surface.left_x, y - 1.0f,
+                           surface.gutter_width + surface.left_width, surface.line_height),
+          .color = left_row_background,
+      });
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
               ? &compare_tab->left_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      draw_syntax_text(surface.left_x + surface.gutter_width, surface.left_visible_columns,
-                       left_color, compare_row.left_text, *cached_tokens,
-                       compare_row.left_changed_spans, left_changed_background,
-                       compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
-                                                                            : theme_.diff_modified);
+      editor::AppendVisibleSyntaxTextRuns(
+          left_row, text_renderer_, theme_, surface.left_x + surface.gutter_width, y,
+          compare_row.left_text, compare_tab->horizontal_scroll, surface.left_visible_columns,
+          selected ? theme_.text_primary : left_color, *cached_tokens);
+      append_changed_underlines(
+          left_row, surface.left_x + surface.gutter_width, surface.left_visible_columns,
+          compare_row.left_text, compare_row.left_changed_spans,
+          compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
+                                                               : theme_.diff_modified);
+      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
+      draw_text(surface.left_x, surface.gutter_width - 4.0f,
+                selected ? theme_.current_line_number : theme_.line_number,
+                std::to_string(compare_row.left_line));
     }
     if (compare_row.right_line > 0) {
+      editor::DecoratedTextRow right_row;
+      right_row.fills.push_back(editor::DecoratedTextFill{
+          .rect = MakeRect(surface.right_x, y - 1.0f,
+                           surface.gutter_width + surface.right_width, surface.line_height),
+          .color = right_row_background,
+      });
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
       const bool selection_active =
           right_selection.has_value() &&
@@ -440,25 +390,32 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
             std::min(end_visual,
                      compare_tab->horizontal_scroll + surface.right_visible_columns);
         if (visible_end > visible_start) {
-          DrawFilledRect(
-              renderer,
-              MakeRect(TextGridCursorX(right_interaction, visible_start),
-                       y - 1.0f,
-                       static_cast<float>(visible_end - visible_start) * right_interaction.char_width,
-                       surface.line_height),
-              theme_.selection_fill);
+          right_row.fills.push_back(editor::DecoratedTextFill{
+              .rect = MakeRect(
+                  TextGridCursorX(right_interaction, visible_start), y - 1.0f,
+                  static_cast<float>(visible_end - visible_start) * right_interaction.char_width,
+                  surface.line_height),
+              .color = theme_.selection_fill,
+          });
         }
       }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->right_tokens_by_row.size()
               ? &compare_tab->right_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      draw_syntax_text(right_interaction.text_x, surface.right_visible_columns, right_color,
-                       compare_row.right_text, *cached_tokens, compare_row.right_changed_spans,
-                       right_changed_background,
-                       compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
-                                                                          : theme_.diff_modified,
-                       selection_active);
+      editor::AppendVisibleSyntaxTextRuns(
+          right_row, text_renderer_, theme_, right_interaction.text_x, y, compare_row.right_text,
+          compare_tab->horizontal_scroll, surface.right_visible_columns,
+          selected ? theme_.text_primary : right_color, *cached_tokens);
+      append_changed_underlines(
+          right_row, right_interaction.text_x, surface.right_visible_columns,
+          compare_row.right_text, compare_row.right_changed_spans,
+          compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
+                                                             : theme_.diff_modified);
+      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
+      draw_text(surface.right_x, surface.gutter_width - 4.0f,
+                selected ? theme_.current_line_number : theme_.line_number,
+                std::to_string(compare_row.right_line));
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
         const std::size_t caret_visual =
             editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text,
@@ -480,8 +437,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
         if (blame_index < blame_overlay->lines.size() &&
             blame_overlay->lines[blame_index].line_index == right_line_index) {
           text_renderer_.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
-                                     blame_overlay->lines[blame_index].rect.y, theme_.text_disabled,
-                                     row_background, blame_overlay->lines[blame_index].text);
+                                     blame_overlay->lines[blame_index].rect.y,
+                                     theme_.text_disabled, right_row_background,
+                                     blame_overlay->lines[blame_index].text);
         }
       }
     }

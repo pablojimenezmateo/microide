@@ -78,6 +78,42 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
          "editor blame overlay should anchor eight columns after the visible line end");
 }
 
+void TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "large.cpp";
+  std::string content;
+  for (int i = 0; i < 4205; ++i) {
+    content += "int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(source, content);
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add large editor blame fixture", "large editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2000, 0);
+
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell);
+  Expect(overlay.has_value(),
+         "large tracked editors should still expose blame overlays");
+  Expect(!overlay->lines.empty(),
+         "large tracked editors should publish at least one visible blame line");
+  Expect(std::any_of(overlay->lines.begin(), overlay->lines.end(),
+                     [](const auto& line) {
+                       return line.line_index >= 1999 && line.line_index <= 2001;
+                     }),
+         "large tracked editor blame should stay near the caret neighborhood");
+  Expect(std::any_of(overlay->lines.begin(), overlay->lines.end(),
+                     [](const auto& line) {
+                       return line.summary == "Add large editor blame fixture";
+                     }),
+         "large tracked editor blame should keep commit summaries");
+}
+
 void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -264,6 +300,8 @@ void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
+  AddTest(tests, "WorkspaceShell/EditorBlameLoadsForLargeTrackedFile",
+          TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile);
   AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndResumesAfterSave",
           TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave);
   AddTest(tests, "WorkspaceShell/EditorDirtyTransitionRedrawsBlameNeighborhood",

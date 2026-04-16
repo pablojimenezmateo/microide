@@ -3,6 +3,7 @@
 #include "compare/CompareModel.h"
 
 #include <algorithm>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -10,6 +11,7 @@ namespace microide::tests {
 namespace {
 
 using microide::compare::BuildCompareModel;
+using microide::compare::BuildCompareModelProfiled;
 using microide::compare::CompareModel;
 using microide::compare::CompareRowKind;
 using microide::compare::CompareTextSpan;
@@ -55,6 +57,56 @@ bool IsUtf8Boundary(std::string_view text, std::size_t offset) {
 
 std::string SpanText(std::string_view text, const CompareTextSpan& span) {
   return std::string(text.substr(span.start, span.end - span.start));
+}
+
+std::string DescribeRows(const CompareModel& model,
+                         std::size_t start_index = 0,
+                         std::size_t max_rows = 32) {
+  std::ostringstream stream;
+  const std::size_t end_index = std::min(model.rows.size(), start_index + max_rows);
+  for (std::size_t index = start_index; index < end_index; ++index) {
+    const auto& row = model.rows[index];
+    char kind = '=';
+    switch (row.kind) {
+      case CompareRowKind::Added:
+        kind = '+';
+        break;
+      case CompareRowKind::Deleted:
+        kind = '-';
+        break;
+      case CompareRowKind::Modified:
+        kind = '~';
+        break;
+      case CompareRowKind::Unchanged:
+      default:
+        kind = '=';
+        break;
+    }
+    stream << index << ' ' << kind << " L" << row.left_line << " R" << row.right_line << " | "
+           << row.left_text << " || " << row.right_text << '\n';
+  }
+  return stream.str();
+}
+
+bool ByteCoveredByChangedSpan(const std::vector<CompareTextSpan>& spans, std::size_t offset) {
+  return std::any_of(spans.begin(), spans.end(), [&](const CompareTextSpan& span) {
+    return offset >= span.start && offset < span.end;
+  });
+}
+
+bool RangeIsUnchanged(std::string_view text,
+                      const std::vector<CompareTextSpan>& spans,
+                      std::string_view needle) {
+  const std::size_t start = text.find(needle);
+  if (start == std::string_view::npos) {
+    return false;
+  }
+  for (std::size_t offset = start; offset < start + needle.size(); ++offset) {
+    if (ByteCoveredByChangedSpan(spans, offset)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void TestCompareSimpleFixture() {
@@ -169,6 +221,262 @@ void TestCompareCodeTokenChangedSpans() {
          "code token span diff should isolate right chrome_active_text");
   Expect(SpanText(row.right_text, row.right_changed_spans[1]) == "chrome_text",
          "code token span diff should isolate right chrome_text");
+}
+
+void TestCompareAssignmentPrefixStaysUnchanged() {
+  const std::string left =
+      "const groupedPayouts = (statement?.payouts ?? []).concat(...(statement?.payout_installments.map(cp) => {";
+  const std::string right =
+      "const groupedPayouts = getExpandedStatementPayouts(statement).reduce((acc: GroupedPayouts[], item: ExpandedStatementPayout) => {";
+  const auto model = BuildCompareModel(left, right);
+
+  Expect(model.rows.size() == 1, "assignment prefix diff should produce one row");
+  const auto& row = model.rows.front();
+  Expect(row.kind == CompareRowKind::Modified, "assignment prefix row should be modified");
+  Expect(!row.left_changed_spans.empty() && !row.right_changed_spans.empty(),
+         "assignment prefix diff should still report changed spans");
+  Expect(RangeIsUnchanged(row.left_text, row.left_changed_spans, "const groupedPayouts = "),
+         "assignment prefix diff should keep the left assignment prefix unchanged");
+  Expect(RangeIsUnchanged(row.right_text, row.right_changed_spans, "const groupedPayouts = "),
+         "assignment prefix diff should keep the right assignment prefix unchanged");
+}
+
+void TestCompareLongQueryChangedSpansKeepSharedClause() {
+  const std::string left =
+      "*, has_pending_payouts, profiles!statements_profile_id_fkey(*, "
+      "teams_profiles(team_id)), payout_installments(*, payouts(${payoutsQuery})), "
+      "p_total: payouts(value.sum()),";
+  const std::string right =
+      "*, has_pending_payouts, profiles!statements_profile_id_fkey(*, "
+      "teams_profiles(team_id)), payouts(${payoutsQuery}), p_total: payouts(value.sum()), "
+      "pi_total: payout_installments(amount.sum()), issues(*)";
+  const auto model = BuildCompareModel(left, right);
+
+  Expect(model.rows.size() == 1, "long query span diff should produce one row");
+  const auto& row = model.rows.front();
+  Expect(row.kind == CompareRowKind::Modified, "long query span row should be modified");
+  Expect(!row.left_changed_spans.empty() && !row.right_changed_spans.empty(),
+         "long query span diff should still report changed spans");
+  Expect(RangeIsUnchanged(row.left_text, row.left_changed_spans, "p_total: payouts(value.sum()),"),
+         "long query left should keep the shared aggregate clause unchanged");
+  Expect(RangeIsUnchanged(row.right_text, row.right_changed_spans,
+                          "p_total: payouts(value.sum()),"),
+         "long query right should keep the shared aggregate clause unchanged");
+}
+
+void TestCompareRepeatedStructureKeepsSharedBlockUnchanged() {
+  const auto model = BuildCompareModel(
+      R"LEFT(const order = [
+  {
+    column: 'created_at',
+    options: {
+      ascending: false,
+      referencedTable: 'issues'
+    },
+  },
+  {
+    column: 'effective_date',
+    options: {
+      ascending: true,
+      referencedTable: 'payouts'
+    },
+  },
+  {
+    column: 'id',
+    options: {
+      ascending: true,
+      referencedTable: 'payouts'
+    },
+  },
+  {
+    column: 'effective_date',
+    options: {
+      ascending: true,
+      referencedTable: 'payout_installments.payouts'
+    },
+  },
+]
+return order
+)LEFT",
+      R"RIGHT(const order = [
+  {
+    column: 'created_at',
+    options: {
+      ascending: false,
+      referencedTable: 'issues'
+    },
+  },
+  {
+    column: 'effective_date',
+    options: {
+      ascending: true,
+      referencedTable: 'payouts'
+    },
+  },
+  {
+    column: 'id',
+    options: {
+      ascending: true,
+      referencedTable: 'payouts'
+    },
+  },
+]
+const { isLoading, items: statements } = useSupabaseTable<
+  StatementsDetailsType,
+  TablesInsert<'statements'>
+>()
+return order
+)RIGHT");
+
+  bool saw_issues_unchanged = false;
+  bool saw_id_unchanged = false;
+  bool saw_deleted_installment_reference = false;
+  bool saw_added_table_hook = false;
+
+  for (const auto& row : model.rows) {
+    if (row.kind == CompareRowKind::Unchanged &&
+        row.left_text == "      referencedTable: 'issues'") {
+      saw_issues_unchanged = true;
+    }
+    if (row.kind == CompareRowKind::Unchanged && row.left_text == "    column: 'id',") {
+      saw_id_unchanged = true;
+    }
+    if (row.kind == CompareRowKind::Deleted &&
+        row.left_text == "      referencedTable: 'payout_installments.payouts'") {
+      saw_deleted_installment_reference = true;
+    }
+    if (row.kind == CompareRowKind::Added &&
+        row.right_text == "const { isLoading, items: statements } = useSupabaseTable<") {
+      saw_added_table_hook = true;
+    }
+
+    Expect(!(row.left_text == "    column: 'id'," &&
+             row.right_text == "const { isLoading, items: statements } = useSupabaseTable<"),
+           "repeated structure diff should not pair the shared order block with the new hook");
+  }
+
+  Expect(saw_issues_unchanged,
+         "repeated structure diff should keep the first shared object entry unchanged");
+  Expect(saw_id_unchanged,
+         "repeated structure diff should keep the third shared object entry unchanged");
+  Expect(saw_deleted_installment_reference,
+         "repeated structure diff should keep the extra payout_installments entry deleted");
+  Expect(saw_added_table_hook,
+         "repeated structure diff should keep the new useSupabaseTable block added");
+}
+
+void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
+  std::string left =
+      "import {\n"
+      "  GroupedPayouts,\n"
+      "  HistoricStatementsType,\n"
+      "  PayoutWithJoins,\n"
+      "  StatementsDetailsType\n"
+      "} from '@dolfin/business/custom_types'\n"
+      "import { Database, Tables, TablesInsert } from '@dolfin/business/db_types'\n"
+      "import { payoutsQuery } from '@dolfin/business/shared_queries'\n"
+      "import { QueryKeys } from '@dolfin/hooks/queryKeys'\n"
+      "import { useOrgContext } from '@dolfin/hooks/state/organization'\n"
+      "import { useSupabaseClient } from '@dolfin/hooks/supabase'\n"
+      "import { useSupabaseTable } from '@dolfin/hooks/supabase-table'\n";
+  std::string right =
+      "import {\n"
+      "  GroupedPayouts,\n"
+      "  HistoricStatementsType,\n"
+      "  PayoutWithJoins,\n"
+      "  StatementsDetailsType\n"
+      "} from '@dolfin/business/custom_types'\n"
+      "import { Database, Tables, TablesInsert } from '@dolfin/business/db_types'\n"
+      "import {\n"
+      "  payoutsQuery,\n"
+      "  payoutsQueryWithoutInstallments\n"
+      "} from '@dolfin/business/shared_queries'\n"
+      "import { QueryKeys } from '@dolfin/hooks/queryKeys'\n"
+      "import { useOrgContext } from '@dolfin/hooks/state/organization'\n"
+      "import { useSupabaseClient } from '@dolfin/hooks/supabase'\n"
+      "import { useSupabaseTable } from '@dolfin/hooks/supabase-table'\n";
+
+  for (int i = 0; i < 220; ++i) {
+    left += "const filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    right += "const filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+
+  left +=
+      "import { StatementNavigator } from './statement-navigator'\n"
+      "import StatementsHistoricChart from './statementsHistoricChart'\n"
+      "import StatementWaterfallChart from './statementWaterfallChart'\n";
+  right +=
+      "import { StatementNavigator } from './statement-navigator'\n"
+      "import StatementsHistoricChart from './statementsHistoricChart'\n"
+      "import StatementWaterfallChart from './statementWaterfallChart'\n"
+      "import { ExpandedStatementPayout, getExpandedStatementPayouts } from './utils'\n";
+
+  for (int i = 220; i < 520; ++i) {
+    left += "const filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    right += "const filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+
+  left +=
+      "    column: 'id',\n"
+      "    options: {\n"
+      "      ascending: true,\n"
+      "      referencedTable: 'payout_installments.payouts.payout_installments'\n"
+      "    }\n";
+  right +=
+      "    column: 'id',\n"
+      "    options: {\n"
+      "      ascending: true,\n"
+      "      referencedTable: 'payout_installments'\n"
+      "    }\n";
+
+  const auto model = BuildCompareModel(left, right);
+
+  bool saw_query_keys_unchanged = false;
+  bool saw_supabase_table_unchanged = false;
+  bool saw_shared_query_deleted = false;
+  bool saw_shared_query_added = false;
+  bool saw_late_reference_modified = false;
+
+  for (const auto& row : model.rows) {
+    if (row.kind == CompareRowKind::Unchanged &&
+        row.left_text == "import { QueryKeys } from '@dolfin/hooks/queryKeys'") {
+      saw_query_keys_unchanged = true;
+    }
+    if (row.kind == CompareRowKind::Unchanged &&
+        row.left_text == "import { useSupabaseTable } from '@dolfin/hooks/supabase-table'") {
+      saw_supabase_table_unchanged = true;
+    }
+    if (row.kind == CompareRowKind::Deleted &&
+        row.left_text == "import { payoutsQuery } from '@dolfin/business/shared_queries'") {
+      saw_shared_query_deleted = true;
+    }
+    if (row.kind == CompareRowKind::Added &&
+        row.right_text == "  payoutsQueryWithoutInstallments") {
+      saw_shared_query_added = true;
+    }
+    if (row.kind == CompareRowKind::Modified &&
+        row.left_text == "      referencedTable: 'payout_installments.payouts.payout_installments'" &&
+        row.right_text == "      referencedTable: 'payout_installments'") {
+      saw_late_reference_modified = true;
+    }
+
+    Expect(!(row.left_text == "import { QueryKeys } from '@dolfin/hooks/queryKeys'" &&
+             row.right_text == "} from '@dolfin/business/shared_queries'"),
+           "import expansion diff should not pair the following unchanged import with the split import tail");
+  }
+
+  Expect(saw_query_keys_unchanged,
+         "import expansion diff should keep QueryKeys import unchanged after the split import");
+  Expect(saw_supabase_table_unchanged,
+         "import expansion diff should keep later unchanged imports aligned");
+  Expect(saw_shared_query_deleted,
+         ("import expansion diff should keep the single-line shared query import deleted\n" +
+          DescribeRows(model, 6, 12))
+             .c_str());
+  Expect(saw_shared_query_added,
+         "import expansion diff should keep the extra shared query symbol as added");
+  Expect(saw_late_reference_modified,
+         "import expansion diff should still pair the later referencedTable edit");
 }
 
 void TestCompareContextAwareAlignment() {
@@ -312,31 +620,44 @@ void TestCompareLargeInputsUseBoundedFallback() {
          "large fallback compare should preserve the shared trailing empty row");
 }
 
-void TestCompareLargeInputsUseCoarseChangedSpans() {
+void TestCompareLargePaddedAssignmentPrefixStaysUnchanged() {
   std::string left;
   std::string right;
-  left.reserve(3000 * 64);
-  right.reserve(3000 * 64);
-  for (int i = 0; i < 2200; ++i) {
-    left += "msgid \"left line " + std::to_string(i) + " alpha beta gamma\"\n";
-    right += "msgid \"right line " + std::to_string(i) + " alpha beta gamma\"\n";
+  left.reserve(2600 * 48);
+  right.reserve(2600 * 48);
+  for (int i = 0; i < 1200; ++i) {
+    const std::string filler =
+        "const filler_" + std::to_string(i) + " = shared_" + std::to_string(i) + ";\n";
+    left += filler;
+    right += filler;
+  }
+
+  left +=
+      "const groupedPayouts = (statement?.payouts ?? []).concat(...(statement?.payout_installments.map(cp) => {\n";
+  right +=
+      "const groupedPayouts = getExpandedStatementPayouts(statement).reduce((acc: GroupedPayouts[], item: ExpandedStatementPayout) => {\n";
+
+  for (int i = 1200; i < 2600; ++i) {
+    const std::string filler =
+        "const filler_" + std::to_string(i) + " = shared_" + std::to_string(i) + ";\n";
+    left += filler;
+    right += filler;
   }
 
   const auto model = BuildCompareModel(left, right);
 
-  Expect(!model.rows.empty(), "coarse-span fixture should produce compare rows");
   const auto it = std::find_if(model.rows.begin(), model.rows.end(), [](const auto& row) {
-    return row.kind == CompareRowKind::Modified;
+    return row.kind == CompareRowKind::Modified &&
+           row.left_text.find("const groupedPayouts = ") != std::string::npos;
   });
-  Expect(it != model.rows.end(), "coarse-span fixture should include modified rows");
-  Expect(it->left_changed_spans.size() == 1 && it->right_changed_spans.size() == 1,
-         "large compare rows should use one coarse changed span per side");
-  Expect(it->left_changed_spans.front().start == 0 &&
-             it->left_changed_spans.front().end == it->left_text.size(),
-         "large compare coarse left span should cover the full line");
-  Expect(it->right_changed_spans.front().start == 0 &&
-             it->right_changed_spans.front().end == it->right_text.size(),
-         "large compare coarse right span should cover the full line");
+  Expect(it != model.rows.end(),
+         "large padded assignment fixture should keep the modified assignment row paired");
+  Expect(!it->left_changed_spans.empty() && !it->right_changed_spans.empty(),
+         "large padded assignment fixture should still report detailed changed spans");
+  Expect(RangeIsUnchanged(it->left_text, it->left_changed_spans, "const groupedPayouts = "),
+         "large padded assignment fixture should keep the left assignment prefix unchanged");
+  Expect(RangeIsUnchanged(it->right_text, it->right_changed_spans, "const groupedPayouts = "),
+         "large padded assignment fixture should keep the right assignment prefix unchanged");
 }
 
 void TestCompareLargeIdenticalInputsStayUnchanged() {
@@ -356,6 +677,47 @@ void TestCompareLargeIdenticalInputsStayUnchanged() {
          "large identical compare should be fully unchanged");
 }
 
+void TestProfiledCompareBuildMatchesUnprofiledModel() {
+  const std::string left =
+      "alpha\n"
+      "beta\n"
+      "gamma\n"
+      "delta\n";
+  const std::string right =
+      "alpha\n"
+      "beta updated\n"
+      "gamma\n"
+      "delta extra\n";
+
+  const CompareModel plain = BuildCompareModel(left, right);
+  const auto profiled = BuildCompareModelProfiled(left, right);
+
+  Expect(profiled.model.rows.size() == plain.rows.size(),
+         "profiled compare build should keep the same row count");
+  Expect(profiled.model.hunks.size() == plain.hunks.size(),
+         "profiled compare build should keep the same hunk count");
+  Expect(profiled.profile.total_ns >= profiled.profile.split_lines_ns +
+                                         profiled.profile.line_alignment_ns +
+                                         profiled.profile.hunk_alignment_ns +
+                                         profiled.profile.intraline_ns,
+         "profiled compare build total should include the staged timings");
+  Expect(profiled.profile.total_ns > 0,
+         "profiled compare build should report a non-zero total duration");
+
+  for (std::size_t index = 0; index < plain.rows.size(); ++index) {
+    const auto& expected = plain.rows[index];
+    const auto& actual = profiled.model.rows[index];
+    Expect(actual.left_text == expected.left_text && actual.right_text == expected.right_text &&
+               actual.left_line == expected.left_line && actual.right_line == expected.right_line &&
+               actual.kind == expected.kind && actual.hunk == expected.hunk &&
+               actual.left_changed_spans.size() == expected.left_changed_spans.size() &&
+               actual.right_changed_spans.size() == expected.right_changed_spans.size(),
+           ("profiled compare build should preserve row semantics\n" +
+            DescribeRows(profiled.model, index, 4))
+               .c_str());
+  }
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
@@ -364,13 +726,23 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Compare/AsciiChangedSpans", TestCompareAsciiChangedSpans);
   AddTest(tests, "Compare/Utf8ChangedSpans", TestCompareUtf8ChangedSpans);
   AddTest(tests, "Compare/CodeTokenChangedSpans", TestCompareCodeTokenChangedSpans);
+  AddTest(tests, "Compare/AssignmentPrefixStaysUnchanged",
+          TestCompareAssignmentPrefixStaysUnchanged);
+  AddTest(tests, "Compare/LongQueryChangedSpansKeepSharedClause",
+          TestCompareLongQueryChangedSpansKeepSharedClause);
+  AddTest(tests, "Compare/RepeatedStructureKeepsSharedBlockUnchanged",
+          TestCompareRepeatedStructureKeepsSharedBlockUnchanged);
+  AddTest(tests, "Compare/ImportExpansionKeepsFollowingImportsUnchanged",
+          TestCompareImportExpansionKeepsFollowingImportsUnchanged);
   AddTest(tests, "Compare/ContextAwareAlignment", TestCompareContextAwareAlignment);
   AddTest(tests, "Compare/LargeInputsUseBoundedFallback",
           TestCompareLargeInputsUseBoundedFallback);
-  AddTest(tests, "Compare/LargeInputsUseCoarseChangedSpans",
-          TestCompareLargeInputsUseCoarseChangedSpans);
+  AddTest(tests, "Compare/LargePaddedAssignmentPrefixStaysUnchanged",
+          TestCompareLargePaddedAssignmentPrefixStaysUnchanged);
   AddTest(tests, "Compare/LargeIdenticalInputsStayUnchanged",
           TestCompareLargeIdenticalInputsStayUnchanged);
+  AddTest(tests, "Compare/ProfiledBuildMatchesUnprofiledModel",
+          TestProfiledCompareBuildMatchesUnprofiledModel);
 }
 
 }  // namespace microide::tests

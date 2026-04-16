@@ -473,10 +473,12 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
             return ActionDispatchResult::Handled;
           case ProjectOpenDialogLaunchResult::Unavailable:
             if (source == ActionSource::Menu) {
+              const bool bottom_panel_was_visible = BottomPanelVisible();
               surface_.command_mode = true;
               surface_.focus = FocusTarget::Panel;
               command_.input = "project-open ";
               ResetCommandSessionState();
+              RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
             }
             return ActionDispatchResult::Handled;
         }
@@ -1095,17 +1097,20 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
 
       text_viewport_.MoveCursorTo(line, request->column > 0 ? request->column - 1 : 0);
       surface_.focus = FocusTarget::Editor;
+      RequestFocusedEditorRedraw();
       return ActionDispatchResult::Handled;
     }
     case ActionId::SelectAll:
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
         viewport->SelectAll();
         ResetCaretBlink();
+        RequestFocusedEditorRedraw();
       }
       surface_.focus = FocusTarget::Editor;
       return ActionDispatchResult::Handled;
     case ActionId::Undo:
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+        const bool was_dirty = viewport->dirty();
         const std::vector<std::string> before_lines = viewport->lines();
         const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
         const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
@@ -1121,11 +1126,20 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
                                                  cursor_before);
           }
           ResetCaretBlink();
+          RequestActiveTabRedraw(false);
+          RequestFocusedEditorRedraw();
+          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          if (viewport->dirty() != was_dirty) {
+            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+                                                        viewport->cursor_line());
+            RequestTabStripRedraw();
+          }
         }
       }
       return ActionDispatchResult::Handled;
     case ActionId::Redo:
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+        const bool was_dirty = viewport->dirty();
         const std::vector<std::string> before_lines = viewport->lines();
         const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
         const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
@@ -1141,6 +1155,14 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
                                                  cursor_before);
           }
           ResetCaretBlink();
+          RequestActiveTabRedraw(false);
+          RequestFocusedEditorRedraw();
+          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          if (viewport->dirty() != was_dirty) {
+            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+                                                        viewport->cursor_line());
+            RequestTabStripRedraw();
+          }
         }
       }
       return ActionDispatchResult::Handled;
@@ -1174,6 +1196,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
     }
     case ActionId::CutSelection: {
       if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+        const bool was_dirty = viewport->dirty();
         const std::string text = viewport->SelectedText();
         if (!text.empty() && WriteClipboardText(text)) {
           WritePrimarySelectionText(text);
@@ -1192,6 +1215,14 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
                                                  cursor_before);
           }
           ResetCaretBlink();
+          RequestActiveTabRedraw(false);
+          RequestFocusedEditorRedraw();
+          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          if (viewport->dirty() != was_dirty) {
+            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+                                                        viewport->cursor_line());
+            RequestTabStripRedraw();
+          }
         }
       }
       return ActionDispatchResult::Handled;
@@ -1202,6 +1233,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
         if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
           PasteClipboardIntoTerminal();
         } else if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+          const bool was_dirty = viewport->dirty();
           const std::vector<std::string> before_lines = viewport->lines();
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
@@ -1217,6 +1249,14 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
                                                  cursor_before);
           }
           ResetCaretBlink();
+          RequestActiveTabRedraw(false);
+          RequestFocusedEditorRedraw();
+          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          if (viewport->dirty() != was_dirty) {
+            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+                                                        viewport->cursor_line());
+            RequestTabStripRedraw();
+          }
         }
       }
       return ActionDispatchResult::Handled;
@@ -1327,11 +1367,14 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       return reject("Cannot focus target: " +
                     (request.raw_target.empty() ? std::string("<empty>") : request.raw_target));
     }
-    case ActionId::OpenCommandPrompt:
-      surface_.command_mode = true;
-      surface_.focus = FocusTarget::Panel;
-      command_.input.clear();
-      ResetCommandSessionState();
+    case ActionId::OpenCommandPrompt: {
+        const bool bottom_panel_was_visible = BottomPanelVisible();
+        surface_.command_mode = true;
+        surface_.focus = FocusTarget::Panel;
+        command_.input.clear();
+        ResetCommandSessionState();
+        RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+      }
       return ActionDispatchResult::Handled;
     case ActionId::PluginsReload:
       if (!plugin_host_.enabled()) {

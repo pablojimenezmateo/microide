@@ -1,15 +1,18 @@
 #include "editor/EditorViewRenderer.h"
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <string>
 
-#include "editor/SyntaxHighlighter.h"
+#include "editor/DecoratedTextGridRenderer.h"
+#include "util/PerformanceTrace.h"
 
 namespace microide::editor {
 
 namespace {
+
+const DecoratedTextGridRenderer kDecoratedRowRenderer;
 
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
   const std::string last_line_label = std::to_string(std::max<std::size_t>(1, line_count));
@@ -22,32 +25,6 @@ std::string ToLower(std::string_view text) {
     return static_cast<char>(std::tolower(c));
   });
   return lowered;
-}
-
-SDL_Color ColorForTokenKind(const render::Theme& theme,
-                            SyntaxTokenKind kind,
-                            bool selected_line) {
-  switch (kind) {
-    case SyntaxTokenKind::Keyword:
-      return theme.syntax_keyword;
-    case SyntaxTokenKind::Type:
-      return theme.syntax_type;
-    case SyntaxTokenKind::String:
-      return theme.syntax_string;
-    case SyntaxTokenKind::Comment:
-      return theme.syntax_comment;
-    case SyntaxTokenKind::Number:
-      return theme.syntax_number;
-    case SyntaxTokenKind::Constant:
-      return theme.syntax_constant;
-    case SyntaxTokenKind::Preprocessor:
-      return theme.syntax_preprocessor;
-    case SyntaxTokenKind::Operator:
-      return theme.syntax_operator;
-    case SyntaxTokenKind::Plain:
-    default:
-      return selected_line ? theme.text_primary : theme.text_secondary;
-  }
 }
 
 void DrawPlaceholderView(SDL_Renderer* renderer,
@@ -279,6 +256,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     return;
   }
 
+  util::PerformanceTrace::Scope trace_scope("EditorViewRenderer::Render");
   SDL_SetRenderDrawColor(renderer, theme.editor_background.r, theme.editor_background.g,
                          theme.editor_background.b, theme.editor_background.a);
   SDL_RenderFillRect(renderer, &rect);
@@ -320,13 +298,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         active_search_match.has_value() &&
         line_index >= active_search_match->start.line &&
         line_index <= active_search_match->end.line;
-    bool has_inline_highlight = false;
+    const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
+    DecoratedTextRow row_desc;
     if (selected) {
-      const SDL_FRect highlight =
-          SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height};
-      SDL_SetRenderDrawColor(renderer, theme.row_highlight.r, theme.row_highlight.g,
-                             theme.row_highlight.b, theme.row_highlight.a);
-      SDL_RenderFillRect(renderer, &highlight);
+      row_desc.fills.push_back(DecoratedTextFill{
+          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .color = theme.row_highlight,
+      });
     }
 
     if (!lowered_search_query.empty()) {
@@ -341,24 +319,22 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t visible_end = std::min(end_visual,
                                                  viewport.horizontal_scroll() + viewport.visible_columns());
         if (visible_end > visible_start) {
-          has_inline_highlight = true;
           const bool is_active_match =
               active_search_line &&
               match_offset == active_search_match->start.column &&
               line_index == active_search_match->start.line;
-          const SDL_FRect match_rect = SDL_FRect{
-              metrics.text_x +
-                  static_cast<float>(visible_start - viewport.horizontal_scroll()) * text_renderer.CharWidth(),
-              y - 1.0f,
-              static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
-              metrics.line_height,
-          };
-          SDL_SetRenderDrawColor(renderer,
-                                is_active_match ? theme.search_match_active.r : theme.search_match.r,
-                                is_active_match ? theme.search_match_active.g : theme.search_match.g,
-                                is_active_match ? theme.search_match_active.b : theme.search_match.b,
-                                is_active_match ? theme.search_match_active.a : theme.search_match.a);
-          SDL_RenderFillRect(renderer, &match_rect);
+          row_desc.fills.push_back(DecoratedTextFill{
+              .rect =
+                  SDL_FRect{
+                      metrics.text_x +
+                          static_cast<float>(visible_start - viewport.horizontal_scroll()) *
+                              text_renderer.CharWidth(),
+                      y - 1.0f,
+                      static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
+                      metrics.line_height,
+                  },
+              .color = is_active_match ? theme.search_match_active : theme.search_match,
+          });
         }
         match_offset = lowered_line.find(lowered_search_query, match_offset + 1);
       }
@@ -379,70 +355,32 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const std::size_t visible_end = std::min(end_visual,
                                                viewport.horizontal_scroll() + viewport.visible_columns());
       if (visible_end > visible_start) {
-        has_inline_highlight = true;
-        const SDL_FRect selection_rect = SDL_FRect{
-            metrics.text_x +
-                static_cast<float>(visible_start - viewport.horizontal_scroll()) * text_renderer.CharWidth(),
-            y - 1.0f,
-            static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
-            metrics.line_height,
-        };
-        SDL_SetRenderDrawColor(renderer, theme.selection_fill.r, theme.selection_fill.g,
-                               theme.selection_fill.b, theme.selection_fill.a);
-        SDL_RenderFillRect(renderer, &selection_rect);
+        row_desc.fills.push_back(DecoratedTextFill{
+            .rect =
+                SDL_FRect{
+                    metrics.text_x +
+                        static_cast<float>(visible_start - viewport.horizontal_scroll()) *
+                            text_renderer.CharWidth(),
+                    y - 1.0f,
+                    static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
+                    metrics.line_height,
+                },
+            .color = theme.selection_fill,
+        });
       }
     }
-
-    text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
-                               selected ? theme.current_line_number : theme.line_number,
-                               selected ? theme.row_highlight : theme.gutter_background,
-                               std::to_string(line_index + 1));
 
     const auto layout = viewport.VisibleLineLayout(line_index);
     const std::vector<SyntaxTokenKind>& token_kinds =
         viewport.HighlightedLineTokens(line_index);
-    const std::size_t visible_cells =
-        std::min(layout.source_columns.size(), layout.text_offsets.size());
-    if (!layout.text.empty() && visible_cells > 0) {
-      std::size_t segment_start = 0;
-      while (segment_start < visible_cells) {
-        const std::size_t source_column =
-            segment_start < layout.source_columns.size() ? layout.source_columns[segment_start] : 0;
-        const SyntaxTokenKind kind =
-            source_column < token_kinds.size() ? token_kinds[source_column] : SyntaxTokenKind::Plain;
-
-        std::size_t segment_end = segment_start + 1;
-        while (segment_end < visible_cells) {
-          const std::size_t next_source_column =
-              segment_end < layout.source_columns.size() ? layout.source_columns[segment_end] : 0;
-          const SyntaxTokenKind next_kind =
-              next_source_column < token_kinds.size() ? token_kinds[next_source_column]
-                                                      : SyntaxTokenKind::Plain;
-          if (next_kind != kind) {
-            break;
-          }
-          ++segment_end;
-        }
-
-        const std::size_t segment_text_start = layout.text_offsets[segment_start];
-        const std::size_t segment_text_end =
-            segment_end < layout.text_offsets.size() ? layout.text_offsets[segment_end]
-                                                     : layout.text.size();
-        const std::string_view segment_text = std::string_view(layout.text).substr(
-            segment_text_start, segment_text_end - segment_text_start);
-        const float segment_x =
-            metrics.text_x + static_cast<float>(segment_start) * text_renderer.CharWidth();
-        if (has_inline_highlight) {
-          text_renderer.DrawString(renderer, segment_x, y, ColorForTokenKind(theme, kind, selected),
-                                   segment_text);
-        } else {
-          text_renderer.DrawStringOn(renderer, segment_x, y, ColorForTokenKind(theme, kind, selected),
-                                     selected ? theme.row_highlight : theme.editor_background,
-                                     segment_text);
-        }
-        segment_start = segment_end;
-      }
-    }
+    AppendLayoutSyntaxTextRuns(row_desc, text_renderer, theme, metrics.text_x, y, layout,
+                               selected ? theme.text_primary : theme.text_secondary,
+                               token_kinds);
+    kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
+    text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
+                               selected ? theme.current_line_number : theme.line_number,
+                               selected ? theme.row_highlight : theme.gutter_background,
+                               std::to_string(line_index + 1));
 
     if (draw_caret && selected && layout.caret_visible) {
       const float caret_x = metrics.text_x +
@@ -463,7 +401,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           blame_overlay->lines[blame_index].line_index == line_index) {
         text_renderer.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
                                    blame_overlay->lines[blame_index].rect.y, theme.text_disabled,
-                                   selected ? theme.row_highlight : theme.editor_background,
+                                   row_background,
                                    blame_overlay->lines[blame_index].text);
       }
     }

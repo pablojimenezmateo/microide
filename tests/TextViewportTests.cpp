@@ -15,7 +15,6 @@ void TestTextViewportSmallFileKeepsSyntaxHighlighting() {
   TextViewport viewport;
   viewport.LoadContent("int value = 42;\n", "/tmp/sample.cpp");
 
-  Expect(!viewport.large_file_mode(), "small files should not enter large file mode");
   Expect(viewport.syntax_highlighting_enabled(),
          "small files should keep syntax highlighting enabled");
 
@@ -27,33 +26,35 @@ void TestTextViewportSmallFileKeepsSyntaxHighlighting() {
   Expect(saw_non_plain, "small C++ files should preserve non-plain syntax tokens");
 }
 
-void TestTextViewportLargeCodeFixtureUsesLargeFileMode() {
+void TestTextViewportLargeCodeFixtureKeepsSyntaxHighlighting() {
   TextViewport viewport;
   Expect(viewport.OpenFile(FixturePath("large/code/large_sample.cpp")),
          "large code fixture should open");
 
-  Expect(viewport.large_file_mode(),
-         "large line-count fixtures should enter explicit large file mode");
-  Expect(!viewport.syntax_highlighting_enabled(),
-         "large file mode should disable syntax highlighting");
-  Expect(viewport.HighlightedLineTokens(0).empty(),
-         "large file mode should stop producing per-line syntax tokens");
+  Expect(viewport.syntax_highlighting_enabled(),
+         "large code fixtures should keep syntax highlighting enabled");
+  const auto& tokens = viewport.HighlightedLineTokens(0);
+  Expect(!tokens.empty(),
+         "large code fixtures should still produce per-line syntax tokens");
+  const bool saw_non_plain =
+      std::any_of(tokens.begin(), tokens.end(),
+                  [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Plain; });
+  Expect(saw_non_plain,
+         "large code fixtures should keep their non-plain syntax classes");
 }
 
-void TestTextViewportLargePlainFixtureUsesLargeFileMode() {
+void TestTextViewportLargePlainFixtureKeepsSyntaxHighlighting() {
   TextViewport viewport;
   Expect(viewport.OpenFile(FixturePath("large/plain/large_story.txt")),
          "large plain-text fixture should open");
 
-  Expect(viewport.large_file_mode(),
-         "large byte-size fixtures should enter explicit large file mode");
-  Expect(!viewport.syntax_highlighting_enabled(),
-         "large byte-size fixtures should disable syntax highlighting");
-  Expect(viewport.HighlightedLineTokens(0).empty(),
-         "large byte-size fixtures should skip syntax token generation");
+  Expect(viewport.syntax_highlighting_enabled(),
+         "large plain-text fixtures should keep syntax token generation enabled");
+  Expect(!viewport.HighlightedLineTokens(0).empty(),
+         "large byte-size fixtures should still expose syntax tokens");
 }
 
-void TestTextViewportEditingAcrossLargeFileLineThresholdReevaluatesMode() {
+void TestTextViewportEditingPastFormerLargeFileLineThresholdKeepsSyntaxHighlighting() {
   TextViewport viewport;
   std::string content;
   for (int i = 0; i < 3999; ++i) {
@@ -64,54 +65,63 @@ void TestTextViewportEditingAcrossLargeFileLineThresholdReevaluatesMode() {
   }
   viewport.LoadContent(content, "/tmp/threshold.cpp");
 
-  Expect(!viewport.large_file_mode(),
-         "content just below the large-file line threshold should stay in normal mode");
   Expect(viewport.syntax_highlighting_enabled(),
-         "content just below the line threshold should keep syntax highlighting");
+         "content just below the former line threshold should keep syntax highlighting");
 
   viewport.MoveCursorTo(viewport.line_count() - 1, viewport.lines().back().size());
   viewport.InsertNewline();
 
-  Expect(viewport.large_file_mode(),
-         "editing across the line threshold should enter large-file mode immediately");
-  Expect(!viewport.syntax_highlighting_enabled(),
-         "editing across the line threshold should disable syntax highlighting");
-  Expect(viewport.HighlightedLineTokens(0).empty(),
-         "editing across the line threshold should stop producing syntax tokens");
+  Expect(viewport.syntax_highlighting_enabled(),
+         "editing across the former line threshold should keep syntax highlighting enabled");
+  Expect(!viewport.HighlightedLineTokens(0).empty(),
+         "editing across the former line threshold should keep producing syntax tokens");
 
   Expect(viewport.Undo(), "undo should succeed after crossing the line threshold");
-  Expect(!viewport.large_file_mode(),
-         "undo below the line threshold should leave large-file mode");
   Expect(viewport.syntax_highlighting_enabled(),
-         "undo below the line threshold should restore syntax highlighting");
+         "undo below the former line threshold should restore syntax highlighting");
   Expect(!viewport.HighlightedLineTokens(0).empty(),
-         "undo below the line threshold should restore syntax tokens");
+         "undo below the former line threshold should restore syntax tokens");
 }
 
-void TestTextViewportEditingAcrossLargeFileByteThresholdReevaluatesMode() {
+void TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting() {
   TextViewport viewport;
   viewport.LoadContent("int value = 42;\n", "/tmp/threshold.cpp");
-
-  Expect(!viewport.large_file_mode(),
-         "small content should start outside large-file mode before byte-threshold growth");
 
   viewport.MoveCursorTo(0, viewport.lines().front().size());
   viewport.InsertText(std::string(400000, 'a'));
 
-  Expect(viewport.large_file_mode(),
-         "editing across the byte threshold should enter large-file mode immediately");
-  Expect(!viewport.syntax_highlighting_enabled(),
-         "editing across the byte threshold should disable syntax highlighting");
-  Expect(viewport.HighlightedLineTokens(0).empty(),
-         "editing across the byte threshold should stop producing syntax tokens");
+  Expect(viewport.syntax_highlighting_enabled(),
+         "editing across the former byte threshold should keep syntax highlighting enabled");
+  Expect(!viewport.HighlightedLineTokens(0).empty(),
+         "editing across the former byte threshold should keep producing syntax tokens");
 
   Expect(viewport.Undo(), "undo should succeed after crossing the byte threshold");
-  Expect(!viewport.large_file_mode(),
-         "undo below the byte threshold should leave large-file mode");
   Expect(viewport.syntax_highlighting_enabled(),
-         "undo below the byte threshold should restore syntax highlighting");
+         "undo below the former byte threshold should restore syntax highlighting");
   Expect(!viewport.HighlightedLineTokens(0).empty(),
-         "undo below the byte threshold should restore syntax tokens");
+         "undo below the former byte threshold should restore syntax tokens");
+}
+
+void TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits() {
+  TextViewport viewport;
+  viewport.LoadContent("int value = 42;\n", "/tmp/cache-stats.cpp");
+  viewport.SetViewportSize(12, 80);
+
+  viewport.ResetCacheStats();
+  (void)viewport.VisibleLineLayout(0);
+  (void)viewport.HighlightedLineTokens(0);
+  (void)viewport.VisibleLineLayout(0);
+  (void)viewport.HighlightedLineTokens(0);
+
+  const auto stats = viewport.CacheStats();
+  Expect(stats.visible_line_queries == 2,
+         "viewport cache stats should count visible-line queries");
+  Expect(stats.visible_line_hits == 1,
+         "viewport cache stats should treat a repeated visible-line lookup as a hit");
+  Expect(stats.highlight_queries == 2,
+         "viewport cache stats should count highlight queries");
+  Expect(stats.highlight_hits == 1,
+         "viewport cache stats should treat a repeated highlight lookup as a hit");
 }
 
 }  // namespace
@@ -119,14 +129,16 @@ void TestTextViewportEditingAcrossLargeFileByteThresholdReevaluatesMode() {
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
-  AddTest(tests, "TextViewport/LargeCodeFixtureUsesLargeFileMode",
-          TestTextViewportLargeCodeFixtureUsesLargeFileMode);
-  AddTest(tests, "TextViewport/LargePlainFixtureUsesLargeFileMode",
-          TestTextViewportLargePlainFixtureUsesLargeFileMode);
-  AddTest(tests, "TextViewport/EditingAcrossLargeFileLineThresholdReevaluatesMode",
-          TestTextViewportEditingAcrossLargeFileLineThresholdReevaluatesMode);
-  AddTest(tests, "TextViewport/EditingAcrossLargeFileByteThresholdReevaluatesMode",
-          TestTextViewportEditingAcrossLargeFileByteThresholdReevaluatesMode);
+  AddTest(tests, "TextViewport/LargeCodeFixtureKeepsSyntaxHighlighting",
+          TestTextViewportLargeCodeFixtureKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/LargePlainFixtureKeepsSyntaxHighlighting",
+          TestTextViewportLargePlainFixtureKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/EditingPastFormerLargeFileLineThresholdKeepsSyntaxHighlighting",
+          TestTextViewportEditingPastFormerLargeFileLineThresholdKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/EditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting",
+          TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/CacheStatsTrackWarmLayoutAndHighlightHits",
+          TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits);
 }
 
 }  // namespace microide::tests

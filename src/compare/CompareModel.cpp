@@ -1,9 +1,11 @@
 #include "compare/CompareModel.h"
 
+#include <chrono>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <string_view>
 #include <vector>
 
@@ -13,11 +15,11 @@ namespace microide::compare {
 
 namespace {
 
+using Clock = std::chrono::steady_clock;
+
 constexpr std::size_t kMaxLineLcsMatrixCells = 250'000;
 constexpr std::size_t kMaxHunkAlignmentMatrixCells = 65'536;
 constexpr std::size_t kMaxIntralineLcsMatrixCells = 65'536;
-constexpr std::size_t kMaxDetailedChangedSpanRows = 2000;
-constexpr std::size_t kMaxDetailedChangedSpanBytes = 512 * 1024;
 
 enum class DiffOpKind {
   Equal,
@@ -60,6 +62,11 @@ bool ProductExceeds(std::size_t left, std::size_t right, std::size_t limit) {
     return false;
   }
   return left > limit / right;
+}
+
+std::uint64_t DurationNs(Clock::time_point start, Clock::time_point end) {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
 }
 
 LineTokenKind ClassifyCodepoint(std::string_view text, std::size_t offset) {
@@ -127,6 +134,18 @@ bool TokenEquals(std::string_view left,
              right.substr(right_token.start, right_token.end - right_token.start);
 }
 
+std::size_t TokenMatchWeight(const LineToken& token) {
+  const std::size_t token_bytes = token.end - token.start;
+  switch (token.kind) {
+    case LineTokenKind::Word:
+      return token_bytes + 4;
+    case LineTokenKind::Whitespace:
+    case LineTokenKind::Symbol:
+    default:
+      return token_bytes > 0 ? 1 : 0;
+  }
+}
+
 std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const TokenizedLine& right) {
   const std::size_t left_count = left.significant_token_indices.size();
   const std::size_t right_count = right.significant_token_indices.size();
@@ -152,6 +171,14 @@ std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const Tokeniz
   }
 
   return at(0, 0);
+}
+
+std::size_t LineMatchWeight(const TokenizedLine& line, std::size_t occurrences) {
+  const std::size_t informative_bytes =
+      line.significant_token_bytes > 0 ? line.significant_token_bytes
+                                       : (line.text.empty() ? 1 : std::size_t{2});
+  const std::size_t rarity = std::max<std::size_t>(1, occurrences);
+  return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
 
 double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right) {
@@ -186,11 +213,15 @@ bool CanPairAlignedLines(double similarity,
   if (left_count == 1 && right_count == 1) {
     return true;
   }
+  if ((left_count == 1 && right_count > 1) || (right_count == 1 && left_count > 1)) {
+    return false;
+  }
   return similarity >= 0.35;
 }
 
 std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string>& deleted_lines,
-                                              const std::vector<std::string>& inserted_lines) {
+                                              const std::vector<std::string>& inserted_lines,
+                                              CompareBuildProfile* profile) {
   const std::size_t left_count = deleted_lines.size();
   const std::size_t right_count = inserted_lines.size();
   std::vector<HunkAlignmentKind> alignment;
@@ -203,12 +234,18 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string>& de
     return alignment;
   }
   if (ProductExceeds(left_count + 1, right_count + 1, kMaxHunkAlignmentMatrixCells)) {
+    if (profile != nullptr) {
+      ++profile->fallback_hunk_alignment_calls;
+    }
     const std::size_t paired = std::min(left_count, right_count);
     alignment.reserve(left_count + right_count - paired);
     alignment.insert(alignment.end(), paired, HunkAlignmentKind::Pair);
     alignment.insert(alignment.end(), left_count - paired, HunkAlignmentKind::Delete);
     alignment.insert(alignment.end(), right_count - paired, HunkAlignmentKind::Insert);
     return alignment;
+  }
+  if (profile != nullptr) {
+    ++profile->exact_hunk_alignment_calls;
   }
 
   const std::vector<TokenizedLine> left_tokenized = [&] {
@@ -400,6 +437,56 @@ std::vector<CompareTextSpan> BuildSpansFromChangedTokens(const TokenizedLine& li
   return spans;
 }
 
+std::vector<CompareTextSpan> TrimSpansToByteWindow(const std::vector<CompareTextSpan>& spans,
+                                                   std::size_t start,
+                                                   std::size_t end) {
+  std::vector<CompareTextSpan> trimmed;
+  trimmed.reserve(spans.size());
+  for (const auto& span : spans) {
+    if (span.end <= start || span.start >= end) {
+      continue;
+    }
+    const std::size_t clipped_start = std::max(span.start, start);
+    const std::size_t clipped_end = std::min(span.end, end);
+    if (clipped_end > clipped_start) {
+      trimmed.push_back(CompareTextSpan{clipped_start, clipped_end});
+    }
+  }
+  return trimmed;
+}
+
+void TrimChangedSpansToSharedEdges(CompareRow& row) {
+  if (row.kind != CompareRowKind::Modified) {
+    return;
+  }
+
+  const std::vector<std::size_t> left_offsets = BuildUtf8Offsets(row.left_text);
+  const std::vector<std::size_t> right_offsets = BuildUtf8Offsets(row.right_text);
+  const std::size_t left_count = left_offsets.size() - 1;
+  const std::size_t right_count = right_offsets.size() - 1;
+
+  std::size_t prefix = 0;
+  while (prefix < left_count && prefix < right_count &&
+         Utf8CodepointEquals(row.left_text, left_offsets, prefix, row.right_text, right_offsets,
+                             prefix)) {
+    ++prefix;
+  }
+
+  std::size_t left_suffix = left_count;
+  std::size_t right_suffix = right_count;
+  while (left_suffix > prefix && right_suffix > prefix &&
+         Utf8CodepointEquals(row.left_text, left_offsets, left_suffix - 1, row.right_text,
+                             right_offsets, right_suffix - 1)) {
+    --left_suffix;
+    --right_suffix;
+  }
+
+  row.left_changed_spans = TrimSpansToByteWindow(row.left_changed_spans, left_offsets[prefix],
+                                                 left_offsets[left_suffix]);
+  row.right_changed_spans = TrimSpansToByteWindow(row.right_changed_spans, right_offsets[prefix],
+                                                  right_offsets[right_suffix]);
+}
+
 bool PopulateTokenChangedSpans(CompareRow& row) {
   const TokenizedLine left = TokenizeLine(row.left_text);
   const TokenizedLine right = TokenizeLine(row.right_text);
@@ -443,30 +530,42 @@ bool PopulateTokenChangedSpans(CompareRow& row) {
     return true;
   }
 
-  std::vector<int> dp((left_middle_count + 1) * (right_middle_count + 1), 0);
-  auto at = [&](std::size_t i, std::size_t j) -> int& {
+  std::vector<std::size_t> dp((left_middle_count + 1) * (right_middle_count + 1), 0);
+  auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
     return dp[i * (right_middle_count + 1) + j];
   };
 
   for (std::size_t i = left_middle_count; i-- > 0;) {
     for (std::size_t j = right_middle_count; j-- > 0;) {
+      std::size_t best = std::max(at(i + 1, j), at(i, j + 1));
       if (TokenEquals(left.text, left.tokens[prefix + i], right.text, right.tokens[prefix + j])) {
-        at(i, j) = at(i + 1, j + 1) + 1;
-      } else {
-        at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
+        best =
+            std::max(best, TokenMatchWeight(left.tokens[prefix + i]) + at(i + 1, j + 1));
       }
+      at(i, j) = best;
     }
   }
 
   std::size_t i = 0;
   std::size_t j = 0;
   while (i < left_middle_count && j < right_middle_count) {
-    if (TokenEquals(left.text, left.tokens[prefix + i], right.text, right.tokens[prefix + j])) {
-      left_changed[prefix + i] = false;
-      right_changed[prefix + j] = false;
-      ++i;
-      ++j;
-    } else if (at(i + 1, j) >= at(i, j + 1)) {
+    const std::size_t left_index = prefix + i;
+    const std::size_t right_index = prefix + j;
+    const std::size_t skip_left = at(i + 1, j);
+    const std::size_t skip_right = at(i, j + 1);
+    if (TokenEquals(left.text, left.tokens[left_index], right.text, right.tokens[right_index])) {
+      const std::size_t diagonal =
+          TokenMatchWeight(left.tokens[left_index]) + at(i + 1, j + 1);
+      if (diagonal >= skip_left && diagonal >= skip_right && at(i, j) == diagonal) {
+        left_changed[left_index] = false;
+        right_changed[right_index] = false;
+        ++i;
+        ++j;
+        continue;
+      }
+    }
+
+    if (skip_left >= skip_right) {
       ++i;
     } else {
       ++j;
@@ -551,7 +650,7 @@ void PopulateCodepointChangedSpans(CompareRow& row) {
   row.right_changed_spans = BuildSpansFromChangedCodepoints(right_offsets, right_changed);
 }
 
-void PopulateChangedSpans(CompareRow& row) {
+void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile) {
   row.left_changed_spans.clear();
   row.right_changed_spans.clear();
 
@@ -574,61 +673,293 @@ void PopulateChangedSpans(CompareRow& row) {
   }
 
   if (!PopulateTokenChangedSpans(row)) {
+    if (profile != nullptr) {
+      ++profile->codepoint_intraline_calls;
+    }
     PopulateCodepointChangedSpans(row);
+  } else if (profile != nullptr) {
+    ++profile->token_intraline_calls;
+  }
+  TrimChangedSpansToSharedEdges(row);
+}
+
+void AppendDeleteOps(const std::vector<std::string>& lines,
+                     std::size_t begin,
+                     std::size_t end,
+                     std::vector<DiffOp>& ops) {
+  for (std::size_t i = begin; i < end; ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Delete, lines[i]});
   }
 }
 
-void PopulateCoarseChangedSpans(CompareRow& row) {
-  row.left_changed_spans.clear();
-  row.right_changed_spans.clear();
-  if (!row.left_text.empty()) {
-    row.left_changed_spans.push_back(CompareTextSpan{0, row.left_text.size()});
-  }
-  if (!row.right_text.empty()) {
-    row.right_changed_spans.push_back(CompareTextSpan{0, row.right_text.size()});
+void AppendInsertOps(const std::vector<std::string>& lines,
+                     std::size_t begin,
+                     std::size_t end,
+                     std::vector<DiffOp>& ops) {
+  for (std::size_t i = begin; i < end; ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Insert, lines[i]});
   }
 }
 
-std::vector<DiffOp> BuildFallbackOps(const std::vector<std::string>& left_lines,
-                                     const std::vector<std::string>& right_lines) {
-  std::size_t prefix = 0;
-  while (prefix < left_lines.size() && prefix < right_lines.size() &&
-         left_lines[prefix] == right_lines[prefix]) {
-    ++prefix;
+std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string>& left_lines,
+                                      const std::vector<std::string>& right_lines) {
+  const std::size_t left_count = left_lines.size();
+  const std::size_t right_count = right_lines.size();
+  std::vector<DiffOp> ops;
+  if (left_count == 0 && right_count == 0) {
+    return ops;
   }
 
-  std::size_t left_suffix = left_lines.size();
-  std::size_t right_suffix = right_lines.size();
-  while (left_suffix > prefix && right_suffix > prefix &&
+  std::vector<TokenizedLine> left_tokenized;
+  left_tokenized.reserve(left_count);
+  for (const auto& line : left_lines) {
+    left_tokenized.push_back(TokenizeLine(line));
+  }
+  std::vector<TokenizedLine> right_tokenized;
+  right_tokenized.reserve(right_count);
+  for (const auto& line : right_lines) {
+    right_tokenized.push_back(TokenizeLine(line));
+  }
+
+  std::unordered_map<std::string_view, std::size_t> line_occurrences;
+  line_occurrences.reserve(left_count + right_count);
+  for (const auto& line : left_lines) {
+    ++line_occurrences[line];
+  }
+  for (const auto& line : right_lines) {
+    ++line_occurrences[line];
+  }
+
+  std::vector<std::size_t> left_match_weight(left_count, 1);
+  for (std::size_t i = 0; i < left_count; ++i) {
+    left_match_weight[i] = LineMatchWeight(left_tokenized[i], line_occurrences[left_lines[i]]);
+  }
+
+  std::vector<std::size_t> dp((left_count + 1) * (right_count + 1), 0);
+  auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
+    return dp[i * (right_count + 1) + j];
+  };
+
+  for (std::size_t i = left_count; i-- > 0;) {
+    for (std::size_t j = right_count; j-- > 0;) {
+      std::size_t best = std::max(at(i + 1, j), at(i, j + 1));
+      if (left_lines[i] == right_lines[j]) {
+        best = std::max(best, left_match_weight[i] + at(i + 1, j + 1));
+      }
+      at(i, j) = best;
+    }
+  }
+
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < left_count && j < right_count) {
+    if (left_lines[i] == right_lines[j]) {
+      const std::size_t diagonal = left_match_weight[i] + at(i + 1, j + 1);
+      if (diagonal >= at(i + 1, j) && diagonal >= at(i, j + 1) && at(i, j) == diagonal) {
+        ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+        ++i;
+        ++j;
+        continue;
+      }
+    }
+
+    if (at(i + 1, j) >= at(i, j + 1)) {
+      ops.push_back(DiffOp{DiffOpKind::Delete, left_lines[i]});
+      ++i;
+    } else {
+      ops.push_back(DiffOp{DiffOpKind::Insert, right_lines[j]});
+      ++j;
+    }
+  }
+  AppendDeleteOps(left_lines, i, left_count, ops);
+  AppendInsertOps(right_lines, j, right_count, ops);
+  return ops;
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
+    const std::vector<std::string>& left_lines,
+    std::size_t left_begin,
+    std::size_t left_end,
+    const std::vector<std::string>& right_lines,
+    std::size_t right_begin,
+    std::size_t right_end) {
+  struct AnchorInfo {
+    std::size_t left_count = 0;
+    std::size_t right_count = 0;
+    std::size_t left_index = 0;
+    std::size_t right_index = 0;
+  };
+
+  std::unordered_map<std::string_view, AnchorInfo> info_by_line;
+  info_by_line.reserve((left_end - left_begin) + (right_end - right_begin));
+  for (std::size_t i = left_begin; i < left_end; ++i) {
+    AnchorInfo& info = info_by_line[left_lines[i]];
+    ++info.left_count;
+    info.left_index = i;
+  }
+  for (std::size_t i = right_begin; i < right_end; ++i) {
+    AnchorInfo& info = info_by_line[right_lines[i]];
+    ++info.right_count;
+    info.right_index = i;
+  }
+
+  std::vector<std::pair<std::size_t, std::size_t>> candidates;
+  candidates.reserve(std::min(left_end - left_begin, right_end - right_begin));
+  for (const auto& [line, info] : info_by_line) {
+    if (line.empty()) {
+      continue;
+    }
+    if (info.left_count == 1 && info.right_count == 1) {
+      candidates.emplace_back(info.left_index, info.right_index);
+    }
+  }
+  std::sort(candidates.begin(), candidates.end());
+  if (candidates.empty()) {
+    return {};
+  }
+
+  const std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> pile_tops;
+  std::vector<std::size_t> pile_candidate_indices;
+  std::vector<std::size_t> predecessor(candidates.size(), kNoIndex);
+  for (std::size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+    const std::size_t right_index = candidates[candidate_index].second;
+    const auto it = std::lower_bound(pile_tops.begin(), pile_tops.end(), right_index);
+    const std::size_t pile_index = static_cast<std::size_t>(it - pile_tops.begin());
+    if (pile_index > 0) {
+      predecessor[candidate_index] = pile_candidate_indices[pile_index - 1];
+    }
+    if (it == pile_tops.end()) {
+      pile_tops.push_back(right_index);
+      pile_candidate_indices.push_back(candidate_index);
+    } else {
+      *it = right_index;
+      pile_candidate_indices[pile_index] = candidate_index;
+    }
+  }
+
+  std::vector<std::pair<std::size_t, std::size_t>> anchors;
+  if (pile_candidate_indices.empty()) {
+    return anchors;
+  }
+  for (std::size_t index = pile_candidate_indices.back(); index != kNoIndex;
+       index = predecessor[index]) {
+    anchors.push_back(candidates[index]);
+  }
+  std::reverse(anchors.begin(), anchors.end());
+  return anchors;
+}
+
+void AppendAnchoredFallbackOps(const std::vector<std::string>& left_lines,
+                               std::size_t left_begin,
+                               std::size_t left_end,
+                               const std::vector<std::string>& right_lines,
+                               std::size_t right_begin,
+                               std::size_t right_end,
+                               std::vector<DiffOp>& ops) {
+  while (left_begin < left_end && right_begin < right_end &&
+         left_lines[left_begin] == right_lines[right_begin]) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin]});
+    ++left_begin;
+    ++right_begin;
+  }
+
+  std::size_t left_suffix = left_end;
+  std::size_t right_suffix = right_end;
+  while (left_suffix > left_begin && right_suffix > right_begin &&
          left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
     --left_suffix;
     --right_suffix;
   }
 
+  if (left_begin == left_suffix && right_begin == right_suffix) {
+    for (std::size_t i = left_suffix; i < left_end; ++i) {
+      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+    }
+    return;
+  }
+  if (left_begin == left_suffix) {
+    AppendInsertOps(right_lines, right_begin, right_suffix, ops);
+    for (std::size_t i = left_suffix; i < left_end; ++i) {
+      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+    }
+    return;
+  }
+  if (right_begin == right_suffix) {
+    AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
+    for (std::size_t i = left_suffix; i < left_end; ++i) {
+      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+    }
+    return;
+  }
+
+  const std::size_t middle_left_count = left_suffix - left_begin;
+  const std::size_t middle_right_count = right_suffix - right_begin;
+  if (!ProductExceeds(middle_left_count + 1, middle_right_count + 1, kMaxLineLcsMatrixCells)) {
+    const std::vector<std::string> left_slice(
+        left_lines.begin() + static_cast<std::ptrdiff_t>(left_begin),
+        left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
+    const std::vector<std::string> right_slice(
+        right_lines.begin() + static_cast<std::ptrdiff_t>(right_begin),
+        right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
+    const std::vector<DiffOp> exact_ops = BuildExactLineOps(left_slice, right_slice);
+    ops.insert(ops.end(), exact_ops.begin(), exact_ops.end());
+    for (std::size_t i = left_suffix; i < left_end; ++i) {
+      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+    }
+    return;
+  }
+
+  const std::vector<std::pair<std::size_t, std::size_t>> anchors =
+      BuildUniqueLineAnchors(left_lines, left_begin, left_suffix, right_lines, right_begin,
+                             right_suffix);
+  if (anchors.empty()) {
+    AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
+    AppendInsertOps(right_lines, right_begin, right_suffix, ops);
+    for (std::size_t i = left_suffix; i < left_end; ++i) {
+      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+    }
+    return;
+  }
+
+  std::size_t segment_left_begin = left_begin;
+  std::size_t segment_right_begin = right_begin;
+  for (const auto& [anchor_left, anchor_right] : anchors) {
+    AppendAnchoredFallbackOps(left_lines, segment_left_begin, anchor_left, right_lines,
+                              segment_right_begin, anchor_right, ops);
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[anchor_left]});
+    segment_left_begin = anchor_left + 1;
+    segment_right_begin = anchor_right + 1;
+  }
+  AppendAnchoredFallbackOps(left_lines, segment_left_begin, left_suffix, right_lines,
+                            segment_right_begin, right_suffix, ops);
+  for (std::size_t i = left_suffix; i < left_end; ++i) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+  }
+}
+
+std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string>& left_lines,
+                                             const std::vector<std::string>& right_lines) {
   std::vector<DiffOp> ops;
-  ops.reserve(prefix + (left_suffix - prefix) + (right_suffix - prefix) +
-              (left_lines.size() - left_suffix));
-  for (std::size_t i = 0; i < prefix; ++i) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-  }
-  for (std::size_t i = prefix; i < left_suffix; ++i) {
-    ops.push_back(DiffOp{DiffOpKind::Delete, left_lines[i]});
-  }
-  for (std::size_t i = prefix; i < right_suffix; ++i) {
-    ops.push_back(DiffOp{DiffOpKind::Insert, right_lines[i]});
-  }
-  for (std::size_t i = left_suffix; i < left_lines.size(); ++i) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-  }
+  ops.reserve(left_lines.size() + right_lines.size());
+  AppendAnchoredFallbackOps(left_lines, 0, left_lines.size(), right_lines, 0, right_lines.size(),
+                            ops);
   return ops;
 }
 
 }  // namespace
 
-CompareModel BuildCompareModel(const std::string& left, const std::string& right) {
+CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right) {
+  CompareBuildResult result;
+  CompareModel& model = result.model;
+  CompareBuildProfile& profile = result.profile;
+
+  const Clock::time_point total_start = Clock::now();
+
+  const Clock::time_point split_start = Clock::now();
   const auto left_lines = util::SplitLines(left);
   const auto right_lines = util::SplitLines(right);
-  CompareModel model;
+  profile.split_lines_ns = DurationNs(split_start, Clock::now());
 
   if (left_lines == right_lines) {
     model.rows.reserve(left_lines.size());
@@ -646,9 +977,14 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
       });
       ++line_number;
     }
-    return model;
+    profile.total_ns = DurationNs(total_start, Clock::now());
+    profile.row_assembly_ns =
+        profile.total_ns - profile.split_lines_ns - profile.line_alignment_ns -
+        profile.hunk_alignment_ns - profile.intraline_ns;
+    return result;
   }
 
+  const Clock::time_point line_alignment_start = Clock::now();
   std::size_t prefix = 0;
   while (prefix < left_lines.size() && prefix < right_lines.size() &&
          left_lines[prefix] == right_lines[prefix]) {
@@ -674,51 +1010,15 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
   const std::size_t right_count = right_middle.size();
   std::vector<DiffOp> ops;
   if (ProductExceeds(left_count + 1, right_count + 1, kMaxLineLcsMatrixCells)) {
-    ops = BuildFallbackOps(left_middle, right_middle);
+    ++profile.anchored_line_alignment_calls;
+    ops = BuildAnchoredFallbackOps(left_middle, right_middle);
   } else {
-    std::vector<int> dp((left_count + 1) * (right_count + 1), 0);
-    auto at = [&](std::size_t i, std::size_t j) -> int& {
-      return dp[i * (right_count + 1) + j];
-    };
-
-    for (std::size_t i = left_count; i-- > 0;) {
-      for (std::size_t j = right_count; j-- > 0;) {
-        if (left_middle[i] == right_middle[j]) {
-          at(i, j) = at(i + 1, j + 1) + 1;
-        } else {
-          at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
-        }
-      }
-    }
-
-    std::size_t i = 0;
-    std::size_t j = 0;
-    while (i < left_count && j < right_count) {
-      if (left_middle[i] == right_middle[j]) {
-        ops.push_back(DiffOp{DiffOpKind::Equal, left_middle[i]});
-        ++i;
-        ++j;
-      } else if (at(i + 1, j) >= at(i, j + 1)) {
-        ops.push_back(DiffOp{DiffOpKind::Delete, left_middle[i]});
-        ++i;
-      } else {
-        ops.push_back(DiffOp{DiffOpKind::Insert, right_middle[j]});
-        ++j;
-      }
-    }
-    while (i < left_count) {
-      ops.push_back(DiffOp{DiffOpKind::Delete, left_middle[i++]});
-    }
-    while (j < right_count) {
-      ops.push_back(DiffOp{DiffOpKind::Insert, right_middle[j++]});
-    }
+    ++profile.exact_line_alignment_calls;
+    ops = BuildExactLineOps(left_middle, right_middle);
   }
+  profile.line_alignment_ns = DurationNs(line_alignment_start, Clock::now());
 
   model.rows.reserve(left_lines.size() + right_lines.size());
-  const bool coarse_changed_spans = (left.size() + right.size()) > kMaxDetailedChangedSpanBytes ||
-                                    (left_lines.size() + right_lines.size()) >
-                                        kMaxDetailedChangedSpanRows;
-
   int left_line = 1;
   int right_line = 1;
   for (std::size_t index = 0; index < prefix; ++index) {
@@ -764,8 +1064,11 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
     --op_index;
 
     const int hunk_index = static_cast<int>(model.hunks.size());
+    const Clock::time_point hunk_alignment_start = Clock::now();
     const std::vector<HunkAlignmentKind> alignment =
-        AlignHunkLines(deleted_lines, inserted_lines);
+        AlignHunkLines(deleted_lines, inserted_lines, &profile);
+    profile.hunk_alignment_ns += DurationNs(hunk_alignment_start, Clock::now());
+
     std::size_t deleted_index = 0;
     std::size_t inserted_index = 0;
     for (const HunkAlignmentKind alignment_kind : alignment) {
@@ -787,11 +1090,9 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
       } else {
         compare_row.kind = CompareRowKind::Added;
       }
-      if (coarse_changed_spans && compare_row.kind == CompareRowKind::Modified) {
-        PopulateCoarseChangedSpans(compare_row);
-      } else {
-        PopulateChangedSpans(compare_row);
-      }
+      const Clock::time_point intraline_start = Clock::now();
+      PopulateChangedSpans(compare_row, &profile);
+      profile.intraline_ns += DurationNs(intraline_start, Clock::now());
       model.rows.push_back(std::move(compare_row));
     }
 
@@ -815,7 +1116,15 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
     });
   }
 
-  return model;
+  profile.total_ns = DurationNs(total_start, Clock::now());
+  profile.row_assembly_ns =
+      profile.total_ns - profile.split_lines_ns - profile.line_alignment_ns -
+      profile.hunk_alignment_ns - profile.intraline_ns;
+  return result;
+}
+
+CompareModel BuildCompareModel(const std::string& left, const std::string& right) {
+  return BuildCompareModelProfiled(left, right).model;
 }
 
 }  // namespace microide::compare

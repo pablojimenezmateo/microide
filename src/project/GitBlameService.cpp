@@ -478,7 +478,7 @@ struct GitBlameService::Impl {
   void Request(const GitBlameRequest& request) {
     const auto relative_path = gitutil::AbsoluteToRelativePath(request.root, request.absolute_path);
     if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
-        request.dirty || request.large_file_mode) {
+        request.dirty) {
       return;
     }
 
@@ -528,7 +528,7 @@ struct GitBlameService::Impl {
 
     const auto relative_path = gitutil::AbsoluteToRelativePath(request.root, request.absolute_path);
     if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
-        request.dirty || request.large_file_mode) {
+        request.dirty) {
       return snapshot;
     }
 

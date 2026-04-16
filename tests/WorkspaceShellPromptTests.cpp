@@ -649,7 +649,7 @@ void TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject()
          "closing an inactive dirty project should save that project's dirty tabs first");
 }
 
-void TestWorkspaceShellLargeFileBreadcrumbLabel() {
+void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
   WorkspaceShell shell;
   const std::filesystem::path project_root = FixturePath("large");
   const std::filesystem::path file_path = FixturePath("large/code/large_sample.cpp");
@@ -657,8 +657,8 @@ void TestWorkspaceShellLargeFileBreadcrumbLabel() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
 
   const std::string breadcrumb = WorkspaceShellTestAccess::BreadcrumbLabel(shell);
-  Expect(breadcrumb.find("large file mode") != std::string::npos,
-         "large file editors should surface the mode in the breadcrumb");
+  Expect(breadcrumb == "code/large_sample.cpp",
+         "editor breadcrumbs should no longer append a large-file mode marker");
 }
 
 }  // namespace
@@ -678,8 +678,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellQuitDoesNotPromptForDirtyTabs);
   AddTest(tests, "WorkspaceShell/CloseInactiveDirtyProjectPreservesOriginalActiveProject",
           TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject);
-  AddTest(tests, "WorkspaceShell/LargeFileBreadcrumbLabel",
-          TestWorkspaceShellLargeFileBreadcrumbLabel);
+  AddTest(tests, "WorkspaceShell/EditorBreadcrumbUsesRelativePathForLargeFixtures",
+          TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures);
 #if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);

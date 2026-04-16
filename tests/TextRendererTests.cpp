@@ -1,6 +1,10 @@
 #include "TestSupport.h"
 
+#include "editor/DecoratedTextGridRenderer.h"
+#include "editor/EditorViewRenderer.h"
+#include "editor/TextViewport.h"
 #include "render/TextRenderer.h"
+#include "render/Theme.h"
 
 #include <SDL3/SDL.h>
 
@@ -67,8 +71,6 @@ class CountingTextBackend final : public microide::render::TextRendererBackend {
   float scale_y_ = 1.0f;
 };
 
-#if MICROIDE_HAS_SDL3_TTF
-
 void EnsureDummySdlVideo() {
   static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");
   static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
@@ -99,6 +101,8 @@ class SoftwareCanvas final {
   SDL_Surface* surface_ = nullptr;
   SDL_Renderer* renderer_ = nullptr;
 };
+
+#if MICROIDE_HAS_SDL3_TTF
 
 bool IsRedDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
   return a > 0 && r >= 24 && r > g + 12 && r > b + 12;
@@ -366,6 +370,132 @@ void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
 
 #endif
 
+void TestDecoratedTextGridRendererPaintsRowFillAndUnderline() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(160, 48);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "decorated text grid test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "decorated text grid test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  microide::editor::DecoratedTextGridRenderer renderer;
+  microide::editor::DecoratedTextRow row;
+  row.fills.push_back(microide::editor::DecoratedTextFill{
+      .rect = SDL_FRect{8.0f, 6.0f, 112.0f, 14.0f},
+      .color = SDL_Color{0x10, 0x40, 0x70, 0xff},
+  });
+  row.underlines.push_back(microide::editor::DecoratedUnderline{
+      .rect = SDL_FRect{32.0f, 18.0f, 32.0f, 1.0f},
+      .color = SDL_Color{0xd0, 0x30, 0x20, 0xff},
+  });
+
+  renderer.RenderRow(canvas.renderer(), text_renderer, row);
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "decorated text grid test should read software pixels");
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  Expect(SDL_ReadSurfacePixel(pixels, 12, 10, &r, &g, &b, &a),
+         "decorated text grid test should read the row fill pixel");
+  Expect(r == 0x10 && g == 0x40 && b == 0x70 && a == 0xff,
+         "decorated text grid renderer should paint the full row fill before text");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 40, 17, &r, &g, &b, &a),
+         "decorated text grid test should read the pixel above the underline");
+  Expect(r == 0x10 && g == 0x40 && b == 0x70 && a == 0xff,
+         "decorated text grid renderer should preserve the row fill above the underline band");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 40, 18, &r, &g, &b, &a),
+         "decorated text grid test should read the underline pixel");
+  Expect(r == 0xd0 && g == 0x30 && b == 0x20 && a == 0xff,
+         "decorated text grid renderer should paint the underline without recoloring the whole row");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 132, 10, &r, &g, &b, &a),
+         "decorated text grid test should read a pixel outside the fill");
+  Expect(r == 0x00 && g == 0x00 && b == 0x00 && a == 0xff,
+         "decorated text grid renderer should leave pixels outside the row fill untouched");
+
+  SDL_DestroySurface(pixels);
+}
+
+void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecoratedGrid() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 72);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "editor renderer test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "editor renderer test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = SDL_Color{0x08, 0x08, 0x08, 0xff};
+  theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
+  theme.row_highlight = SDL_Color{0x24, 0x44, 0x64, 0xff};
+  theme.selection_fill = SDL_Color{0x74, 0x24, 0x24, 0xff};
+  theme.search_match = SDL_Color{0x24, 0x74, 0x24, 0xff};
+  theme.search_match_active = SDL_Color{0x24, 0x24, 0x74, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("alpha beta gamma\nomega\n", "/tmp/editor-render.cpp");
+  viewport.MoveCursorTo(0, 6);
+  viewport.MoveCursorTo(0, 10, true);
+
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport,
+                  SDL_FRect{0.0f, 0.0f, 220.0f, 72.0f}, false, "alpha",
+                  microide::editor::SelectionRange{
+                      .start = microide::editor::TextPosition{0, 0},
+                      .end = microide::editor::TextPosition{0, 5},
+                  });
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "editor renderer test should read software pixels");
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  Expect(SDL_ReadSurfacePixel(pixels, 5, 10, &r, &g, &b, &a),
+         "editor renderer test should read the selected gutter pixel");
+  Expect(r == theme.row_highlight.r && g == theme.row_highlight.g &&
+             b == theme.row_highlight.b && a == theme.row_highlight.a,
+         "selected editor rows should paint the whole row highlight across the gutter");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 61, 10, &r, &g, &b, &a),
+         "editor renderer test should read the active search pixel");
+  Expect(r == theme.search_match_active.r && g == theme.search_match_active.g &&
+             b == theme.search_match_active.b && a == theme.search_match_active.a,
+         "active search matches should sit above the row fill inside the shared decorated grid");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 67, 10, &r, &g, &b, &a),
+         "editor renderer test should read the selection pixel");
+  Expect(r == theme.selection_fill.r && g == theme.selection_fill.g &&
+             b == theme.selection_fill.b && a == theme.selection_fill.a,
+         "editor selections should paint as inline fills on top of the selected-row background");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 71, 10, &r, &g, &b, &a),
+         "editor renderer test should read the plain selected-row pixel");
+  Expect(r == theme.row_highlight.r && g == theme.row_highlight.g &&
+             b == theme.row_highlight.b && a == theme.row_highlight.a,
+         "editor text outside inline highlights should preserve the whole-row selected background");
+
+  Expect(SDL_ReadSurfacePixel(pixels, 5, 24, &r, &g, &b, &a),
+         "editor renderer test should read the unselected gutter pixel");
+  Expect(r == theme.gutter_background.r && g == theme.gutter_background.g &&
+             b == theme.gutter_background.b && a == theme.gutter_background.a,
+         "unselected editor rows should keep the gutter background when no row fill is present");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestMeasureWidthCachesRepeatedStrings() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -397,6 +527,23 @@ void TestMeasureWidthCacheClearsWhenPresentationScaleChanges() {
          "scale changes should force a fresh backend measurement");
 }
 
+void TestMeasureWidthCacheStatsTrackQueriesAndHits() {
+  microide::render::TextRenderer renderer;
+  auto backend = std::make_unique<CountingTextBackend>();
+  TextRendererTestAccess::SetBackend(renderer, std::move(backend));
+
+  renderer.ResetCacheStats();
+  (void)renderer.MeasureWidth("status");
+  (void)renderer.MeasureWidth("status");
+  (void)renderer.MeasureWidth("branch");
+
+  const auto stats = renderer.CacheStats();
+  Expect(stats.width_cache_queries == 3,
+         "width cache stats should count every measure-width query");
+  Expect(stats.width_cache_hits == 1,
+         "width cache stats should count repeated lookups as cache hits");
+}
+
 void TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -414,10 +561,19 @@ void TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements() {
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests,
+          "TextRenderer decorated grid paints row fills and underlines separately",
+          TestDecoratedTextGridRendererPaintsRowFillAndUnderline);
+  AddTest(tests,
+          "TextRenderer editor view composes selected rows and inline highlights through decorated rows",
+          TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecoratedGrid);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",
           TestMeasureWidthCacheClearsWhenPresentationScaleChanges);
+  AddTest(tests,
+          "TextRenderer cache stats track width queries and hits",
+          TestMeasureWidthCacheStatsTrackQueriesAndHits);
   AddTest(tests,
           "TextRenderer truncation uses bounded width probes",
           TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements);

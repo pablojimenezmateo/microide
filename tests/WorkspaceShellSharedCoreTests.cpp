@@ -336,9 +336,9 @@ void TestWorkspaceSharedChromeTextModel() {
   Expect(untitled_tab.tooltip_label == "scratch",
          "tab text model should reuse the fallback title for untitled tooltips");
 
-  Expect(BuildEditorBreadcrumbLabel(root, root / "docs" / "notes.md", false, true) ==
-             "docs/notes.md  |  large file mode",
-         "editor breadcrumb helper should append the large-file marker");
+  Expect(BuildEditorBreadcrumbLabel(root, root / "docs" / "notes.md", false) ==
+             "docs/notes.md",
+         "editor breadcrumb helper should return the relative editor path");
   Expect(BuildCompareBreadcrumbLabel(root, root / "src" / "compare.txt", "HEAD", "Working tree") ==
              "src/compare.txt  |  HEAD -> Working tree",
          "compare breadcrumb helper should include both refs");

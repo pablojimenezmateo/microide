@@ -85,7 +85,6 @@ void TestGitBlameServiceLoadsVisibleLinesForCleanTrackedFile() {
       .visible_line_count = 2,
       .total_line_count = 4,
       .dirty = false,
-      .large_file_mode = false,
   };
 
   const auto snapshot = WaitForSnapshot(service, request);
@@ -124,7 +123,6 @@ void TestGitBlameServiceSuppressesDirtyAndUntrackedFiles() {
       .visible_line_count = 1,
       .total_line_count = 1,
       .dirty = true,
-      .large_file_mode = false,
   };
   const auto dirty_snapshot = service.Snapshot(dirty_request);
   Expect(!dirty_snapshot.eligible && !dirty_snapshot.loading,
@@ -137,7 +135,6 @@ void TestGitBlameServiceSuppressesDirtyAndUntrackedFiles() {
       .visible_line_count = 1,
       .total_line_count = 1,
       .dirty = false,
-      .large_file_mode = false,
   };
   const auto untracked_snapshot = WaitForSnapshot(service, untracked_request);
   service.Stop();
@@ -164,7 +161,6 @@ void TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges() {
       .visible_line_count = 3,
       .total_line_count = 3,
       .dirty = false,
-      .large_file_mode = false,
   };
 
   const auto snapshot = WaitForSnapshot(service, request);
@@ -200,7 +196,6 @@ void TestGitBlameServiceHandlesQuotedAndSpacedPaths() {
       .visible_line_count = 2,
       .total_line_count = 2,
       .dirty = false,
-      .large_file_mode = false,
   };
 
   const auto snapshot = WaitForSnapshot(service, request);
@@ -230,7 +225,6 @@ void TestGitBlameServiceInvalidateDropsStaleCache() {
       .visible_line_count = 1,
       .total_line_count = 3,
       .dirty = false,
-      .large_file_mode = false,
   };
 
   const auto first_snapshot = WaitForSnapshot(service, request);
@@ -285,7 +279,6 @@ void TestGitBlameServiceInvalidateDropsInFlightResults() {
       .visible_line_count = 1,
       .total_line_count = 3,
       .dirty = false,
-      .large_file_mode = false,
   };
 
   service.Request(request);
@@ -361,7 +354,6 @@ void TestGitBlameServiceClearDropsInFlightResults() {
       .visible_line_count = 1,
       .total_line_count = 3,
       .dirty = false,
-      .large_file_mode = false,
   };
 
   service.Request(request);

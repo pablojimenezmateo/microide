@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,27 @@ struct CompareModel {
   std::vector<CompareHunk> hunks;
 };
 
+struct CompareBuildProfile {
+  std::uint64_t split_lines_ns = 0;
+  std::uint64_t line_alignment_ns = 0;
+  std::uint64_t hunk_alignment_ns = 0;
+  std::uint64_t intraline_ns = 0;
+  std::uint64_t row_assembly_ns = 0;
+  std::uint64_t total_ns = 0;
+  std::size_t exact_line_alignment_calls = 0;
+  std::size_t anchored_line_alignment_calls = 0;
+  std::size_t exact_hunk_alignment_calls = 0;
+  std::size_t fallback_hunk_alignment_calls = 0;
+  std::size_t token_intraline_calls = 0;
+  std::size_t codepoint_intraline_calls = 0;
+};
+
+struct CompareBuildResult {
+  CompareModel model;
+  CompareBuildProfile profile;
+};
+
 CompareModel BuildCompareModel(const std::string& left, const std::string& right);
+CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right);
 
 }  // namespace microide::compare

@@ -361,20 +361,28 @@ bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
     return false;
   }
   const auto& entry = shell_.git_sidebar_.entries[entry_index];
+  bool opened = false;
   if (entry.section == GitSidebarEntry::Section::Modified) {
     if (entry.conflicted) {
-      return shell_.OpenGitConflictMerge(entry.path);
+      opened = shell_.OpenGitConflictMerge(entry.path);
+    } else {
+      opened = shell_.OpenWorkingTreeComparison(entry.path, "HEAD", "HEAD");
     }
-    return shell_.OpenWorkingTreeComparison(entry.path, "HEAD", "HEAD");
+  } else {
+    if (shell_.git_sidebar_.base_ref.empty()) {
+      return false;
+    }
+    opened = shell_.OpenBranchHeadComparison(
+        entry.path, shell_.git_sidebar_.base_ref,
+        shell_.git_sidebar_.base_label.empty() ? shell_.git_sidebar_.base_ref
+                                               : shell_.git_sidebar_.base_label,
+        "HEAD", "HEAD");
   }
-  if (shell_.git_sidebar_.base_ref.empty()) {
-    return false;
+  if (opened && shell_.surface_.sidebar_visible &&
+      shell_.surface_.sidebar_mode == SidebarMode::Git) {
+    shell_.RequestSidebarRedraw();
   }
-  return shell_.OpenBranchHeadComparison(
-      entry.path, shell_.git_sidebar_.base_ref,
-      shell_.git_sidebar_.base_label.empty() ? shell_.git_sidebar_.base_ref
-                                             : shell_.git_sidebar_.base_label,
-      "HEAD", "HEAD");
+  return opened;
 }
 
 bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
