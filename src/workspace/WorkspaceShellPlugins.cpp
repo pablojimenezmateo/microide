@@ -86,6 +86,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject() {
   runtime_syntax_errors_.insert(runtime_syntax_errors_.end(), syntax_loader_errors.begin(),
                                 syntax_loader_errors.end());
   runtime_syntax_plugin_definition_count_ = syntax_reload.plugin_definition_count;
+  plugin_asset_monitor_.SetProjectRoot(project_root_);
   InvalidateRuntimeSyntaxStateCaches();
   RefreshPluginSidebar();
   RefreshProblemsSidebar();

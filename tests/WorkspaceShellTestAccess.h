@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -322,6 +323,13 @@ struct WorkspaceShellTestAccess {
     return shell.plugin_host_.Errors();
   }
   static void ClearPluginMessages(WorkspaceShell& shell) { shell.plugin_host_.ClearMessages(); }
+  static void SetPluginAssetPollInterval(WorkspaceShell& shell,
+                                         std::chrono::milliseconds poll_interval) {
+    shell.plugin_asset_monitor_.SetPollInterval(poll_interval);
+  }
+  static WorkspaceShell::EventResult HandleScheduledWake(WorkspaceShell& shell) {
+    return shell.HandleScheduledWake();
+  }
   static const std::vector<std::string>* OutputChannelEntries(const WorkspaceShell& shell,
                                                               std::string_view id) {
     return shell.output_channels_.Entries(id);

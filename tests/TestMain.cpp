@@ -11,6 +11,7 @@ void RegisterAppDirectoriesTests(std::vector<TestCase>& tests);
 void RegisterCompareModelTests(std::vector<TestCase>& tests);
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
+void RegisterFilesystemTests(std::vector<TestCase>& tests);
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
@@ -48,6 +49,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterCompareModelTests(tests);
   microide::tests::RegisterDiagnosticsStoreTests(tests);
   microide::tests::RegisterDirtyRegionPolicyTests(tests);
+  microide::tests::RegisterFilesystemTests(tests);
   microide::tests::RegisterWorkspaceShellSharedCoreTests(tests);
   microide::tests::RegisterWorkspaceShellSharedLayoutTests(tests);
   microide::tests::RegisterWorkspaceShellSharedSearchTests(tests);

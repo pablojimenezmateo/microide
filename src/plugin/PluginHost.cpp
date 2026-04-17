@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "platform/AppDirectories.h"
+#include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
 #include "util/TextFileIO.h"
 
@@ -216,20 +217,18 @@ struct PluginHost::Impl {
       if (plugins_dir.empty()) {
         return;
       }
-      std::error_code error;
-      if (!std::filesystem::exists(plugins_dir, error) || error ||
-          !std::filesystem::is_directory(plugins_dir, error)) {
+      if (platform::ReadPathType(plugins_dir) != platform::PathType::Directory) {
         return;
       }
 
       std::vector<std::filesystem::path> entries;
-      for (const auto& entry : std::filesystem::directory_iterator(plugins_dir, error)) {
-        if (error || !entry.is_directory()) {
+      for (const auto& entry : platform::ListDirectory(plugins_dir)) {
+        if (entry.type != platform::PathType::Directory) {
           continue;
         }
-        const std::filesystem::path init_path = entry.path() / "init.lua";
-        if (std::filesystem::exists(init_path, error) && !error) {
-          entries.push_back(entry.path().lexically_normal());
+        const std::filesystem::path init_path = entry.path / "init.lua";
+        if (platform::ReadPathType(init_path) == platform::PathType::RegularFile) {
+          entries.push_back(entry.path.lexically_normal());
         }
       }
       std::sort(entries.begin(), entries.end(),
@@ -1921,10 +1920,8 @@ std::vector<std::filesystem::path> PluginHost::DataDirectories(std::string_view 
       if (plugin.project_local != project_local) {
         continue;
       }
-      std::error_code error;
       const std::filesystem::path candidate = (plugin.root / subdirectory).lexically_normal();
-      if (!std::filesystem::exists(candidate, error) || error ||
-          !std::filesystem::is_directory(candidate, error)) {
+      if (platform::ReadPathType(candidate) != platform::PathType::Directory) {
         continue;
       }
       directories.push_back(candidate);

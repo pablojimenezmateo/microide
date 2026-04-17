@@ -963,7 +963,7 @@ WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
   return action;
 }
 
-std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
+std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
   if (!ShouldBlinkCaret()) {
     return std::nullopt;
   }
@@ -971,6 +971,55 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   const Uint64 elapsed = SDL_GetTicks() - caret_blink_epoch_ms_;
   const Uint64 remaining = kCaretBlinkIntervalMs - (elapsed % kCaretBlinkIntervalMs);
   return static_cast<Uint32>(std::max<Uint64>(1, remaining));
+}
+
+std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
+  std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
+  if (const auto plugin_delay = plugin_asset_monitor_.NextPollDelay(); plugin_delay.has_value()) {
+    const Uint32 plugin_delay_ms =
+        static_cast<Uint32>(std::max<std::int64_t>(0, plugin_delay->count()));
+    if (!next_delay.has_value() || plugin_delay_ms < *next_delay) {
+      next_delay = plugin_delay_ms;
+    }
+  }
+  return next_delay;
+}
+
+WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
+  if (plugin_asset_monitor_.PollForChanges()) {
+    ReloadPluginsForCurrentProject();
+    output_channels_.AppendLine("plugins.log", "Plugin Log",
+                                "Detected plugin asset changes: " + PluginRuntimeReloadSummary());
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
+
+  if (!ShouldBlinkCaret()) {
+    return {};
+  }
+
+  if (const auto caret_rect = CurrentCaretDirtyRect(); caret_rect.has_value()) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = false,
+            .rects = {*caret_rect},
+        },
+    };
+  }
+
+  return EventResult{
+      .handled = true,
+      .redraw = RenderInvalidation{
+          .full = true,
+          .rects = {},
+      },
+  };
 }
 
 bool WorkspaceShell::ConsumePostRenderFullRedrawRequest() {

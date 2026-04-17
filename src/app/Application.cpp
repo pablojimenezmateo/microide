@@ -109,14 +109,17 @@ int Application::Run() {
                                : SDL_WaitEvent(&event);
     if (!has_event) {
       if (next_delay.has_value()) {
-        dirty_rects.clear();
-        if (const auto caret_rect = workspace_shell_.CurrentCaretDirtyRect(); caret_rect.has_value()) {
-          dirty_rects.push_back(*caret_rect);
-          full_redraw_pending = false;
-          redraw_reason = "caret-blink";
-        } else {
-          full_redraw_pending = true;
-          redraw_reason = "animation";
+        const auto scheduled = workspace_shell_.HandleScheduledWake();
+        if (scheduled.handled) {
+          if (scheduled.redraw.full) {
+            full_redraw_pending = true;
+            dirty_rects.clear();
+            redraw_reason = "scheduled-full";
+          } else {
+            full_redraw_pending = false;
+            dirty_rects = scheduled.redraw.rects;
+            redraw_reason = "scheduled-partial";
+          }
         }
         continue;
       }

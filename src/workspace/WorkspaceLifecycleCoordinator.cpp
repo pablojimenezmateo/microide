@@ -115,6 +115,7 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
 }
 
 void WorkspaceShell::LifecycleCoordinator::Shutdown() {
+  shell_.plugin_asset_monitor_.Reset();
   shell_.plugin_host_.Shutdown();
   shell_.SaveUserConfig();
   shell_.git_blame_service_.Stop();

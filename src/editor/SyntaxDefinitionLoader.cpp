@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "platform/Filesystem.h"
+
 #if MICROIDE_HAS_LUA_PLUGINS
 #include <lua.hpp>
 #endif
@@ -391,22 +393,16 @@ std::vector<std::filesystem::path> DiscoverDefinitionFiles(
     const std::vector<std::filesystem::path>& directories) {
   std::vector<std::filesystem::path> files;
   for (const auto& directory : directories) {
-    if (directory.empty()) {
-      continue;
-    }
-
-    std::error_code error;
-    if (!std::filesystem::exists(directory, error) || error ||
-        !std::filesystem::is_directory(directory, error)) {
+    if (platform::ReadPathType(directory) != platform::PathType::Directory) {
       continue;
     }
 
     std::vector<std::filesystem::path> directory_files;
-    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
-      if (error || !entry.is_regular_file()) {
+    for (const auto& entry : platform::ListDirectory(directory)) {
+      if (entry.type != platform::PathType::RegularFile) {
         continue;
       }
-      const std::filesystem::path path = entry.path().lexically_normal();
+      const std::filesystem::path path = entry.path.lexically_normal();
       if (path.extension() == ".lua") {
         directory_files.push_back(path);
       }

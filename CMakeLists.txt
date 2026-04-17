@@ -115,6 +115,8 @@ set(MICROIDE_CORE_SOURCES
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
+  src/platform/FileWatcher.cpp
+  src/platform/Filesystem.cpp
   src/platform/Subprocess.cpp
   src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp
@@ -172,6 +174,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspacePersistenceFormat.cpp
+  src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
@@ -242,6 +245,7 @@ add_executable(microide_tests
   tests/CompareModelTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirtyRegionPolicyTests.cpp
+  tests/FilesystemTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitBlameServiceTests.cpp
@@ -317,6 +321,7 @@ add_executable(microide_diff_bench
   src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
   src/platform/Subprocess.cpp
+  src/platform/Filesystem.cpp
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp
   src/project/GitPorcelainParser.cpp

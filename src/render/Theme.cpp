@@ -15,6 +15,8 @@
 #include <system_error>
 #include <vector>
 
+#include "platform/Filesystem.h"
+
 namespace microide::render {
 
 float RelativeLuminance(SDL_Color color) {
@@ -379,17 +381,15 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
   }
 
   const std::filesystem::path direct_path = theme_directory / (std::string(name) + ".microide");
-  if (std::filesystem::exists(direct_path)) {
+  if (platform::ReadPathType(direct_path) == platform::PathType::RegularFile) {
     return direct_path.lexically_normal();
   }
 
-  std::error_code error;
-  const auto end = std::filesystem::directory_iterator();
-  for (std::filesystem::directory_iterator it(theme_directory, error); !error && it != end; ++it) {
-    if (!it->is_regular_file()) {
+  for (const auto& entry : platform::ListDirectory(theme_directory)) {
+    if (entry.type != platform::PathType::RegularFile) {
       continue;
     }
-    const auto& candidate = it->path();
+    const auto& candidate = entry.path;
     if (candidate.extension() != ".microide") {
       continue;
     }
@@ -700,8 +700,7 @@ std::filesystem::path FindThemeDirectory() {
   };
 
   for (const auto& candidate : candidates) {
-    if (!candidate.empty() && std::filesystem::exists(candidate) &&
-        std::filesystem::is_directory(candidate)) {
+    if (platform::ReadPathType(candidate) == platform::PathType::Directory) {
       return candidate.lexically_normal();
     }
   }
@@ -716,13 +715,11 @@ std::vector<std::string> ListAvailableThemeNames(const std::filesystem::path& th
     return names;
   }
 
-  std::error_code error;
-  const auto end = std::filesystem::directory_iterator();
-  for (std::filesystem::directory_iterator it(resolved_directory, error); !error && it != end; ++it) {
-    if (!it->is_regular_file()) {
+  for (const auto& entry : platform::ListDirectory(resolved_directory)) {
+    if (entry.type != platform::PathType::RegularFile) {
       continue;
     }
-    const auto& path = it->path();
+    const auto& path = entry.path;
     if (path.extension() != ".microide") {
       continue;
     }

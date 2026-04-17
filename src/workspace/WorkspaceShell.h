@@ -30,6 +30,7 @@
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspacePluginAssetMonitor.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -94,6 +95,7 @@ class WorkspaceShell {
   bool Initialize(const std::filesystem::path& project_root);
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
+  EventResult HandleScheduledWake();
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
@@ -1644,6 +1646,7 @@ class WorkspaceShell {
   static std::optional<ChangedLineSpan> ComputeChangedLineSpan(
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);
+  std::optional<Uint32> NextCaretBlinkDelayMs() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   bool CaretVisibleNow() const;
@@ -1688,6 +1691,7 @@ class WorkspaceShell {
   mutable std::vector<MenuItemSpec> sidebar_mode_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceOutputChannels output_channels_;
+  WorkspacePluginAssetMonitor plugin_asset_monitor_;
   plugin::PluginHost plugin_host_;
   std::size_t runtime_syntax_plugin_definition_count_ = 0;
   std::vector<std::string> runtime_syntax_errors_;

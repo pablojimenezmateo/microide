@@ -2,6 +2,7 @@
 
 #include "WorkspaceShellTestAccess.h"
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -258,6 +259,141 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("1 syntax definition") !=
              std::string::npos,
          "plugins-reload feedback should include loaded plugin syntax definitions");
+}
+
+void TestWorkspaceShellPluginWatcherReloadsChangedCommands() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "watcher reload fixture\n");
+
+  const std::filesystem::path plugin_root = plugins_root / "reloadable";
+  WritePluginInit(
+      plugins_root, "reloadable",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "reloadable",
+  setup = function(ctx)
+    ctx.commands.add("reloadable.ping", function(ctx, args)
+      ctx.log("before")
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "plugin watcher fixture should open the project");
+  WorkspaceShellTestAccess::SetPluginAssetPollInterval(shell, std::chrono::milliseconds::zero());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reloadable.ping"),
+         "initial watched plugin command should execute");
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() == "reloadable: before",
+         "initial watched plugin command should use the original implementation");
+
+  WriteFile(
+      plugin_root / "init.lua",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "reloadable",
+  setup = function(ctx)
+    ctx.commands.add("reloadable.ping", function(ctx, args)
+      ctx.log("after")
+    end)
+  end
+})
+)");
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  const auto scheduled = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  Expect(scheduled.handled && scheduled.redraw.full,
+         "scheduled plugin watcher wake should force a redraw after reloading plugins");
+  const auto* plugin_log_channel = WorkspaceShellTestAccess::OutputChannelEntries(shell, "plugins.log");
+  Expect(plugin_log_channel != nullptr &&
+             !plugin_log_channel->empty() &&
+             plugin_log_channel->back().find("Detected plugin asset changes: Loaded 1 plugin") !=
+                 std::string::npos,
+         "plugin watcher reload should append a host-owned log summary");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reloadable.ping"),
+         "watched plugin command should execute after automatic reload");
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() == "reloadable: after",
+         "plugin watcher should rebuild the active plugin command table");
+}
+
+void TestWorkspaceShellPluginWatcherReloadsRuntimeSyntaxHighlighting() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path notes = project_root / "notes.todo";
+  WriteFile(project_root / "README.md", "syntax watcher fixture\n");
+  WriteFile(notes, "TODO item\n");
+
+  WritePluginInit(
+      plugins_root, "syntax",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "syntax"
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bTODO\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "syntax watcher fixture should open the project");
+  WorkspaceShellTestAccess::SetPluginAssetPollInterval(shell, std::chrono::milliseconds::zero());
+  WorkspaceShellTestAccess::OpenFile(shell, notes);
+
+  const auto& before_tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+  Expect(std::any_of(before_tokens.begin(), before_tokens.end(),
+                     [](microide::editor::SyntaxTokenKind kind) {
+                       return kind == microide::editor::SyntaxTokenKind::Keyword;
+                     }),
+         "initial watched syntax contribution should highlight the matching token");
+
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bDONE\\b", group = "keyword" }
+  }
+}
+)");
+
+  const auto scheduled = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  Expect(scheduled.handled && scheduled.redraw.full,
+         "scheduled syntax watcher wake should force a redraw after reloading syntax");
+
+  const auto& after_tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+  Expect(std::none_of(after_tokens.begin(), after_tokens.end(),
+                      [](microide::editor::SyntaxTokenKind kind) {
+                        return kind == microide::editor::SyntaxTokenKind::Keyword;
+                      }),
+         "plugin watcher reload should invalidate active editor syntax caches when definitions change");
 }
 
 void TestWorkspaceShellPluginSidebarOpensItems() {
@@ -808,6 +944,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
   AddTest(tests, "WorkspaceShell/PluginsReloadRefreshesRuntimeSyntaxHighlighting",
           TestWorkspaceShellPluginsReloadRefreshesRuntimeSyntaxHighlighting);
+  AddTest(tests, "WorkspaceShell/PluginWatcherReloadsChangedCommands",
+          TestWorkspaceShellPluginWatcherReloadsChangedCommands);
+  AddTest(tests, "WorkspaceShell/PluginWatcherReloadsRuntimeSyntaxHighlighting",
+          TestWorkspaceShellPluginWatcherReloadsRuntimeSyntaxHighlighting);
   AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
           TestWorkspaceShellPluginSidebarOpensItems);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",
