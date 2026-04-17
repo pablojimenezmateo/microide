@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "editor/EditorViewRenderer.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 

@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "compare/CompareModel.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
 
 #include <cmath>
 #include <vector>

@@ -6,7 +6,7 @@
 #include <optional>
 
 #include "workspace/WorkspaceActionCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 

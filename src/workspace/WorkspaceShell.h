@@ -28,11 +28,12 @@
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTerminalSelection.h"
 
 namespace microide::workspace {
 

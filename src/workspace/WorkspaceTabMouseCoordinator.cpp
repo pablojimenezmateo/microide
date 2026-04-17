@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 

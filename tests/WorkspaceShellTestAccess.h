@@ -2,9 +2,9 @@
 
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
-#include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 #include <algorithm>

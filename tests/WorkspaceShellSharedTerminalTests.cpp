@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceTerminalSelection.h"
 
 #include <vector>
 

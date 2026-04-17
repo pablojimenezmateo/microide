@@ -45,32 +45,32 @@ Recommended next step:
 
 Impact:
 - High
-- One shared utility unit is still carrying unrelated parsing, persistence, layout, scrolling, and
-  terminal-selection responsibilities.
+- One shared utility unit still carries unrelated parsing, persistence-facing text formats,
+  string-search helpers, and project-presentation helpers even after the recent layout split.
 
 Evidence:
-- The same module contains command parsing, config/session text parsing, string/search helpers,
-  workspace layout construction, scrollbar geometry, terminal selection helpers, and compare/merge
-  marker helpers.
+- `WorkspaceLayout*` and `WorkspaceTerminalSelection*` now own layout, scroll, compare-or-merge
+  marker, and terminal-selection responsibilities.
+- `WorkspaceShellShared.*` still contains command parsing, config-and-session text parsing,
+  string-search helpers, git-sidebar line helpers, project-state naming, and path-or-breadcrumb
+  presentation helpers.
 
 References:
-- `src/workspace/WorkspaceShellShared.h:382`
-- `src/workspace/WorkspaceShellShared.h:429`
-- `src/workspace/WorkspaceShellShared.h:636`
-- `src/workspace/WorkspaceShellShared.cpp:228`
-- `src/workspace/WorkspaceShellShared.cpp:904`
-- `src/workspace/WorkspaceShellShared.cpp:1214`
-- `src/workspace/WorkspaceShellShared.cpp:1620`
+- `src/workspace/WorkspaceLayout.h`
+- `src/workspace/WorkspaceLayout.cpp`
+- `src/workspace/WorkspaceTerminalSelection.h`
+- `src/workspace/WorkspaceTerminalSelection.cpp`
+- `src/workspace/WorkspaceShellShared.h`
+- `src/workspace/WorkspaceShellShared.cpp`
 
 Why this matters:
 - This is still a “shared dump” instead of a cohesive subsystem boundary.
 - It increases compile-time coupling and makes unrelated changes land in the same file.
 
 Recommended next step:
-- Split this module into focused units, at minimum:
-- `WorkspaceLayout*`
-- `WorkspacePersistenceFormat*`
-- `WorkspaceText/Search*`
+- Continue the split after the shipped `WorkspaceLayout*` and `WorkspaceTerminalSelection*`
+  extraction, with the next focused unit centered on `WorkspaceText/Search*` plus the remaining
+  project-and-session formatting helpers.
 
 ### 3. Action handling is still too centralized in the shell
 

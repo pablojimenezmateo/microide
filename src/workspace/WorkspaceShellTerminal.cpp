@@ -5,7 +5,8 @@
 #include <cmath>
 #include <string_view>
 
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceTerminalSelection.h"
 
 namespace microide::workspace {
 

@@ -174,6 +174,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePathMutationCoordinator.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
+  src/workspace/WorkspaceLayout.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspacePersistenceFormat.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
@@ -190,6 +191,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellShared.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
+  src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceShell.cpp
 )
 

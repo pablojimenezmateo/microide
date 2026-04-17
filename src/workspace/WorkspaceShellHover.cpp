@@ -9,7 +9,7 @@
 
 #include "editor/DiagnosticsRender.h"
 #include "editor/TextLayout.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 

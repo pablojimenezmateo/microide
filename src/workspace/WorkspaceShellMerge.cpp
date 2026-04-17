@@ -7,7 +7,7 @@
 #include <optional>
 #include <string_view>
 
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 

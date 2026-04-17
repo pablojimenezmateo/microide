@@ -11,7 +11,7 @@
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "util/PerformanceTrace.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 
