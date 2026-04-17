@@ -224,46 +224,6 @@ bool WorkspaceShell::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   return false;
 }
 
-bool WorkspaceShell::HandleCommandKeyDown(const SDL_KeyboardEvent& event) {
-  switch (event.key) {
-    case SDLK_ESCAPE: {
-      const bool bottom_panel_was_visible = BottomPanelVisible();
-      surface_.command_mode = false;
-      command_.input.clear();
-      ResetCommandSessionState();
-      RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
-      return true;
-    }
-    case SDLK_RETURN:
-    case SDLK_KP_ENTER:
-      if (command_.input.empty() || ExecuteCommand(command_.input)) {
-        const bool bottom_panel_was_visible = BottomPanelVisible();
-        surface_.command_mode = false;
-        command_.input.clear();
-        ResetCommandSessionState();
-        RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
-      }
-      return true;
-    case SDLK_BACKSPACE:
-      RemoveLastUtf8Codepoint(&command_.input);
-      command_.history_index.reset();
-      command_.history_pending_input.clear();
-      ClearCommandFeedback();
-      return true;
-    case SDLK_UP:
-      StepCommandHistory(-1);
-      return true;
-    case SDLK_DOWN:
-      StepCommandHistory(1);
-      return true;
-    case SDLK_TAB:
-      CompleteCommandInput();
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool WorkspaceShell::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event,
                                                     SDL_Keymod modifiers) {
   switch (event.key) {

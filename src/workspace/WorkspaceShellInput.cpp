@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -117,7 +118,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     return finish(true);
   }
   if (surface_.command_mode) {
-    const bool handled = HandleCommandKeyDown(event.key);
+    const bool handled = CommandPromptCoordinator(*this).HandleKeyDown(event.key);
     if (handled) {
       ensure_redraw([this]() { RequestBottomPanelCommandRedraw(); });
     }
@@ -316,10 +317,7 @@ bool WorkspaceShell::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
   if (surface_.command_mode) {
-    command_.input.append(input);
-    command_.history_index.reset();
-    command_.history_pending_input.clear();
-    ClearCommandFeedback();
+    CommandPromptCoordinator(*this).AppendInput(input);
     RequestBottomPanelCommandRedraw();
     return true;
   }

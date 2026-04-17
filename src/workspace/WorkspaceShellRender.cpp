@@ -10,6 +10,7 @@
 
 #include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -1769,7 +1770,8 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
 
       const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
       draw_text_on(command_area.x + 12.0f, status_y, theme_.text_muted, theme_.surface_raised,
-                   TruncateLabel(CommandPromptStatusText(), command_area.w - 24.0f));
+                   TruncateLabel(CommandPromptCoordinator::PromptStatusText(*this),
+                                 command_area.w - 24.0f));
 
       SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);

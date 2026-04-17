@@ -323,6 +323,43 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
          "focus panel should move focus to the bottom panel when available");
 }
 
+void TestWorkspaceShellCommandPromptCompletionAndHistory() {
+  WorkspaceShell shell;
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt before completion");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "soft"),
+         "text input should populate the command prompt before completion");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "tab should trigger command completion");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs ",
+         "tab completion should expand the unique built-in command name");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed soft-tabs",
+         "tab completion should report the completed command name");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "on"),
+         "completion fixture should allow finishing the completed command");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "enter should execute the completed command");
+  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
+         "successful command execution should close the command prompt");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should reopen the command prompt before history recall");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_UP, SDL_KMOD_NONE),
+         "up should recall the previous command from history");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
+         "history recall should restore the last executed command");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("History 1 / 1") !=
+             std::string::npos,
+         "history recall should report the active history position");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "down should restore the pending empty command input");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell).empty(),
+         "history navigation back to the pending input should restore an empty prompt");
+}
+
 void TestWorkspaceShellCtrlNOpensUntitledTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1006,6 +1043,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
+  AddTest(tests, "WorkspaceShell/CommandPromptCompletionAndHistory",
+          TestWorkspaceShellCommandPromptCompletionAndHistory);
   AddTest(tests, "WorkspaceShell/CtrlNOpensUntitledTab",
           TestWorkspaceShellCtrlNOpensUntitledTab);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",

@@ -62,6 +62,8 @@ Current state:
 - plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
 - workspace colorscheme, config, and session persistence now run through a dedicated persistence
   coordinator instead of keeping those flows embedded in `WorkspaceShell`
+- command prompt history, completion, and command-line execution now run through a dedicated
+  command-prompt coordinator instead of living directly on `WorkspaceShell`
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:

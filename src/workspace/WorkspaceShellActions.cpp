@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -403,7 +404,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
   }
 
   const auto reject_command = [&](std::string feedback) {
-    return RejectCommandAction(source, std::move(feedback));
+    return CommandPromptCoordinator(*this).RejectAction(source, std::move(feedback));
   };
 
   std::string rejection_feedback;
@@ -478,7 +479,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
               surface_.command_mode = true;
               surface_.focus = FocusTarget::Panel;
               command_.input = "project-open ";
-              ResetCommandSessionState();
+              CommandPromptCoordinator(*this).ResetSessionState();
               RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
             }
             return ActionDispatchResult::Handled;
@@ -1388,7 +1389,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
         surface_.command_mode = true;
         surface_.focus = FocusTarget::Panel;
         command_.input.clear();
-        ResetCommandSessionState();
+        CommandPromptCoordinator(*this).ResetSessionState();
         RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
       }
       return ActionDispatchResult::Handled;
@@ -1397,7 +1398,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
         return reject("Lua plugin runtime unavailable");
       }
       ReloadPluginsForCurrentProject();
-      command_.feedback_text = PluginRuntimeReloadSummary();
+      CommandPromptCoordinator(*this).SetFeedback(PluginRuntimeReloadSummary());
       return ActionDispatchResult::Handled;
     case ActionId::Quit:
       RequestQuit();

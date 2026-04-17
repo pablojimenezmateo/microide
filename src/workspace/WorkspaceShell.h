@@ -919,6 +919,7 @@ class WorkspaceShell {
 
   class ProjectCatalogCoordinator;
   class PersistenceCoordinator;
+  class CommandPromptCoordinator;
   class DirtyPromptCoordinator;
   class PathMutationCoordinator;
   class TabCoordinator;
@@ -1451,7 +1452,6 @@ class WorkspaceShell {
   void ReplaceCurrentBufferSearchMatch();
   void ReplaceAllBufferSearchMatches();
   std::optional<editor::SelectionRange> ActiveBufferSearchMatch() const;
-  bool ExecuteCommand(const std::string& command_line);
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
@@ -1459,13 +1459,6 @@ class WorkspaceShell {
   std::filesystem::path ProjectStateDirectory() const;
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
-  void ResetCommandSessionState();
-  void ClearCommandFeedback();
-  bool RejectCommandAction(ActionSource source, std::string feedback);
-  void PushCommandHistory(std::string command_line);
-  void StepCommandHistory(int delta);
-  void CompleteCommandInput();
-  std::string CommandPromptStatusText() const;
   bool HandleTextInput(const SDL_TextInputEvent& event);
   bool HandleTextEditing(const SDL_TextEditingEvent& event);
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
@@ -1533,7 +1526,6 @@ class WorkspaceShell {
                            SDL_Keymod modifiers,
                            bool active_compare_tab,
                            bool active_merge_tab);
-  bool HandleCommandKeyDown(const SDL_KeyboardEvent& event);
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);

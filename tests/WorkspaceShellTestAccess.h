@@ -1,5 +1,6 @@
 #pragma once
 
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -315,7 +316,7 @@ struct WorkspaceShellTestAccess {
     return shell.OpenFileInNewTab(path);
   }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
-    return shell.ExecuteCommand(command_line);
+    return WorkspaceShell::CommandPromptCoordinator(shell).ExecuteCommandLine(command_line);
   }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_host_.Messages();
@@ -985,7 +986,7 @@ struct WorkspaceShellTestAccess {
   static bool CommandMode(const WorkspaceShell& shell) { return shell.surface_.command_mode; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
-    return shell.CommandPromptStatusText();
+    return WorkspaceShell::CommandPromptCoordinator::PromptStatusText(shell);
   }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.surface_.overlay_visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
