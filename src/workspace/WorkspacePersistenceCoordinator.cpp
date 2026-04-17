@@ -7,6 +7,7 @@
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
 #include "util/TextFileIO.h"
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTextSearch.h"

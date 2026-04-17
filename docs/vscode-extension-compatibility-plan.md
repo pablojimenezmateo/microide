@@ -359,7 +359,8 @@ Before widening the plugin API, `microide` should continue the work already call
 
 - narrow `WorkspaceShell`
 - finish the remaining `WorkspaceShellShared.*` split after the shipped `WorkspaceLayout*`,
-  `WorkspaceTerminalSelection*`, and `WorkspaceTextSearch*` extractions
+  `WorkspaceTerminalSelection*`, `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, and
+  `WorkspacePathUtils*` extractions
 - move command handling behind registries and per-domain executors
 - reduce shell ownership of sidebar and surface state
 
@@ -569,8 +570,9 @@ Deliverables:
 
 - narrower `WorkspaceShell`
 - split `WorkspaceShellShared.*` into dedicated modules such as the shipped `WorkspaceLayout*`,
-  `WorkspaceTerminalSelection*`, and `WorkspaceTextSearch*` seams, then finish the remaining
-  command, path, and presentation split
+  `WorkspaceTerminalSelection*`, `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, and
+  `WorkspacePathUtils*` seams, then finish the remaining presentation, git-sidebar, and
+  search-result formatting split
 - process service
 - task executor with cancellation
 - filesystem and watcher service

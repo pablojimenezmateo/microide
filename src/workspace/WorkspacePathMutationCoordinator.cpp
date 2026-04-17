@@ -7,7 +7,7 @@
 
 #include "editor/SyntaxHighlighter.h"
 #include "project/FileOperationService.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
 

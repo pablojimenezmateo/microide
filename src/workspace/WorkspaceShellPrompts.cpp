@@ -2,7 +2,7 @@
 
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
 

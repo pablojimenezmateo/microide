@@ -6,10 +6,11 @@
 #include <vector>
 
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceConstants.h"
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
-#include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {

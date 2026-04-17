@@ -7,12 +7,12 @@
 #include <string_view>
 
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
-#include "workspace/WorkspaceTextInputCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 

@@ -4,6 +4,7 @@
 #include <sstream>
 #include <utility>
 
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {

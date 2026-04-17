@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"

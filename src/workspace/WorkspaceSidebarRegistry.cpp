@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <array>
 
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceCommandParsing.h"
 
 namespace microide::workspace {
 

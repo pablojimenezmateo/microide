@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTextSearch.h"
 
