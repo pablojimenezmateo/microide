@@ -60,6 +60,9 @@ Current state:
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
+- keep paying phase-1 host-service debt by routing plugin and git subprocess work through
+  compiled services and by centralizing config or state path resolution instead of repeating
+  environment lookups in feature code
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it

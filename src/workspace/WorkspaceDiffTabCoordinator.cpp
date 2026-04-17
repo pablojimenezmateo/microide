@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "project/GitCompareService.h"
+#include "util/TextFileIO.h"
 
 namespace microide::workspace {
 
@@ -177,7 +178,7 @@ bool WorkspaceShell::DiffTabCoordinator::OpenWorkingTreeComparison(
   if (!left_content.has_value()) {
     return false;
   }
-  const std::optional<std::string> working_content = ReadFileText(normalized_path);
+  const std::optional<std::string> working_content = util::ReadTextFile(normalized_path);
   auto compare_tab = shell_.BuildCompareTabFromBuffers(
       normalized_path, left_content->exists ? left_content->content : "",
       working_content.value_or(""), left_label, "Working tree", 0, true);

@@ -6,6 +6,7 @@
 #include <system_error>
 #include <vector>
 
+#include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -586,14 +587,9 @@ std::filesystem::path WorkspaceShell::ConfigStatePath() const {
 }
 
 std::filesystem::path WorkspaceShell::UserConfigPath() const {
-  if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
-      xdg_config_home != nullptr && *xdg_config_home != '\0') {
-    return std::filesystem::path(xdg_config_home) / "microide" / "config";
-  }
-  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-    return std::filesystem::path(home) / ".config" / "microide" / "config";
-  }
-  return {};
+  const std::filesystem::path config_root =
+      platform::ResolveAppDirectory(platform::UserDirectoryKind::Config, "microide");
+  return config_root.empty() ? std::filesystem::path{} : config_root / "config";
 }
 
 std::filesystem::path WorkspaceShell::ProjectStateDirectory() const {
@@ -601,15 +597,9 @@ std::filesystem::path WorkspaceShell::ProjectStateDirectory() const {
     return {};
   }
   const std::string directory_name = ProjectStateDirectoryName(project_root_);
-  if (const char* xdg_state_home = std::getenv("XDG_STATE_HOME");
-      xdg_state_home != nullptr && *xdg_state_home != '\0') {
-    return std::filesystem::path(xdg_state_home) / "microide" / "projects" / directory_name;
-  }
-  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-    return std::filesystem::path(home) / ".local" / "state" / "microide" / "projects" /
-           directory_name;
-  }
-  return {};
+  const std::filesystem::path state_root =
+      platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
+  return state_root.empty() ? std::filesystem::path{} : state_root / "projects" / directory_name;
 }
 
 }  // namespace microide::workspace

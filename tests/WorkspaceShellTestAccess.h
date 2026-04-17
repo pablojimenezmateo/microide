@@ -322,6 +322,10 @@ struct WorkspaceShellTestAccess {
     return shell.plugin_host_.Errors();
   }
   static void ClearPluginMessages(WorkspaceShell& shell) { shell.plugin_host_.ClearMessages(); }
+  static const std::vector<std::string>* OutputChannelEntries(const WorkspaceShell& shell,
+                                                              std::string_view id) {
+    return shell.output_channels_.Entries(id);
+  }
   static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
       const WorkspaceShell& shell,
       const std::filesystem::path& path) {

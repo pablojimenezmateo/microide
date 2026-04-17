@@ -114,10 +114,13 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
+  src/platform/AppDirectories.cpp
+  src/platform/Subprocess.cpp
   src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp
   src/project/FileOperationService.cpp
   src/project/GitCompareService.cpp
+  src/project/GitCommandUtil.cpp
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
   src/project/GitBlameService.cpp
@@ -136,6 +139,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
+  src/util/TextFileIO.cpp
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
@@ -165,6 +169,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePathMutationCoordinator.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
+  src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
@@ -231,6 +236,7 @@ add_executable(microide_tests
   src/app/DirtyRegionPolicy.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
+  tests/AppDirectoriesTests.cpp
   tests/CompareModelTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirtyRegionPolicyTests.cpp
@@ -245,6 +251,7 @@ add_executable(microide_tests
   tests/TestSupport.cpp
   tests/PluginHostTests.cpp
   tests/StringUtilTests.cpp
+  tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
   tests/WindowPresentationTests.cpp
@@ -306,7 +313,9 @@ add_executable(microide_diff_bench
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
+  src/platform/Subprocess.cpp
   src/project/GitCompareService.cpp
+  src/project/GitCommandUtil.cpp
   src/project/GitPorcelainParser.cpp
   src/project/GitRepository.cpp
   src/render/DebugTextBackend.cpp

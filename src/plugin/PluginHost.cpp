@@ -1,24 +1,20 @@
 #include "plugin/PluginHost.h"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
-#include <cerrno>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <fcntl.h>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "workspace/WorkspaceShellShared.h"
+#include "platform/AppDirectories.h"
+#include "platform/Subprocess.h"
+#include "util/TextFileIO.h"
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include <lua.hpp>
@@ -29,14 +25,9 @@ namespace microide::plugin {
 namespace {
 
 std::filesystem::path GlobalPluginDirectory() {
-  if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
-      xdg_config_home != nullptr && *xdg_config_home != '\0') {
-    return std::filesystem::path(xdg_config_home) / "microide" / "plugins";
-  }
-  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-    return std::filesystem::path(home) / ".config" / "microide" / "plugins";
-  }
-  return {};
+  const std::filesystem::path config_root =
+      platform::ResolveAppDirectory(platform::UserDirectoryKind::Config, "microide");
+  return config_root.empty() ? std::filesystem::path{} : config_root / "plugins";
 }
 
 bool IsValidIdentifier(std::string_view value) {
@@ -51,12 +42,6 @@ bool IsValidIdentifier(std::string_view value) {
 std::string Basename(const std::filesystem::path& path) {
   return path.filename().empty() ? path.lexically_normal().string() : path.filename().string();
 }
-
-struct ProcessResult {
-  int exit_code = -1;
-  std::string stdout_text;
-  std::string stderr_text;
-};
 
 std::filesystem::path ResolveRuntimePath(const std::filesystem::path& project_root,
                                          const std::filesystem::path& path) {
@@ -99,131 +84,6 @@ bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSever
     return true;
   }
   return false;
-}
-
-void AppendPipeOutput(int fd, std::string* output) {
-  if (fd < 0 || output == nullptr) {
-    return;
-  }
-
-  std::array<char, 4096> buffer{};
-  while (true) {
-    const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
-    if (bytes_read > 0) {
-      output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
-      continue;
-    }
-    if (bytes_read == 0) {
-      break;
-    }
-    if (errno == EINTR) {
-      continue;
-    }
-    break;
-  }
-}
-
-ProcessResult RunProcess(const std::vector<std::string>& argv,
-                         const std::filesystem::path& cwd,
-                         std::string_view stdin_text) {
-  ProcessResult result;
-  if (argv.empty()) {
-    return result;
-  }
-
-  int stdout_pipe[2] = {-1, -1};
-  int stderr_pipe[2] = {-1, -1};
-  int stdin_pipe[2] = {-1, -1};
-  if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0 ||
-      (!stdin_text.empty() && pipe(stdin_pipe) != 0)) {
-    if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-    if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
-    if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
-    if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
-    if (stdin_pipe[0] >= 0) close(stdin_pipe[0]);
-    if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
-    return result;
-  }
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    close(stdout_pipe[0]);
-    close(stdout_pipe[1]);
-    close(stderr_pipe[0]);
-    close(stderr_pipe[1]);
-    if (stdin_pipe[0] >= 0) close(stdin_pipe[0]);
-    if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
-    return result;
-  }
-
-  if (pid == 0) {
-    dup2(stdout_pipe[1], STDOUT_FILENO);
-    dup2(stderr_pipe[1], STDERR_FILENO);
-    close(stdout_pipe[0]);
-    close(stdout_pipe[1]);
-    close(stderr_pipe[0]);
-    close(stderr_pipe[1]);
-
-    if (!stdin_text.empty()) {
-      dup2(stdin_pipe[0], STDIN_FILENO);
-      close(stdin_pipe[0]);
-      close(stdin_pipe[1]);
-    }
-
-    if (!cwd.empty()) {
-      (void)chdir(cwd.string().c_str());
-    }
-
-    std::vector<char*> raw_argv;
-    raw_argv.reserve(argv.size() + 1);
-    for (const std::string& arg : argv) {
-      raw_argv.push_back(const_cast<char*>(arg.c_str()));
-    }
-    raw_argv.push_back(nullptr);
-    execvp(raw_argv[0], raw_argv.data());
-    _exit(errno == ENOENT ? 127 : 126);
-  }
-
-  close(stdout_pipe[1]);
-  close(stderr_pipe[1]);
-  if (!stdin_text.empty()) {
-    close(stdin_pipe[0]);
-    const char* data = stdin_text.data();
-    std::size_t remaining = stdin_text.size();
-    while (remaining > 0) {
-      const ssize_t written = write(stdin_pipe[1], data, remaining);
-      if (written > 0) {
-        data += written;
-        remaining -= static_cast<std::size_t>(written);
-        continue;
-      }
-      if (written < 0 && errno == EINTR) {
-        continue;
-      }
-      break;
-    }
-    close(stdin_pipe[1]);
-  }
-
-  AppendPipeOutput(stdout_pipe[0], &result.stdout_text);
-  AppendPipeOutput(stderr_pipe[0], &result.stderr_text);
-  close(stdout_pipe[0]);
-  close(stderr_pipe[0]);
-
-  int status = 0;
-  while (waitpid(pid, &status, 0) < 0) {
-    if (errno != EINTR) {
-      result.exit_code = -1;
-      return result;
-    }
-  }
-
-  if (WIFEXITED(status)) {
-    result.exit_code = WEXITSTATUS(status);
-  } else if (WIFSIGNALED(status)) {
-    result.exit_code = 128 + WTERMSIG(status);
-  }
-  return result;
 }
 
 }  // namespace
@@ -332,6 +192,9 @@ struct PluginHost::Impl {
 
   void RecordError(std::string error) {
     errors.push_back(error);
+    if (callbacks.error_sink) {
+      callbacks.error_sink(errors.back());
+    }
   }
 
   std::optional<std::string> RelativePathString(const std::filesystem::path& path) const {
@@ -743,7 +606,7 @@ struct PluginHost::Impl {
 
     const std::filesystem::path path =
         ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
-    const std::optional<std::string> text = workspace::ReadFileText(path);
+    const std::optional<std::string> text = util::ReadTextFile(path);
     if (!text.has_value()) {
       lua_pushnil(state);
       return 1;
@@ -764,10 +627,8 @@ struct PluginHost::Impl {
 
     const std::filesystem::path path =
         ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
-    lua_pushboolean(state,
-                    workspace::WriteTextFileAtomically(path, std::string_view(text, text_length))
-                        ? 1
-                        : 0);
+    lua_pushboolean(
+        state, util::WriteTextFileAtomically(path, std::string_view(text, text_length)) ? 1 : 0);
     return 1;
   }
 
@@ -822,7 +683,13 @@ struct PluginHost::Impl {
       lua_pop(state, 1);
     }
 
-    const ProcessResult result = RunProcess(argv, cwd, stdin_text);
+    const platform::SubprocessResult result = platform::RunSubprocess(
+        argv, platform::SubprocessOptions{
+                  .cwd = cwd,
+                  .stdin_text = stdin_text,
+                  .capture_stdout = true,
+                  .capture_stderr = true,
+              });
     lua_createtable(state, 0, 4);
     lua_pushinteger(state, result.exit_code);
     lua_setfield(state, -2, "exit_code");

@@ -64,7 +64,14 @@ WorkspaceShell::WorkspaceShell() {
               RequestEditorSurfaceRedraw();
             }
           },
-      .log_sink = {},
+      .error_sink =
+          [this](const std::string& text) {
+            output_channels_.AppendLine("plugins.error", "Plugin Errors", text);
+          },
+      .log_sink =
+          [this](const std::string& text) {
+            output_channels_.AppendLine("plugins.log", "Plugin Log", text);
+          },
   });
 }
 

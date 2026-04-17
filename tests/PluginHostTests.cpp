@@ -104,6 +104,7 @@ return ide.plugin({
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
       .clear_owner_diagnostics = {},
+      .error_sink = {},
       .log_sink = {},
   });
 
@@ -196,6 +197,7 @@ return ide.plugin({
 
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
+  std::vector<std::string> sink_errors;
   PluginHost host;
   host.SetCallbacks(PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view) { return true; },
@@ -205,6 +207,10 @@ return ide.plugin({
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
       .clear_owner_diagnostics = {},
+      .error_sink =
+          [&](const std::string& error) {
+            sink_errors.push_back(error);
+          },
       .log_sink = {},
   });
 
@@ -215,6 +221,9 @@ return ide.plugin({
   Expect(host.Errors().size() == 1 &&
              host.Errors().front().find("duplicate plugin id 'dup'") != std::string::npos,
          "duplicate plugin ids should produce a clear error");
+  Expect(sink_errors.size() == 1 &&
+             sink_errors.front().find("duplicate plugin id 'dup'") != std::string::npos,
+         "duplicate plugin ids should also be forwarded to the host error sink");
 }
 
 void TestPluginHostPhase2Apis() {
@@ -285,6 +294,7 @@ return ide.plugin({
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
       .clear_owner_diagnostics = {},
+      .error_sink = {},
       .log_sink = {},
   });
 
@@ -403,6 +413,7 @@ return ide.plugin({
           },
       .clear_owner_diagnostics =
           [&](std::string_view owner) { diagnostics_store.ClearOwner(owner); },
+      .error_sink = {},
       .log_sink = {},
   });
 
@@ -480,6 +491,7 @@ return ide.plugin({
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
       .clear_owner_diagnostics = {},
+      .error_sink = {},
       .log_sink = {},
   });
 
@@ -546,6 +558,7 @@ return ide.plugin({
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
       .clear_owner_diagnostics = {},
+      .error_sink = {},
       .log_sink = {},
   });
 

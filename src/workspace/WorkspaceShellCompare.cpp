@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "editor/SyntaxHighlighter.h"
+#include "util/TextFileIO.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -442,7 +443,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     return std::nullopt;
   }
 
-  const std::optional<std::string> working_content = ReadFileText(normalized_path);
+  const std::optional<std::string> working_content = util::ReadTextFile(normalized_path);
   auto compare_tab = BuildCompareTabFromBuffers(normalized_path, content->exists ? content->content : "",
                                                 working_content.value_or(""), commit.short_hash,
                                                 "Working tree", selected_row, true);
@@ -476,7 +477,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     right_content = compare_tab.right_viewport.dirty()
                         ? SerializeLines(compare_tab.right_viewport.lines(),
                                          compare_tab.right_viewport.line_ending())
-                        : ReadFileText(right_source_path).value_or("");
+                        : util::ReadTextFile(right_source_path).value_or("");
   } else {
     const auto right_commit_content =
         project::ReadGitFileAtCommit(project_root_, right_source_path, compare_tab.right_ref);
@@ -1052,9 +1053,9 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabEntry(
   const std::filesystem::path normalized_current = current_path.lexically_normal();
   const std::filesystem::path normalized_output = output_path.lexically_normal();
 
-  const std::optional<std::string> base_text = ReadFileText(normalized_base);
-  const std::optional<std::string> incoming_text = ReadFileText(normalized_incoming);
-  const std::optional<std::string> current_text = ReadFileText(normalized_current);
+  const std::optional<std::string> base_text = util::ReadTextFile(normalized_base);
+  const std::optional<std::string> incoming_text = util::ReadTextFile(normalized_incoming);
+  const std::optional<std::string> current_text = util::ReadTextFile(normalized_current);
   if (!base_text.has_value() || !incoming_text.has_value() || !current_text.has_value()) {
     return std::nullopt;
   }
@@ -1085,7 +1086,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
     bool persistable) const {
   const std::filesystem::path normalized_output = output_path.lexically_normal();
   const std::optional<std::string> output_text =
-      normalized_output.empty() ? std::nullopt : ReadFileText(normalized_output);
+      normalized_output.empty() ? std::nullopt : util::ReadTextFile(normalized_output);
 
   MergeTabState merge_tab;
   merge_tab.base_path = normalized_output;

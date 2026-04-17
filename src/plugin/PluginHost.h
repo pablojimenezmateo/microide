@@ -58,6 +58,7 @@ class PluginHost {
         publish_diagnostics;
     std::function<void(std::string_view, const std::filesystem::path&)> clear_file_diagnostics;
     std::function<void(std::string_view)> clear_owner_diagnostics;
+    std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
   };
 

@@ -99,6 +99,11 @@ return ide.plugin({
          "opening a project should trigger plugin project-open and startup buffer-open hooks");
   Expect(WorkspaceShellTestAccess::PluginMessages(shell)[0] == "events: project-open:project",
          "project-open hook should run when the project is activated");
+  const auto* plugin_log_channel = WorkspaceShellTestAccess::OutputChannelEntries(shell, "plugins.log");
+  Expect(plugin_log_channel != nullptr && plugin_log_channel->size() >= 2,
+         "plugin output logging should mirror plugin messages into the host log channel");
+  Expect(plugin_log_channel != nullptr && plugin_log_channel->front() == "events: project-open:project",
+         "plugin output logging should preserve the recorded plugin message text");
 
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   WorkspaceShellTestAccess::OpenFile(shell, source);

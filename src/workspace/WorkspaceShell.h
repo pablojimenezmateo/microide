@@ -28,6 +28,7 @@
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
+#include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -1685,6 +1686,7 @@ class WorkspaceShell {
   mutable std::vector<SidebarModeMenuPluginEntry> sidebar_mode_menu_plugin_entries_;
   mutable std::vector<MenuItemSpec> sidebar_mode_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
+  WorkspaceOutputChannels output_channels_;
   plugin::PluginHost plugin_host_;
   std::size_t runtime_syntax_plugin_definition_count_ = 0;
   std::vector<std::string> runtime_syntax_errors_;

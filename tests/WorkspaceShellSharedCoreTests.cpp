@@ -4,6 +4,7 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "util/TextFileIO.h"
 
 #include <algorithm>
 #include <cmath>
@@ -50,7 +51,6 @@ using microide::workspace::PersistedSplitNodeState;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 using microide::workspace::QuoteCommandArg;
-using microide::workspace::ReadFileText;
 using microide::workspace::RelativePathLabel;
 using microide::workspace::RemoveLastUtf8Codepoint;
 using microide::workspace::ReplacePathPrefix;
@@ -65,8 +65,9 @@ using microide::workspace::Utf8ByteOffsetForCodepointCount;
 using microide::workspace::Utf8CodepointCount;
 using microide::workspace::WorkspaceCommandNames;
 using microide::workspace::WorkspaceDocumentedCommandUsages;
-using microide::workspace::WriteTextFileAtomically;
 using microide::workspace::WorkspaceShell;
+using microide::util::ReadTextFile;
+using microide::util::WriteTextFileAtomically;
 
 void TestWorkspaceSharedParseCommandLine() {
   const auto parsed = ParseCommandLine(R"(open "two words" path\ with\ spaces 'tail value')");
@@ -158,11 +159,11 @@ void TestWorkspaceSharedReadFileText() {
   const std::filesystem::path sample = temp_root / "sample.txt";
   WriteFile(sample, "sample text\n");
 
-  const auto content = ReadFileText(sample);
+  const auto content = ReadTextFile(sample);
   Expect(content.has_value(), "read file text should load existing file");
   Expect(*content == "sample text\n", "read file text content mismatch");
 
-  const auto missing = ReadFileText(temp_root / "missing.txt");
+  const auto missing = ReadTextFile(temp_root / "missing.txt");
   Expect(!missing.has_value(), "read file text should fail for missing file");
 
   std::filesystem::remove_all(temp_root);

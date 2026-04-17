@@ -2,11 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <fstream>
 #include <limits>
 
+#include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
+#include "util/TextFileIO.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -65,7 +66,7 @@ bool WorkspaceShell::RestoreUserConfig() {
     return false;
   }
 
-  const auto text = ReadFileText(config_path);
+  const auto text = util::ReadTextFile(config_path);
   if (!text.has_value()) {
     return false;
   }
@@ -83,7 +84,8 @@ void WorkspaceShell::SaveUserConfig() const {
   if (config_path.empty()) {
     return;
   }
-  WriteTextFileAtomically(config_path, SerializeUserConfig(PersistedUserConfigState{.ui_scale = ui_scale_}));
+  util::WriteTextFileAtomically(config_path,
+                                SerializeUserConfig(PersistedUserConfigState{.ui_scale = ui_scale_}));
 }
 
 bool WorkspaceShell::RestoreConfigState() {
@@ -91,7 +93,7 @@ bool WorkspaceShell::RestoreConfigState() {
   if (config_path.empty()) {
     return false;
   }
-  const auto text = ReadFileText(config_path);
+  const auto text = util::ReadTextFile(config_path);
   if (!text.has_value()) {
     return false;
   }
@@ -125,14 +127,14 @@ void WorkspaceShell::SaveConfigState() const {
   if (config_path.empty()) {
     return;
   }
-  WriteTextFileAtomically(config_path, SerializeProjectConfig(PersistedProjectConfigState{
-                                       .editor_tab_size = editor_preferences_.tab_size,
-                                       .editor_indent_width = editor_preferences_.indent_width,
-                                       .editor_soft_tabs = editor_preferences_.soft_tabs,
-                                       .colorscheme_name = active_colorscheme_name_,
-                                       .project_base_color =
-                                           project_base_color_.value_or(DefaultProjectBaseColor(project_root_)),
-                                   }));
+  util::WriteTextFileAtomically(config_path, SerializeProjectConfig(PersistedProjectConfigState{
+                                             .editor_tab_size = editor_preferences_.tab_size,
+                                             .editor_indent_width = editor_preferences_.indent_width,
+                                             .editor_soft_tabs = editor_preferences_.soft_tabs,
+                                             .colorscheme_name = active_colorscheme_name_,
+                                             .project_base_color = project_base_color_.value_or(
+                                                 DefaultProjectBaseColor(project_root_)),
+                                         }));
 }
 
 std::filesystem::path WorkspaceShell::SessionStatePath() const {
@@ -163,7 +165,7 @@ bool WorkspaceShell::RestoreSessionState() {
   if (session_path.empty()) {
     return false;
   }
-  const auto text = ReadFileText(session_path);
+  const auto text = util::ReadTextFile(session_path);
   if (!text.has_value()) {
     return false;
   }
@@ -479,18 +481,13 @@ void WorkspaceShell::SaveSessionState() {
     persisted_session.tabs.push_back(std::move(*persisted_tab));
   }
 
-  WriteTextFileAtomically(session_path, SerializeProjectSession(persisted_session));
+  util::WriteTextFileAtomically(session_path, SerializeProjectSession(persisted_session));
 }
 
 std::filesystem::path WorkspaceShell::WorkspaceSessionStatePath() const {
-  if (const char* xdg_state_home = std::getenv("XDG_STATE_HOME");
-      xdg_state_home != nullptr && *xdg_state_home != '\0') {
-    return std::filesystem::path(xdg_state_home) / "microide" / "workspace-session";
-  }
-  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-    return std::filesystem::path(home) / ".local" / "state" / "microide" / "workspace-session";
-  }
-  return {};
+  const std::filesystem::path state_root =
+      platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
+  return state_root.empty() ? std::filesystem::path{} : state_root / "workspace-session";
 }
 
 bool WorkspaceShell::RestoreWorkspaceSession() {
@@ -499,7 +496,7 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
   if (session_path.empty()) {
     return false;
   }
-  const auto text = ReadFileText(session_path);
+  const auto text = util::ReadTextFile(session_path);
   if (!text.has_value()) {
     return false;
   }
@@ -564,7 +561,7 @@ void WorkspaceShell::SaveWorkspaceSession() {
     }
     persisted_session.project_roots.push_back(project_root.lexically_normal());
   }
-  WriteTextFileAtomically(session_path, SerializeWorkspaceSession(persisted_session));
+  util::WriteTextFileAtomically(session_path, SerializeWorkspaceSession(persisted_session));
 }
 
 std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedCompareTabState(

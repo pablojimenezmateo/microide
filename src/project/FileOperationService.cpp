@@ -1,7 +1,8 @@
 #include "project/FileOperationService.h"
 
+#include "platform/AppDirectories.h"
+
 #include <chrono>
-#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -147,21 +148,7 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
 }
 
 std::filesystem::path UserHomeDirectory() {
-  if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
-    return std::filesystem::path(home);
-  }
-#if defined(_WIN32)
-  if (const char* profile = std::getenv("USERPROFILE");
-      profile != nullptr && profile[0] != '\0') {
-    return std::filesystem::path(profile);
-  }
-  const char* drive = std::getenv("HOMEDRIVE");
-  const char* path = std::getenv("HOMEPATH");
-  if (drive != nullptr && drive[0] != '\0' && path != nullptr && path[0] != '\0') {
-    return std::filesystem::path(std::string(drive) + std::string(path));
-  }
-#endif
-  return {};
+  return platform::ResolveUserHomeDirectory();
 }
 
 std::string FormatDeletionTimestamp() {
@@ -183,11 +170,8 @@ FileOperationResult TrashPathLinux(const std::filesystem::path& source) {
     return Failure("Could not resolve the home directory for trash");
   }
 
-  const char* xdg_data_home = std::getenv("XDG_DATA_HOME");
   const std::filesystem::path data_home =
-      xdg_data_home != nullptr && xdg_data_home[0] != '\0'
-          ? std::filesystem::path(xdg_data_home)
-          : home / ".local" / "share";
+      platform::ResolveUserDirectory(platform::UserDirectoryKind::Data);
   const std::filesystem::path trash_root = data_home / "Trash";
   const std::filesystem::path trash_files = trash_root / "files";
   const std::filesystem::path trash_info = trash_root / "info";
