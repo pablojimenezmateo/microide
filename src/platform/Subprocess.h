@@ -1,14 +1,21 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace microide::platform {
 
+struct SubprocessEnvironmentOverride {
+  std::string name;
+  std::optional<std::string> value;
+};
+
 struct SubprocessOptions {
   std::filesystem::path cwd;
   std::string stdin_text;
+  std::vector<SubprocessEnvironmentOverride> environment_overrides;
   bool capture_stdout = true;
   bool capture_stderr = true;
   bool silence_stderr = false;

@@ -1,6 +1,7 @@
 #include "platform/Subprocess.h"
 
 #include <cerrno>
+#include <cstdlib>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <array>
@@ -118,6 +119,21 @@ void WriteAllToPipe(int fd, const std::string& text) {
   }
 }
 
+void ApplyEnvironmentOverrides(const std::vector<SubprocessEnvironmentOverride>& overrides) {
+  for (const auto& override_entry : overrides) {
+    if (override_entry.name.empty()) {
+      continue;
+    }
+
+    if (override_entry.value.has_value()) {
+      (void)setenv(override_entry.name.c_str(), override_entry.value->c_str(), 1);
+      continue;
+    }
+
+    (void)unsetenv(override_entry.name.c_str());
+  }
+}
+
 #endif
 
 }  // namespace
@@ -186,6 +202,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     if (!options.cwd.empty()) {
       (void)chdir(options.cwd.string().c_str());
     }
+    ApplyEnvironmentOverrides(options.environment_overrides);
 
     std::vector<char*> raw_argv;
     raw_argv.reserve(argv.size() + 1);

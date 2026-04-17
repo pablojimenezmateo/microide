@@ -1,6 +1,6 @@
 # Plugin Runtime Research
 
-Reviewed on 2026-04-17.
+Reviewed on 2026-04-18.
 
 Scope:
 
@@ -31,7 +31,7 @@ Phase 2 status:
 - plugins can show those providers through `ctx.sidebar.show(id)` or the built-in `sidebar-show <id>` command
 - the workspace API now supports `ctx.workspace.open_file(path, line, column)`
 - plugins now have basic project-relative file helpers: `ctx.files.read_text`, `ctx.files.write_text`, and `ctx.files.exists`
-- plugins now have an argv-based process helper: `ctx.process.run(argv, { cwd = ..., stdin = ... })`
+- plugins now have an argv-based process helper: `ctx.process.run(argv, { cwd = ..., stdin = ..., env = ... })`
 - the current process surface is intentionally synchronous; the async spawn shape from the design notes remains future work if real plugins need it
 
 Phase 3 status:
@@ -884,7 +884,7 @@ This pass extended the runtime without changing the core product boundary:
 - plugin sidebars render through the host and participate in the existing sidebar command flow through `sidebar-show <id>` and `ctx.sidebar.show(id)`
 - `ctx.workspace.open_file(path, line, column)` now supports jumping directly to a location
 - `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, and `ctx.files.exists(path)` provide project-relative file access
-- `ctx.process.run(argv, { cwd, stdin })` provides argv-based external tool execution and returns `ok`, `exit_code`, `stdout`, and `stderr`
+- `ctx.process.run(argv, { cwd, stdin, env })` provides argv-based external tool execution and returns `ok`, `exit_code`, `stdout`, and `stderr`
 
 At the end of Phase 2, this still did not include:
 

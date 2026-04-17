@@ -664,6 +664,7 @@ struct PluginHost::Impl {
 
     std::filesystem::path cwd = host != nullptr ? host->current_project_root : std::filesystem::path{};
     std::string stdin_text;
+    std::vector<platform::SubprocessEnvironmentOverride> environment_overrides;
     if (lua_gettop(state) >= 2 && !lua_isnil(state, 2)) {
       luaL_checktype(state, 2, LUA_TTABLE);
       lua_getfield(state, 2, "cwd");
@@ -680,12 +681,40 @@ struct PluginHost::Impl {
         stdin_text.assign(text, length);
       }
       lua_pop(state, 1);
+
+      lua_getfield(state, 2, "env");
+      if (!lua_isnil(state, -1)) {
+        luaL_checktype(state, -1, LUA_TTABLE);
+        lua_pushnil(state);
+        while (lua_next(state, -2) != 0) {
+          if (!lua_isstring(state, -2)) {
+            return luaL_error(state, "process env keys must be strings");
+          }
+
+          platform::SubprocessEnvironmentOverride override_entry;
+          override_entry.name = lua_tostring(state, -2);
+          if (lua_isstring(state, -1)) {
+            size_t length = 0;
+            const char* text = lua_tolstring(state, -1, &length);
+            override_entry.value = std::string(text, length);
+          } else if (lua_isboolean(state, -1) && lua_toboolean(state, -1) == 0) {
+            override_entry.value = std::nullopt;
+          } else {
+            return luaL_error(state, "process env values must be strings or false");
+          }
+
+          environment_overrides.push_back(std::move(override_entry));
+          lua_pop(state, 1);
+        }
+      }
+      lua_pop(state, 1);
     }
 
     const platform::SubprocessResult result = platform::RunSubprocess(
         argv, platform::SubprocessOptions{
                   .cwd = cwd,
                   .stdin_text = stdin_text,
+                  .environment_overrides = std::move(environment_overrides),
                   .capture_stdout = true,
                   .capture_stderr = true,
               });

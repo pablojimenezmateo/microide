@@ -56,7 +56,8 @@ Current state:
 - the host already exposes narrow file, workspace, process, diagnostics, and hover extension points
 - host-owned app-directory, subprocess, output-channel, task-executor, and persistence-format
   services now back plugin, search, blame, and workspace state flows instead of keeping that work
-  tangled in `WorkspaceShell` or `WorkspaceShellShared.*`
+  tangled in `WorkspaceShell` or `WorkspaceShellShared.*`, including argv-based plugin subprocess
+  execution with cwd, stdin, and environment override support
 - host-owned filesystem helpers and a host-owned tree watcher now back plugin discovery, runtime
   syntax loading, theme enumeration, and automatic plugin reload, with Linux native file-watch
   wakeups plus snapshot fallback where native coverage is not available

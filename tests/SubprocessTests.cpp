@@ -2,12 +2,14 @@
 
 #include "platform/Subprocess.h"
 
+#include <optional>
 #include <string>
 
 namespace microide::tests {
 namespace {
 
 using microide::platform::RunSubprocess;
+using microide::platform::SubprocessEnvironmentOverride;
 using microide::platform::SubprocessOptions;
 
 void TestSubprocessCapturesStdoutAndStdin() {
@@ -45,11 +47,54 @@ void TestSubprocessCapturesStderrAndCwd() {
          "silenced subprocess execution should discard stderr output");
 }
 
+#if defined(__unix__) || defined(__APPLE__)
+void TestSubprocessAppliesEnvironmentOverrides() {
+  ScopedEnvVar scoped_env("MICROIDE_SUBPROCESS_TEST_ENV", "outer");
+
+  const auto override_result = RunSubprocess(
+      {"sh", "-c", "printf '%s' \"$MICROIDE_SUBPROCESS_TEST_ENV\""},
+      SubprocessOptions{
+          .environment_overrides =
+              {
+                  SubprocessEnvironmentOverride{
+                      .name = "MICROIDE_SUBPROCESS_TEST_ENV",
+                      .value = std::string("inner"),
+                  },
+              },
+      });
+  Expect(override_result.exit_code == 0,
+         "subprocess env override fixture should exit successfully");
+  Expect(override_result.stdout_text == "inner",
+         "subprocess execution should override inherited environment variables");
+
+  const auto unset_result = RunSubprocess(
+      {"sh", "-c",
+       "if [ -n \"${MICROIDE_SUBPROCESS_TEST_ENV+x}\" ]; then printf set; else printf unset; fi"},
+      SubprocessOptions{
+          .environment_overrides =
+              {
+                  SubprocessEnvironmentOverride{
+                      .name = "MICROIDE_SUBPROCESS_TEST_ENV",
+                      .value = std::nullopt,
+                  },
+              },
+      });
+  Expect(unset_result.exit_code == 0,
+         "subprocess env unset fixture should exit successfully");
+  Expect(unset_result.stdout_text == "unset",
+         "subprocess execution should allow removing inherited environment variables");
+}
+#endif
+
 }  // namespace
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Subprocess/CapturesStdoutAndStdin", TestSubprocessCapturesStdoutAndStdin);
   AddTest(tests, "Subprocess/CapturesStderrAndCwd", TestSubprocessCapturesStderrAndCwd);
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "Subprocess/AppliesEnvironmentOverrides",
+          TestSubprocessAppliesEnvironmentOverrides);
+#endif
 }
 
 }  // namespace microide::tests

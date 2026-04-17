@@ -261,11 +261,24 @@ return ide.plugin({
       local wrote = ctx.files.write_text("notes.txt", "written by plugin\n")
       local cat = ctx.process.run({"cat"}, { stdin = "stdin payload\n", cwd = "." })
       local pwd = ctx.process.run({"pwd"}, { cwd = "." })
+      local envset = ctx.process.run({"sh", "-c", "printf '%s' \"$PHASE2_SET_ENV\""}, {
+        cwd = ".",
+        env = { PHASE2_SET_ENV = "plugin-value" }
+      })
+      local envunset = ctx.process.run({
+        "sh", "-c",
+        "if [ -n \"${PHASE2_REMOVE_ENV+x}\" ]; then printf set; else printf unset; fi"
+      }, {
+        cwd = ".",
+        env = { PHASE2_REMOVE_ENV = false }
+      })
       ctx.log("read:" .. readme)
       ctx.log("exists:" .. tostring(exists))
       ctx.log("wrote:" .. tostring(wrote))
       ctx.log("cat:" .. tostring(cat.exit_code) .. ":" .. cat.stdout)
       ctx.log("pwd:" .. tostring(pwd.exit_code) .. ":" .. pwd.stdout)
+      ctx.log("envset:" .. tostring(envset.exit_code) .. ":" .. envset.stdout)
+      ctx.log("envunset:" .. tostring(envunset.exit_code) .. ":" .. envunset.stdout)
       ctx.workspace.open_file("README.md", 2, 3)
       ctx.sidebar.show("problems")
     end)
@@ -274,6 +287,7 @@ return ide.plugin({
 )");
 
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedEnvVar phase2_remove_env("PHASE2_REMOVE_ENV", "outer");
 
   std::optional<PluginHost::OpenFileRequest> opened_file;
   std::string shown_sidebar;
@@ -331,6 +345,12 @@ return ide.plugin({
   Expect(pwd_message != host.Messages().end() &&
              pwd_message->find(project_root.lexically_normal().string()) != std::string::npos,
          "ctx.process.run should honor cwd relative to the active project");
+  Expect(std::find(host.Messages().begin(), host.Messages().end(),
+                   "phase2: envset:0:plugin-value") != host.Messages().end(),
+         "ctx.process.run should apply environment overrides");
+  Expect(std::find(host.Messages().begin(), host.Messages().end(),
+                   "phase2: envunset:0:unset") != host.Messages().end(),
+         "ctx.process.run should allow clearing inherited environment variables");
 
   std::vector<PluginHost::SidebarItem> items;
   Expect(host.SnapshotSidebar("problems", &items, &command_error),
