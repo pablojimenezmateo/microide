@@ -40,6 +40,7 @@ Phase 3 status:
 - added a host-owned `editor::DiagnosticsStore` that keeps plugin diagnostics scoped by owner and file path
 - plugins can now publish and clear diagnostics through `ctx.diagnostics.publish(path, diagnostics)` and `ctx.diagnostics.clear(path_or_nil)`
 - editor tabs, compare right panes, and merge result panes now render diagnostic underlines through the host using theme-backed severity colors
+- editor tabs, compare right panes, and merge result panes now render severity gutter markers through the host instead of keeping diagnostics as underline-only decoration
 - project-tab switching now preserves each workspace state's diagnostics without leaking or clearing them across projects
 - plugins can now register hover providers through `ctx.hover.add({ id, provide })`
 - hover requests now resolve through the host in editor tabs, compare right panes, and merge result panes, then render through the shared host popup path
@@ -917,9 +918,17 @@ This follow-up pass finished the host-owned hover-routing half of editor extensi
 - popup rendering stays host-owned and text-only, so providers return structured text while the host keeps layout, precedence, and interaction rules
 - blame still wins first, diagnostics still win second, and plugin hover providers fill the remaining generic text-hover slot
 
+### Phase 3: Landed Diagnostics Gutter Marker Slice
+
+This final diagnostics pass closed the remaining presentation gap in Phase 3:
+
+- editor diagnostics now render severity-colored gutter markers in normal editor tabs and merge result panes through the shared editor renderer
+- compare tabs now render the same severity markers in the editable right-pane gutter so diagnostics are not underline-only there either
+- marker severity collapses overlapping diagnostics to the highest severity visible on each line, so one line gets one clear marker even when multiple owners overlap
+
 ### Phase 3: Remaining Editor Extensibility
 
-- richer diagnostics presentation beyond underlines and hover popups
+- none; the current phase-3 host surface now includes diagnostics publication, underlines, gutter markers, shared hover popups, a Problems sidebar, stale-path cleanup, and plugin hover providers
 
 ### Phase 4: Syntax Contributions
 

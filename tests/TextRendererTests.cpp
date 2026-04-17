@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/DiagnosticsRender.h"
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/EditorViewRenderer.h"
 #include "editor/TextViewport.h"
@@ -564,6 +565,125 @@ void TestEditorViewRendererPaintsDiagnosticUnderlines() {
   SDL_DestroySurface(pixels);
 }
 
+void TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch() {
+  const std::vector<microide::editor::PublishedDiagnostic> diagnostics = {
+      microide::editor::PublishedDiagnostic{
+          .owner = "lint",
+          .path = "/tmp/line-severity.cpp",
+          .range =
+              microide::editor::SelectionRange{
+                  .start = microide::editor::TextPosition{0, 0},
+                  .end = microide::editor::TextPosition{0, 4},
+              },
+          .severity = microide::editor::DiagnosticSeverity::Warning,
+          .message = "warning",
+      },
+      microide::editor::PublishedDiagnostic{
+          .owner = "lint",
+          .path = "/tmp/line-severity.cpp",
+          .range =
+              microide::editor::SelectionRange{
+                  .start = microide::editor::TextPosition{0, 2},
+                  .end = microide::editor::TextPosition{1, 2},
+              },
+          .severity = microide::editor::DiagnosticSeverity::Error,
+          .message = "error",
+      },
+      microide::editor::PublishedDiagnostic{
+          .owner = "lint",
+          .path = "/tmp/line-severity.cpp",
+          .range =
+              microide::editor::SelectionRange{
+                  .start = microide::editor::TextPosition{2, 0},
+                  .end = microide::editor::TextPosition{2, 1},
+              },
+          .severity = microide::editor::DiagnosticSeverity::Hint,
+          .message = "hint",
+      },
+  };
+
+  Expect(microide::editor::HighestDiagnosticSeverityForLine(diagnostics, 0).has_value() &&
+             *microide::editor::HighestDiagnosticSeverityForLine(diagnostics, 0) ==
+                 microide::editor::DiagnosticSeverity::Error,
+         "line severity should prefer the most severe overlapping diagnostic");
+  Expect(microide::editor::HighestDiagnosticSeverityForLine(diagnostics, 1).has_value() &&
+             *microide::editor::HighestDiagnosticSeverityForLine(diagnostics, 1) ==
+                 microide::editor::DiagnosticSeverity::Error,
+         "line severity should treat multi-line diagnostics as covering each intersected line");
+  Expect(microide::editor::HighestDiagnosticSeverityForLine(diagnostics, 3) == std::nullopt,
+         "line severity should report no marker when a line has no diagnostics");
+}
+
+void TestEditorViewRendererPaintsDiagnosticGutterMarkers() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 72);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "diagnostic gutter renderer test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "diagnostic gutter renderer test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = SDL_Color{0x08, 0x08, 0x08, 0xff};
+  theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
+  theme.diagnostic_error = SDL_Color{0xd9, 0x64, 0x64, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("alpha\nomega\n", "/tmp/editor-diagnostic-gutter.cpp");
+  viewport.MoveCursorTo(1, 0);
+
+  const std::vector<microide::editor::PublishedDiagnostic> diagnostics = {
+      microide::editor::PublishedDiagnostic{
+          .owner = "eslint",
+          .path = "/tmp/editor-diagnostic-gutter.cpp",
+          .range =
+              microide::editor::SelectionRange{
+                  .start = microide::editor::TextPosition{0, 1},
+                  .end = microide::editor::TextPosition{0, 4},
+              },
+          .severity = microide::editor::DiagnosticSeverity::Error,
+          .message = "unexpected token",
+      },
+  };
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 72.0f};
+  const auto metrics =
+      microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+  const SDL_FRect marker_rect = microide::editor::DiagnosticGutterMarkerRect(
+      rect.x, metrics.first_line_y, metrics.gutter_width, metrics.line_height);
+
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "", std::nullopt,
+                  std::nullopt, diagnostics);
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "diagnostic gutter renderer test should read software pixels");
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  const int marker_x = static_cast<int>(std::floor(marker_rect.x + marker_rect.w * 0.5f));
+  const int marker_y = static_cast<int>(std::floor(marker_rect.y + marker_rect.h * 0.5f));
+  Expect(SDL_ReadSurfacePixel(pixels, marker_x, marker_y, &r, &g, &b, &a),
+         "diagnostic gutter renderer test should read the marker pixel");
+  Expect(r == theme.diagnostic_error.r && g == theme.diagnostic_error.g &&
+             b == theme.diagnostic_error.b && a == theme.diagnostic_error.a,
+         "diagnostic gutter markers should use the severity color");
+
+  Expect(SDL_ReadSurfacePixel(pixels, static_cast<int>(marker_rect.x + marker_rect.w + 3.0f),
+                              marker_y, &r, &g, &b, &a),
+         "diagnostic gutter renderer test should read the plain gutter pixel");
+  Expect(r == theme.gutter_background.r && g == theme.gutter_background.g &&
+             b == theme.gutter_background.b && a == theme.gutter_background.a,
+         "diagnostic gutter markers should not recolor the whole gutter");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestMeasureWidthCachesRepeatedStrings() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -638,6 +758,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view paints diagnostic underlines",
           TestEditorViewRendererPaintsDiagnosticUnderlines);
+  AddTest(tests,
+          "TextRenderer diagnostic line severity prefers the most severe match",
+          TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch);
+  AddTest(tests,
+          "TextRenderer editor view paints diagnostic gutter markers",
+          TestEditorViewRendererPaintsDiagnosticGutterMarkers);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",

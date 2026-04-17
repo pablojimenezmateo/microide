@@ -426,6 +426,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
             std::span<const editor::PublishedDiagnostic>(*right_diagnostics));
       }
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
+      if (right_diagnostics != nullptr) {
+        if (const auto severity = editor::HighestDiagnosticSeverityForLine(
+                std::span<const editor::PublishedDiagnostic>(*right_diagnostics), right_line_index);
+            severity.has_value()) {
+          editor::DrawDiagnosticGutterMarker(renderer, theme_, surface.right_x, y,
+                                             surface.gutter_width, surface.line_height,
+                                             *severity);
+        }
+      }
       draw_text(surface.right_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,
                 std::to_string(compare_row.right_line));

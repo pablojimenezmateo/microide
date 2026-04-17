@@ -4,6 +4,24 @@
 
 namespace microide::editor {
 
+namespace {
+
+int DiagnosticSeverityRank(DiagnosticSeverity severity) {
+  switch (severity) {
+    case DiagnosticSeverity::Error:
+      return 3;
+    case DiagnosticSeverity::Warning:
+      return 2;
+    case DiagnosticSeverity::Info:
+      return 1;
+    case DiagnosticSeverity::Hint:
+      return 0;
+  }
+  return -1;
+}
+
+}  // namespace
+
 SDL_Color DiagnosticSeverityColor(const render::Theme& theme, DiagnosticSeverity severity) {
   switch (severity) {
     case DiagnosticSeverity::Error:
@@ -16,6 +34,54 @@ SDL_Color DiagnosticSeverityColor(const render::Theme& theme, DiagnosticSeverity
       return theme.diagnostic_hint;
   }
   return theme.diagnostic_error;
+}
+
+std::optional<DiagnosticSeverity> HighestDiagnosticSeverityForLine(
+    std::span<const PublishedDiagnostic> diagnostics,
+    std::size_t line_index) {
+  std::optional<DiagnosticSeverity> severity;
+  int highest_rank = -1;
+  for (const PublishedDiagnostic& diagnostic : diagnostics) {
+    if (line_index < diagnostic.range.start.line || line_index > diagnostic.range.end.line) {
+      continue;
+    }
+    const int rank = DiagnosticSeverityRank(diagnostic.severity);
+    if (rank <= highest_rank) {
+      continue;
+    }
+    highest_rank = rank;
+    severity = diagnostic.severity;
+  }
+  return severity;
+}
+
+SDL_FRect DiagnosticGutterMarkerRect(float gutter_x,
+                                     float y,
+                                     float gutter_width,
+                                     float line_height) {
+  const float marker_width = std::min(3.0f, std::max(2.0f, gutter_width * 0.08f));
+  return SDL_FRect{
+      gutter_x + 2.0f,
+      y - 1.0f,
+      marker_width,
+      std::max(1.0f, line_height),
+  };
+}
+
+void DrawDiagnosticGutterMarker(SDL_Renderer* renderer,
+                                const render::Theme& theme,
+                                float gutter_x,
+                                float y,
+                                float gutter_width,
+                                float line_height,
+                                DiagnosticSeverity severity) {
+  if (renderer == nullptr || gutter_width <= 0.0f || line_height <= 0.0f) {
+    return;
+  }
+  const SDL_FRect rect = DiagnosticGutterMarkerRect(gutter_x, y, gutter_width, line_height);
+  const SDL_Color color = DiagnosticSeverityColor(theme, severity);
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  SDL_RenderFillRect(renderer, &rect);
 }
 
 std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& text_renderer,

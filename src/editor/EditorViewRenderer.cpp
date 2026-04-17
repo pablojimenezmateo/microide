@@ -383,6 +383,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                viewport.horizontal_scroll(), viewport.visible_columns(),
                                viewport.tab_size(), diagnostics);
     kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
+    if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
+        severity.has_value()) {
+      DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+                                 *severity);
+    }
     text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
                                selected ? theme.current_line_number : theme.line_number,
                                selected ? theme.row_highlight : theme.gutter_background,

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "WorkspaceShellTestAccess.h"
+#include "render/Theme.h"
 
 #include <chrono>
 #include <cmath>
@@ -15,6 +16,41 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceShellTestAccess;
+
+#if MICROIDE_HAS_SDL3_TTF
+
+void EnsureDummySdlVideo() {
+  static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");
+  static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
+  Expect(initialized, "SDL should initialize with the dummy video driver");
+}
+
+class SoftwareCanvas final {
+ public:
+  SoftwareCanvas(int width, int height) {
+    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+    Expect(surface_ != nullptr, "compare diagnostics render test should allocate a software surface");
+    renderer_ = SDL_CreateSoftwareRenderer(surface_);
+    Expect(renderer_ != nullptr, "compare diagnostics render test should create a software renderer");
+  }
+
+  ~SoftwareCanvas() {
+    if (renderer_ != nullptr) {
+      SDL_DestroyRenderer(renderer_);
+    }
+    if (surface_ != nullptr) {
+      SDL_DestroySurface(surface_);
+    }
+  }
+
+  SDL_Renderer* renderer() const { return renderer_; }
+
+ private:
+  SDL_Surface* surface_ = nullptr;
+  SDL_Renderer* renderer_ = nullptr;
+};
+
+#endif
 
 bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
@@ -245,6 +281,60 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
          "compare selection step should redraw less than the full compare surface height");
 }
 
+void TestWorkspaceShellCompareRenderPaintsDiagnosticGutterMarkers() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare diagnostics fixture", "compare diagnostics fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare diagnostics fixture should open");
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "diagnostics", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 0},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 3},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Error,
+                 .message = "compare error",
+             }}),
+         "compare diagnostics fixture should publish one right-pane diagnostic");
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "compare diagnostics render test should read software pixels");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const auto theme = microide::render::MakeDefaultTheme();
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  const int marker_x = static_cast<int>(std::floor(surface.right_x + 3.0f));
+  const int marker_y = static_cast<int>(std::floor(surface.rows_y + surface.line_height - 2.0f));
+  Expect(SDL_ReadSurfacePixel(pixels, marker_x, marker_y, &r, &g, &b, &a),
+         "compare diagnostics render test should read the gutter marker pixel");
+  Expect(r == theme.diagnostic_error.r && g == theme.diagnostic_error.g &&
+             b == theme.diagnostic_error.b && a == theme.diagnostic_error.a,
+         "compare right-pane diagnostics should paint severity markers in the gutter");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -422,6 +512,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane);
   AddTest(tests, "WorkspaceShell/CompareSelectionStepInvalidatesRowBand",
           TestWorkspaceShellCompareSelectionStepInvalidatesRowBand);
+  AddTest(tests, "WorkspaceShell/CompareRenderPaintsDiagnosticGutterMarkers",
+          TestWorkspaceShellCompareRenderPaintsDiagnosticGutterMarkers);
   AddTest(tests, "WorkspaceShell/CompareBlameLoadsForWorkingTreePane",
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",
