@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -49,6 +50,10 @@ std::string NormalizePattern(std::string_view pattern) {
 
 CompiledRegex CompileSyntaxRegex(std::string_view pattern) {
   return CompiledRegex(NormalizePattern(pattern), kRegexCompileOptions);
+}
+
+CompiledRegex CompileSyntaxRegex(std::string_view pattern, std::string error_prefix) {
+  return CompiledRegex(NormalizePattern(pattern), kRegexCompileOptions, std::move(error_prefix));
 }
 
 std::size_t AdvanceToNextCodePoint(std::string_view text, std::size_t offset) {
@@ -160,6 +165,11 @@ struct Registry {
   std::uint32_t default_definition_id = 0;
 };
 
+struct BuildOutput {
+  Registry registry;
+  std::size_t loaded_runtime_definition_count = 0;
+};
+
 bool StartsWith(std::string_view text, std::string_view prefix) {
   return text.substr(0, prefix.size()) == prefix;
 }
@@ -216,9 +226,143 @@ SyntaxTokenKind TokenKindForGroupName(std::string_view group_name) {
   return SyntaxTokenKind::Plain;
 }
 
-Registry BuildRegistry() {
-  Registry registry;
-  registry.rules.reserve(kGeneratedRuleCount);
+void RecordBuildError(std::vector<std::string>* errors, std::string error_message) {
+  if (errors != nullptr && !error_message.empty()) {
+    errors->push_back(std::move(error_message));
+  }
+}
+
+std::string JoinSyntaxPatterns(const std::vector<std::string>& patterns) {
+  if (patterns.empty()) {
+    return {};
+  }
+
+  std::ostringstream stream;
+  for (std::size_t i = 0; i < patterns.size(); ++i) {
+    if (i != 0) {
+      stream << "|";
+    }
+    stream << "(?:" << patterns[i] << ")";
+  }
+  return stream.str();
+}
+
+bool ValidateCompiledRegex(const CompiledRegex& regex, std::vector<std::string>* errors) {
+  if (regex.valid() || regex.error().empty()) {
+    return regex.valid();
+  }
+  RecordBuildError(errors, regex.error());
+  return false;
+}
+
+CompiledRegex CompileMergedSyntaxRegex(const std::vector<std::string>& patterns,
+                                       std::string error_prefix,
+                                       std::vector<std::string>* errors) {
+  if (patterns.empty()) {
+    return {};
+  }
+
+  CompiledRegex regex = CompileSyntaxRegex(JoinSyntaxPatterns(patterns), std::move(error_prefix));
+  if (!ValidateCompiledRegex(regex, errors)) {
+    return {};
+  }
+  return regex;
+}
+
+bool AppendRuntimeRule(Registry& registry,
+                       const RuntimeSyntaxRuleData& runtime_rule,
+                       std::uint32_t parent_region_id,
+                       const std::filesystem::path& source_path,
+                       std::vector<std::string>* errors) {
+  const std::size_t rule_index = registry.rules.size();
+  Rule rule;
+  rule.kind = runtime_rule.kind;
+  rule.group = TokenKindForGroupName(runtime_rule.group_name);
+  rule.limit_group = TokenKindForGroupName(
+      runtime_rule.limit_group_name.empty() ? runtime_rule.group_name : runtime_rule.limit_group_name);
+  rule.parent_region_id = parent_region_id;
+
+  const std::string source_text = source_path.string();
+  if (runtime_rule.kind == GeneratedRuleKind::Pattern) {
+    rule.pattern = CompileSyntaxRegex(runtime_rule.pattern,
+                                      "invalid syntax pattern in " + source_text);
+    if (!ValidateCompiledRegex(rule.pattern, errors)) {
+      return false;
+    }
+  } else {
+    rule.start = CompileSyntaxRegex(runtime_rule.start_regex,
+                                    "invalid syntax region start in " + source_text);
+    rule.end = CompileSyntaxRegex(runtime_rule.end_regex,
+                                  "invalid syntax region end in " + source_text);
+    if (!runtime_rule.skip_regex.empty()) {
+      rule.skip = CompileSyntaxRegex(runtime_rule.skip_regex,
+                                     "invalid syntax region skip in " + source_text);
+    }
+    if (!ValidateCompiledRegex(rule.start, errors) || !ValidateCompiledRegex(rule.end, errors) ||
+        (!runtime_rule.skip_regex.empty() && !ValidateCompiledRegex(rule.skip, errors))) {
+      return false;
+    }
+  }
+
+  registry.rules.push_back(std::move(rule));
+
+  if (runtime_rule.kind == GeneratedRuleKind::Region) {
+    if (!runtime_rule.children.empty()) {
+      registry.rules[rule_index].first_child = registry.rules.size();
+    }
+    const std::uint32_t region_id = static_cast<std::uint32_t>(rule_index + 1);
+    for (const auto& child : runtime_rule.children) {
+      if (!AppendRuntimeRule(registry, child, region_id, source_path, errors)) {
+        return false;
+      }
+      ++registry.rules[rule_index].child_count;
+    }
+  }
+
+  return true;
+}
+
+bool AppendRuntimeDefinition(Registry& registry,
+                             const RuntimeSyntaxDefinitionData& runtime_definition,
+                             std::vector<std::string>* errors) {
+  const std::size_t rules_before = registry.rules.size();
+  const std::size_t definitions_before = registry.definitions.size();
+
+  Definition definition;
+  definition.filetype = runtime_definition.filetype;
+  definition.filename_regex = CompileMergedSyntaxRegex(
+      runtime_definition.filename_patterns,
+      "invalid syntax filename matcher in " + runtime_definition.source_path.string(), errors);
+  definition.header_regex = CompileMergedSyntaxRegex(
+      runtime_definition.header_patterns,
+      "invalid syntax header matcher in " + runtime_definition.source_path.string(), errors);
+  definition.signature_regex = CompileMergedSyntaxRegex(
+      runtime_definition.signature_patterns,
+      "invalid syntax signature matcher in " + runtime_definition.source_path.string(), errors);
+  if ((!runtime_definition.filename_patterns.empty() && !definition.filename_regex.valid()) ||
+      (!runtime_definition.header_patterns.empty() && !definition.header_regex.valid()) ||
+      (!runtime_definition.signature_patterns.empty() && !definition.signature_regex.valid())) {
+    registry.rules.resize(rules_before);
+    registry.definitions.resize(definitions_before);
+    return false;
+  }
+
+  definition.first_rule = registry.rules.size();
+  for (const auto& rule : runtime_definition.rules) {
+    if (!AppendRuntimeRule(registry, rule, 0, runtime_definition.source_path, errors)) {
+      registry.rules.resize(rules_before);
+      registry.definitions.resize(definitions_before);
+      return false;
+    }
+  }
+  definition.rule_count = registry.rules.size() - definition.first_rule;
+  registry.definitions.push_back(std::move(definition));
+  return true;
+}
+
+void AppendGeneratedDefinitions(Registry& registry) {
+  const std::size_t rule_offset = registry.rules.size();
+  registry.rules.reserve(registry.rules.size() + kGeneratedRuleCount);
   for (std::size_t i = 0; i < kGeneratedRuleCount; ++i) {
     const GeneratedRuleData& generated = kGeneratedRules[i];
     Rule rule;
@@ -238,13 +382,16 @@ Registry BuildRegistry() {
     if (generated.skip_regex != nullptr) {
       rule.skip = CompileSyntaxRegex(generated.skip_regex);
     }
-    rule.first_child = generated.first_child;
+    rule.first_child =
+        generated.child_count == 0 ? 0 : rule_offset + generated.first_child;
     rule.child_count = generated.child_count;
-    rule.parent_region_id = static_cast<std::uint32_t>(generated.parent_region_id);
+    rule.parent_region_id = generated.parent_region_id == 0
+                                ? 0
+                                : static_cast<std::uint32_t>(rule_offset + generated.parent_region_id);
     registry.rules.push_back(std::move(rule));
   }
 
-  registry.definitions.reserve(kGeneratedDefinitionCount);
+  registry.definitions.reserve(registry.definitions.size() + kGeneratedDefinitionCount);
   for (std::size_t i = 0; i < kGeneratedDefinitionCount; ++i) {
     const GeneratedDefinitionData& generated = kGeneratedDefinitions[i];
     Definition definition;
@@ -258,23 +405,48 @@ Registry BuildRegistry() {
     if (generated.signature_regex != nullptr) {
       definition.signature_regex = CompileSyntaxRegex(generated.signature_regex);
     }
-    definition.first_rule = generated.first_rule;
+    definition.first_rule = rule_offset + generated.first_rule;
     definition.rule_count = generated.rule_count;
     registry.definitions.push_back(std::move(definition));
-    if (registry.default_definition_id == 0 && registry.definitions.back().filetype == "unknown") {
-      registry.default_definition_id = static_cast<std::uint32_t>(i + 1);
+  }
+}
+
+BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtime_definitions,
+                          std::vector<std::string>* errors) {
+  BuildOutput output;
+  for (const auto& definition : runtime_definitions) {
+    if (AppendRuntimeDefinition(output.registry, definition, errors)) {
+      ++output.loaded_runtime_definition_count;
     }
   }
 
-  if (registry.default_definition_id == 0 && !registry.definitions.empty()) {
-    registry.default_definition_id = 1;
+  AppendGeneratedDefinitions(output.registry);
+
+  for (std::size_t i = 0; i < output.registry.definitions.size(); ++i) {
+    if (output.registry.definitions[i].filetype == "unknown") {
+      output.registry.default_definition_id = static_cast<std::uint32_t>(i + 1);
+      break;
+    }
   }
+
+  if (output.registry.default_definition_id == 0 && !output.registry.definitions.empty()) {
+    output.registry.default_definition_id = 1;
+  }
+  return output;
+}
+
+Registry& MutableRegistry() {
+  static Registry registry = BuildRegistry({}, nullptr).registry;
   return registry;
 }
 
+std::size_t& MutableRegistryRevision() {
+  static std::size_t revision = 1;
+  return revision;
+}
+
 const Registry& GetRegistry() {
-  static const Registry registry = BuildRegistry();
-  return registry;
+  return MutableRegistry();
 }
 
 const Definition* DefinitionById(const Registry& registry, std::uint32_t definition_id) {
@@ -545,6 +717,27 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
 }
 
 }  // namespace
+
+RuntimeSyntaxReloadResult ReloadDefinitions(
+    const std::vector<RuntimeSyntaxDefinitionData>& definitions,
+    std::vector<std::string>* errors) {
+  std::vector<std::string> local_errors;
+  BuildOutput build = BuildRegistry(definitions, &local_errors);
+  MutableRegistry() = std::move(build.registry);
+  ++MutableRegistryRevision();
+  if (errors != nullptr) {
+    *errors = local_errors;
+  }
+  return RuntimeSyntaxReloadResult{
+      .built_in_definition_count = kGeneratedDefinitionCount,
+      .plugin_definition_count = build.loaded_runtime_definition_count,
+      .error_count = local_errors.size(),
+  };
+}
+
+std::size_t RegistryRevision() {
+  return MutableRegistryRevision();
+}
 
 SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines) {
   const Registry& registry = GetRegistry();

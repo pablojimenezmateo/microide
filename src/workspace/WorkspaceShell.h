@@ -1028,6 +1028,8 @@ class WorkspaceShell {
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject();
+  void InvalidateRuntimeSyntaxStateCaches();
+  std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers();
   void NotifyPluginBufferOpen(const std::filesystem::path& path);
   void NotifyPluginBufferSave(const std::filesystem::path& path);
@@ -1677,6 +1679,8 @@ class WorkspaceShell {
   editor::DiagnosticsStore diagnostics_store_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   plugin::PluginHost plugin_host_;
+  std::size_t runtime_syntax_plugin_definition_count_ = 0;
+  std::vector<std::string> runtime_syntax_errors_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

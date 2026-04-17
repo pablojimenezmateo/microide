@@ -901,6 +901,10 @@ void TextViewport::InvalidateLayoutCaches() {
   highlight_state_revision_ = document_->layout_revision;
 }
 
+void TextViewport::InvalidateSyntaxHighlighting() {
+  InvalidateLayoutCaches();
+}
+
 void TextViewport::RefreshEncoding() {
   document_->encoding = DetectEncoding(document_->lines);
 }

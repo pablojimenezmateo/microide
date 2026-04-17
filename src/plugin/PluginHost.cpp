@@ -2017,6 +2017,34 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
   return false;
 }
 
+std::vector<std::filesystem::path> PluginHost::DataDirectories(std::string_view subdirectory) const {
+  if (subdirectory.empty()) {
+    return {};
+  }
+
+  std::vector<std::filesystem::path> directories;
+  directories.reserve(impl_->plugins.size());
+
+  const auto append_matching_directories = [&](bool project_local) {
+    for (const auto& plugin : impl_->plugins) {
+      if (plugin.project_local != project_local) {
+        continue;
+      }
+      std::error_code error;
+      const std::filesystem::path candidate = (plugin.root / subdirectory).lexically_normal();
+      if (!std::filesystem::exists(candidate, error) || error ||
+          !std::filesystem::is_directory(candidate, error)) {
+        continue;
+      }
+      directories.push_back(candidate);
+    }
+  };
+
+  append_matching_directories(true);
+  append_matching_directories(false);
+  return directories;
+}
+
 const std::vector<std::string>& PluginHost::Messages() const {
   return impl_->messages;
 }

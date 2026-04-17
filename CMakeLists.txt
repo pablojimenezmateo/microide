@@ -108,6 +108,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
+  src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp

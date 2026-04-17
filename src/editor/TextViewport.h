@@ -119,6 +119,7 @@ class TextViewport {
   bool DeleteSelectedText();
   void ClearSelection();
   void SelectAll();
+  void InvalidateSyntaxHighlighting();
 
  private:
   struct HistoryEntry {

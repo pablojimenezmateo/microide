@@ -53,7 +53,7 @@ The current SDL shell already includes:
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files
 - a PTY-backed terminal panel with tabs, scrollback, selection, clipboard paste shortcuts, alternate-screen support, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, and common ANSI scroll-region handling
 - project-local editor preferences, colorscheme persistence, and session restore
-- runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets
+- runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets plus runtime-loaded plugin syntax contributions
 - an optional `SDL3_ttf` backend with a debug-text fallback
 
 Current implementation status and active priorities are tracked in `docs/active-work.md`.
@@ -72,7 +72,7 @@ These decisions should stay fixed unless there is a clear product reason to revi
 - a terminal tab should be open by default for loaded projects
 - colorscheme and editor preferences remain project-local
 - compare, merge, search, git, and terminal workflows are built-in product features, not plugins
-- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-rendered diagnostic or hover presentation, but they do not replace built-in editing, search, git, compare, merge, terminal, or built-in diagnostics workflows
+- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-loaded syntax data, but they do not replace built-in editing, search, git, compare, merge, terminal, or built-in diagnostics workflows
 
 ## Explicit Non-Goals
 

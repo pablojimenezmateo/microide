@@ -38,7 +38,7 @@ These are implemented and should not be treated as open migration work:
 - file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project for literal mode, capped-result feedback, and a standalone benchmark tool
 - git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
 - PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
-- runtime syntax highlighting from the in-tree generated syntax snapshot
+- runtime syntax highlighting from the in-tree generated syntax snapshot plus plugin `syntax/*.lua` contributions loaded into the host tokenizer at startup and `plugins-reload`
 - manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, argv-based process helpers, and `plugins-reload`
 - plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, a built-in Problems sidebar, and host rename/delete cleanup for stale diagnostic paths
 - targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
@@ -54,13 +54,14 @@ Current state:
 - manual Lua plugin loading is shipped
 - command and sidebar registries exist
 - the host already exposes narrow file, workspace, process, diagnostics, and hover extension points
+- plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
 
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
-- decide whether syntax, colorscheme, or other runtime asset contribution belongs in the same host-managed extension model now that the phase-3 editor extensibility pass is complete
+- extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in product features even when plugins can extend around them
 
 ### 2. Terminal Hardening

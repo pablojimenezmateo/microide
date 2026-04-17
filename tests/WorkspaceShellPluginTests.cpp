@@ -18,6 +18,13 @@ void WritePluginInit(const std::filesystem::path& root,
   WriteFile(root / directory_name / "init.lua", std::string(content));
 }
 
+void WritePluginSyntax(const std::filesystem::path& root,
+                       std::string_view directory_name,
+                       std::string_view file_name,
+                       std::string_view content) {
+  WriteFile(root / directory_name / "syntax" / file_name, std::string(content));
+}
+
 void TestWorkspaceShellLoadsPluginsAndRunsBufferHooks() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -149,6 +156,75 @@ return ide.plugin({
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
              WorkspaceShellTestAccess::PluginMessages(shell).back() == "reloadable: after",
          "plugins-reload should rebuild the active plugin command table");
+}
+
+void TestWorkspaceShellPluginsReloadRefreshesRuntimeSyntaxHighlighting() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path notes = project_root / "notes.todo";
+  WriteFile(project_root / "README.md", "syntax reload fixture\n");
+  WriteFile(notes, "TODO item\n");
+
+  WritePluginInit(
+      plugins_root, "syntax",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "syntax"
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bTODO\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "syntax reload fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, notes);
+
+  const auto& before_tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+  Expect(std::any_of(before_tokens.begin(), before_tokens.end(),
+                     [](microide::editor::SyntaxTokenKind kind) {
+                       return kind == microide::editor::SyntaxTokenKind::Keyword;
+                     }),
+         "plugin syntax contributions should highlight matching files after project load");
+
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bDONE\\b", group = "keyword" }
+  }
+}
+)");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "plugins-reload should rebuild syntax contributions");
+
+  const auto& after_tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+  Expect(std::none_of(after_tokens.begin(), after_tokens.end(),
+                      [](microide::editor::SyntaxTokenKind kind) {
+                        return kind == microide::editor::SyntaxTokenKind::Keyword;
+                      }),
+         "plugins-reload should invalidate active editor syntax caches when definitions change");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("1 syntax definition") !=
+             std::string::npos,
+         "plugins-reload feedback should include loaded plugin syntax definitions");
 }
 
 void TestWorkspaceShellPluginSidebarOpensItems() {
@@ -553,6 +629,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellLoadsPluginsAndRunsBufferHooks);
   AddTest(tests, "WorkspaceShell/PluginsReloadCommandRefreshesCommands",
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
+  AddTest(tests, "WorkspaceShell/PluginsReloadRefreshesRuntimeSyntaxHighlighting",
+          TestWorkspaceShellPluginsReloadRefreshesRuntimeSyntaxHighlighting);
   AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
           TestWorkspaceShellPluginSidebarOpensItems);
   AddTest(tests, "WorkspaceShell/PluginDiagnosticsPersistAcrossProjectSwitches",

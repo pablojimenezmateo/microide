@@ -932,8 +932,12 @@ This final diagnostics pass closed the remaining presentation gap in Phase 3:
 
 ### Phase 4: Syntax Contributions
 
-- runtime syntax loading from plugin data directories
-- startup registration into the syntax engine
+Implemented on 2026-04-17 in a host-owned runtime-data slice:
+
+- plugin directories may now contribute `syntax/*.lua` files that return syntax-definition tables
+- plugin syntax files now load from project-local plugins before global plugins, then fall back to built-in generated definitions
+- the host now rebuilds the runtime syntax registry on project activation and `plugins-reload`
+- editor tabs, split editor views, compare tabs, and merge tabs now invalidate cached syntax state after a syntax-registry reload so definition ids do not go stale across plugin changes
 
 ### Phase 5: Dogfood With Real Plugins
 

@@ -84,6 +84,7 @@ class PluginHost {
                   std::size_t column,
                   HoverResult* result,
                   std::string* error_message = nullptr) const;
+  std::vector<std::filesystem::path> DataDirectories(std::string_view subdirectory) const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

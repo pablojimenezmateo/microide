@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string_view>
 
+#include "editor/SyntaxDefinitionLoader.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 namespace microide::workspace {
@@ -56,14 +57,72 @@ WorkspaceShell::WorkspaceShell() {
 }
 
 bool WorkspaceShell::ReloadPluginsForCurrentProject() {
-  if (!plugin_host_.enabled()) {
-    return false;
-  }
-  const bool clean_reload = plugin_host_.Reload(project_root_);
+  const bool clean_reload = plugin_host_.enabled() ? plugin_host_.Reload(project_root_) : false;
+  std::vector<std::string> syntax_loader_errors;
+  const std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> syntax_definitions =
+      editor::runtime_syntax::LoadDefinitionsFromDirectories(
+          plugin_host_.DataDirectories("syntax"), &syntax_loader_errors);
+  const editor::runtime_syntax::RuntimeSyntaxReloadResult syntax_reload =
+      editor::runtime_syntax::ReloadDefinitions(syntax_definitions, &runtime_syntax_errors_);
+  runtime_syntax_errors_.insert(runtime_syntax_errors_.end(), syntax_loader_errors.begin(),
+                                syntax_loader_errors.end());
+  runtime_syntax_plugin_definition_count_ = syntax_reload.plugin_definition_count;
+  InvalidateRuntimeSyntaxStateCaches();
   RefreshPluginSidebar();
   RefreshProblemsSidebar();
   NotifyPluginsAboutOpenBuffers();
-  return clean_reload;
+  RequestEditorSurfaceRedraw();
+  return clean_reload && runtime_syntax_errors_.empty();
+}
+
+void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches() {
+  text_viewport_.InvalidateSyntaxHighlighting();
+
+  for (auto& tab : open_tabs_) {
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      for (auto& view : tab.editor_state->views) {
+        if (!view.needs_restore) {
+          view.viewport.InvalidateSyntaxHighlighting();
+        }
+      }
+      continue;
+    }
+
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+      RefreshCompareTabDerivedState(*tab.compare);
+      continue;
+    }
+
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+      auto& merge_tab = *tab.merge;
+      merge_tab.incoming_initial_syntax_state =
+          editor::SyntaxHighlighter::InitialState(merge_tab.output_path, merge_tab.model.incoming_lines);
+      merge_tab.current_initial_syntax_state =
+          editor::SyntaxHighlighter::InitialState(merge_tab.output_path, merge_tab.model.current_lines);
+      merge_tab.incoming_current_syntax_state = merge_tab.incoming_initial_syntax_state;
+      merge_tab.current_current_syntax_state = merge_tab.current_initial_syntax_state;
+      merge_tab.incoming_tokens.assign(merge_tab.model.incoming_lines.size(), {});
+      merge_tab.current_tokens.assign(merge_tab.model.current_lines.size(), {});
+      merge_tab.incoming_syntax_rows_tokenized = 0;
+      merge_tab.current_syntax_rows_tokenized = 0;
+      merge_tab.result_viewport.InvalidateSyntaxHighlighting();
+    }
+  }
+}
+
+std::string WorkspaceShell::PluginRuntimeReloadSummary() const {
+  std::string summary = plugin_host_.ReloadSummary();
+  summary += " and " + std::to_string(runtime_syntax_plugin_definition_count_) + " syntax definition";
+  if (runtime_syntax_plugin_definition_count_ != 1) {
+    summary += "s";
+  }
+  if (!runtime_syntax_errors_.empty()) {
+    summary += " with " + std::to_string(runtime_syntax_errors_.size()) + " syntax error";
+    if (runtime_syntax_errors_.size() != 1) {
+      summary += "s";
+    }
+  }
+  return summary;
 }
 
 void WorkspaceShell::NotifyPluginsAboutOpenBuffers() {

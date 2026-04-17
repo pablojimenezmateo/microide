@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "editor/SyntaxDefinitionLoader.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 
 #include <algorithm>
@@ -10,6 +12,10 @@ namespace {
 
 using microide::editor::SyntaxTokenKind;
 using microide::editor::TextViewport;
+
+struct ScopedRuntimeSyntaxRegistryReset {
+  ~ScopedRuntimeSyntaxRegistryReset() { microide::editor::runtime_syntax::ReloadDefinitions({}); }
+};
 
 void TestTextViewportSmallFileKeepsSyntaxHighlighting() {
   TextViewport viewport;
@@ -124,6 +130,59 @@ void TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits() {
          "viewport cache stats should treat a repeated highlight lookup as a hit");
 }
 
+void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
+  WriteFile(
+      syntax_dir / "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\b(TODO|DONE)\\b", group = "keyword" },
+    {
+      start = "\"",
+      ["end"] = "\"",
+      skip = "\\\\.",
+      group = "string",
+      rules = {
+        { pattern = "\\\\.", group = "string" }
+      }
+    }
+  }
+}
+)");
+
+  std::vector<std::string> loader_errors;
+  const auto definitions =
+      microide::editor::runtime_syntax::LoadDefinitionsFromDirectories({syntax_dir}, &loader_errors);
+  Expect(loader_errors.empty(), "runtime syntax loader should accept valid plugin syntax data");
+
+  std::vector<std::string> reload_errors;
+  const auto reload_result =
+      microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
+  Expect(reload_result.plugin_definition_count == 1,
+         "runtime syntax reload should register one plugin definition");
+  Expect(reload_errors.empty(), "runtime syntax reload should accept valid plugin syntax regexes");
+
+  TextViewport viewport;
+  viewport.LoadContent("TODO \"value\"\n", "/tmp/items.todo");
+
+  const auto& tokens = viewport.HighlightedLineTokens(0);
+  Expect(tokens.size() == viewport.lines().front().size(),
+         "runtime syntax highlighting should still return one token per byte");
+  Expect(std::any_of(tokens.begin(), tokens.begin() + 4,
+                     [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::Keyword; }),
+         "plugin filename syntax definitions should highlight matched keywords");
+  Expect(std::any_of(tokens.begin() + 5, tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::String; }),
+         "plugin region syntax definitions should highlight string spans");
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
@@ -139,6 +198,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/CacheStatsTrackWarmLayoutAndHighlightHits",
           TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits);
+  AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
+          TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
 }
 
 }  // namespace microide::tests

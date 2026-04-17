@@ -1395,7 +1395,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
         return reject("Lua plugin runtime unavailable");
       }
       ReloadPluginsForCurrentProject();
-      command_.feedback_text = plugin_host_.ReloadSummary();
+      command_.feedback_text = PluginRuntimeReloadSummary();
       return ActionDispatchResult::Handled;
     case ActionId::Quit:
       RequestQuit();

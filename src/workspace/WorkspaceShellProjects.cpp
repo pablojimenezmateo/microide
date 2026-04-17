@@ -293,6 +293,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   plugin_sidebar_.error.clear();
   plugin_sidebar_.selected_index = 0;
   diagnostics_store_.Clear();
+  runtime_syntax_plugin_definition_count_ = 0;
+  runtime_syntax_errors_.clear();
   overlay_workflow_.compare_picker.path.clear();
   overlay_workflow_.compare_picker.query.clear();
   overlay_workflow_.compare_picker.commits.clear();

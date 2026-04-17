@@ -1,0 +1,447 @@
+#include "editor/SyntaxDefinitionLoader.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#if MICROIDE_HAS_LUA_PLUGINS
+#include <lua.hpp>
+#endif
+
+namespace microide::editor::runtime_syntax {
+
+namespace {
+
+#if MICROIDE_HAS_LUA_PLUGINS
+
+std::string LuaErrorString(lua_State* state) {
+  const char* message = lua_tostring(state, -1);
+  return message != nullptr ? std::string(message) : std::string("unknown Lua error");
+}
+
+bool ReadStringArrayField(lua_State* state,
+                          int table_index,
+                          const char* field_name,
+                          bool required,
+                          std::vector<std::string>* values,
+                          std::string* error_message) {
+  if (values == nullptr) {
+    return false;
+  }
+
+  values->clear();
+  const int absolute_index = lua_absindex(state, table_index);
+  lua_getfield(state, absolute_index, field_name);
+  if (lua_isnil(state, -1)) {
+    lua_pop(state, 1);
+    if (required && error_message != nullptr) {
+      *error_message = std::string(field_name) + " must be a string or array of strings";
+    }
+    return !required;
+  }
+
+  if (lua_isstring(state, -1)) {
+    values->push_back(lua_tostring(state, -1));
+    lua_pop(state, 1);
+    return true;
+  }
+
+  if (!lua_istable(state, -1)) {
+    if (error_message != nullptr) {
+      *error_message = std::string(field_name) + " must be a string or array of strings";
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+
+  const std::size_t count = lua_rawlen(state, -1);
+  values->reserve(count);
+  for (std::size_t i = 1; i <= count; ++i) {
+    lua_rawgeti(state, -1, static_cast<lua_Integer>(i));
+    if (!lua_isstring(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = std::string(field_name) + " entries must be strings";
+      }
+      lua_pop(state, 2);
+      return false;
+    }
+    values->push_back(lua_tostring(state, -1));
+    lua_pop(state, 1);
+  }
+
+  lua_pop(state, 1);
+  if (required && values->empty()) {
+    if (error_message != nullptr) {
+      *error_message = std::string(field_name) + " must not be empty";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool ReadStringField(lua_State* state,
+                     int table_index,
+                     const char* field_name,
+                     bool required,
+                     std::string* value,
+                     std::string* error_message) {
+  if (value == nullptr) {
+    return false;
+  }
+
+  value->clear();
+  const int absolute_index = lua_absindex(state, table_index);
+  lua_getfield(state, absolute_index, field_name);
+  if (lua_isnil(state, -1)) {
+    lua_pop(state, 1);
+    if (required && error_message != nullptr) {
+      *error_message = std::string(field_name) + " must be a string";
+    }
+    return !required;
+  }
+
+  if (!lua_isstring(state, -1)) {
+    if (error_message != nullptr) {
+      *error_message = std::string(field_name) + " must be a string";
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+
+  *value = lua_tostring(state, -1);
+  lua_pop(state, 1);
+  if (required && value->empty()) {
+    if (error_message != nullptr) {
+      *error_message = std::string(field_name) + " must not be empty";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool LoadRule(lua_State* state,
+              int table_index,
+              const std::filesystem::path& source_path,
+              RuntimeSyntaxRuleData* rule,
+              std::string* error_message);
+
+bool LoadRuleArray(lua_State* state,
+                   int table_index,
+                   const char* field_name,
+                   bool required,
+                   const std::filesystem::path& source_path,
+                   std::vector<RuntimeSyntaxRuleData>* rules,
+                   std::string* error_message) {
+  if (rules == nullptr) {
+    return false;
+  }
+
+  rules->clear();
+  const int absolute_index = lua_absindex(state, table_index);
+  lua_getfield(state, absolute_index, field_name);
+  if (lua_isnil(state, -1)) {
+    lua_pop(state, 1);
+    if (required && error_message != nullptr) {
+      *error_message = std::string(field_name) + " must be an array of rule tables";
+    }
+    return !required;
+  }
+
+  if (!lua_istable(state, -1)) {
+    if (error_message != nullptr) {
+      *error_message = std::string(field_name) + " must be an array of rule tables";
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+
+  const std::size_t count = lua_rawlen(state, -1);
+  rules->reserve(count);
+  for (std::size_t i = 1; i <= count; ++i) {
+    lua_rawgeti(state, -1, static_cast<lua_Integer>(i));
+    if (!lua_istable(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = std::string(field_name) + " entries must be rule tables";
+      }
+      lua_pop(state, 2);
+      return false;
+    }
+
+    RuntimeSyntaxRuleData loaded_rule;
+    if (!LoadRule(state, -1, source_path, &loaded_rule, error_message)) {
+      lua_pop(state, 2);
+      return false;
+    }
+    rules->push_back(std::move(loaded_rule));
+    lua_pop(state, 1);
+  }
+
+  lua_pop(state, 1);
+  if (required && rules->empty()) {
+    if (error_message != nullptr) {
+      *error_message = std::string(field_name) + " must not be empty";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool LoadRule(lua_State* state,
+              int table_index,
+              const std::filesystem::path& source_path,
+              RuntimeSyntaxRuleData* rule,
+              std::string* error_message) {
+  if (rule == nullptr) {
+    return false;
+  }
+
+  RuntimeSyntaxRuleData loaded_rule;
+  if (!ReadStringField(state, table_index, "group", true, &loaded_rule.group_name, error_message)) {
+    return false;
+  }
+
+  std::string pattern;
+  std::string start_regex;
+  std::string end_regex;
+  if (!ReadStringField(state, table_index, "pattern", false, &pattern, error_message) ||
+      !ReadStringField(state, table_index, "start", false, &start_regex, error_message) ||
+      !ReadStringField(state, table_index, "end", false, &end_regex, error_message) ||
+      !ReadStringField(state, table_index, "skip", false, &loaded_rule.skip_regex, error_message) ||
+      !ReadStringField(state, table_index, "limit_group", false, &loaded_rule.limit_group_name,
+                       error_message)) {
+    return false;
+  }
+
+  const bool has_pattern = !pattern.empty();
+  const bool has_region_bounds = !start_regex.empty() || !end_regex.empty();
+  if (has_pattern == has_region_bounds) {
+    if (error_message != nullptr) {
+      *error_message = "rules in " + source_path.string() +
+                       " must provide either pattern or start/end";
+    }
+    return false;
+  }
+
+  if (has_pattern) {
+    loaded_rule.kind = GeneratedRuleKind::Pattern;
+    loaded_rule.pattern = std::move(pattern);
+  } else {
+    if (start_regex.empty() || end_regex.empty()) {
+      if (error_message != nullptr) {
+        *error_message = "region rules in " + source_path.string() +
+                         " must provide both start and end";
+      }
+      return false;
+    }
+    loaded_rule.kind = GeneratedRuleKind::Region;
+    loaded_rule.start_regex = std::move(start_regex);
+    loaded_rule.end_regex = std::move(end_regex);
+    if (loaded_rule.limit_group_name.empty()) {
+      loaded_rule.limit_group_name = loaded_rule.group_name;
+    }
+    if (!LoadRuleArray(state, table_index, "rules", false, source_path, &loaded_rule.children,
+                       error_message)) {
+      return false;
+    }
+  }
+
+  *rule = std::move(loaded_rule);
+  return true;
+}
+
+bool LoadDefinition(lua_State* state,
+                    int table_index,
+                    const std::filesystem::path& source_path,
+                    RuntimeSyntaxDefinitionData* definition,
+                    std::string* error_message) {
+  if (definition == nullptr) {
+    return false;
+  }
+
+  RuntimeSyntaxDefinitionData loaded_definition;
+  loaded_definition.source_path = source_path.lexically_normal();
+  if (!ReadStringField(state, table_index, "filetype", true, &loaded_definition.filetype,
+                       error_message) ||
+      !ReadStringArrayField(state, table_index, "files", false,
+                            &loaded_definition.filename_patterns, error_message) ||
+      !ReadStringArrayField(state, table_index, "headers", false,
+                            &loaded_definition.header_patterns, error_message) ||
+      !ReadStringArrayField(state, table_index, "signatures", false,
+                            &loaded_definition.signature_patterns, error_message) ||
+      !LoadRuleArray(state, table_index, "rules", true, source_path, &loaded_definition.rules,
+                     error_message)) {
+    return false;
+  }
+
+  if (loaded_definition.filename_patterns.empty() && loaded_definition.header_patterns.empty()) {
+    if (error_message != nullptr) {
+      *error_message = "syntax definition in " + source_path.string() +
+                       " must declare files or headers";
+    }
+    return false;
+  }
+
+  *definition = std::move(loaded_definition);
+  return true;
+}
+
+bool LoadDefinitionFile(const std::filesystem::path& source_path,
+                        std::vector<RuntimeSyntaxDefinitionData>* definitions,
+                        std::string* error_message) {
+  if (definitions == nullptr) {
+    return false;
+  }
+
+  lua_State* state = luaL_newstate();
+  if (state == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "failed to create Lua state for " + source_path.string();
+    }
+    return false;
+  }
+
+  const auto close_state = [&state]() {
+    if (state != nullptr) {
+      lua_close(state);
+      state = nullptr;
+    }
+  };
+
+  if (luaL_loadfile(state, source_path.string().c_str()) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "failed to load syntax definition " + source_path.string() + ": " +
+                       LuaErrorString(state);
+    }
+    close_state();
+    return false;
+  }
+
+  if (lua_pcall(state, 0, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "failed to evaluate syntax definition " + source_path.string() + ": " +
+                       LuaErrorString(state);
+    }
+    close_state();
+    return false;
+  }
+
+  if (!lua_istable(state, -1)) {
+    if (error_message != nullptr) {
+      *error_message = "syntax definition " + source_path.string() +
+                       " must return a table or array of tables";
+    }
+    close_state();
+    return false;
+  }
+
+  const int root_index = lua_absindex(state, -1);
+  lua_getfield(state, root_index, "filetype");
+  const bool is_single_definition = lua_isstring(state, -1);
+  lua_pop(state, 1);
+
+  if (is_single_definition) {
+    RuntimeSyntaxDefinitionData definition;
+    const bool loaded = LoadDefinition(state, root_index, source_path, &definition, error_message);
+    close_state();
+    if (loaded) {
+      definitions->push_back(std::move(definition));
+    }
+    return loaded;
+  }
+
+  const std::size_t count = lua_rawlen(state, root_index);
+  if (count == 0) {
+    if (error_message != nullptr) {
+      *error_message = "syntax definition " + source_path.string() +
+                       " must return a table or array of tables";
+    }
+    close_state();
+    return false;
+  }
+
+  for (std::size_t i = 1; i <= count; ++i) {
+    lua_rawgeti(state, root_index, static_cast<lua_Integer>(i));
+    if (!lua_istable(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "syntax definition array in " + source_path.string() +
+                         " must contain only tables";
+      }
+      lua_pop(state, 1);
+      close_state();
+      return false;
+    }
+
+    RuntimeSyntaxDefinitionData definition;
+    if (!LoadDefinition(state, -1, source_path, &definition, error_message)) {
+      lua_pop(state, 1);
+      close_state();
+      return false;
+    }
+    definitions->push_back(std::move(definition));
+    lua_pop(state, 1);
+  }
+
+  close_state();
+  return true;
+}
+
+std::vector<std::filesystem::path> DiscoverDefinitionFiles(
+    const std::vector<std::filesystem::path>& directories) {
+  std::vector<std::filesystem::path> files;
+  for (const auto& directory : directories) {
+    if (directory.empty()) {
+      continue;
+    }
+
+    std::error_code error;
+    if (!std::filesystem::exists(directory, error) || error ||
+        !std::filesystem::is_directory(directory, error)) {
+      continue;
+    }
+
+    std::vector<std::filesystem::path> directory_files;
+    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+      if (error || !entry.is_regular_file()) {
+        continue;
+      }
+      const std::filesystem::path path = entry.path().lexically_normal();
+      if (path.extension() == ".lua") {
+        directory_files.push_back(path);
+      }
+    }
+    std::sort(directory_files.begin(), directory_files.end());
+    files.insert(files.end(), directory_files.begin(), directory_files.end());
+  }
+  return files;
+}
+
+#endif
+
+}  // namespace
+
+std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
+    const std::vector<std::filesystem::path>& directories,
+    std::vector<std::string>* errors) {
+  std::vector<RuntimeSyntaxDefinitionData> definitions;
+  if (errors != nullptr) {
+    errors->clear();
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (const auto& path : DiscoverDefinitionFiles(directories)) {
+    std::string error_message;
+    if (!LoadDefinitionFile(path, &definitions, &error_message) && errors != nullptr &&
+        !error_message.empty()) {
+      errors->push_back(std::move(error_message));
+    }
+  }
+#else
+  (void)directories;
+#endif
+
+  return definitions;
+}
+
+}  // namespace microide::editor::runtime_syntax
