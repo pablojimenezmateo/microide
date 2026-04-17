@@ -137,6 +137,54 @@ void TestWorkspaceShellRenamePromptOnlySavesAffectedSplitEditor() {
   Expect(kept_view_dirty, "split rename save flow should preserve unrelated dirty pane state");
 }
 
+void TestWorkspaceShellRenamePromptRetargetsDiagnostics() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "linter", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 0},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 5},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Warning,
+                 .message = "rename warning",
+             }}),
+         "rename diagnostics fixture should publish a diagnostic for the source file");
+
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1 &&
+             WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().detail_label ==
+                 "notes.txt:1:1 | linter",
+         "rename diagnostics fixture should expose the original problems entry");
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  const std::filesystem::path renamed = root / "renamed.txt";
+  Expect(std::filesystem::is_regular_file(renamed),
+         "rename diagnostics flow should create the destination path");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
+         "rename diagnostics flow should remove diagnostics from the old path");
+  const auto* renamed_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, renamed);
+  Expect(renamed_diagnostics != nullptr && renamed_diagnostics->size() == 1 &&
+             renamed_diagnostics->front().path == renamed.lexically_normal() &&
+             renamed_diagnostics->front().message == "rename warning",
+         "rename diagnostics flow should retarget diagnostics to the new path");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1 &&
+             WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().detail_label ==
+                 "renamed.txt:1:1 | linter",
+         "rename diagnostics flow should refresh the Problems sidebar entry");
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   TemporaryDirectory temp_dir;
@@ -185,6 +233,51 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   Expect(trashed_file.has_value(), "delete discard flow should create a trash entry");
   Expect(ReadFile(*trashed_file) == "original text\n",
          "delete discard flow should discard unsaved editor changes before trashing");
+}
+
+void TestWorkspaceShellDeletePromptClearsDiagnostics() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "trash-me.txt";
+  WriteFile(source, "original text\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_data_home = temp_dir.path() / "xdg-data-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_data_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", xdg_data_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "linter", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 0},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 7},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Error,
+                 .message = "delete error",
+             }}),
+         "delete diagnostics fixture should publish a diagnostic for the doomed file");
+
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
+         "delete diagnostics fixture should expose one Problems entry before deletion");
+
+  WorkspaceShellTestAccess::PrepareDeletePrompt(shell, source);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!std::filesystem::exists(source),
+         "delete diagnostics flow should remove the doomed path");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
+         "delete diagnostics flow should clear diagnostics for the deleted path");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).empty(),
+         "delete diagnostics flow should remove stale Problems entries");
 }
 
 void TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges() {
@@ -668,6 +761,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
   AddTest(tests, "WorkspaceShell/RenamePromptOnlySavesAffectedSplitEditor",
           TestWorkspaceShellRenamePromptOnlySavesAffectedSplitEditor);
+  AddTest(tests, "WorkspaceShell/RenamePromptRetargetsDiagnostics",
+          TestWorkspaceShellRenamePromptRetargetsDiagnostics);
   AddTest(tests, "WorkspaceShell/RenamePreservesWorkingTreeCompareState",
           TestWorkspaceShellRenamePreservesWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/RenamePreservesBranchCompareSemantics",
@@ -683,6 +778,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
 #if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);
+  AddTest(tests, "WorkspaceShell/DeletePromptClearsDiagnostics",
+          TestWorkspaceShellDeletePromptClearsDiagnostics);
   AddTest(tests, "WorkspaceShell/DiscardAllGitPromptDiscardsWorkingTreeChanges",
           TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges);
   AddTest(tests, "WorkspaceShell/DiscardAllGitPromptBlocksDirtyEditors",

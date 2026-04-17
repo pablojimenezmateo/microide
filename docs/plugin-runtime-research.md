@@ -42,6 +42,7 @@ Phase 3 status:
 - editor tabs, compare right panes, and merge result panes now render diagnostic underlines through the host using theme-backed severity colors
 - project-tab switching now preserves each workspace state's diagnostics without leaking or clearing them across projects
 - the host now exposes a built-in Problems sidebar that snapshots merged diagnostics, preserves per-project sidebar state, and opens files at diagnostic locations
+- host rename and delete flows now retarget or clear diagnostics so underlines, hover popups, and Problems entries do not keep stale file paths
 
 Constraints for this pass:
 

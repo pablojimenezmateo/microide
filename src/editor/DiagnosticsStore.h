@@ -55,6 +55,9 @@ class DiagnosticsStore {
                            std::vector<Diagnostic> diagnostics);
   bool ClearOwner(std::string_view owner);
   bool ClearOwnerFile(std::string_view owner, const std::filesystem::path& path);
+  bool RetargetPathPrefix(const std::filesystem::path& old_prefix,
+                          const std::filesystem::path& new_prefix);
+  bool ClearPathPrefix(const std::filesystem::path& path_prefix);
   void Clear();
   const std::vector<PublishedDiagnostic>* FindByPath(const std::filesystem::path& path) const;
   std::vector<PublishedDiagnostic> SnapshotAll() const;

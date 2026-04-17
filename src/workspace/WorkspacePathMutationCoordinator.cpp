@@ -227,6 +227,27 @@ bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
   return true;
 }
 
+void WorkspaceShell::PathMutationCoordinator::RefreshDiagnosticsAfterMutation() {
+  shell_.RefreshProblemsSidebar();
+  shell_.QueueEditorHoverRefresh();
+  shell_.RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::PathMutationCoordinator::RetargetDiagnosticsForRename(
+    const std::filesystem::path& old_path,
+    const std::filesystem::path& new_path) {
+  if (shell_.diagnostics_store_.RetargetPathPrefix(old_path, new_path)) {
+    RefreshDiagnosticsAfterMutation();
+  }
+}
+
+void WorkspaceShell::PathMutationCoordinator::ClearDiagnosticsForPath(
+    const std::filesystem::path& path) {
+  if (shell_.diagnostics_store_.ClearPathPrefix(path)) {
+    RefreshDiagnosticsAfterMutation();
+  }
+}
+
 void WorkspaceShell::PathMutationCoordinator::RefreshProjectViewsAfterMutation(
     const std::filesystem::path& preferred_tree_path) {
   shell_.RefreshProjectFiles();
@@ -633,6 +654,7 @@ void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
 
     RetargetOpenTabsForRename(state.path, result.resulting_path,
                               resolution != DirtyPathResolution::Discard);
+    RetargetDiagnosticsForRename(state.path, result.resulting_path);
     shell_.ClearEditorBlame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
     shell_.surface_.focus = FocusTarget::Sidebar;
@@ -663,6 +685,7 @@ void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
   }
   shell_.DismissPromptSurface(false);
   CloseOpenTabsForPath(state.path);
+  ClearDiagnosticsForPath(state.path);
   shell_.ClearEditorBlame();
   RefreshProjectViewsAfterMutation(parent);
   shell_.surface_.focus = FocusTarget::Sidebar;

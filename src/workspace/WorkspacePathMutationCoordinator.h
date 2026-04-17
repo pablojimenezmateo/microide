@@ -38,6 +38,10 @@ class WorkspaceShell::PathMutationCoordinator {
   bool ResolveDirtyTabsForPath(const std::filesystem::path& path,
                                DirtyPromptState::Kind prompt_kind,
                                DirtyPathResolution resolution);
+  void RefreshDiagnosticsAfterMutation();
+  void RetargetDiagnosticsForRename(const std::filesystem::path& old_path,
+                                    const std::filesystem::path& new_path);
+  void ClearDiagnosticsForPath(const std::filesystem::path& path);
   void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
   void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
                                  const std::filesystem::path& new_path,

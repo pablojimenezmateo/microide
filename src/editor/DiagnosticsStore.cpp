@@ -38,6 +38,49 @@ std::vector<PublishedDiagnostic> CollectPublishedDiagnostics(std::string_view ow
   return published;
 }
 
+bool PathEqualsOrWithin(const std::filesystem::path& candidate,
+                        const std::filesystem::path& root) {
+  const std::filesystem::path normalized_candidate = candidate.lexically_normal();
+  const std::filesystem::path normalized_root = root.lexically_normal();
+  if (normalized_candidate.empty() || normalized_root.empty()) {
+    return false;
+  }
+  if (normalized_candidate == normalized_root) {
+    return true;
+  }
+
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(normalized_candidate, normalized_root, error);
+  if (error || relative.empty()) {
+    return false;
+  }
+  const std::string relative_text = relative.generic_string();
+  return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
+}
+
+std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
+                                        const std::filesystem::path& old_prefix,
+                                        const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
+  if (!PathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
+    return normalized_path;
+  }
+  if (normalized_path == normalized_old_prefix) {
+    return normalized_new_prefix;
+  }
+
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(normalized_path, normalized_old_prefix, error);
+  if (error || relative.empty()) {
+    return normalized_path;
+  }
+  return (normalized_new_prefix / relative).lexically_normal();
+}
+
 }  // namespace
 
 std::string DiagnosticsStore::PathKey(const std::filesystem::path& path) {
@@ -178,6 +221,103 @@ bool DiagnosticsStore::ClearOwnerFile(std::string_view owner, const std::filesys
   }
   RebuildPath(path_key);
   return true;
+}
+
+bool DiagnosticsStore::RetargetPathPrefix(const std::filesystem::path& old_prefix,
+                                          const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_old = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new = new_prefix.lexically_normal();
+  if (normalized_old.empty() || normalized_new.empty() || normalized_old == normalized_new) {
+    return false;
+  }
+
+  bool changed = false;
+  std::vector<std::string> affected_path_keys;
+  for (auto owner_it = diagnostics_by_owner_.begin(); owner_it != diagnostics_by_owner_.end();) {
+    auto& owner_entries = owner_it->second;
+    std::vector<std::string> old_keys;
+    std::vector<std::pair<std::string, FileDiagnostics>> replacements;
+
+    for (const auto& [path_key, file_diagnostics] : owner_entries) {
+      if (!PathEqualsOrWithin(file_diagnostics.path, normalized_old)) {
+        continue;
+      }
+
+      FileDiagnostics moved = file_diagnostics;
+      moved.path = ReplacePathPrefix(file_diagnostics.path, normalized_old, normalized_new);
+      for (auto& diagnostic : moved.diagnostics) {
+        diagnostic.path = ReplacePathPrefix(diagnostic.path, normalized_old, normalized_new);
+      }
+      const std::string moved_key = PathKey(moved.path);
+      if (moved_key.empty()) {
+        continue;
+      }
+
+      old_keys.push_back(path_key);
+      replacements.push_back({moved_key, std::move(moved)});
+      affected_path_keys.push_back(path_key);
+      affected_path_keys.push_back(moved_key);
+      changed = true;
+    }
+
+    for (const auto& old_key : old_keys) {
+      owner_entries.erase(old_key);
+    }
+    for (auto& [new_key, moved] : replacements) {
+      owner_entries[new_key] = std::move(moved);
+    }
+
+    if (owner_entries.empty()) {
+      owner_it = diagnostics_by_owner_.erase(owner_it);
+    } else {
+      ++owner_it;
+    }
+  }
+
+  std::sort(affected_path_keys.begin(), affected_path_keys.end());
+  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
+                           affected_path_keys.end());
+  for (const auto& path_key : affected_path_keys) {
+    RebuildPath(path_key);
+  }
+  return changed;
+}
+
+bool DiagnosticsStore::ClearPathPrefix(const std::filesystem::path& path_prefix) {
+  const std::filesystem::path normalized_prefix = path_prefix.lexically_normal();
+  if (normalized_prefix.empty()) {
+    return false;
+  }
+
+  bool changed = false;
+  std::vector<std::string> affected_path_keys;
+  for (auto owner_it = diagnostics_by_owner_.begin(); owner_it != diagnostics_by_owner_.end();) {
+    auto& owner_entries = owner_it->second;
+    for (auto path_it = owner_entries.begin(); path_it != owner_entries.end();) {
+      if (!PathEqualsOrWithin(path_it->second.path, normalized_prefix)) {
+        ++path_it;
+        continue;
+      }
+
+      affected_path_keys.push_back(path_it->first);
+      path_it = owner_entries.erase(path_it);
+      changed = true;
+    }
+
+    if (owner_entries.empty()) {
+      owner_it = diagnostics_by_owner_.erase(owner_it);
+    } else {
+      ++owner_it;
+    }
+  }
+
+  std::sort(affected_path_keys.begin(), affected_path_keys.end());
+  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
+                           affected_path_keys.end());
+  for (const auto& path_key : affected_path_keys) {
+    RebuildPath(path_key);
+  }
+  return changed;
 }
 
 void DiagnosticsStore::Clear() {
