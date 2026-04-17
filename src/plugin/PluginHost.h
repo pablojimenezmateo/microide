@@ -20,6 +20,12 @@ class PluginHost {
     std::size_t column = 0;
   };
 
+  struct ActiveBuffer {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+
   struct SidebarProviderInfo {
     std::string id;
     std::string label;
@@ -44,6 +50,7 @@ class PluginHost {
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
+    std::function<std::optional<ActiveBuffer>()> active_buffer;
     std::function<bool(std::string_view)> show_sidebar;
     std::function<void(std::string_view,
                        const std::filesystem::path&,

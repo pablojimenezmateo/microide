@@ -712,6 +712,27 @@ struct PluginHost::Impl {
     return 1;
   }
 
+  static int LuaWorkspaceActiveBuffer(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    if (host == nullptr || !host->callbacks.active_buffer) {
+      lua_pushnil(state);
+      return 1;
+    }
+
+    const std::optional<PluginHost::ActiveBuffer> active_buffer = host->callbacks.active_buffer();
+    if (!active_buffer.has_value() || active_buffer->path.empty()) {
+      lua_pushnil(state);
+      return 1;
+    }
+
+    host->PushBufferTable(state, active_buffer->path);
+    lua_pushinteger(state, static_cast<lua_Integer>(active_buffer->line));
+    lua_setfield(state, -2, "line");
+    lua_pushinteger(state, static_cast<lua_Integer>(active_buffer->column));
+    lua_setfield(state, -2, "column");
+    return 1;
+  }
+
   static int LuaFilesReadText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const char* raw_path = luaL_checkstring(state, 1);
@@ -1060,13 +1081,16 @@ struct PluginHost::Impl {
     lua_setfield(state, -2, "add");
     lua_setfield(state, -2, "commands");
 
-    lua_createtable(state, 0, 2);
+    lua_createtable(state, 0, 3);
     lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaWorkspaceProjectRoot, 1);
     lua_setfield(state, -2, "project_root");
     lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaWorkspaceOpenFile, 1);
     lua_setfield(state, -2, "open_file");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaWorkspaceActiveBuffer, 1);
+    lua_setfield(state, -2, "active_buffer");
     lua_setfield(state, -2, "workspace");
 
     lua_createtable(state, 0, 3);

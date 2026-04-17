@@ -99,6 +99,7 @@ return ide.plugin({
             opened_paths.push_back(request.path.lexically_normal());
             return true;
           },
+      .active_buffer = {},
       .show_sidebar = {},
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
@@ -199,6 +200,7 @@ return ide.plugin({
   host.SetCallbacks(PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view) { return true; },
       .open_file = {},
+      .active_buffer = {},
       .show_sidebar = {},
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
@@ -274,6 +276,7 @@ return ide.plugin({
             opened_file = request;
             return true;
           },
+      .active_buffer = {},
       .show_sidebar =
           [&](std::string_view id) {
             shown_sidebar = std::string(id);
@@ -386,6 +389,7 @@ return ide.plugin({
   host.SetCallbacks(PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view) { return true; },
       .open_file = {},
+      .active_buffer = {},
       .show_sidebar = {},
       .publish_diagnostics =
           [&](std::string_view owner,
@@ -471,6 +475,7 @@ return ide.plugin({
   host.SetCallbacks(PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view) { return true; },
       .open_file = {},
+      .active_buffer = {},
       .show_sidebar = {},
       .publish_diagnostics = {},
       .clear_file_diagnostics = {},
@@ -495,6 +500,65 @@ return ide.plugin({
          "missing hover results should leave the output empty");
 }
 
+void TestPluginHostPhase5WorkspaceApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase5 workspace\n");
+
+  WritePluginInit(
+      global_plugins, "phase5-workspace",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase5-workspace",
+  setup = function(ctx)
+    ctx.commands.add("phase5.probe-active-buffer", function(ctx, args)
+      local buffer = ctx.workspace.active_buffer()
+      if buffer == nil then
+        ctx.log("active:nil")
+        return
+      end
+      ctx.log("active:" .. buffer.relative_path .. ":" .. tostring(buffer.line) .. ":" .. tostring(buffer.column))
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .active_buffer =
+          [&]() -> std::optional<PluginHost::ActiveBuffer> {
+            return PluginHost::ActiveBuffer{
+                .path = (project_root / "README.md").lexically_normal(),
+                .line = 2,
+                .column = 5,
+            };
+          },
+      .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
+      .log_sink = {},
+  });
+
+  Expect(host.Reload(project_root), "phase5 workspace plugin should reload successfully");
+  std::string command_error;
+  Expect(host.ExecuteCommand("phase5.probe-active-buffer", {}, &command_error),
+         "phase5 workspace command should execute");
+  Expect(command_error.empty(), "successful phase5 workspace command should not set an error");
+  Expect(!host.Messages().empty() &&
+             host.Messages().back() == "phase5-workspace: active:README.md:2:5",
+         "ctx.workspace.active_buffer should expose the active relative path and one-based cursor");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -505,6 +569,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
   AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
+  AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
 }
 
 }  // namespace microide::tests

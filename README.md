@@ -21,7 +21,7 @@ This scaffold provides:
 - nested shared-buffer editor split trees
 - project-local session restore for editor tabs, compare tabs, and workspace chrome
 - project-local editor preferences for tab size, indent width, and soft-tabs
-- manual Lua 5.4 plugin loading from global and project-local plugin directories, with lifecycle hooks, plugin commands, and `plugins-reload`
+- manual Lua 5.4 plugin loading from global and project-local plugin directories, with lifecycle hooks, plugin commands, sidebars, diagnostics, hover providers, syntax contributions, and `plugins-reload`
 - tab-aware text layout with visual-column cursor positioning
 - editor load/save now preserves detected line endings
 - editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, loaded asynchronously per viewport window and cached by file or line span, with only the caret line plus one line above and below annotated inline and hover details for author, date, commit message, and SHA copy
@@ -194,10 +194,13 @@ Plugin runtime:
 
 - manual plugins load from `~/.config/microide/plugins/<plugin-id>/init.lua`
 - project-local plugins load from `<project-root>/.microide/plugins/<plugin-id>/init.lua`
+- repo-owned example plugins live under `plugins/`
 - plugin entry points return `require("microide").plugin({...})`
 - current lifecycle hooks are `setup`, `on_project_open`, `on_project_close`, `on_buffer_open`, `on_buffer_save`, and `shutdown`
-- the current host API includes `ctx.log(...)`, `ctx.commands.add(name, fn)`, `ctx.sidebar.add({...})`, `ctx.sidebar.show(id)`, `ctx.workspace.project_root()`, `ctx.workspace.open_file(path, line, column)`, `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, `ctx.files.exists(path)`, and `ctx.process.run(argv, { cwd = ..., stdin = ... })`
+- the current host API includes `ctx.log(...)`, `ctx.commands.add(name, fn)`, `ctx.sidebar.add({...})`, `ctx.sidebar.show(id)`, `ctx.workspace.project_root()`, `ctx.workspace.open_file(path, line, column)`, `ctx.workspace.active_buffer()`, `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, `ctx.files.exists(path)`, `ctx.process.run(argv, { cwd = ..., stdin = ... })`, `ctx.diagnostics.publish(path, diagnostics)`, `ctx.diagnostics.clear(path_or_nil)`, and `ctx.hover.add({ id, provide })`
 - plugin sidebars use host-owned rendering and can be opened from the command line with `sidebar-show <sidebar-id>`
+- plugin syntax definitions load from `syntax/*.lua` inside plugin directories on project open and `plugins-reload`
+- the repo-owned `plugins/eslint` and `plugins/bookmarks` directories are the current dogfood examples for diagnostics and sidebar-driven workflows
 - `plugins-reload` rebuilds the active plugin host and reloads commands for the current project
 
 Diff benchmark:

@@ -39,7 +39,7 @@ These are implemented and should not be treated as open migration work:
 - git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
 - PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
 - runtime syntax highlighting from the in-tree generated syntax snapshot plus plugin `syntax/*.lua` contributions loaded into the host tokenizer at startup and `plugins-reload`
-- manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, argv-based process helpers, and `plugins-reload`
+- manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, active-buffer metadata, argv-based process helpers, repo-owned dogfood plugins, and `plugins-reload`
 - plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, a built-in Problems sidebar, and host rename/delete cleanup for stale diagnostic paths
 - targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
 
@@ -55,6 +55,7 @@ Current state:
 - command and sidebar registries exist
 - the host already exposes narrow file, workspace, process, diagnostics, and hover extension points
 - plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
+- repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:
 

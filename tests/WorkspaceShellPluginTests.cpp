@@ -25,6 +25,34 @@ void WritePluginSyntax(const std::filesystem::path& root,
   WriteFile(root / directory_name / "syntax" / file_name, std::string(content));
 }
 
+std::filesystem::path RepoPluginsRoot() {
+  return TestRoot().parent_path() / "plugins";
+}
+
+void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
+  CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
+}
+
+void WriteFakeEslint(const std::filesystem::path& project_root) {
+  const std::filesystem::path eslint_path = project_root / "node_modules" / ".bin" / "eslint";
+  WriteFile(
+      eslint_path,
+      R"(#!/bin/sh
+file="$4"
+if grep -q "broken" "$file"; then
+  printf '%s\n' '[{"messages":[{"ruleId":"no-broken","severity":2,"message":"Unexpected broken token","line":1,"column":1,"endLine":1,"endColumn":7}]}]'
+  exit 1
+fi
+printf '%s\n' '[{"messages":[]}]'
+exit 0
+)");
+  std::filesystem::permissions(
+      eslint_path,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+          std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::replace);
+}
+
 void TestWorkspaceShellLoadsPluginsAndRunsBufferHooks() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -510,6 +538,107 @@ return ide.plugin({
          "compare hover popups should resolve provider content against the editable file path");
 }
 
+void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "eslint fixture\n");
+  WriteFile(source, "const answer = 1;\n");
+  CopyRepoPlugin(plugins_root, "eslint");
+  WriteFakeEslint(project_root);
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "eslint plugin fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText("broken();\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "eslint plugin fixture should save the edited JavaScript buffer");
+
+  const auto* broken_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+  Expect(broken_diagnostics != nullptr && broken_diagnostics->size() == 1,
+         "saving a broken JavaScript file should publish one ESLint diagnostic");
+  Expect(broken_diagnostics->front().message == "Unexpected broken token (no-broken)",
+         "ESLint plugin diagnostics should preserve the formatter message and rule id");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "eslint.show-problems"),
+         "eslint.show-problems should open the built-in Problems sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+         "eslint.show-problems should route through the host Problems sidebar");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
+         "published ESLint diagnostics should appear in the Problems sidebar");
+
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& clean_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  clean_editor.SelectAll();
+  clean_editor.InsertText("const answer = 1;\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "eslint plugin fixture should save the cleaned JavaScript buffer");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
+         "saving a clean JavaScript file should clear the plugin's diagnostics");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).empty(),
+         "clearing ESLint diagnostics should refresh the Problems sidebar");
+}
+
+void TestWorkspaceShellRepoBookmarksPluginAddsSidebarItems() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path readme = project_root / "README.md";
+  const std::filesystem::path source = project_root / "src" / "main.txt";
+  WriteFile(readme, "bookmarks fixture\n");
+  WriteFile(source, "alpha\nbeta\n");
+  CopyRepoPlugin(plugins_root, "bookmarks");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "bookmarks plugin fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "bookmarks.add Beta hotspot"),
+         "bookmarks.add should execute through the shell command prompt");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
+         "bookmarks.add should show the plugin sidebar after writing the bookmark");
+  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "project-bookmarks",
+         "bookmarks.add should activate the repo plugin's sidebar id");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
+         "bookmarks sidebar should expose the saved bookmark");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).front().label == "Beta hotspot" &&
+             WorkspaceShellTestAccess::PluginSidebarItems(shell).front().detail == "src/main.txt:2:3",
+         "bookmarks sidebar items should preserve the active buffer location");
+  Expect(ReadFile(project_root / ".microide" / "bookmarks.tsv") ==
+             "src/main.txt\t2\t3\tBeta hotspot\n",
+         "bookmarks plugin should persist project-local storage in .microide/bookmarks.tsv");
+
+  WorkspaceShellTestAccess::OpenFile(shell, readme);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "bookmarks.show"),
+         "bookmarks.show should reopen the plugin sidebar");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing Enter in the bookmarks sidebar should confirm the selected item");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
+         "bookmark confirmation should reopen the target file");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 2,
+         "bookmark confirmation should restore the saved cursor location");
+}
+
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -641,6 +770,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginHoverPopupShowsMessages);
   AddTest(tests, "WorkspaceShell/PluginHoverPopupShowsMessagesInComparePane",
           TestWorkspaceShellPluginHoverPopupShowsMessagesInComparePane);
+  AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesDiagnosticsOnSave",
+          TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave);
+  AddTest(tests, "WorkspaceShell/RepoBookmarksPluginAddsSidebarItems",
+          TestWorkspaceShellRepoBookmarksPluginAddsSidebarItems);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

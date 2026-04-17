@@ -25,6 +25,18 @@ WorkspaceShell::WorkspaceShell() {
             }
             return true;
           },
+      .active_buffer =
+          [this]() -> std::optional<plugin::PluginHost::ActiveBuffer> {
+            const editor::TextViewport* viewport = ActiveEditableViewport();
+            if (viewport == nullptr || viewport->path().empty()) {
+              return std::nullopt;
+            }
+            return plugin::PluginHost::ActiveBuffer{
+                .path = viewport->path().lexically_normal(),
+                .line = viewport->cursor_line() + 1,
+                .column = viewport->cursor_column() + 1,
+            };
+          },
       .show_sidebar =
           [this](std::string_view id) {
             return ExecuteAction(ActionId::SidebarShow, {std::string(id)}, ActionSource::Shortcut);
