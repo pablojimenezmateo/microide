@@ -918,6 +918,7 @@ class WorkspaceShell {
   };
 
   class ProjectCatalogCoordinator;
+  class PersistenceCoordinator;
   class DirtyPromptCoordinator;
   class PathMutationCoordinator;
   class TabCoordinator;
@@ -1456,26 +1457,6 @@ class WorkspaceShell {
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
   std::filesystem::path ProjectStateDirectory() const;
-  void RefreshAvailableColorschemeNames();
-  bool ApplyColorscheme(std::string_view name, bool persist, bool log_feedback);
-  bool ApplyUiScale(float scale, bool persist, bool log_feedback);
-  bool RestoreUserConfig();
-  void SaveUserConfig() const;
-  bool RestoreConfigState();
-  void SaveConfigState() const;
-  std::filesystem::path SessionStatePath() const;
-  bool RestoreSessionState();
-  void SaveSessionState();
-  std::filesystem::path WorkspaceSessionStatePath() const;
-  bool RestoreWorkspaceSession();
-  void SaveWorkspaceSession();
-  std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
-      const TabEntry& tab) const;
-  std::optional<PersistedEditorTabState> BuildPersistedMergeTabState(
-      const TabEntry& tab) const;
-  std::optional<PersistedEditorTabState> BuildPersistedEditorTabState(
-      std::size_t tab_index,
-      TabEntry& tab);
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
   void ResetCommandSessionState();

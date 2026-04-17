@@ -1,5 +1,6 @@
 #pragma once
 
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -812,12 +813,18 @@ struct WorkspaceShellTestAccess {
     }
     return {};
   }
-  static bool RestoreSessionState(WorkspaceShell& shell) { return shell.RestoreSessionState(); }
-  static void SaveSessionState(WorkspaceShell& shell) { shell.SaveSessionState(); }
-  static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
-    return shell.RestoreWorkspaceSession();
+  static bool RestoreSessionState(WorkspaceShell& shell) {
+    return WorkspaceShell::PersistenceCoordinator(shell).RestoreSessionState();
   }
-  static void SaveWorkspaceSession(WorkspaceShell& shell) { shell.SaveWorkspaceSession(); }
+  static void SaveSessionState(WorkspaceShell& shell) {
+    WorkspaceShell::PersistenceCoordinator(shell).SaveSessionState();
+  }
+  static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
+    return WorkspaceShell::PersistenceCoordinator(shell).RestoreWorkspaceSession();
+  }
+  static void SaveWorkspaceSession(WorkspaceShell& shell) {
+    WorkspaceShell::PersistenceCoordinator(shell).SaveWorkspaceSession();
+  }
   static void RequestQuit(WorkspaceShell& shell) { shell.RequestQuit(); }
   static bool ConsumeQuitRequested(WorkspaceShell& shell) { return shell.ConsumeQuitRequested(); }
   static WorkspaceShell::WindowAction ConsumeWindowAction(WorkspaceShell& shell) {

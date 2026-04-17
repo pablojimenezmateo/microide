@@ -1,8 +1,7 @@
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <limits>
 
 #include "platform/AppDirectories.h"
@@ -13,12 +12,17 @@
 
 namespace microide::workspace {
 
-void WorkspaceShell::RefreshAvailableColorschemeNames() {
-  available_colorscheme_names_ = render::ListAvailableThemeNames();
+WorkspaceShell::PersistenceCoordinator::PersistenceCoordinator(WorkspaceShell& shell)
+    : shell_(shell) {}
+
+void WorkspaceShell::PersistenceCoordinator::RefreshAvailableColorschemeNames() {
+  shell_.available_colorscheme_names_ = render::ListAvailableThemeNames();
 }
 
-bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool log_feedback) {
-  (void) log_feedback;
+bool WorkspaceShell::PersistenceCoordinator::ApplyColorscheme(std::string_view name,
+                                                              bool persist,
+                                                              bool log_feedback) {
+  (void)log_feedback;
   render::Theme loaded_theme;
   std::string resolved_name;
   std::string error;
@@ -27,18 +31,20 @@ bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool 
     return false;
   }
 
-  theme_ = loaded_theme;
-  active_colorscheme_name_ = resolved_name.empty() ? requested_name : resolved_name;
-  if (!project_base_color_.has_value() && !project_root_.empty()) {
-    project_base_color_ = DefaultProjectBaseColor(project_root_);
+  shell_.theme_ = loaded_theme;
+  shell_.active_colorscheme_name_ = resolved_name.empty() ? requested_name : resolved_name;
+  if (!shell_.project_base_color_.has_value() && !shell_.project_root_.empty()) {
+    shell_.project_base_color_ = DefaultProjectBaseColor(shell_.project_root_);
   }
-  if (project_base_color_.has_value()) {
-    ApplyProjectAccent(theme_, *project_base_color_);
+  if (shell_.project_base_color_.has_value()) {
+    ApplyProjectAccent(shell_.theme_, *shell_.project_base_color_);
   }
-  if (std::find(available_colorscheme_names_.begin(), available_colorscheme_names_.end(),
-                active_colorscheme_name_) == available_colorscheme_names_.end()) {
-    available_colorscheme_names_.push_back(active_colorscheme_name_);
-    std::sort(available_colorscheme_names_.begin(), available_colorscheme_names_.end());
+  if (std::find(shell_.available_colorscheme_names_.begin(),
+                shell_.available_colorscheme_names_.end(),
+                shell_.active_colorscheme_name_) == shell_.available_colorscheme_names_.end()) {
+    shell_.available_colorscheme_names_.push_back(shell_.active_colorscheme_name_);
+    std::sort(shell_.available_colorscheme_names_.begin(),
+              shell_.available_colorscheme_names_.end());
   }
 
   if (persist) {
@@ -47,21 +53,23 @@ bool WorkspaceShell::ApplyColorscheme(std::string_view name, bool persist, bool 
   return true;
 }
 
-bool WorkspaceShell::ApplyUiScale(float scale, bool persist, bool log_feedback) {
-  (void) log_feedback;
+bool WorkspaceShell::PersistenceCoordinator::ApplyUiScale(float scale,
+                                                          bool persist,
+                                                          bool log_feedback) {
+  (void)log_feedback;
   if (!std::isfinite(scale)) {
     return false;
   }
 
-  ui_scale_ = std::clamp(scale, kMinUiScale, kMaxUiScale);
+  shell_.ui_scale_ = std::clamp(scale, kMinUiScale, kMaxUiScale);
   if (persist) {
     SaveUserConfig();
   }
   return true;
 }
 
-bool WorkspaceShell::RestoreUserConfig() {
-  const std::filesystem::path config_path = UserConfigPath();
+bool WorkspaceShell::PersistenceCoordinator::RestoreUserConfig() {
+  const std::filesystem::path config_path = shell_.UserConfigPath();
   if (config_path.empty()) {
     return false;
   }
@@ -71,7 +79,7 @@ bool WorkspaceShell::RestoreUserConfig() {
     return false;
   }
 
-  PersistedUserConfigState state{.ui_scale = ui_scale_};
+  PersistedUserConfigState state{.ui_scale = shell_.ui_scale_};
   if (!ParseUserConfigText(*text, &state)) {
     return false;
   }
@@ -79,17 +87,18 @@ bool WorkspaceShell::RestoreUserConfig() {
   return ApplyUiScale(state.ui_scale, false, false);
 }
 
-void WorkspaceShell::SaveUserConfig() const {
-  const std::filesystem::path config_path = UserConfigPath();
+void WorkspaceShell::PersistenceCoordinator::SaveUserConfig() const {
+  const std::filesystem::path config_path = shell_.UserConfigPath();
   if (config_path.empty()) {
     return;
   }
-  util::WriteTextFileAtomically(config_path,
-                                SerializeUserConfig(PersistedUserConfigState{.ui_scale = ui_scale_}));
+
+  util::WriteTextFileAtomically(
+      config_path, SerializeUserConfig(PersistedUserConfigState{.ui_scale = shell_.ui_scale_}));
 }
 
-bool WorkspaceShell::RestoreConfigState() {
-  const std::filesystem::path config_path = ConfigStatePath();
+bool WorkspaceShell::PersistenceCoordinator::RestoreConfigState() {
+  const std::filesystem::path config_path = shell_.ConfigStatePath();
   if (config_path.empty()) {
     return false;
   }
@@ -99,67 +108,52 @@ bool WorkspaceShell::RestoreConfigState() {
   }
 
   PersistedProjectConfigState state{
-      .editor_tab_size = editor_preferences_.tab_size,
-      .editor_indent_width = editor_preferences_.indent_width,
-      .editor_soft_tabs = editor_preferences_.soft_tabs,
-      .colorscheme_name = active_colorscheme_name_,
-      .project_base_color = project_base_color_,
+      .editor_tab_size = shell_.editor_preferences_.tab_size,
+      .editor_indent_width = shell_.editor_preferences_.indent_width,
+      .editor_soft_tabs = shell_.editor_preferences_.soft_tabs,
+      .colorscheme_name = shell_.active_colorscheme_name_,
+      .project_base_color = shell_.project_base_color_,
   };
   if (!ParseProjectConfigText(*text, &state)) {
     return false;
   }
 
-  editor_preferences_.tab_size = state.editor_tab_size;
-  editor_preferences_.indent_width = state.editor_indent_width;
-  editor_preferences_.soft_tabs = state.editor_soft_tabs;
-  project_base_color_ = state.project_base_color;
-  ApplyEditorPreferencesToAllTabs();
+  shell_.editor_preferences_.tab_size = state.editor_tab_size;
+  shell_.editor_preferences_.indent_width = state.editor_indent_width;
+  shell_.editor_preferences_.soft_tabs = state.editor_soft_tabs;
+  shell_.project_base_color_ = state.project_base_color;
+  shell_.ApplyEditorPreferencesToAllTabs();
   ApplyColorscheme(state.colorscheme_name, false, false);
   return true;
 }
 
-void WorkspaceShell::SaveConfigState() const {
-  if (project_root_.empty()) {
+void WorkspaceShell::PersistenceCoordinator::SaveConfigState() const {
+  if (shell_.project_root_.empty()) {
     return;
   }
 
-  const std::filesystem::path config_path = ConfigStatePath();
+  const std::filesystem::path config_path = shell_.ConfigStatePath();
   if (config_path.empty()) {
     return;
   }
-  util::WriteTextFileAtomically(config_path, SerializeProjectConfig(PersistedProjectConfigState{
-                                             .editor_tab_size = editor_preferences_.tab_size,
-                                             .editor_indent_width = editor_preferences_.indent_width,
-                                             .editor_soft_tabs = editor_preferences_.soft_tabs,
-                                             .colorscheme_name = active_colorscheme_name_,
-                                             .project_base_color = project_base_color_.value_or(
-                                                 DefaultProjectBaseColor(project_root_)),
-                                         }));
+  util::WriteTextFileAtomically(
+      config_path,
+      SerializeProjectConfig(PersistedProjectConfigState{
+          .editor_tab_size = shell_.editor_preferences_.tab_size,
+          .editor_indent_width = shell_.editor_preferences_.indent_width,
+          .editor_soft_tabs = shell_.editor_preferences_.soft_tabs,
+          .colorscheme_name = shell_.active_colorscheme_name_,
+          .project_base_color =
+              shell_.project_base_color_.value_or(DefaultProjectBaseColor(shell_.project_root_)),
+      }));
 }
 
-std::filesystem::path WorkspaceShell::SessionStatePath() const {
-  return project_root_.empty() ? std::filesystem::path{} : ProjectStateDirectory() / "session";
+std::filesystem::path WorkspaceShell::PersistenceCoordinator::SessionStatePath() const {
+  return shell_.project_root_.empty() ? std::filesystem::path{}
+                                      : shell_.ProjectStateDirectory() / "session";
 }
 
-void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
-  viewport.SetTabSize(editor_preferences_.tab_size);
-  viewport.SetIndentWidth(editor_preferences_.indent_width);
-  viewport.SetSoftTabs(editor_preferences_.soft_tabs);
-}
-
-void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
-  ApplyEditorPreferences(text_viewport_);
-  for (auto& tab : open_tabs_) {
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-      continue;
-    }
-    for (auto& view : tab.editor_state->views) {
-      ApplyEditorPreferences(view.viewport);
-    }
-  }
-}
-
-bool WorkspaceShell::RestoreSessionState() {
+bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreSessionState");
   const std::filesystem::path session_path = SessionStatePath();
   if (session_path.empty()) {
@@ -171,27 +165,27 @@ bool WorkspaceShell::RestoreSessionState() {
   }
 
   PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = surface_.sidebar_visible;
-  persisted_session.sidebar_width = surface_.sidebar_width;
-  persisted_session.bottom_panel_height = surface_.bottom_panel_height;
-  persisted_session.active_tab_index = active_tab_index_;
+  persisted_session.sidebar_visible = shell_.surface_.sidebar_visible;
+  persisted_session.sidebar_width = shell_.surface_.sidebar_width;
+  persisted_session.bottom_panel_height = shell_.surface_.bottom_panel_height;
+  persisted_session.active_tab_index = shell_.active_tab_index_;
   if (!ParseProjectSessionText(*text, &persisted_session)) {
     return false;
   }
 
-  open_tabs_.clear();
-  active_tab_index_ = 0;
-  surface_.overlay_visible = false;
-  surface_.command_mode = false;
-  overlay_workflow_.compare_picker.matches.clear();
-  overlay_workflow_.compare_picker.commits.clear();
-  overlay_workflow_.compare_picker.selected_index = 0;
+  shell_.open_tabs_.clear();
+  shell_.active_tab_index_ = 0;
+  shell_.surface_.overlay_visible = false;
+  shell_.surface_.command_mode = false;
+  shell_.overlay_workflow_.compare_picker.matches.clear();
+  shell_.overlay_workflow_.compare_picker.commits.clear();
+  shell_.overlay_workflow_.compare_picker.selected_index = 0;
 
   for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
     if (persisted_tab.kind == "compare") {
       std::filesystem::path compare_path = persisted_tab.compare_path;
       if (compare_path.is_relative()) {
-        compare_path = project_root_ / compare_path;
+        compare_path = shell_.project_root_ / compare_path;
       }
       compare_path = compare_path.lexically_normal();
 
@@ -212,7 +206,7 @@ bool WorkspaceShell::RestoreSessionState() {
             return fallback;
           }
           if (path.is_relative()) {
-            path = project_root_ / path;
+            path = shell_.project_root_ / path;
           }
           return path.lexically_normal();
         };
@@ -223,34 +217,36 @@ bool WorkspaceShell::RestoreSessionState() {
         compare_state.commit_hash = persisted_tab.compare_commit_hash;
         compare_state.right_ref = persisted_tab.compare_right_ref;
         compare_state.left_label = persisted_tab.compare_commit_short_hash;
-        compare_state.right_label = persisted_tab.compare_right_label.empty()
-                                        ? (persisted_tab.compare_right_ref == "WORKTREE"
-                                               ? "Working tree"
-                                               : persisted_tab.compare_right_ref)
-                                        : persisted_tab.compare_right_label;
+        compare_state.right_label =
+            persisted_tab.compare_right_label.empty()
+                ? (persisted_tab.compare_right_ref == "WORKTREE" ? "Working tree"
+                                                                 : persisted_tab.compare_right_ref)
+                : persisted_tab.compare_right_label;
         compare_state.selected_row = persisted_tab.compare_selected_row;
         compare_state.scroll_row = static_cast<int>(std::min<std::size_t>(
             persisted_tab.compare_scroll_row,
             static_cast<std::size_t>(std::numeric_limits<int>::max())));
         compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
         compare_state.persistable = true;
-        compare_tab = BuildCompareTabEntry(compare_path, compare_state);
+        compare_tab = shell_.BuildCompareTabEntry(compare_path, compare_state);
       } else {
-        compare_tab = BuildCompareTabEntry(compare_path, commit, persisted_tab.compare_selected_row);
+        compare_tab =
+            shell_.BuildCompareTabEntry(compare_path, commit, persisted_tab.compare_selected_row);
       }
       if (!compare_tab.has_value()) {
         continue;
       }
       compare_tab->compare->scroll_row = static_cast<int>(std::min<std::size_t>(
-          persisted_tab.compare_scroll_row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+          persisted_tab.compare_scroll_row,
+          static_cast<std::size_t>(std::numeric_limits<int>::max())));
       compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
-      open_tabs_.push_back(std::move(*compare_tab));
+      shell_.open_tabs_.push_back(std::move(*compare_tab));
       continue;
     }
     if (persisted_tab.kind == "merge") {
       auto resolve_path = [&](std::filesystem::path path) {
         if (path.is_relative()) {
-          path = project_root_ / path;
+          path = shell_.project_root_ / path;
         }
         return path.lexically_normal();
       };
@@ -264,7 +260,8 @@ bool WorkspaceShell::RestoreSessionState() {
         continue;
       }
 
-      auto merge_tab = BuildMergeTabEntry(merge_base, merge_incoming, merge_current, merge_output);
+      auto merge_tab =
+          shell_.BuildMergeTabEntry(merge_base, merge_incoming, merge_current, merge_output);
       if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
         continue;
       }
@@ -295,19 +292,20 @@ bool WorkspaceShell::RestoreSessionState() {
       }
       merge_state.left_divider_fraction = persisted_tab.merge_left_divider_fraction;
       merge_state.right_divider_fraction = persisted_tab.merge_right_divider_fraction;
-      RefreshMergeTabDerivedState(merge_state);
+      shell_.RefreshMergeTabDerivedState(merge_state);
       merge_state.selected_hunk =
           merge_state.conflicts.empty()
               ? 0
               : std::min(persisted_tab.merge_selected_hunk, merge_state.conflicts.size() - 1);
       merge_state.scroll_row = static_cast<int>(std::min<std::size_t>(
-          persisted_tab.merge_scroll_row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+          persisted_tab.merge_scroll_row,
+          static_cast<std::size_t>(std::numeric_limits<int>::max())));
       merge_state.horizontal_scroll = persisted_tab.merge_horizontal_scroll;
       merge_state.result_viewport.SetScrollLine(
           static_cast<std::size_t>(std::max(0, merge_state.scroll_row)));
       merge_state.result_viewport.SetHorizontalScroll(merge_state.horizontal_scroll);
       merge_state.scroll_row = static_cast<int>(merge_state.result_viewport.scroll_line());
-      open_tabs_.push_back(std::move(*merge_tab));
+      shell_.open_tabs_.push_back(std::move(*merge_tab));
       continue;
     }
 
@@ -317,20 +315,20 @@ bool WorkspaceShell::RestoreSessionState() {
     for (const PersistedEditorViewState& persisted_view : persisted_tab.views) {
       std::filesystem::path view_path = persisted_view.path;
       if (!view_path.empty() && view_path.is_relative()) {
-        view_path = project_root_ / view_path;
+        view_path = shell_.project_root_ / view_path;
       }
       view_path = view_path.lexically_normal();
 
       if (persisted_view.dirty_snapshot) {
         editor::TextViewport restored_view;
-        restored_view.LoadContent(SerializeLines(persisted_view.buffer_lines,
-                                                 persisted_view.line_ending),
-                                  view_path, persisted_view.line_ending);
+        restored_view.LoadContent(
+            SerializeLines(persisted_view.buffer_lines, persisted_view.line_ending), view_path,
+            persisted_view.line_ending);
         restored_view.MoveCursorTo(persisted_view.cursor_line, persisted_view.cursor_column);
         restored_view.SetScrollLine(persisted_view.scroll_line);
         restored_view.SetHorizontalScroll(persisted_view.horizontal_scroll);
         restored_view.SetDirty(true);
-        ApplyEditorPreferences(restored_view);
+        shell_.ApplyEditorPreferences(restored_view);
         editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
             .leaf_id = persisted_view.leaf_id,
             .viewport = std::move(restored_view),
@@ -393,7 +391,7 @@ bool WorkspaceShell::RestoreSessionState() {
         }
 
         std::vector<std::size_t> parent_path(node_state.path.begin(), node_state.path.end() - 1);
-        auto* parent = FindEditorSplitNode(editor_state.split_root.get(), parent_path);
+        auto* parent = shell_.FindEditorSplitNode(editor_state.split_root.get(), parent_path);
         if (parent == nullptr) {
           continue;
         }
@@ -405,16 +403,16 @@ bool WorkspaceShell::RestoreSessionState() {
       }
     }
 
-    NormalizeEditorSplitTree(editor_state);
+    shell_.NormalizeEditorSplitTree(editor_state);
     const TabEntry::EditorTabState::EditorViewState* active_view =
-        FindEditorViewState(editor_state, editor_state.active_leaf_id);
+        shell_.FindEditorViewState(editor_state, editor_state.active_leaf_id);
     if (active_view == nullptr) {
       active_view = &editor_state.views.front();
       editor_state.active_leaf_id = editor_state.views.front().leaf_id;
     }
 
-    const std::filesystem::path tab_path = EditorViewPath(*active_view);
-    open_tabs_.push_back(TabEntry{
+    const std::filesystem::path tab_path = shell_.EditorViewPath(*active_view);
+    shell_.open_tabs_.push_back(TabEntry{
         .kind = TabEntry::Kind::Editor,
         .path = tab_path,
         .title = tab_path.empty() ? "untitled" : tab_path.filename().string(),
@@ -424,32 +422,34 @@ bool WorkspaceShell::RestoreSessionState() {
     });
   }
 
-  surface_.sidebar_visible = persisted_session.sidebar_visible;
-  surface_.sidebar_width = persisted_session.sidebar_width;
-  surface_.bottom_panel_height = persisted_session.bottom_panel_height;
+  shell_.surface_.sidebar_visible = persisted_session.sidebar_visible;
+  shell_.surface_.sidebar_width = persisted_session.sidebar_width;
+  shell_.surface_.bottom_panel_height = persisted_session.bottom_panel_height;
 
-  if (open_tabs_.empty()) {
-    text_viewport_.SetPlaceholderText(
+  if (shell_.open_tabs_.empty()) {
+    shell_.text_viewport_.SetPlaceholderText(
         "microide\n\n"
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
-    surface_.focus = surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+    shell_.surface_.focus =
+        shell_.surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
     return true;
   }
 
   const std::size_t active_index =
-      std::min(persisted_session.active_tab_index, open_tabs_.size() - 1);
-  active_tab_index_ = active_index;
-  surface_.focus = surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+      std::min(persisted_session.active_tab_index, shell_.open_tabs_.size() - 1);
+  shell_.active_tab_index_ = active_index;
+  shell_.surface_.focus =
+      shell_.surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
   return true;
 }
 
-void WorkspaceShell::SaveSessionState() {
-  if (project_root_.empty()) {
+void WorkspaceShell::PersistenceCoordinator::SaveSessionState() {
+  if (shell_.project_root_.empty()) {
     return;
   }
 
-  SyncActiveEditorTab();
+  shell_.SyncActiveEditorTab();
 
   const std::filesystem::path session_path = SessionStatePath();
   if (session_path.empty()) {
@@ -457,13 +457,13 @@ void WorkspaceShell::SaveSessionState() {
   }
 
   PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = surface_.sidebar_visible;
-  persisted_session.sidebar_width = surface_.sidebar_width;
-  persisted_session.bottom_panel_height = surface_.bottom_panel_height;
+  persisted_session.sidebar_visible = shell_.surface_.sidebar_visible;
+  persisted_session.sidebar_width = shell_.surface_.sidebar_width;
+  persisted_session.bottom_panel_height = shell_.surface_.bottom_panel_height;
   persisted_session.active_tab_index = 0;
 
-  for (std::size_t tab_index = 0; tab_index < open_tabs_.size(); ++tab_index) {
-    auto& tab = open_tabs_[tab_index];
+  for (std::size_t tab_index = 0; tab_index < shell_.open_tabs_.size(); ++tab_index) {
+    auto& tab = shell_.open_tabs_[tab_index];
     std::optional<PersistedEditorTabState> persisted_tab;
     if (tab.kind == TabEntry::Kind::Compare) {
       persisted_tab = BuildPersistedCompareTabState(tab);
@@ -475,7 +475,7 @@ void WorkspaceShell::SaveSessionState() {
     if (!persisted_tab.has_value()) {
       continue;
     }
-    if (tab_index == active_tab_index_) {
+    if (tab_index == shell_.active_tab_index_) {
       persisted_session.active_tab_index = persisted_session.tabs.size();
     }
     persisted_session.tabs.push_back(std::move(*persisted_tab));
@@ -484,13 +484,13 @@ void WorkspaceShell::SaveSessionState() {
   util::WriteTextFileAtomically(session_path, SerializeProjectSession(persisted_session));
 }
 
-std::filesystem::path WorkspaceShell::WorkspaceSessionStatePath() const {
+std::filesystem::path WorkspaceShell::PersistenceCoordinator::WorkspaceSessionStatePath() const {
   const std::filesystem::path state_root =
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
   return state_root.empty() ? std::filesystem::path{} : state_root / "workspace-session";
 }
 
-bool WorkspaceShell::RestoreWorkspaceSession() {
+bool WorkspaceShell::PersistenceCoordinator::RestoreWorkspaceSession() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreWorkspaceSession");
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
   if (session_path.empty()) {
@@ -506,17 +506,17 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     return false;
   }
 
-  project_catalog_.entries.clear();
-  project_catalog_.active_index = 0;
-  project_catalog_.tab_scroll_index = 0;
+  shell_.project_catalog_.entries.clear();
+  shell_.project_catalog_.active_index = 0;
+  shell_.project_catalog_.tab_scroll_index = 0;
 
   if (persisted_session.project_roots.empty()) {
-    ResetProjectCatalogToWelcomeState();
+    shell_.ResetProjectCatalogToWelcomeState();
     return true;
   }
 
   for (const auto& root : persisted_session.project_roots) {
-    const std::filesystem::path normalized_root = ResolveProjectRootInput(root);
+    const std::filesystem::path normalized_root = shell_.ResolveProjectRootInput(root);
     std::error_code error;
     if (normalized_root.empty() || !std::filesystem::exists(normalized_root, error) || error ||
         !std::filesystem::is_directory(normalized_root, error)) {
@@ -525,24 +525,25 @@ bool WorkspaceShell::RestoreWorkspaceSession() {
     auto project_state = std::make_unique<ProjectWorkspaceState>();
     project_state->root = normalized_root;
     project_state->restore_persistence_on_activate = true;
-    project_catalog_.entries.push_back(std::move(project_state));
+    shell_.project_catalog_.entries.push_back(std::move(project_state));
   }
 
-  if (project_catalog_.entries.empty()) {
-    ResetProjectCatalogToWelcomeState();
+  if (shell_.project_catalog_.entries.empty()) {
+    shell_.ResetProjectCatalogToWelcomeState();
     return true;
   }
 
-  if (!ProjectCatalogCoordinator(*this).RestoreAfterRemoval(
-          std::min(persisted_session.active_project_index, project_catalog_.entries.size() - 1),
+  if (!ProjectCatalogCoordinator(shell_).RestoreAfterRemoval(
+          std::min(persisted_session.active_project_index,
+                   shell_.project_catalog_.entries.size() - 1),
           true)) {
     return true;
   }
-  EnsureActiveProjectVisible();
+  shell_.EnsureActiveProjectVisible();
   return true;
 }
 
-void WorkspaceShell::SaveWorkspaceSession() {
+void WorkspaceShell::PersistenceCoordinator::SaveWorkspaceSession() const {
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
   if (session_path.empty()) {
     return;
@@ -550,12 +551,15 @@ void WorkspaceShell::SaveWorkspaceSession() {
 
   PersistedWorkspaceSessionState persisted_session;
   persisted_session.active_project_index =
-      project_catalog_.entries.empty() ? 0 : std::min(project_catalog_.active_index, project_catalog_.entries.size() - 1);
-  persisted_session.project_roots.reserve(project_catalog_.entries.size());
-  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
-    const auto* entry = ProjectCatalogEntry(i);
+      shell_.project_catalog_.entries.empty()
+          ? 0
+          : std::min(shell_.project_catalog_.active_index,
+                     shell_.project_catalog_.entries.size() - 1);
+  persisted_session.project_roots.reserve(shell_.project_catalog_.entries.size());
+  for (std::size_t i = 0; i < shell_.project_catalog_.entries.size(); ++i) {
+    const auto* entry = shell_.ProjectCatalogEntry(i);
     const std::filesystem::path project_root =
-        entry != nullptr ? entry->root : ProjectCatalogRoot(i);
+        entry != nullptr ? entry->root : shell_.ProjectCatalogRoot(i);
     if (project_root.empty()) {
       continue;
     }
@@ -564,8 +568,8 @@ void WorkspaceShell::SaveWorkspaceSession() {
   util::WriteTextFileAtomically(session_path, SerializeWorkspaceSession(persisted_session));
 }
 
-std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedCompareTabState(
-    const TabEntry& tab) const {
+std::optional<PersistedEditorTabState>
+WorkspaceShell::PersistenceCoordinator::BuildPersistedCompareTabState(const TabEntry& tab) const {
   if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() || !tab.compare->persistable) {
     return std::nullopt;
   }
@@ -585,8 +589,8 @@ std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedCompareTabS
   return persisted_tab;
 }
 
-std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedMergeTabState(
-    const TabEntry& tab) const {
+std::optional<PersistedEditorTabState>
+WorkspaceShell::PersistenceCoordinator::BuildPersistedMergeTabState(const TabEntry& tab) const {
   if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value() || !tab.merge->persistable) {
     return std::nullopt;
   }
@@ -609,25 +613,26 @@ std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedMergeTabSta
   return persisted_tab;
 }
 
-std::optional<PersistedEditorTabState> WorkspaceShell::BuildPersistedEditorTabState(
-    std::size_t tab_index,
-    TabEntry& tab) {
+std::optional<PersistedEditorTabState>
+WorkspaceShell::PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t tab_index,
+                                                                     TabEntry& tab) {
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
       tab.editor_state->views.empty()) {
     return std::nullopt;
   }
 
   auto& editor_state = tab.editor_state.value();
-  NormalizeEditorSplitTree(editor_state);
+  shell_.NormalizeEditorSplitTree(editor_state);
 
   PersistedEditorTabState persisted_tab;
   persisted_tab.kind = "editor";
   persisted_tab.active_leaf_id = editor_state.active_leaf_id;
   for (const auto& view : editor_state.views) {
     const bool active_live_view =
-        tab_index == active_tab_index_ && view.leaf_id == editor_state.active_leaf_id &&
+        tab_index == shell_.active_tab_index_ && view.leaf_id == editor_state.active_leaf_id &&
         !view.needs_restore;
-    const editor::TextViewport* persisted_viewport = active_live_view ? &text_viewport_ : &view.viewport;
+    const editor::TextViewport* persisted_viewport =
+        active_live_view ? &shell_.text_viewport_ : &view.viewport;
     const std::filesystem::path normalized_path =
         view.needs_restore ? view.restored_path.lexically_normal()
                            : persisted_viewport->path().lexically_normal();

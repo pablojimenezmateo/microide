@@ -60,14 +60,16 @@ Current state:
 - host-owned filesystem helpers and a recursive asset watcher now back plugin discovery, runtime
   syntax loading, theme enumeration, and automatic plugin reload when watched plugin files change
 - plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
+- workspace colorscheme, config, and session persistence now run through a dedicated persistence
+  coordinator instead of keeping those flows embedded in `WorkspaceShell`
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
 - keep paying phase-1 host-service debt by replacing the polling watcher path with stronger
-  platform-specific file watching where it is justified and by continuing to peel persistence,
-  command, and registry concerns out of `WorkspaceShell`
+  platform-specific file watching where it is justified and by continuing to peel command and
+  registry concerns out of `WorkspaceShell`
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it

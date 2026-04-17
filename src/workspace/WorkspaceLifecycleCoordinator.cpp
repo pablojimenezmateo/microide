@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include "util/StartupTrace.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 
 namespace microide::workspace {
@@ -79,6 +80,7 @@ std::size_t WorkspaceShell::LifecycleCoordinator::DirtyProjectTabCount() const {
 bool WorkspaceShell::LifecycleCoordinator::Initialize(
     const std::filesystem::path& project_root) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::Initialize");
+  PersistenceCoordinator persistence(shell_);
   ResetStartupState();
 
   shell_.project_search_runtime_.Initialize();
@@ -86,12 +88,12 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
 
   {
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");
-    shell_.RestoreUserConfig();
+    persistence.RestoreUserConfig();
   }
   {
     util::StartupTrace::Scope refresh_colors_scope(
         "WorkspaceShell::RefreshAvailableColorschemeNames");
-    shell_.RefreshAvailableColorschemeNames();
+    persistence.RefreshAvailableColorschemeNames();
   }
   {
     util::StartupTrace::Scope reset_state_scope("WorkspaceShell::ResetProjectScopedState");
@@ -100,7 +102,7 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
 
   {
     util::StartupTrace::Scope restore_workspace_scope("WorkspaceShell::RestoreWorkspaceSession");
-    if (shell_.RestoreWorkspaceSession()) {
+    if (persistence.RestoreWorkspaceSession()) {
       return true;
     }
   }
@@ -115,16 +117,17 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
 }
 
 void WorkspaceShell::LifecycleCoordinator::Shutdown() {
+  PersistenceCoordinator persistence(shell_);
   shell_.plugin_asset_monitor_.Reset();
   shell_.plugin_host_.Shutdown();
-  shell_.SaveUserConfig();
+  persistence.SaveUserConfig();
   shell_.git_blame_service_.Stop();
 
   if (shell_.HasActiveProjectCatalogEntry()) {
     ProjectCatalogCoordinator(shell_).PersistActiveEntry();
   }
   ProjectCatalogCoordinator(shell_).PersistInactiveEntriesForShutdown();
-  shell_.SaveWorkspaceSession();
+  persistence.SaveWorkspaceSession();
 
   shell_.project_search_runtime_.Shutdown();
   shell_.terminal_tabs_.clear();

@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -1292,6 +1293,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
     }
     return ActionDispatchResult::Rejected;
   };
+  PersistenceCoordinator persistence(*this);
 
   switch (id) {
     case ActionId::Colorscheme: {
@@ -1300,11 +1302,11 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
         return ActionDispatchResult::Handled;
       }
       if (request->list) {
-        RefreshAvailableColorschemeNames();
+        persistence.RefreshAvailableColorschemeNames();
         return ActionDispatchResult::Handled;
       }
-      RefreshAvailableColorschemeNames();
-      ApplyColorscheme(request->name, true, true);
+      persistence.RefreshAvailableColorschemeNames();
+      persistence.ApplyColorscheme(request->name, true, true);
       return ActionDispatchResult::Handled;
     }
     case ActionId::TabSize: {
@@ -1315,7 +1317,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       }
       editor_preferences_.tab_size = request->value;
       ApplyEditorPreferencesToAllTabs();
-      SaveConfigState();
+      persistence.SaveConfigState();
       return ActionDispatchResult::Handled;
     }
     case ActionId::IndentWidth: {
@@ -1326,7 +1328,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       }
       editor_preferences_.indent_width = request->value;
       ApplyEditorPreferencesToAllTabs();
-      SaveConfigState();
+      persistence.SaveConfigState();
       return ActionDispatchResult::Handled;
     }
     case ActionId::UiScale: {
@@ -1336,13 +1338,13 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       }
       switch (request->kind) {
         case UiScaleRequest::Kind::Step:
-          ApplyUiScale(StepUiScale(ui_scale_, request->delta), true, true);
+          persistence.ApplyUiScale(StepUiScale(ui_scale_, request->delta), true, true);
           break;
         case UiScaleRequest::Kind::Reset:
-          ApplyUiScale(1.0f, true, true);
+          persistence.ApplyUiScale(1.0f, true, true);
           break;
         case UiScaleRequest::Kind::Direct:
-          ApplyUiScale(request->scale, true, true);
+          persistence.ApplyUiScale(request->scale, true, true);
           break;
       }
       return ActionDispatchResult::Handled;
@@ -1354,7 +1356,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       }
       editor_preferences_.soft_tabs = request->enabled;
       ApplyEditorPreferencesToAllTabs();
-      SaveConfigState();
+      persistence.SaveConfigState();
       return ActionDispatchResult::Handled;
     }
     case ActionId::Focus: {

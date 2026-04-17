@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <memory>
 
+#include "workspace/WorkspacePersistenceCoordinator.h"
+
 namespace microide::workspace {
 
 WorkspaceShell::ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceShell& shell)
@@ -57,13 +59,13 @@ void WorkspaceShell::ProjectCatalogCoordinator::Close(std::size_t index,
       shell_.project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index));
   if (shell_.project_catalog_.entries.empty()) {
     shell_.ResetProjectCatalogToWelcomeState();
-    shell_.SaveWorkspaceSession();
+    PersistenceCoordinator(shell_).SaveWorkspaceSession();
     return;
   }
 
   if (closing_active) {
     if (!RestoreAfterRemoval(index, activate_restored_tab)) {
-      shell_.SaveWorkspaceSession();
+      PersistenceCoordinator(shell_).SaveWorkspaceSession();
       return;
     }
   } else if (shell_.project_catalog_.active_index > index) {
@@ -94,13 +96,15 @@ void WorkspaceShell::ProjectCatalogCoordinator::PersistActiveEntry() {
   if (!shell_.HasActiveProjectCatalogEntry()) {
     return;
   }
-  shell_.SaveConfigState();
-  shell_.SaveSessionState();
+  PersistenceCoordinator persistence(shell_);
+  persistence.SaveConfigState();
+  persistence.SaveSessionState();
   shell_.StoreCurrentProjectState(*shell_.project_catalog_.entries[shell_.project_catalog_.active_index]);
   shell_.plugin_host_.Shutdown();
 }
 
 void WorkspaceShell::ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
+  PersistenceCoordinator persistence(shell_);
   for (std::size_t i = 0; i < shell_.project_catalog_.entries.size(); ++i) {
     auto* entry = shell_.ProjectCatalogEntry(i);
     if (entry == nullptr || !entry->initialized ||
@@ -108,8 +112,8 @@ void WorkspaceShell::ProjectCatalogCoordinator::PersistInactiveEntriesForShutdow
       continue;
     }
     shell_.LoadProjectState(*entry);
-    shell_.SaveConfigState();
-    shell_.SaveSessionState();
+    persistence.SaveConfigState();
+    persistence.SaveSessionState();
     shell_.StoreCurrentProjectState(*entry);
   }
 }
@@ -148,7 +152,7 @@ void WorkspaceShell::ProjectCatalogCoordinator::RestoreActivationCheckpoint(
 
 void WorkspaceShell::ProjectCatalogCoordinator::FinalizeMutation() {
   shell_.EnsureActiveProjectVisible();
-  shell_.SaveWorkspaceSession();
+  PersistenceCoordinator(shell_).SaveWorkspaceSession();
   shell_.RequestWindowRedraw();
 }
 

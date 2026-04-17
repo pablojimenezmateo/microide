@@ -166,7 +166,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp
   src/workspace/WorkspaceShellHover.cpp
-  src/workspace/WorkspaceShellPersistence.cpp
+  src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp

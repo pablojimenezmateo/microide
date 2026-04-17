@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -291,9 +292,9 @@ bool WorkspaceShell::TabMouseCoordinator::HandleWheel(const SDL_Event& event,
 
 void WorkspaceShell::TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
   if (kind == TabDragKind::Project) {
-    shell_.SaveWorkspaceSession();
+    PersistenceCoordinator(shell_).SaveWorkspaceSession();
   } else {
-    shell_.SaveSessionState();
+    PersistenceCoordinator(shell_).SaveSessionState();
   }
 }
 

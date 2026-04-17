@@ -8,6 +8,7 @@
 
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -238,6 +239,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 }
 
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
+  PersistenceCoordinator persistence(*this);
   StopProjectSearch();
   CloseTreeContextMenu();
   ClearEditorBlame();
@@ -310,7 +312,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   project_base_color_ = std::nullopt;
   editor_preferences_ = EditorPreferences{};
   file_finder_.SetIndex(&file_index_);
-  ApplyColorscheme(active_colorscheme_name_, false, false);
+  persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferences(text_viewport_);
   if (show_welcome) {
     SetWelcomePlaceholder();
@@ -322,6 +324,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
                                               bool log_feedback,
                                               bool activate_restored_tab) {
   (void) log_feedback;
+  PersistenceCoordinator persistence(*this);
   util::StartupTrace::Scope trace_scope("WorkspaceShell::InitializeCurrentProject");
   ResetProjectScopedState(false);
   {
@@ -333,13 +336,13 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
 
   project_base_color_ = DefaultProjectBaseColor(project_root_);
 
-  ApplyColorscheme(active_colorscheme_name_, false, false);
+  persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferences(text_viewport_);
   if (restore_persistence) {
-    RestoreConfigState();
+    persistence.RestoreConfigState();
   }
 
-  if (restore_persistence && RestoreSessionState()) {
+  if (restore_persistence && persistence.RestoreSessionState()) {
     if (terminal_tabs_.empty()) {
       OpenTerminal({}, false, false);
     }
@@ -444,6 +447,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 }
 
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
+  PersistenceCoordinator persistence(*this);
   StopProjectSearch();
   CloseTreeContextMenu();
   ClearEditorBlame();
@@ -472,7 +476,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
 
   state.root = project_root_;
   file_finder_.SetIndex(&file_index_);
-  ApplyColorscheme(active_colorscheme_name_, false, false);
+  persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferencesToAllTabs();
   if (text_viewport_.is_placeholder()) {
     ApplyEditorPreferences(text_viewport_);

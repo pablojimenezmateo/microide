@@ -17,6 +17,24 @@ std::string EditorTabLabel(const editor::TextViewport& viewport) {
   return viewport.is_placeholder() ? "welcome" : "untitled";
 }
 
+}  // namespace
+
+void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
+  viewport.SetTabSize(editor_preferences_.tab_size);
+  viewport.SetIndentWidth(editor_preferences_.indent_width);
+  viewport.SetSoftTabs(editor_preferences_.soft_tabs);
+}
+
+void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
+  ApplyEditorPreferences(text_viewport_);
+  for (auto& tab : open_tabs_) {
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+      continue;
+    }
+    for (auto& view : tab.editor_state->views) {
+      ApplyEditorPreferences(view.viewport);
+    }
+  }
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {
