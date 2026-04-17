@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -316,93 +315,6 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   return false;
 }
 
-int WorkspaceShell::FirstEnabledMenuItemIndex(MenuId id) const {
-  const auto items = MenuItems(id);
-  if (items.empty()) {
-    return -1;
-  }
-
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    if (IsMenuItemEnabled(items[i])) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
-}
-
-int WorkspaceShell::NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const {
-  const auto items = MenuItems(id);
-  if (items.empty() || delta == 0) {
-    return -1;
-  }
-
-  const int item_count = static_cast<int>(items.size());
-  int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
-  for (int step = 0; step < item_count; ++step) {
-    index = (index + delta + item_count) % item_count;
-    if (IsMenuItemEnabled(items[static_cast<std::size_t>(index)])) {
-      return index;
-    }
-  }
-  return current_index;
-}
-
-void WorkspaceShell::OpenMenuBarMenu(MenuId id) {
-  RequestChromeRedraw();
-  if (id == MenuId::None) {
-    CloseMenuBar();
-    return;
-  }
-  CloseTreeContextMenu();
-  surface_.menu_bar_open = true;
-  surface_.active_menu_id = id;
-  surface_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
-  surface_.active_menu_anchor_rect.reset();
-  CloseSubmenu();
-  RequestChromeRedraw();
-}
-
-void WorkspaceShell::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
-  RequestChromeRedraw();
-  if (id == MenuId::None) {
-    CloseMenuBar();
-    return;
-  }
-  CloseTreeContextMenu();
-  surface_.menu_bar_open = true;
-  surface_.active_menu_id = id;
-  surface_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
-  surface_.active_menu_anchor_rect = anchor_rect;
-  CloseSubmenu();
-  RequestChromeRedraw();
-}
-
-void WorkspaceShell::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
-  RequestChromeRedraw();
-  surface_.active_submenu_id = id;
-  surface_.active_submenu_item_index = FirstEnabledMenuItemIndex(id);
-  surface_.active_submenu_anchor_rect = anchor_rect;
-  RequestChromeRedraw();
-}
-
-void WorkspaceShell::CloseSubmenu() {
-  RequestChromeRedraw();
-  surface_.active_submenu_id = MenuId::None;
-  surface_.active_submenu_item_index = -1;
-  surface_.active_submenu_anchor_rect.reset();
-  RequestChromeRedraw();
-}
-
-void WorkspaceShell::CloseMenuBar() {
-  RequestChromeRedraw();
-  surface_.menu_bar_open = false;
-  surface_.active_menu_id = MenuId::None;
-  surface_.active_menu_item_index = -1;
-  surface_.active_menu_anchor_rect.reset();
-  CloseSubmenu();
-  RequestChromeRedraw();
-}
-
 std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu_bar) const {
   if (surface_.active_submenu_id == MenuId::None || !surface_.active_submenu_anchor_rect.has_value()) {
     return std::nullopt;
@@ -417,70 +329,6 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu
   SDL_FRect anchor = *surface_.active_submenu_anchor_rect;
   anchor.x += anchor.w - 1.0f;
   return ComputePopupMenuRect(anchor, submenu_items, bounds);
-}
-
-bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
-  const auto items = MenuItems(menu_id);
-  if (items.empty() || item_index >= items.size()) {
-    return false;
-  }
-
-  const MenuItemSpec& item = items[item_index];
-  if (!IsMenuItemEnabled(item)) {
-    return true;
-  }
-  if (item.submenu != MenuId::None) {
-    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-      if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, menu_id);
-          popup_rect.has_value()) {
-        for (const VisiblePopupMenuItem& visible_item :
-             ComputeVisiblePopupMenuItems(menu_id, *popup_rect)) {
-          if (visible_item.index != item_index) {
-            continue;
-          }
-          OpenSubmenu(item.submenu, visible_item.rect);
-          return true;
-        }
-      }
-    }
-    CloseSubmenu();
-    return true;
-  }
-
-  std::vector<std::string> args;
-  args.reserve(item.arg_count);
-  for (std::size_t i = 0; i < item.arg_count; ++i) {
-    args.emplace_back(item.args[i]);
-  }
-  CloseMenuBar();
-  return ActionCoordinator(*this).Execute(item.action, args, ActionSource::Menu);
-}
-
-bool WorkspaceShell::SwitchMenuBarMenu(int delta) {
-  const auto menus = MenuSpecs();
-  if (menus.empty() || surface_.active_menu_id == MenuId::None || delta == 0) {
-    return false;
-  }
-
-  auto current_it = std::find_if(menus.begin(), menus.end(),
-                                 [this](const MenuSpec& spec) { return spec.id == surface_.active_menu_id; });
-  if (current_it == menus.end()) {
-    return false;
-  }
-
-  const int current_index = static_cast<int>(std::distance(menus.begin(), current_it));
-  const int next_index =
-      (current_index + delta + static_cast<int>(menus.size())) % static_cast<int>(menus.size());
-  OpenMenuBarMenu(menus[static_cast<std::size_t>(next_index)].id);
-  return true;
-}
-
-bool WorkspaceShell::MoveActiveMenuItem(int delta) {
-  if (!surface_.menu_bar_open || surface_.active_menu_id == MenuId::None) {
-    return false;
-  }
-  surface_.active_menu_item_index = NextEnabledMenuItemIndex(surface_.active_menu_id, surface_.active_menu_item_index, delta);
-  return surface_.active_menu_item_index >= 0;
 }
 
 std::filesystem::path WorkspaceShell::SelectedTreePath() const {
@@ -503,74 +351,6 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
   }
   return ComputePopupMenuRect(surface_.tree_context_menu.anchor_rect,
                               TreeContextMenuItems(surface_.tree_context_menu.target), *window_rect);
-}
-
-void WorkspaceShell::OpenTreeContextMenu(TreeContextTargetKind target,
-                                         const std::filesystem::path& path,
-                                         const SDL_FRect& anchor_rect) {
-  RequestChromeRedraw();
-  CloseMenuBar();
-  surface_.tree_context_menu.open = true;
-  surface_.tree_context_menu.target = target;
-  surface_.tree_context_menu.path = path.lexically_normal();
-  surface_.tree_context_menu.anchor_rect = anchor_rect;
-  surface_.tree_context_menu.active_item_index = FirstEnabledTreeContextMenuItemIndex();
-  RequestChromeRedraw();
-}
-
-void WorkspaceShell::CloseTreeContextMenu() {
-  RequestChromeRedraw();
-  surface_.tree_context_menu = TreeContextMenuState{};
-  RequestChromeRedraw();
-}
-
-bool WorkspaceShell::ExecuteTreeContextMenuItem(std::size_t item_index) {
-  const auto items = TreeContextMenuItems(surface_.tree_context_menu.target);
-  if (item_index >= items.size()) {
-    return false;
-  }
-
-  const MenuItemSpec& item = items[item_index];
-  if (!IsMenuItemEnabled(item)) {
-    return true;
-  }
-
-  std::vector<std::string> args;
-  args.reserve(item.arg_count);
-  for (std::size_t i = 0; i < item.arg_count; ++i) {
-    args.emplace_back(item.args[i]);
-  }
-  const bool handled =
-      ActionCoordinator(*this).Execute(item.action, args, ActionSource::ContextMenu);
-  CloseTreeContextMenu();
-  return handled;
-}
-
-int WorkspaceShell::FirstEnabledTreeContextMenuItemIndex() const {
-  const auto items = TreeContextMenuItems(surface_.tree_context_menu.target);
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    if (IsMenuItemEnabled(items[i])) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
-}
-
-int WorkspaceShell::NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const {
-  const auto items = TreeContextMenuItems(surface_.tree_context_menu.target);
-  if (items.empty() || delta == 0) {
-    return -1;
-  }
-
-  const int item_count = static_cast<int>(items.size());
-  int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
-  for (int step = 0; step < item_count; ++step) {
-    index = (index + delta + item_count) % item_count;
-    if (IsMenuItemEnabled(items[static_cast<std::size_t>(index)])) {
-      return index;
-    }
-  }
-  return current_index;
 }
 
 }  // namespace microide::workspace

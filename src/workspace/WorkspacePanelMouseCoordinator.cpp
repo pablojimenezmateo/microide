@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -70,9 +71,10 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
     if (event.button.button == SDL_BUTTON_RIGHT && Contains(panel_content, event.button.x,
                                                             event.button.y)) {
       shell_.surface_.focus = FocusTarget::Panel;
-      shell_.OpenAnchoredMenu(MenuId::TerminalContext,
-                              MakeRect(static_cast<float>(event.button.x),
-                                       static_cast<float>(event.button.y), 1.0f, 1.0f));
+      MenuCoordinator(shell_).OpenAnchoredMenu(
+          MenuId::TerminalContext,
+          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                   1.0f));
       return true;
     }
     if (event.button.button == SDL_BUTTON_MIDDLE && Contains(panel_content, event.button.x,

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -111,9 +112,10 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
         };
       } else if (event.button.button == SDL_BUTTON_RIGHT) {
         shell_.ActivateTab(tab.index);
-        shell_.OpenAnchoredMenu(MenuId::EditorTabContext,
-                                MakeRect(static_cast<float>(event.button.x),
-                                         static_cast<float>(event.button.y), 1.0f, 1.0f));
+        MenuCoordinator(shell_).OpenAnchoredMenu(
+            MenuId::EditorTabContext,
+            MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                     1.0f));
       }
       return true;
     }
@@ -158,9 +160,10 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
     } else if (event.button.button == SDL_BUTTON_RIGHT) {
       shell_.active_terminal_tab_index_ = tab.index;
       shell_.surface_.focus = FocusTarget::Panel;
-      shell_.OpenAnchoredMenu(MenuId::TerminalTabContext,
-                              MakeRect(static_cast<float>(event.button.x),
-                                       static_cast<float>(event.button.y), 1.0f, 1.0f));
+      MenuCoordinator(shell_).OpenAnchoredMenu(
+          MenuId::TerminalTabContext,
+          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                   1.0f));
     }
     return true;
   }

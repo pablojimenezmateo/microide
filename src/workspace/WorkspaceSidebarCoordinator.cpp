@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "project/GitStatusService.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -19,7 +20,7 @@ void WorkspaceShell::SidebarCoordinator::ShowMode(SidebarMode mode, bool tempora
     return;
   }
   if (mode != SidebarMode::Tree) {
-    shell_.CloseTreeContextMenu();
+    MenuCoordinator(shell_).CloseTreeContextMenu();
   }
 
   if (shell_.surface_.sidebar_mode == SidebarMode::Search && mode != SidebarMode::Search) {
@@ -98,7 +99,7 @@ void WorkspaceShell::SidebarCoordinator::Close() {
   if (shell_.surface_.sidebar_mode == SidebarMode::Search) {
     shell_.StopProjectSearch();
   }
-  shell_.CloseTreeContextMenu();
+  MenuCoordinator(shell_).CloseTreeContextMenu();
 
   if (shell_.surface_.sidebar_temporary && shell_.surface_.sidebar_prev_mode != SidebarMode::None) {
     RestorePrevious();

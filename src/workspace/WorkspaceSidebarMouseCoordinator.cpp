@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -218,9 +219,10 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
 
   if (local_y < 0.0f) {
     if (event.button.button == SDL_BUTTON_RIGHT) {
-      shell_.OpenTreeContextMenu(TreeContextTargetKind::Background, {},
-                                 MakeRect(static_cast<float>(event.button.x),
-                                          static_cast<float>(event.button.y), 1.0f, 1.0f));
+      MenuCoordinator(shell_).OpenTreeContextMenu(
+          TreeContextTargetKind::Background, {},
+          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                   1.0f));
     }
     return true;
   }
@@ -242,9 +244,10 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
           !entry.is_directory ? TreeContextTargetKind::File
           : entry.path == shell_.project_root_ ? TreeContextTargetKind::Root
                                                : TreeContextTargetKind::Directory;
-      shell_.OpenTreeContextMenu(target, entry.path,
-                                 MakeRect(static_cast<float>(event.button.x),
-                                          static_cast<float>(event.button.y), 1.0f, 1.0f));
+      MenuCoordinator(shell_).OpenTreeContextMenu(
+          target, entry.path,
+          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                   1.0f));
       return true;
     }
     if (Contains(row_rect, event.button.x, event.button.y) &&
@@ -259,9 +262,10 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
   }
 
   if (event.button.button == SDL_BUTTON_RIGHT) {
-    shell_.OpenTreeContextMenu(TreeContextTargetKind::Background, {},
-                               MakeRect(static_cast<float>(event.button.x),
-                                        static_cast<float>(event.button.y), 1.0f, 1.0f));
+    MenuCoordinator(shell_).OpenTreeContextMenu(
+        TreeContextTargetKind::Background, {},
+        MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                 1.0f));
   }
   return true;
 }

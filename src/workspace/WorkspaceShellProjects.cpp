@@ -8,6 +8,7 @@
 
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -241,7 +242,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   PersistenceCoordinator persistence(*this);
   StopProjectSearch();
-  CloseTreeContextMenu();
+  MenuCoordinator(*this).CloseTreeContextMenu();
   ClearEditorBlame();
 
   project_root_.clear();
@@ -418,7 +419,7 @@ bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
 void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   SyncActiveEditorTab();
   StopProjectSearch();
-  CloseTreeContextMenu();
+  MenuCoordinator(*this).CloseTreeContextMenu();
 
   state.initialized = true;
   state.restore_persistence_on_activate = false;
@@ -449,7 +450,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   PersistenceCoordinator persistence(*this);
   StopProjectSearch();
-  CloseTreeContextMenu();
+  MenuCoordinator(*this).CloseTreeContextMenu();
   ClearEditorBlame();
 
   project_root_ = state.root;
@@ -545,7 +546,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   if (index >= project_catalog_.entries.size()) {
     return false;
   }
-  CloseTreeContextMenu();
+  MenuCoordinator(*this).CloseTreeContextMenu();
   if (HasActiveProjectCatalogEntry() && index == project_catalog_.active_index) {
     EnsureActiveProjectVisible();
     return true;

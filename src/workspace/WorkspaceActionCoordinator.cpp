@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
@@ -402,7 +403,7 @@ bool WorkspaceShell::ActionCoordinator::Execute(ActionId id,
                                    const std::vector<std::string>& args,
                                    ActionSource source) {
   if (source != ActionSource::ContextMenu) {
-    shell_.CloseTreeContextMenu();
+    MenuCoordinator(shell_).CloseTreeContextMenu();
   }
 
   const auto reject_command = [&](std::string feedback) {

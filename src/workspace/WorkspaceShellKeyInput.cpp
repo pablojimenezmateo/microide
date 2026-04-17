@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -50,22 +51,24 @@ bool WorkspaceShell::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& event,
 }
 
 bool WorkspaceShell::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event) {
+  MenuCoordinator menu(*this);
   switch (event.key) {
     case SDLK_ESCAPE:
-      CloseTreeContextMenu();
+      menu.CloseTreeContextMenu();
       return true;
     case SDLK_DOWN:
       surface_.tree_context_menu.active_item_index =
-          NextEnabledTreeContextMenuItemIndex(surface_.tree_context_menu.active_item_index, 1);
+          menu.NextEnabledTreeContextMenuItemIndex(surface_.tree_context_menu.active_item_index, 1);
       return true;
     case SDLK_UP:
       surface_.tree_context_menu.active_item_index =
-          NextEnabledTreeContextMenuItemIndex(surface_.tree_context_menu.active_item_index, -1);
+          menu.NextEnabledTreeContextMenuItemIndex(surface_.tree_context_menu.active_item_index,
+                                                   -1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (surface_.tree_context_menu.active_item_index >= 0) {
-        return ExecuteTreeContextMenuItem(
+        return menu.ExecuteTreeContextMenuItem(
             static_cast<std::size_t>(surface_.tree_context_menu.active_item_index));
       }
       return true;
@@ -75,25 +78,26 @@ bool WorkspaceShell::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event
 }
 
 bool WorkspaceShell::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
+  MenuCoordinator menu(*this);
   switch (event.key) {
     case SDLK_ESCAPE:
-      CloseMenuBar();
+      menu.CloseMenuBar();
       return true;
     case SDLK_LEFT:
-      return SwitchMenuBarMenu(-1);
+      return menu.SwitchMenuBarMenu(-1);
     case SDLK_RIGHT:
-      return SwitchMenuBarMenu(1);
+      return menu.SwitchMenuBarMenu(1);
     case SDLK_TAB:
-      return SwitchMenuBarMenu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+      return menu.SwitchMenuBarMenu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
     case SDLK_DOWN:
-      return MoveActiveMenuItem(1);
+      return menu.MoveActiveMenuItem(1);
     case SDLK_UP:
-      return MoveActiveMenuItem(-1);
+      return menu.MoveActiveMenuItem(-1);
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (surface_.active_menu_item_index >= 0) {
-        return ExecuteMenuItem(surface_.active_menu_id,
-                               static_cast<std::size_t>(surface_.active_menu_item_index));
+        return menu.ExecuteMenuItem(surface_.active_menu_id,
+                                    static_cast<std::size_t>(surface_.active_menu_item_index));
       }
       return true;
     default:

@@ -929,6 +929,7 @@ class WorkspaceShell {
   class SidebarMouseCoordinator;
   class PanelMouseCoordinator;
   class ActionCoordinator;
+  class MenuCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -963,29 +964,12 @@ class WorkspaceShell {
   std::string MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
   bool IsMenuItemChecked(const MenuItemSpec& item) const;
-  int FirstEnabledMenuItemIndex(MenuId id) const;
-  int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
-  void OpenMenuBarMenu(MenuId id);
-  void OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect);
-  void OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect);
-  void CloseSubmenu();
-  void CloseMenuBar();
   std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
-  bool ExecuteMenuItem(MenuId menu_id, std::size_t item_index);
-  bool SwitchMenuBarMenu(int delta);
-  bool MoveActiveMenuItem(int delta);
   const project::TreeEntry* SelectedTreeEntry() const;
   std::filesystem::path SelectedTreePath() const;
   TreeContextTargetKind SelectedTreeTargetKind() const;
   std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
   std::optional<SDL_FRect> ComputeTreeContextMenuRect() const;
-  void OpenTreeContextMenu(TreeContextTargetKind target,
-                           const std::filesystem::path& path,
-                           const SDL_FRect& anchor_rect);
-  void CloseTreeContextMenu();
-  bool ExecuteTreeContextMenuItem(std::size_t item_index);
-  int FirstEnabledTreeContextMenuItemIndex() const;
-  int NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const;
   static char KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers);
   std::filesystem::path ResolveProjectRootInput(const std::filesystem::path& project_root) const;
   ProjectOpenDialogLaunchResult OpenNativeProjectPicker(std::string* error_message = nullptr);

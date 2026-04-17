@@ -154,6 +154,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
+  src/workspace/WorkspaceMenuCoordinator.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
