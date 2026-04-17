@@ -64,6 +64,9 @@ Current state:
 - workspace layout, scroll geometry, compare-or-merge marker math, and terminal-selection helpers
   now live in dedicated `WorkspaceLayout*` and `WorkspaceTerminalSelection*` modules instead of
   staying bundled into `WorkspaceShellShared.*`
+- workspace UTF-8 helpers, line serialization, whitespace normalization, and literal-search
+  helpers now live in dedicated `WorkspaceTextSearch*` modules instead of staying bundled into
+  `WorkspaceShellShared.*`
 - plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
 - workspace colorscheme, config, and session persistence now run through a dedicated persistence
   coordinator instead of keeping those flows embedded in `WorkspaceShell`
@@ -84,9 +87,9 @@ Open work:
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
 - keep paying phase-1 host-service debt by broadening native file-watch coverage beyond the
   current Linux-backed asset watcher while keeping snapshot fallback only where hosts or missing
-  roots still require it, by finishing the remaining text-and-search split out of
-  `WorkspaceShellShared.*`, and by continuing to peel remaining registry and coordinator concerns
-  out of `WorkspaceShell`
+  roots still require it, by finishing the remaining command, path, and project-presentation split
+  out of `WorkspaceShellShared.*`, and by continuing to peel remaining registry and coordinator
+  concerns out of `WorkspaceShell`
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it

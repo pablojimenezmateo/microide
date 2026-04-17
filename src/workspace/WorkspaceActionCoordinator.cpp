@@ -12,6 +12,7 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 

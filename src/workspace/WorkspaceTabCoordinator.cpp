@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 

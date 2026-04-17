@@ -9,11 +9,9 @@
 #include <string_view>
 #include <vector>
 
-#include "editor/TextViewport.h"
 #include "project/ProjectSearchService.h"
 #include "render/Theme.h"
-#include "workspace/WorkspaceLayout.h"
-#include "workspace/WorkspaceTerminalSelection.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 
@@ -82,28 +80,7 @@ std::string UiScaleLabel(float scale);
 std::optional<float> ParseUiScaleValue(std::string_view text);
 float StepUiScale(float current_scale, int delta);
 
-std::vector<std::string> SplitSyntaxLines(std::string_view text);
-std::string SerializeLines(const std::vector<std::string>& lines,
-                           editor::TextViewport::LineEnding line_ending);
-editor::TextViewport::LineEnding DetectLineEnding(std::string_view text);
-bool RemoveLastUtf8Codepoint(std::string* text);
-std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count);
-std::size_t Utf8CodepointCount(std::string_view text);
-std::string CollapseWhitespace(std::string_view text);
-bool QuerySupportsLiteralReplace(std::string_view query);
-bool UsesCaseSensitiveLiteralMatch(std::string_view query);
-std::size_t ReplaceLiteralMatchesInText(std::string& content,
-                                        std::string_view query,
-                                        std::string_view replacement,
-                                        bool case_sensitive);
-std::vector<editor::SelectionRange> FindLiteralSearchMatches(
-    const std::vector<std::string>& lines,
-    std::string_view query);
-
 ParsedCommandLine ParseCommandLine(std::string_view input);
-bool StartsWith(std::string_view text, std::string_view prefix);
-bool EndsWith(std::string_view text, std::string_view suffix);
-std::string ToLower(std::string_view text);
 std::string CommonPrefix(const std::vector<CommandCompletionCandidate>& candidates);
 bool CommandArgNeedsQuoting(std::string_view argument);
 std::string QuoteCommandArg(std::string_view argument);

@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "project/GitCompareService.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 

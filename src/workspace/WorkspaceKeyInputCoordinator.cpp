@@ -6,7 +6,7 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {

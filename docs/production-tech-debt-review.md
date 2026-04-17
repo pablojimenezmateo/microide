@@ -46,13 +46,16 @@ Recommended next step:
 Impact:
 - High
 - One shared utility unit still carries unrelated parsing, persistence-facing text formats,
-  string-search helpers, and project-presentation helpers even after the recent layout split.
+  command or path helpers, and project-presentation helpers even after the recent layout and text
+  splits.
 
 Evidence:
 - `WorkspaceLayout*` and `WorkspaceTerminalSelection*` now own layout, scroll, compare-or-merge
   marker, and terminal-selection responsibilities.
+- `WorkspaceTextSearch*` now owns UTF-8 helpers, line serialization, whitespace normalization,
+  and literal-search helpers.
 - `WorkspaceShellShared.*` still contains command parsing, config-and-session text parsing,
-  string-search helpers, git-sidebar line helpers, project-state naming, and path-or-breadcrumb
+  path helpers, git-sidebar line helpers, project-state naming, colors, and path-or-breadcrumb
   presentation helpers.
 
 References:
@@ -60,6 +63,8 @@ References:
 - `src/workspace/WorkspaceLayout.cpp`
 - `src/workspace/WorkspaceTerminalSelection.h`
 - `src/workspace/WorkspaceTerminalSelection.cpp`
+- `src/workspace/WorkspaceTextSearch.h`
+- `src/workspace/WorkspaceTextSearch.cpp`
 - `src/workspace/WorkspaceShellShared.h`
 - `src/workspace/WorkspaceShellShared.cpp`
 
@@ -68,9 +73,9 @@ Why this matters:
 - It increases compile-time coupling and makes unrelated changes land in the same file.
 
 Recommended next step:
-- Continue the split after the shipped `WorkspaceLayout*` and `WorkspaceTerminalSelection*`
-  extraction, with the next focused unit centered on `WorkspaceText/Search*` plus the remaining
-  project-and-session formatting helpers.
+- Continue the split after the shipped `WorkspaceLayout*`, `WorkspaceTerminalSelection*`, and
+  `WorkspaceTextSearch*` extractions, with the next focused unit centered on command-and-path
+  parsing plus the remaining project-and-session presentation helpers.
 
 ### 3. Action handling is still too centralized in the shell
 

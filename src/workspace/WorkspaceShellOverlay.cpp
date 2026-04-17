@@ -8,6 +8,7 @@
 
 #include "project/ProjectFileScanner.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 

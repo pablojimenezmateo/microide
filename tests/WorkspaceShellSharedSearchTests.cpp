@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 #include <filesystem>
 #include <string>

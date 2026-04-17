@@ -358,8 +358,8 @@ Before widening the plugin API, `microide` should continue the work already call
 `docs/production-tech-debt-review.md`:
 
 - narrow `WorkspaceShell`
-- finish the remaining `WorkspaceShellShared.*` split after the shipped `WorkspaceLayout*` and
-  `WorkspaceTerminalSelection*` extractions
+- finish the remaining `WorkspaceShellShared.*` split after the shipped `WorkspaceLayout*`,
+  `WorkspaceTerminalSelection*`, and `WorkspaceTextSearch*` extractions
 - move command handling behind registries and per-domain executors
 - reduce shell ownership of sidebar and surface state
 
@@ -568,8 +568,9 @@ added.
 Deliverables:
 
 - narrower `WorkspaceShell`
-- split `WorkspaceShellShared.*` into dedicated modules such as the shipped `WorkspaceLayout*` and
-  `WorkspaceTerminalSelection*` seams, then finish the remaining text-and-search split
+- split `WorkspaceShellShared.*` into dedicated modules such as the shipped `WorkspaceLayout*`,
+  `WorkspaceTerminalSelection*`, and `WorkspaceTextSearch*` seams, then finish the remaining
+  command, path, and presentation split
 - process service
 - task executor with cancellation
 - filesystem and watcher service

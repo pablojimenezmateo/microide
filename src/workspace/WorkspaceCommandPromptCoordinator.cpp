@@ -10,6 +10,7 @@
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 

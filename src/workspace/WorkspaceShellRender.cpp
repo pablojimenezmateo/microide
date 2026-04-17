@@ -12,6 +12,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {

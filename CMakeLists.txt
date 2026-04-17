@@ -192,6 +192,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
+  src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceShell.cpp
 )
 

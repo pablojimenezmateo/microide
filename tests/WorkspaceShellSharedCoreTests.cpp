@@ -5,6 +5,7 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextSearch.h"
 #include "util/TextFileIO.h"
 
 #include <algorithm>
