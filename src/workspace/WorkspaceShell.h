@@ -989,6 +989,7 @@ class WorkspaceShell {
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject();
+  bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers();
@@ -1602,6 +1603,7 @@ class WorkspaceShell {
   plugin::PluginHost plugin_host_;
   std::size_t runtime_syntax_plugin_definition_count_ = 0;
   std::vector<std::string> runtime_syntax_errors_;
+  Uint32 plugin_asset_event_type_ = 0;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-17.
+Reviewed on 2026-04-18.
 
 This is the single source of truth for:
 
@@ -57,8 +57,9 @@ Current state:
 - host-owned app-directory, subprocess, output-channel, task-executor, and persistence-format
   services now back plugin, search, blame, and workspace state flows instead of keeping that work
   tangled in `WorkspaceShell` or `WorkspaceShellShared.*`
-- host-owned filesystem helpers and a recursive asset watcher now back plugin discovery, runtime
-  syntax loading, theme enumeration, and automatic plugin reload when watched plugin files change
+- host-owned filesystem helpers and a host-owned tree watcher now back plugin discovery, runtime
+  syntax loading, theme enumeration, and automatic plugin reload, with Linux native file-watch
+  wakeups plus snapshot fallback where native coverage is not available
 - plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
 - workspace colorscheme, config, and session persistence now run through a dedicated persistence
   coordinator instead of keeping those flows embedded in `WorkspaceShell`
@@ -77,9 +78,10 @@ Current state:
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
-- keep paying phase-1 host-service debt by replacing the polling watcher path with stronger
-  platform-specific file watching where it is justified and by continuing to peel remaining
-  registry and coordinator concerns out of `WorkspaceShell`
+- keep paying phase-1 host-service debt by broadening native file-watch coverage beyond the
+  current Linux-backed asset watcher while keeping snapshot fallback only where hosts or missing
+  roots still require it, and by continuing to peel remaining registry and coordinator concerns
+  out of `WorkspaceShell`
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it

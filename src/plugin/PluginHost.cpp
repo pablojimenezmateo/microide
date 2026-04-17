@@ -1811,6 +1811,8 @@ bool PluginHost::ExecuteCommand(std::string_view name,
     lua_pop(state, 1);
     return false;
   }
+#else
+  (void)args;
 #endif
 
   if (error_message != nullptr) {
@@ -1845,7 +1847,17 @@ bool PluginHost::SnapshotSidebar(std::string_view id,
     }
     return false;
   }
+#if MICROIDE_HAS_LUA_PLUGINS
   return impl_->SnapshotSidebarProvider(it->second, items, error_message);
+#else
+  if (items != nullptr) {
+    items->clear();
+  }
+  if (error_message != nullptr) {
+    *error_message = "Lua plugin runtime unavailable";
+  }
+  return false;
+#endif
 }
 
 bool PluginHost::ConfirmSidebarItem(std::string_view id,
@@ -1858,7 +1870,15 @@ bool PluginHost::ConfirmSidebarItem(std::string_view id,
     }
     return false;
   }
+#if MICROIDE_HAS_LUA_PLUGINS
   return impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
+#else
+  (void)item;
+  if (error_message != nullptr) {
+    *error_message = "Lua plugin runtime unavailable";
+  }
+  return false;
+#endif
 }
 
 bool PluginHost::QueryHover(const std::filesystem::path& path,
@@ -1885,6 +1905,7 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
   const std::filesystem::path resolved_path =
       ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
   Impl* impl = impl_.get();
+#if MICROIDE_HAS_LUA_PLUGINS
   for (const std::string& provider_id : impl->hover_provider_order) {
     const auto it = impl->hovers.find(provider_id);
     if (it == impl->hovers.end()) {
@@ -1900,6 +1921,10 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
       return true;
     }
   }
+#else
+  (void)resolved_path;
+  (void)impl;
+#endif
 
   if (error_message != nullptr) {
     error_message->clear();

@@ -32,6 +32,18 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     ConsumePendingProjectOpenDialogResult();
     return finish(true);
   }
+  if (plugin_asset_monitor_.ConsumeWakeEvent(event.type)) {
+    if (ReloadPluginsIfPluginAssetsChanged(true)) {
+      return EventResult{
+          .handled = true,
+          .redraw = RenderInvalidation{
+              .full = true,
+              .rects = {},
+          },
+      };
+    }
+    return finish(true);
+  }
   if (project_search_runtime_.HandlesEvent(event.type)) {
     ConsumeProjectSearchUpdates();
     return finish(true);

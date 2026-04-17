@@ -986,10 +986,7 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
-  if (plugin_asset_monitor_.PollForChanges()) {
-    ReloadPluginsForCurrentProject();
-    output_channels_.AppendLine("plugins.log", "Plugin Log",
-                                "Detected plugin asset changes: " + PluginRuntimeReloadSummary());
+  if (ReloadPluginsIfPluginAssetsChanged(false)) {
     return EventResult{
         .handled = true,
         .redraw = RenderInvalidation{

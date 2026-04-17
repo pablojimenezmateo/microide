@@ -1,6 +1,6 @@
 # Plugin Platform Expansion Plan
 
-Reviewed on 2026-04-17.
+Reviewed on 2026-04-18.
 
 This document supersedes the earlier compatibility-first framing.
 The top VS Code Marketplace extensions remain a useful demand signal, but they are no longer the
@@ -101,7 +101,8 @@ Important current constraints:
 - plugin process execution is synchronous
 - there is no generic background task runner for plugins
 - there is no settings, keybinding, output, task, test, SCM, or AI registry
-- there is no platform-neutral process or watcher abstraction yet
+- host-owned process, app-directory, and file-watching services exist, but native watcher coverage
+  and higher-level plugin registries are still incomplete
 
 ## What Zed Gets Right
 
@@ -472,12 +473,12 @@ Concrete local examples:
 
 - `src/terminal/TerminalSession.cpp` is POSIX-only and explicitly reports that terminal support is
   only available on POSIX hosts
-- `src/project/GitCommandUtil.h` uses `fork`, `execvp`, pipes, and `waitpid`
-- `src/plugin/PluginHost.cpp` uses the same POSIX process model for plugin process execution
+- `src/platform/Subprocess.cpp` still uses `fork`, `execvp`, pipes, and `waitpid` on POSIX hosts
+  and returns “not implemented” on unsupported platforms
+- `src/platform/FileWatcher.cpp` now provides Linux `inotify` wakeups, but other hosts still fall
+  back to snapshot polling
 - `src/project/FileOperationService.cpp` implements Linux and macOS trash flows, but returns “not
   implemented” on unsupported platforms such as Windows
-- `src/plugin/PluginHost.cpp` resolves the global plugin directory from XDG or `HOME`, not a
-  platform-neutral application-data service
 
 ### What this means for the plugin plan
 

@@ -97,6 +97,19 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject() {
   return clean_reload && runtime_syntax_errors_.empty();
 }
 
+bool WorkspaceShell::ReloadPluginsIfPluginAssetsChanged(bool force_check) {
+  const bool changed =
+      force_check ? plugin_asset_monitor_.ConsumePendingChanges() : plugin_asset_monitor_.PollForChanges();
+  if (!changed) {
+    return false;
+  }
+
+  ReloadPluginsForCurrentProject();
+  output_channels_.AppendLine("plugins.log", "Plugin Log",
+                              "Detected plugin asset changes: " + PluginRuntimeReloadSummary());
+  return true;
+}
+
 void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches() {
   text_viewport_.InvalidateSyntaxHighlighting();
 

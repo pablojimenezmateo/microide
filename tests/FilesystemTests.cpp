@@ -4,7 +4,9 @@
 #include "platform/Filesystem.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
 
 namespace microide::tests {
 namespace {
@@ -64,6 +66,35 @@ void TestFileWatcherDetectsCreationOfMissingRoots() {
   Expect(watcher.Poll(), "file watcher should detect when a previously missing root appears");
 }
 
+#if defined(__linux__)
+void TestFileWatcherWakeCallbackSignalsNestedChanges() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "plugins";
+  std::filesystem::create_directories(root);
+
+  FileTreeWatcher watcher(std::chrono::milliseconds(500));
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool notified = false;
+  watcher.SetWakeCallback([&]() {
+    {
+      std::lock_guard lock(mutex);
+      notified = true;
+    }
+    condition.notify_one();
+  });
+  watcher.SetRoots({root});
+
+  WriteFile(root / "reloadable" / "init.lua", "return 1\n");
+
+  std::unique_lock lock(mutex);
+  const bool woke = condition.wait_for(lock, std::chrono::seconds(2), [&]() { return notified; });
+  Expect(woke, "native file watcher should notify when nested files change");
+  Expect(watcher.Poll(),
+         "file watcher wake notifications should correspond to detectable tree changes");
+}
+#endif
+
 }  // namespace
 
 void RegisterFilesystemTests(std::vector<TestCase>& tests) {
@@ -73,6 +104,10 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestFileWatcherDetectsNestedCreatesUpdatesAndDeletes);
   AddTest(tests, "FileWatcher/DetectsCreationOfMissingRoots",
           TestFileWatcherDetectsCreationOfMissingRoots);
+#if defined(__linux__)
+  AddTest(tests, "FileWatcher/WakeCallbackSignalsNestedChanges",
+          TestFileWatcherWakeCallbackSignalsNestedChanges);
+#endif
 }
 
 }  // namespace microide::tests
