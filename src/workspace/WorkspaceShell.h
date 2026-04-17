@@ -29,6 +29,7 @@
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceOutputChannels.h"
+#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspaceShellShared.h"
 

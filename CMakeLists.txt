@@ -139,6 +139,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
+  src/util/TaskExecutor.cpp
   src/util/TextFileIO.cpp
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
@@ -170,6 +171,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceOutputChannels.cpp
+  src/workspace/WorkspacePersistenceFormat.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
@@ -246,6 +248,7 @@ add_executable(microide_tests
   tests/MergeModelTests.cpp
   tests/ProjectSearchServiceTests.cpp
   tests/RegexUtilTests.cpp
+  tests/TaskExecutorTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp
@@ -347,6 +350,7 @@ add_executable(microide_search_bench
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp
+  src/util/TaskExecutor.cpp
   tools/ProjectSearchBench.cpp
 )
 

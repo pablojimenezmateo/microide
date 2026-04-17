@@ -2,13 +2,13 @@
 
 #include <SDL3/SDL.h>
 
-#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
+
+#include "util/TaskExecutor.h"
 
 namespace microide::project {
 
@@ -64,20 +64,21 @@ class ProjectSearchService {
   void WorkerMain(std::filesystem::path root,
                   std::string query,
                   ProjectSearchOptions options,
-                  std::uint64_t run_id);
+                  std::uint64_t run_id,
+                  const util::CancellationToken& token);
   SearchCompletion RunSearch(const std::filesystem::path& root,
                              const std::string& query,
                              const ProjectSearchOptions& options,
-                             std::uint64_t run_id);
+                             std::uint64_t run_id,
+                             const util::CancellationToken& token);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);
   void PublishFinished(std::uint64_t run_id, SearchCompletion completion);
   void PushWakeEvent() const;
-  bool StopRequested() const;
 
   mutable std::mutex mutex_;
-  std::thread worker_;
-  std::atomic<bool> stop_requested_{false};
+  util::TaskExecutor task_executor_;
   std::uint64_t next_run_id_ = 0;
+  std::uint64_t active_run_id_ = 0;
   Uint32 wake_event_type_ = 0;
   ProjectSearchUpdate pending_update_;
 };

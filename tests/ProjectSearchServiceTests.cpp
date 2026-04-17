@@ -266,6 +266,31 @@ void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
          "restarted project search should keep the latest query match");
 }
 
+void TestProjectSearchServiceStopDiscardsLateUpdates() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::string repeated_lines;
+  for (int line = 0; line < 50; ++line) {
+    repeated_lines += "alpha\n";
+  }
+  for (int file_index = 0; file_index < 24; ++file_index) {
+    const std::string label = file_index < 10 ? "0" + std::to_string(file_index)
+                                              : std::to_string(file_index);
+    WriteFile(root / ("file" + label + ".txt"), repeated_lines);
+  }
+
+  ProjectSearchService service;
+  service.Start(root, "alpha");
+  service.Stop();
+  std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+  const auto update = service.TakePendingUpdate();
+  Expect(update.run_id == 0, "stopped project search should discard any pending updates");
+  Expect(update.results.empty(), "stopped project search should not publish late results");
+  Expect(!update.finished,
+         "stopped project search should not publish a completion update afterwards");
+}
+
 }  // namespace
 
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
@@ -281,6 +306,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceFlagsTruncatedLargeResultSets);
   AddTest(tests, "ProjectSearchService/RestartPublishesOnlyLatestRun",
           TestProjectSearchServiceRestartPublishesOnlyLatestRun);
+  AddTest(tests, "ProjectSearchService/StopDiscardsLateUpdates",
+          TestProjectSearchServiceStopDiscardsLateUpdates);
 }
 
 }  // namespace microide::tests

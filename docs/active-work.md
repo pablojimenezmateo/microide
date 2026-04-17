@@ -54,15 +54,17 @@ Current state:
 - manual Lua plugin loading is shipped
 - command and sidebar registries exist
 - the host already exposes narrow file, workspace, process, diagnostics, and hover extension points
+- host-owned app-directory, subprocess, output-channel, task-executor, and persistence-format
+  services now back plugin, search, blame, and workspace state flows instead of keeping that work
+  tangled in `WorkspaceShell` or `WorkspaceShellShared.*`
 - plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
-- keep paying phase-1 host-service debt by routing plugin and git subprocess work through
-  compiled services and by centralizing config or state path resolution instead of repeating
-  environment lookups in feature code
+- keep paying phase-1 host-service debt by finishing the filesystem and watcher service work and
+  by continuing to peel persistence, command, and registry concerns out of `WorkspaceShell`
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it
@@ -100,6 +102,7 @@ Current state:
 
 - search is already behind a built-in service boundary
 - file operations, blame, compare, and git state already have service seams
+- search and blame now share a cancellable background task executor instead of bespoke worker-thread ownership
 
 Open work:
 

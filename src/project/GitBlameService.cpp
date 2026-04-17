@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
-#include <condition_variable>
 #include <cstdlib>
-#include <deque>
 #include <filesystem>
 #include <limits>
 #include <mutex>
@@ -20,6 +18,7 @@
 #include <vector>
 
 #include "project/GitCommandUtil.h"
+#include "util/TaskExecutor.h"
 
 namespace microide::project {
 
@@ -465,13 +464,13 @@ struct GitBlameService::Impl {
   }
 
   void RemovePendingRequestsForFileLocked(std::string_view file_key) {
-    for (auto it = pending_requests.begin(); it != pending_requests.end();) {
-      if (it->file_key == file_key) {
-        pending_request_keys.erase(it->request_key);
-        it = pending_requests.erase(it);
-        continue;
+    for (auto it = pending_request_files.begin(); it != pending_request_files.end();) {
+      if (it->second == file_key) {
+        pending_request_keys.erase(it->first);
+        it = pending_request_files.erase(it);
+      } else {
+        ++it;
       }
-      ++it;
     }
   }
 
@@ -487,27 +486,29 @@ struct GitBlameService::Impl {
     const std::string file_key = BuildFileKey(request.root, *relative_path);
     const auto now = Clock::now();
 
-    std::lock_guard lock(mutex);
-    const std::uint64_t file_generation = CurrentFileGenerationLocked(file_key);
-    const std::uint64_t request_clear_generation = clear_generation;
-    const std::string request_key =
-        BuildRequestKey(file_key, window, file_generation, request_clear_generation);
-    FileCache* cache = nullptr;
-    if (auto it = file_caches.find(file_key); it != file_caches.end()) {
-      cache = &it->second;
-      cache->last_access_generation = ++access_generation;
-    }
+    PendingRequest pending_request;
+    {
+      std::lock_guard lock(mutex);
+      const std::uint64_t file_generation = CurrentFileGenerationLocked(file_key);
+      const std::uint64_t request_clear_generation = clear_generation;
+      const std::string request_key =
+          BuildRequestKey(file_key, window, file_generation, request_clear_generation);
+      FileCache* cache = nullptr;
+      if (auto it = file_caches.find(file_key); it != file_caches.end()) {
+        cache = &it->second;
+        cache->last_access_generation = ++access_generation;
+      }
 
-    if (cache != nullptr && cache->eligible &&
-        SpansCoverWindow(cache->loaded_spans, window) &&
-        now - cache->last_validated_at < kCacheValidationInterval) {
-      return;
-    }
-    if (request_key == active_request_key || pending_request_keys.count(request_key) > 0) {
-      return;
-    }
+      if (cache != nullptr && cache->eligible &&
+          SpansCoverWindow(cache->loaded_spans, window) &&
+          now - cache->last_validated_at < kCacheValidationInterval) {
+        return;
+      }
+      if (request_key == active_request_key || pending_request_keys.count(request_key) > 0) {
+        return;
+      }
 
-    pending_requests.push_back(PendingRequest{
+      pending_request = PendingRequest{
         .request = request,
         .relative_path = *relative_path,
         .file_key = file_key,
@@ -515,9 +516,15 @@ struct GitBlameService::Impl {
         .window = window,
         .file_generation = file_generation,
         .clear_generation = request_clear_generation,
-    });
-    pending_request_keys.insert(request_key);
-    cv.notify_one();
+      };
+      pending_request_keys.insert(request_key);
+      pending_request_files.emplace(request_key, file_key);
+    }
+
+    executor.Submit(
+        [this, pending_request](const util::CancellationToken& token) {
+          ProcessQueuedRequest(pending_request, token);
+        });
   }
 
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const {
@@ -580,65 +587,50 @@ struct GitBlameService::Impl {
   }
 
   void Clear() {
-    std::lock_guard lock(mutex);
-    ++clear_generation;
-    file_caches.clear();
-    file_generations.clear();
-    pending_requests.clear();
-    pending_request_keys.clear();
-    active_request_key.clear();
+    {
+      std::lock_guard lock(mutex);
+      ++clear_generation;
+      file_caches.clear();
+      file_generations.clear();
+      pending_request_keys.clear();
+      pending_request_files.clear();
+      active_request_key.clear();
+    }
+    executor.CancelAll();
   }
 
   void Stop() {
     {
       std::lock_guard lock(mutex);
-      stop_requested = true;
-      pending_requests.clear();
+      active_request_key.clear();
       pending_request_keys.clear();
+      pending_request_files.clear();
     }
-    cv.notify_all();
-    if (worker.joinable()) {
-      worker.join();
-    }
+    executor.CancelAll();
+    executor.WaitForIdle();
   }
 
-  void EnsureWorkerStarted() {
-    if (worker.joinable()) {
-      return;
+  void ProcessQueuedRequest(const PendingRequest& request, const util::CancellationToken& token) {
+    {
+      std::lock_guard lock(mutex);
+      pending_request_keys.erase(request.request_key);
+      pending_request_files.erase(request.request_key);
+      active_request_key = request.request_key;
     }
-    worker = std::thread(&Impl::WorkerMain, this);
-  }
 
-  void WorkerMain() {
-    while (true) {
-      PendingRequest request;
-      {
-        std::unique_lock lock(mutex);
-        cv.wait(lock, [&]() { return stop_requested || !pending_requests.empty(); });
-        if (stop_requested) {
-          return;
-        }
+    ProcessRequest(request, token);
 
-        request = std::move(pending_requests.front());
-        pending_requests.erase(pending_requests.begin());
-        pending_request_keys.erase(request.request_key);
-        active_request_key = request.request_key;
-      }
-
-      ProcessRequest(request);
-
-      {
-        std::lock_guard lock(mutex);
-        if (active_request_key == request.request_key) {
-          active_request_key.clear();
-        }
+    {
+      std::lock_guard lock(mutex);
+      if (active_request_key == request.request_key) {
+        active_request_key.clear();
       }
     }
   }
 
-  void ProcessRequest(const PendingRequest& request) {
+  void ProcessRequest(const PendingRequest& request, const util::CancellationToken& token) {
     bool changed = false;
-    if (!RequestStillCurrent(request)) {
+    if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;
     }
 
@@ -652,7 +644,7 @@ struct GitBlameService::Impl {
 
     const auto head_id = ResolveHeadId(request.request.root);
     const auto stamp = ReadFileStamp(request.request.absolute_path);
-    if (!RequestStillCurrent(request)) {
+    if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;
     }
     if (!head_id.has_value() || !stamp.has_value() ||
@@ -666,7 +658,7 @@ struct GitBlameService::Impl {
 
     const bool working_tree_clean =
         FileIsWorkingTreeClean(request.request.root, request.relative_path);
-    if (!RequestStillCurrent(request)) {
+    if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;
     }
 
@@ -692,7 +684,7 @@ struct GitBlameService::Impl {
     }
 
     for (const Span& span : missing_spans) {
-      if (!RequestStillCurrent(request)) {
+      if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
         return;
       }
       std::vector<std::string> arguments = {"blame", "--incremental", "--encoding=UTF-8"};
@@ -707,7 +699,7 @@ struct GitBlameService::Impl {
       arguments.push_back(request.relative_path.generic_string());
       const auto output =
           gitutil::ReadGitCommandOutput(request.request.root, std::move(arguments));
-      if (!RequestStillCurrent(request)) {
+      if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
         return;
       }
       if (!output.success()) {
@@ -725,7 +717,7 @@ struct GitBlameService::Impl {
       RunBeforeCacheApplyHook();
 #endif
       std::lock_guard lock(mutex);
-      if (!RequestStillCurrentLocked(request)) {
+      if (token.IsCancellationRequested() || !RequestStillCurrentLocked(request)) {
         return;
       }
       auto& cache = file_caches[request.file_key];
@@ -849,17 +841,15 @@ struct GitBlameService::Impl {
   }
 
   mutable std::mutex mutex;
-  std::condition_variable cv;
-  std::thread worker;
-  bool stop_requested = false;
   Uint32 wake_event_type = 0;
-  std::deque<PendingRequest> pending_requests;
   std::unordered_set<std::string> pending_request_keys;
+  std::unordered_map<std::string, std::string> pending_request_files;
   std::string active_request_key;
   std::unordered_map<std::string, FileCache> file_caches;
   std::unordered_map<std::string, std::uint64_t> file_generations;
   std::uint64_t clear_generation = 0;
   std::uint64_t access_generation = 0;
+  util::TaskExecutor executor;
 #ifdef MICROIDE_TESTING
   std::function<void()> before_cache_apply_hook;
 #endif
@@ -881,7 +871,6 @@ void GitBlameService::Request(const GitBlameRequest& request) {
   if (impl_ == nullptr) {
     impl_ = new Impl();
   }
-  impl_->EnsureWorkerStarted();
   impl_->Request(request);
 }
 

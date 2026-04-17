@@ -151,24 +151,29 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
                                           ProjectSearchOptions options) {
   Stop();
 
-  std::lock_guard lock(mutex_);
-  pending_update_ = {};
-  const std::uint64_t run_id = ++next_run_id_;
-  stop_requested_.store(false);
-  worker_ = std::thread(&ProjectSearchService::WorkerMain, this, root, std::move(query),
-                        options, run_id);
+  std::uint64_t run_id = 0;
+  {
+    std::lock_guard lock(mutex_);
+    run_id = ++next_run_id_;
+    active_run_id_ = run_id;
+  }
+
+  task_executor_.Submit(
+      [this, root, query = std::move(query), options, run_id](const util::CancellationToken& token) {
+        WorkerMain(root, query, options, run_id, token);
+      });
   return run_id;
 }
 
 void ProjectSearchService::Stop() {
-  stop_requested_.store(true);
-
-  if (worker_.joinable()) {
-    worker_.join();
+  {
+    std::lock_guard lock(mutex_);
+    active_run_id_ = 0;
+    pending_update_ = {};
   }
 
-  std::lock_guard lock(mutex_);
-  pending_update_ = {};
+  task_executor_.CancelAll();
+  task_executor_.WaitForIdle();
 }
 
 ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
@@ -181,14 +186,18 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
 void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::string query,
                                       ProjectSearchOptions options,
-                                      std::uint64_t run_id) {
+                                      std::uint64_t run_id,
+                                      const util::CancellationToken& token) {
+  if (token.IsCancellationRequested()) {
+    return;
+  }
   if (query.empty()) {
     PublishFinished(run_id, SearchCompletion{});
     return;
   }
 
-  const SearchCompletion completion = RunSearch(root, query, options, run_id);
-  if (!StopRequested()) {
+  const SearchCompletion completion = RunSearch(root, query, options, run_id, token);
+  if (!token.IsCancellationRequested()) {
     PublishFinished(run_id, completion);
   }
 }
@@ -197,7 +206,8 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     const std::filesystem::path& root,
     const std::string& query,
     const ProjectSearchOptions& options,
-    std::uint64_t run_id) {
+    std::uint64_t run_id,
+    const util::CancellationToken& token) {
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
   if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||
@@ -240,7 +250,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   std::array<char, 4096> probe{};
 
   for (const auto& relative_path : files) {
-    if (StopRequested()) {
+    if (token.IsCancellationRequested()) {
       return {};
     }
 
@@ -259,7 +269,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
 
     std::string line;
     std::size_t line_index = 0;
-    while (!StopRequested() && std::getline(file, line)) {
+    while (!token.IsCancellationRequested() && std::getline(file, line)) {
       if (!line.empty() && line.back() == '\r') {
         line.pop_back();
       }
@@ -297,7 +307,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   }
 
-  if (!batch.empty() && !StopRequested()) {
+  if (!batch.empty() && !token.IsCancellationRequested()) {
     PublishResults(run_id, std::move(batch));
   }
   return SearchCompletion{};
@@ -305,12 +315,15 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
 
 void ProjectSearchService::PublishResults(std::uint64_t run_id,
                                           std::vector<ProjectSearchResult> batch) {
-  if (batch.empty() || StopRequested()) {
+  if (batch.empty()) {
     return;
   }
 
   {
     std::lock_guard lock(mutex_);
+    if (active_run_id_ != run_id) {
+      return;
+    }
     if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
       pending_update_ = {};
     }
@@ -326,12 +339,11 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
 }
 
 void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletion completion) {
-  if (StopRequested()) {
-    return;
-  }
-
   {
     std::lock_guard lock(mutex_);
+    if (active_run_id_ != run_id) {
+      return;
+    }
     if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
       pending_update_ = {};
     }
@@ -353,10 +365,6 @@ void ProjectSearchService::PushWakeEvent() const {
   SDL_zero(event);
   event.type = wake_event_type_;
   SDL_PushEvent(&event);
-}
-
-bool ProjectSearchService::StopRequested() const {
-  return stop_requested_.load();
 }
 
 }  // namespace microide::project
