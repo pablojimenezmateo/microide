@@ -6,6 +6,7 @@
 #include <string>
 
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
 
 namespace microide::editor {
@@ -251,7 +252,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 bool draw_caret,
                                 std::string_view search_query,
                                 const std::optional<SelectionRange>& active_search_match,
-                                const std::optional<EditorBlameOverlay>& blame_overlay) const {
+                                const std::optional<EditorBlameOverlay>& blame_overlay,
+                                std::span<const PublishedDiagnostic> diagnostics) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -376,6 +378,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     AppendLayoutSyntaxTextRuns(row_desc, text_renderer, theme, metrics.text_x, y, layout,
                                selected ? theme.text_primary : theme.text_secondary,
                                token_kinds);
+    AppendDiagnosticUnderlines(row_desc, text_renderer, theme, metrics.text_x, y,
+                               metrics.line_height, lines[line_index], line_index,
+                               viewport.horizontal_scroll(), viewport.visible_columns(),
+                               viewport.tab_size(), diagnostics);
     kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
     text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
                                selected ? theme.current_line_number : theme.line_number,

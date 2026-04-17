@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -327,12 +328,21 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
   } else if (ActiveTabIsMerge()) {
     RenderMergeSurface(renderer, layout.editor_surface);
   } else {
+    const auto diagnostics_for_viewport =
+        [this](const editor::TextViewport& viewport) -> std::span<const editor::PublishedDiagnostic> {
+      if (viewport.path().empty() || viewport.dirty()) {
+        return {};
+      }
+      const auto* diagnostics = diagnostics_store_.FindByPath(viewport.path());
+      return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
+                                    : std::span<const editor::PublishedDiagnostic>{};
+    };
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
     if (panes.empty() && text_viewport_.is_placeholder()) {
       active_editor_pane_rect = layout.editor_surface;
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, text_viewport_,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
-                                   std::nullopt);
+                                   std::nullopt, {});
     }
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
@@ -358,12 +368,12 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
                                        ? overlay_workflow_.buffer_search.query
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
-                                   blame_overlay);
+                                   blame_overlay, diagnostics_for_viewport(*viewport));
     }
   }
-  if (blame_hover_refresh_pending_ && last_mouse_position_valid_) {
-    UpdateEditorBlameHover(last_mouse_x_, last_mouse_y_);
-    blame_hover_refresh_pending_ = false;
+  if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
+    UpdateEditorHover(last_mouse_x_, last_mouse_y_);
+    editor_hover_refresh_pending_ = false;
   }
 
   const auto draw_text_on =
@@ -552,41 +562,79 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
     SDL_SetTextInputArea(render_window, &area, cursor);
   };
 
-  if (const auto popup = ActiveEditorBlamePopupLayout(); popup.has_value()) {
-    const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->line_index);
-    if (blame_line != nullptr) {
-      DrawFilledRect(renderer, popup->rect, theme_.overlay_background);
-      DrawRect(renderer, popup->rect, theme_.border);
-      const float text_x = popup->rect.x + 12.0f;
-      const float text_width = std::max(0.0f, popup->rect.w - 24.0f);
-      const auto summary_lines =
-          WrapEditorBlamePopupText(blame_line->summary, text_width, 4);
-      float text_y = popup->rect.y + 12.0f;
-      draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                   text_renderer_.TruncateToWidth(blame_line->author, text_width));
-      text_y += text_renderer_.LineHeight() + 2.0f;
-      draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
-                   text_renderer_.TruncateToWidth(blame_line->date, text_width));
-      if (!summary_lines.empty()) {
+  if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
+    DrawFilledRect(renderer, popup->rect, theme_.overlay_background);
+    DrawRect(renderer, popup->rect, theme_.border);
+    const float text_x = popup->rect.x + 12.0f;
+    const float text_width = std::max(0.0f, popup->rect.w - 24.0f);
+    float text_y = popup->rect.y + 12.0f;
+
+    if (popup->kind == EditorHoverTarget::Kind::Blame) {
+      const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->blame_line_index);
+      if (blame_line != nullptr) {
+        const auto summary_lines =
+            WrapEditorHoverPopupText(blame_line->summary, text_width, 4);
+        draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
+                     text_renderer_.TruncateToWidth(blame_line->author, text_width));
+        text_y += text_renderer_.LineHeight() + 2.0f;
+        draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
+                     text_renderer_.TruncateToWidth(blame_line->date, text_width));
+        if (!summary_lines.empty()) {
+          text_y += text_renderer_.LineHeight() + 8.0f;
+          for (std::size_t i = 0; i < summary_lines.size(); ++i) {
+            draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
+                         summary_lines[i]);
+            text_y += text_renderer_.LineHeight();
+            if (i + 1 < summary_lines.size()) {
+              text_y += 2.0f;
+            }
+          }
+        }
+      }
+    } else if (popup->diagnostic.has_value()) {
+      const auto severity = editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
+      std::string_view severity_label = "Diagnostic";
+      switch (popup->diagnostic->severity) {
+        case editor::DiagnosticSeverity::Error:
+          severity_label = "Error";
+          break;
+        case editor::DiagnosticSeverity::Warning:
+          severity_label = "Warning";
+          break;
+        case editor::DiagnosticSeverity::Info:
+          severity_label = "Info";
+          break;
+        case editor::DiagnosticSeverity::Hint:
+          severity_label = "Hint";
+          break;
+      }
+      const auto message_lines =
+          WrapEditorHoverPopupText(popup->diagnostic->message, text_width, 6);
+      draw_text_on(text_x, text_y, severity, theme_.overlay_background,
+                   text_renderer_.TruncateToWidth(severity_label, text_width));
+      if (!message_lines.empty()) {
         text_y += text_renderer_.LineHeight() + 8.0f;
-        for (std::size_t i = 0; i < summary_lines.size(); ++i) {
+        for (std::size_t i = 0; i < message_lines.size(); ++i) {
           draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                       summary_lines[i]);
+                       message_lines[i]);
           text_y += text_renderer_.LineHeight();
-          if (i + 1 < summary_lines.size()) {
+          if (i + 1 < message_lines.size()) {
             text_y += 2.0f;
           }
         }
       }
+    }
 
-      const bool copy_hovered =
-          last_mouse_position_valid_ && EditorBlamePopupCopyShaHovered(last_mouse_x_, last_mouse_y_);
-      DrawFilledRect(renderer, popup->copy_sha_rect,
-                     copy_hovered ? theme_.row_highlight : theme_.surface_raised);
-      DrawRect(renderer, popup->copy_sha_rect, copy_hovered ? theme_.accent : theme_.border);
-      draw_text_on(popup->copy_sha_rect.x + 9.0f, popup->copy_sha_rect.y + 4.0f,
-                   copy_hovered ? theme_.text_primary : theme_.text_secondary,
-                   copy_hovered ? theme_.row_highlight : theme_.surface_raised, "Copy SHA");
+    if (popup->primary_action_rect.has_value()) {
+      const bool action_hovered = last_mouse_position_valid_ &&
+                                  EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
+      DrawFilledRect(renderer, *popup->primary_action_rect,
+                     action_hovered ? theme_.row_highlight : theme_.surface_raised);
+      DrawRect(renderer, *popup->primary_action_rect,
+               action_hovered ? theme_.accent : theme_.border);
+      draw_text_on(popup->primary_action_rect->x + 9.0f, popup->primary_action_rect->y + 4.0f,
+                   action_hovered ? theme_.text_primary : theme_.text_secondary,
+                   action_hovered ? theme_.row_highlight : theme_.surface_raised, "Copy SHA");
     }
   }
   const auto render_text_composition = [&](const std::optional<TextInputVisual>& visual) {

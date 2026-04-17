@@ -322,6 +322,17 @@ struct WorkspaceShellTestAccess {
     return shell.plugin_host_.Errors();
   }
   static void ClearPluginMessages(WorkspaceShell& shell) { shell.plugin_host_.ClearMessages(); }
+  static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
+      const WorkspaceShell& shell,
+      const std::filesystem::path& path) {
+    return shell.diagnostics_store_.FindByPath(path);
+  }
+  static bool PublishDiagnostics(WorkspaceShell& shell,
+                                 std::string_view owner,
+                                 const std::filesystem::path& path,
+                                 std::vector<editor::Diagnostic> diagnostics) {
+    return shell.diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
+  }
   static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
     return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
                                WorkspaceShell::ActionSource::Menu);
@@ -734,6 +745,16 @@ struct WorkspaceShellTestAccess {
       WorkspaceShell& shell,
       std::optional<microide::editor::EditorBlameOverlay> overlay) {
     shell.visible_editor_blame_overlay_ = std::move(overlay);
+  }
+  static std::optional<SDL_FRect> ActiveEditorHoverPopupRect(WorkspaceShell& shell) {
+    const auto popup = shell.ActiveEditorHoverPopupLayout();
+    return popup.has_value() ? std::make_optional(popup->rect) : std::nullopt;
+  }
+  static std::optional<std::string> ActiveEditorDiagnosticHoverMessage(WorkspaceShell& shell) {
+    const auto popup = shell.ActiveEditorHoverPopupLayout();
+    return popup.has_value() && popup->diagnostic.has_value()
+               ? std::make_optional(popup->diagnostic->message)
+               : std::nullopt;
   }
   static std::optional<SDL_FRect> ActiveEditorBlamePopupRect(WorkspaceShell& shell) {
     const auto popup = shell.ActiveEditorBlamePopupLayout();

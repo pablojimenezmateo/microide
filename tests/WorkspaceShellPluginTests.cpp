@@ -214,6 +214,109 @@ return ide.plugin({
          "plugin sidebar confirm should be able to open files at the requested location");
 }
 
+void TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  WriteFile(project_a / "README.md", "alpha project\n");
+  WriteFile(project_b / "README.md", "beta project\n");
+
+  WritePluginInit(
+      plugins_root, "diagnostics",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "diagnostics",
+  setup = function(ctx)
+    ctx.commands.add("diagnostics.publish", function(ctx, args)
+      ctx.diagnostics.publish("README.md", {
+        {
+          message = ctx.workspace.project_root() or "",
+          line = 1,
+          column = 1,
+          end_column = 5,
+          severity = "error"
+        }
+      })
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "diagnostics project-switch fixture should open the first project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "diagnostics.publish"),
+         "diagnostics publish command should execute in the first project");
+
+  const auto* project_a_diagnostics =
+      WorkspaceShellTestAccess::DiagnosticsForPath(shell, project_a / "README.md");
+  Expect(project_a_diagnostics != nullptr && project_a_diagnostics->size() == 1,
+         "publishing diagnostics should store them on the active project");
+  Expect(project_a_diagnostics->front().message == project_a.lexically_normal().string(),
+         "project diagnostics should preserve the publishing project's metadata");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "diagnostics project-switch fixture should open the second project");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, project_a / "README.md") == nullptr,
+         "switching projects should not leak the previous project's diagnostics into the new state");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, project_b / "README.md") == nullptr,
+         "a fresh project should start without diagnostics until a plugin publishes them");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "diagnostics project-switch fixture should switch back to the first project");
+  const auto* restored_diagnostics =
+      WorkspaceShellTestAccess::DiagnosticsForPath(shell, project_a / "README.md");
+  Expect(restored_diagnostics != nullptr && restored_diagnostics->size() == 1,
+         "switching back should restore the first project's stored diagnostics");
+  Expect(restored_diagnostics->front().message == project_a.lexically_normal().string(),
+         "restored diagnostics should match the project that originally published them");
+}
+
+void TestWorkspaceShellDiagnosticHoverPopupShowsMessages() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "alpha beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "diagnostics", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 1},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 5},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Warning,
+                 .message = "Unexpected token near alpha",
+             }}),
+         "diagnostic hover fixture should publish one visible diagnostic");
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float hover_x =
+      metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
+  const float hover_y = metrics.first_line_y + metrics.line_height - 1.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering a diagnostic underline should be handled");
+
+  const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell);
+  Expect(popup_rect.has_value(), "hovering a diagnostic underline should open a popup");
+  Expect(WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell).has_value() &&
+             *WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell) ==
+                 "Unexpected token near alpha",
+         "diagnostic hover popup should expose the published diagnostic message");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
@@ -223,6 +326,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
   AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
           TestWorkspaceShellPluginSidebarOpensItems);
+  AddTest(tests, "WorkspaceShell/PluginDiagnosticsPersistAcrossProjectSwitches",
+          TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches);
+  AddTest(tests, "WorkspaceShell/DiagnosticHoverPopupShowsMessages",
+          TestWorkspaceShellDiagnosticHoverPopupShowsMessages);
 }
 
 }  // namespace microide::tests

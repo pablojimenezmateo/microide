@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/DiagnosticsStore.h"
+
 namespace microide::plugin {
 
 class PluginHost {
@@ -36,6 +38,12 @@ class PluginHost {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
     std::function<bool(std::string_view)> show_sidebar;
+    std::function<void(std::string_view,
+                       const std::filesystem::path&,
+                       std::vector<editor::Diagnostic>)>
+        publish_diagnostics;
+    std::function<void(std::string_view, const std::filesystem::path&)> clear_file_diagnostics;
+    std::function<void(std::string_view)> clear_owner_diagnostics;
     std::function<void(const std::string&)> log_sink;
   };
 

@@ -632,6 +632,11 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.diff_added = ResolveForeground(styles, "diff-added", theme.diff_added);
   theme.diff_modified = ResolveForeground(styles, "diff-modified", theme.diff_modified);
   theme.diff_deleted = ResolveForeground(styles, "diff-deleted", theme.diff_deleted);
+  theme.diagnostic_error = ResolveForeground(styles, "diagnostic-error", theme.diagnostic_error);
+  theme.diagnostic_warning =
+      ResolveForeground(styles, "diagnostic-warning", theme.diagnostic_warning);
+  theme.diagnostic_info = ResolveForeground(styles, "diagnostic-info", theme.diagnostic_info);
+  theme.diagnostic_hint = ResolveForeground(styles, "diagnostic-hint", theme.diagnostic_hint);
   return theme;
 }
 
@@ -676,6 +681,10 @@ Theme MakeDefaultTheme() {
       .diff_added = SDL_Color{0x7f, 0xc9, 0x7f, 0xff},
       .diff_modified = SDL_Color{0xe0, 0xbc, 0x6d, 0xff},
       .diff_deleted = SDL_Color{0xe0, 0x72, 0x7b, 0xff},
+      .diagnostic_error = SDL_Color{0xe0, 0x72, 0x7b, 0xff},
+      .diagnostic_warning = SDL_Color{0xe0, 0xbc, 0x6d, 0xff},
+      .diagnostic_info = SDL_Color{0x66, 0xa4, 0xff, 0xff},
+      .diagnostic_hint = SDL_Color{0x7f, 0xc9, 0x7f, 0xff},
   };
 }
 

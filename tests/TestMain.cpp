@@ -8,6 +8,7 @@
 namespace microide::tests {
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests);
+void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
@@ -41,6 +42,7 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests);
 int main(int argc, char** argv) {
   std::vector<microide::tests::TestCase> tests;
   microide::tests::RegisterCompareModelTests(tests);
+  microide::tests::RegisterDiagnosticsStoreTests(tests);
   microide::tests::RegisterDirtyRegionPolicyTests(tests);
   microide::tests::RegisterWorkspaceShellSharedCoreTests(tests);
   microide::tests::RegisterWorkspaceShellSharedLayoutTests(tests);

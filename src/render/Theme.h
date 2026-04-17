@@ -47,6 +47,10 @@ struct Theme {
   SDL_Color diff_added;
   SDL_Color diff_modified;
   SDL_Color diff_deleted;
+  SDL_Color diagnostic_error;
+  SDL_Color diagnostic_warning;
+  SDL_Color diagnostic_info;
+  SDL_Color diagnostic_hint;
 };
 
 Theme MakeDefaultTheme();

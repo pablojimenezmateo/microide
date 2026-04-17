@@ -378,7 +378,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
 void WorkspaceShell::RequestFullRedraw() {
   pending_render_invalidation_.full = true;
   pending_render_invalidation_.rects.clear();
-  QueueBlameHoverRefresh();
+  QueueEditorHoverRefresh();
 }
 
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
@@ -386,7 +386,7 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
     return;
   }
   pending_render_invalidation_.rects.push_back(rect);
-  QueueBlameHoverRefresh();
+  QueueEditorHoverRefresh();
 }
 
 void WorkspaceShell::RequestWindowRedraw() {
@@ -671,8 +671,8 @@ void WorkspaceShell::RequestPromptRedraw() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::QueueBlameHoverRefresh() {
-  blame_hover_refresh_pending_ = last_mouse_position_valid_;
+void WorkspaceShell::QueueEditorHoverRefresh() {
+  editor_hover_refresh_pending_ = last_mouse_position_valid_;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
@@ -1639,8 +1639,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (const auto popup = ActiveEditorBlamePopupLayout(); popup.has_value()) {
-    if (Contains(EditorBlamePopupCopyShaHitRect(*popup), x, y)) {
+  if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
+    if (popup->primary_action_rect.has_value() &&
+        Contains(EditorHoverPopupPrimaryActionHitRect(*popup), x, y)) {
       return CursorKind::Pointer;
     }
     if (Contains(popup->rect, x, y)) {
@@ -1833,7 +1834,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y) {
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
-  UpdateEditorBlameHover(x, y);
+  UpdateEditorHover(x, y);
 
   const CursorKind next_kind = CursorKindForPosition(x, y);
   if (next_kind == cursor_kind_) {

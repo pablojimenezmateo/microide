@@ -100,6 +100,9 @@ return ide.plugin({
             return true;
           },
       .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
       .log_sink = {},
   });
 
@@ -197,6 +200,9 @@ return ide.plugin({
       .is_command_name_available = [](std::string_view) { return true; },
       .open_file = {},
       .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
       .log_sink = {},
   });
 
@@ -273,6 +279,9 @@ return ide.plugin({
             shown_sidebar = std::string(id);
             return true;
           },
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
       .log_sink = {},
   });
 
@@ -325,6 +334,105 @@ return ide.plugin({
          "plugin sidebar confirm handlers should receive resolved item paths and locations");
 }
 
+void TestPluginHostPhase3DiagnosticsApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase3 diagnostics\n");
+
+  WritePluginInit(
+      global_plugins, "phase3-diagnostics",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase3-diagnostics",
+  setup = function(ctx)
+    ctx.diagnostics.publish("README.md", {
+      {
+        message = "startup diagnostic",
+        line = 1,
+        column = 1,
+        end_column = 8,
+        severity = "warning"
+      }
+    })
+
+    ctx.commands.add("phase3.publish", function(ctx, args)
+      ctx.diagnostics.publish("README.md", {
+        {
+          message = "runtime diagnostic",
+          line = 1,
+          column = 2,
+          end_column = 5,
+          severity = "error"
+        }
+      })
+    end)
+
+    ctx.commands.add("phase3.clear-file", function(ctx, args)
+      ctx.diagnostics.clear("README.md")
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  microide::editor::DiagnosticsStore diagnostics_store;
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .show_sidebar = {},
+      .publish_diagnostics =
+          [&](std::string_view owner,
+              const std::filesystem::path& path,
+              std::vector<microide::editor::Diagnostic> diagnostics) {
+            diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
+          },
+      .clear_file_diagnostics =
+          [&](std::string_view owner, const std::filesystem::path& path) {
+            diagnostics_store.ClearOwnerFile(owner, path);
+          },
+      .clear_owner_diagnostics =
+          [&](std::string_view owner) { diagnostics_store.ClearOwner(owner); },
+      .log_sink = {},
+  });
+
+  Expect(host.Reload(project_root), "phase3 diagnostics plugin should reload successfully");
+  const auto* startup_diagnostics = diagnostics_store.FindByPath(project_root / "README.md");
+  Expect(startup_diagnostics != nullptr && startup_diagnostics->size() == 1,
+         "setup should be able to publish initial diagnostics");
+  Expect(startup_diagnostics->front().message == "startup diagnostic" &&
+             startup_diagnostics->front().severity == microide::editor::DiagnosticSeverity::Warning,
+         "setup diagnostics should preserve message and severity");
+
+  std::string command_error;
+  Expect(host.ExecuteCommand("phase3.publish", {}, &command_error),
+         "phase3 diagnostics publish command should execute");
+  const auto* runtime_diagnostics = diagnostics_store.FindByPath(project_root / "README.md");
+  Expect(runtime_diagnostics != nullptr && runtime_diagnostics->size() == 1,
+         "runtime diagnostic publication should replace the owner's file diagnostics");
+  Expect(runtime_diagnostics->front().message == "runtime diagnostic" &&
+             runtime_diagnostics->front().range.start.column == 1 &&
+             runtime_diagnostics->front().range.end.column == 4,
+         "published diagnostics should be converted to zero-based host ranges");
+
+  Expect(host.ExecuteCommand("phase3.clear-file", {}, &command_error),
+         "phase3 diagnostics clear command should execute");
+  Expect(diagnostics_store.FindByPath(project_root / "README.md") == nullptr,
+         "ctx.diagnostics.clear(path) should clear one file's diagnostics");
+
+  Expect(host.ExecuteCommand("phase3.publish", {}, &command_error),
+         "phase3 diagnostics publish command should be reusable");
+  host.Shutdown();
+  Expect(diagnostics_store.FindByPath(project_root / "README.md") == nullptr,
+         "plugin shutdown should clear the owner's diagnostics");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -333,6 +441,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/RejectsDuplicatePluginIds",
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
+  AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
 }
 
 }  // namespace microide::tests

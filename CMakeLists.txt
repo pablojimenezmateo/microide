@@ -104,6 +104,8 @@ target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 
 set(MICROIDE_CORE_SOURCES
   src/editor/DecoratedTextGridRenderer.cpp
+  src/editor/DiagnosticsRender.cpp
+  src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
@@ -155,6 +157,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp
+  src/workspace/WorkspaceShellHover.cpp
   src/workspace/WorkspaceShellPersistence.cpp
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellProjects.cpp
@@ -228,6 +231,7 @@ add_executable(microide_tests
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
   tests/CompareModelTests.cpp
+  tests/DiagnosticsStoreTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
@@ -293,6 +297,8 @@ add_test(NAME microide_tests COMMAND microide_tests)
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   src/editor/DecoratedTextGridRenderer.cpp
+  src/editor/DiagnosticsRender.cpp
+  src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp

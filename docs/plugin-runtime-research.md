@@ -1,6 +1,6 @@
 # Plugin Runtime Research
 
-Reviewed on 2026-04-15.
+Reviewed on 2026-04-17.
 
 Scope:
 
@@ -33,6 +33,14 @@ Phase 2 status:
 - plugins now have basic project-relative file helpers: `ctx.files.read_text`, `ctx.files.write_text`, and `ctx.files.exists`
 - plugins now have an argv-based process helper: `ctx.process.run(argv, { cwd = ..., stdin = ... })`
 - the current process surface is intentionally synchronous; the async spawn shape from the design notes remains future work if real plugins need it
+
+Phase 3 status:
+
+- partially implemented on 2026-04-17 in the host codebase
+- added a host-owned `editor::DiagnosticsStore` that keeps plugin diagnostics scoped by owner and file path
+- plugins can now publish and clear diagnostics through `ctx.diagnostics.publish(path, diagnostics)` and `ctx.diagnostics.clear(path_or_nil)`
+- editor tabs, compare right panes, and merge result panes now render diagnostic underlines through the host using theme-backed severity colors
+- project-tab switching now preserves each workspace state's diagnostics without leaking or clearing them across projects
 
 Constraints for this pass:
 
@@ -873,18 +881,33 @@ This pass extended the runtime without changing the core product boundary:
 - `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, and `ctx.files.exists(path)` provide project-relative file access
 - `ctx.process.run(argv, { cwd, stdin })` provides argv-based external tool execution and returns `ok`, `exit_code`, `stdout`, and `stderr`
 
-What this phase still does not include:
+At the end of Phase 2, this still did not include:
 
 - diagnostics, underlines, or hover decoration APIs
 - syntax contribution loading
 - async process spawning or cancellation callbacks
 
-### Phase 3: Editor Extensibility
+### Phase 3: Landed Diagnostic Publication Slice
 
-- diagnostics store
-- decoration renderer
+This pass landed the first coherent editor-extensibility slice:
+
+- `src/editor/DiagnosticsStore.*` now owns plugin-published diagnostics keyed by owner and file path
+- `ctx.diagnostics.publish(path, diagnostics)` and `ctx.diagnostics.clear(path_or_nil)` let plugins replace or clear their own diagnostics without reaching into shell state
+- theme support now includes `diagnostic-error`, `diagnostic-warning`, `diagnostic-info`, and `diagnostic-hint`
+- editor rendering uses a shared diagnostic-underline helper in normal editor views, compare right panes, and merge result panes
+- project-tab persistence now carries diagnostics along with the rest of the workspace state instead of treating them as shell-global scratch state
+- the host now owns editor hover popup state and renders both blame details and diagnostic messages through the same popup path instead of keeping blame as a standalone popup implementation
+
+What this slice still does not include:
+
+- hover providers beyond the built-in blame and diagnostics path
+- gutter markers or problem badges
+- document-revision tracking for suppressing stale diagnostics beyond the current dirty-buffer hiding policy
+
+### Phase 3: Remaining Editor Extensibility
+
 - hover providers
-- theme additions for diagnostics
+- richer diagnostics presentation beyond underlines and hover popups
 
 ### Phase 4: Syntax Contributions
 

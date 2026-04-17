@@ -500,6 +500,34 @@ class WorkspaceShell {
     SDL_FRect copy_sha_rect{};
   };
 
+  struct EditorHoverTarget {
+    enum class Kind {
+      Blame,
+      Diagnostic,
+    };
+
+    Kind kind = Kind::Blame;
+    SDL_FRect anchor_rect{};
+    std::size_t blame_line_index = 0;
+    std::optional<editor::PublishedDiagnostic> diagnostic;
+
+    bool operator==(const EditorHoverTarget& other) const {
+      return kind == other.kind && anchor_rect.x == other.anchor_rect.x &&
+             anchor_rect.y == other.anchor_rect.y && anchor_rect.w == other.anchor_rect.w &&
+             anchor_rect.h == other.anchor_rect.h &&
+             blame_line_index == other.blame_line_index && diagnostic == other.diagnostic;
+    }
+  };
+
+  struct EditorHoverPopupLayout {
+    EditorHoverTarget::Kind kind = EditorHoverTarget::Kind::Blame;
+    SDL_FRect anchor_rect{};
+    SDL_FRect rect{};
+    std::size_t blame_line_index = 0;
+    std::optional<editor::PublishedDiagnostic> diagnostic;
+    std::optional<SDL_FRect> primary_action_rect;
+  };
+
   struct DirtyPromptState {
     enum class Kind {
       CloseTab,
@@ -853,6 +881,7 @@ class WorkspaceShell {
     OverlayWorkflowState overlay_workflow;
     GitSidebarState git_sidebar;
     PluginSidebarState plugin_sidebar;
+    editor::DiagnosticsStore diagnostics_store;
     CommandState command;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
@@ -1277,6 +1306,21 @@ class WorkspaceShell {
       const SDL_FRect& rect);
   const editor::EditorBlameLine* VisibleEditorBlameLine(std::size_t line_index) const;
   const editor::EditorBlameLine* EditorBlameLineAtPosition(float x, float y) const;
+  std::optional<EditorHoverTarget> EditorHoverTargetAtPosition(float x, float y) const;
+  std::optional<EditorHoverTarget> DiagnosticHoverTargetAtPosition(float x, float y) const;
+  std::optional<EditorHoverTarget> DiagnosticHoverTargetForViewport(
+      const editor::TextViewport& viewport,
+      const TextGridInteractionLayout& interaction,
+      std::span<const editor::PublishedDiagnostic> diagnostics,
+      float x,
+      float y) const;
+  std::optional<EditorHoverPopupLayout> ActiveEditorHoverPopupLayout() const;
+  SDL_FRect EditorHoverPopupPrimaryActionHitRect(const EditorHoverPopupLayout& popup) const;
+  bool EditorHoverPopupPrimaryActionHovered(float x, float y) const;
+  std::vector<std::string> WrapEditorHoverPopupText(std::string_view text,
+                                                    float max_width,
+                                                    std::size_t max_lines) const;
+  void UpdateEditorHover(float x, float y);
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
   SDL_FRect EditorBlamePopupCopyShaHitRect(const EditorBlamePopupLayout& popup) const;
   bool EditorBlamePopupCopyShaHovered(float x, float y) const;
@@ -1535,7 +1579,7 @@ class WorkspaceShell {
   void RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible);
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
-  void QueueBlameHoverRefresh();
+  void QueueEditorHoverRefresh();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
   std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,
@@ -1589,6 +1633,7 @@ class WorkspaceShell {
   OverlayWorkflowState overlay_workflow_;
   GitSidebarState git_sidebar_;
   PluginSidebarState plugin_sidebar_;
+  editor::DiagnosticsStore diagnostics_store_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   plugin::PluginHost plugin_host_;
   Uint32 git_blame_event_type_ = 0;
@@ -1596,8 +1641,8 @@ class WorkspaceShell {
   Uint32 project_open_dialog_event_type_ = 0;
   project::GitBlameService git_blame_service_;
   std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
-  std::optional<std::size_t> active_editor_blame_popup_line_;
-  bool blame_hover_refresh_pending_ = false;
+  std::optional<EditorHoverTarget> active_editor_hover_target_;
+  bool editor_hover_refresh_pending_ = false;
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
   std::function<bool(std::string_view)> clipboard_text_writer_;

@@ -32,13 +32,15 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
   const WorkspaceLayout layout = *layout_state;
 
-  const auto visible_blame_popup = ActiveEditorBlamePopupLayout();
-  if (event.button.button == SDL_BUTTON_LEFT && visible_blame_popup.has_value() &&
-      Contains(visible_blame_popup->rect, event.button.x, event.button.y)) {
-    if (Contains(EditorBlamePopupCopyShaHitRect(*visible_blame_popup), event.button.x,
+  const auto visible_hover_popup = ActiveEditorHoverPopupLayout();
+  if (event.button.button == SDL_BUTTON_LEFT && visible_hover_popup.has_value() &&
+      Contains(visible_hover_popup->rect, event.button.x, event.button.y)) {
+    if (visible_hover_popup->kind == EditorHoverTarget::Kind::Blame &&
+        visible_hover_popup->primary_action_rect.has_value() &&
+        Contains(EditorHoverPopupPrimaryActionHitRect(*visible_hover_popup), event.button.x,
                  event.button.y)) {
       if (const editor::EditorBlameLine* blame_line =
-              VisibleEditorBlameLine(visible_blame_popup->line_index);
+              VisibleEditorBlameLine(visible_hover_popup->blame_line_index);
           blame_line != nullptr && !blame_line->commit_id.empty() &&
           WriteClipboardText(blame_line->commit_id)) {
       }
@@ -230,15 +232,15 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   };
   bool hover_visual_changed = false;
   if (CurrentWindowRect().has_value()) {
-    const std::optional<std::size_t> previous_popup_line = active_editor_blame_popup_line_;
-    const bool previous_copy_hovered =
-        last_mouse_position_valid_ && EditorBlamePopupCopyShaHovered(last_mouse_x_, last_mouse_y_);
+    const std::optional<EditorHoverTarget> previous_hover_target = active_editor_hover_target_;
+    const bool previous_action_hovered =
+        last_mouse_position_valid_ && EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-    const bool current_copy_hovered =
-        EditorBlamePopupCopyShaHovered(static_cast<float>(event.motion.x),
-                                       static_cast<float>(event.motion.y));
-    hover_visual_changed = previous_popup_line != active_editor_blame_popup_line_ ||
-                           previous_copy_hovered != current_copy_hovered;
+    const bool current_action_hovered =
+        EditorHoverPopupPrimaryActionHovered(static_cast<float>(event.motion.x),
+                                             static_cast<float>(event.motion.y));
+    hover_visual_changed = !(previous_hover_target == active_editor_hover_target_) ||
+                           previous_action_hovered != current_action_hovered;
   }
 
   if (prompts_.dirty_visible) {

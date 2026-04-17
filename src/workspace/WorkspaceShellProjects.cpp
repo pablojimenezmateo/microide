@@ -290,6 +290,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   plugin_sidebar_.items.clear();
   plugin_sidebar_.error.clear();
   plugin_sidebar_.selected_index = 0;
+  diagnostics_store_.Clear();
   overlay_workflow_.compare_picker.path.clear();
   overlay_workflow_.compare_picker.query.clear();
   overlay_workflow_.compare_picker.commits.clear();
@@ -428,6 +429,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.overlay_workflow.project_search.running = false;
   state.git_sidebar = std::move(git_sidebar_);
   state.plugin_sidebar = std::move(plugin_sidebar_);
+  state.diagnostics_store = std::move(diagnostics_store_);
   state.command = std::move(command_);
   state.active_colorscheme_name = active_colorscheme_name_;
   state.project_base_color = project_base_color_;
@@ -455,6 +457,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   overlay_workflow_.project_search.running = false;
   git_sidebar_ = std::move(state.git_sidebar);
   plugin_sidebar_ = std::move(state.plugin_sidebar);
+  diagnostics_store_ = std::move(state.diagnostics_store);
   command_ = std::move(state.command);
   active_colorscheme_name_ = state.active_colorscheme_name;
   project_base_color_ = state.project_base_color;

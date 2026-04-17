@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/DiagnosticsRender.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "util/PerformanceTrace.h"
@@ -187,6 +188,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       compare_tab->right_editable && compare_tab->right_view_active
           ? BuildCompareBlameOverlay(*compare_tab, surface, rect)
           : std::nullopt;
+  const auto* right_diagnostics =
+      compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
+              !compare_tab->right_viewport.dirty()
+          ? diagnostics_store_.FindByPath(compare_tab->right_viewport.path())
+          : nullptr;
   visible_editor_blame_overlay_ = blame_overlay;
   const float bottom_reserved =
       surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
@@ -412,6 +418,13 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
           compare_row.right_text, compare_row.right_changed_spans,
           compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
                                                              : theme_.diff_modified);
+      if (right_diagnostics != nullptr) {
+        editor::AppendDiagnosticUnderlines(
+            right_row, text_renderer_, theme_, right_interaction.text_x, y, surface.line_height,
+            compare_row.right_text, right_line_index, compare_tab->horizontal_scroll,
+            surface.right_visible_columns, compare_tab->right_viewport.tab_size(),
+            std::span<const editor::PublishedDiagnostic>(*right_diagnostics));
+      }
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
       draw_text(surface.right_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,

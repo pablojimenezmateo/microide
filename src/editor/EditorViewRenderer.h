@@ -3,10 +3,12 @@
 #include <SDL3/SDL.h>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "editor/DiagnosticsStore.h"
 #include "editor/TextViewport.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
@@ -52,7 +54,8 @@ class EditorViewRenderer {
               bool draw_caret = true,
               std::string_view search_query = {},
               const std::optional<SelectionRange>& active_search_match = std::nullopt,
-              const std::optional<EditorBlameOverlay>& blame_overlay = std::nullopt) const;
+              const std::optional<EditorBlameOverlay>& blame_overlay = std::nullopt,
+              std::span<const PublishedDiagnostic> diagnostics = {}) const;
 };
 
 }  // namespace microide::editor

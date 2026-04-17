@@ -393,10 +393,17 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
       BuildEditorBlameOverlay(merge_tab->result_viewport, interaction.result.rect, 280.0f);
   visible_editor_blame_overlay_ = merge_blame_overlay;
+  const auto* merge_diagnostics =
+      !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
+          ? diagnostics_store_.FindByPath(merge_tab->result_viewport.path())
+          : nullptr;
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
                                surface_.focus == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
-                               merge_blame_overlay);
+                               merge_blame_overlay,
+                               merge_diagnostics != nullptr
+                                   ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)
+                                   : std::span<const editor::PublishedDiagnostic>{});
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 

@@ -496,6 +496,74 @@ void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecorated
   SDL_DestroySurface(pixels);
 }
 
+void TestEditorViewRendererPaintsDiagnosticUnderlines() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 72);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "diagnostic underline renderer test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "diagnostic underline renderer test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = SDL_Color{0x08, 0x08, 0x08, 0xff};
+  theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
+  theme.diagnostic_warning = SDL_Color{0xe0, 0xbc, 0x6d, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("alpha beta\nomega\n", "/tmp/editor-diagnostics.cpp");
+  viewport.MoveCursorTo(1, 0);
+
+  const std::vector<microide::editor::PublishedDiagnostic> diagnostics = {
+      microide::editor::PublishedDiagnostic{
+          .owner = "eslint",
+          .path = "/tmp/editor-diagnostics.cpp",
+          .range =
+              microide::editor::SelectionRange{
+                  .start = microide::editor::TextPosition{0, 6},
+                  .end = microide::editor::TextPosition{0, 10},
+              },
+          .severity = microide::editor::DiagnosticSeverity::Warning,
+          .message = "unused value",
+      },
+  };
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 72.0f};
+  const auto metrics = microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "", std::nullopt,
+                  std::nullopt, diagnostics);
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "diagnostic underline renderer test should read software pixels");
+
+  const int underline_x = static_cast<int>(metrics.text_x) + 7;
+  const int underline_y =
+      static_cast<int>(metrics.first_line_y + metrics.line_height - 2.0f);
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  Expect(SDL_ReadSurfacePixel(pixels, underline_x, underline_y - 1, &r, &g, &b, &a),
+         "diagnostic underline renderer test should read the pixel above the underline");
+  Expect(r == theme.editor_background.r && g == theme.editor_background.g &&
+             b == theme.editor_background.b && a == theme.editor_background.a,
+         "diagnostic underlines should not recolor the whole editor row");
+
+  Expect(SDL_ReadSurfacePixel(pixels, underline_x, underline_y, &r, &g, &b, &a),
+         "diagnostic underline renderer test should read the underline pixel");
+  Expect(r == theme.diagnostic_warning.r && g == theme.diagnostic_warning.g &&
+             b == theme.diagnostic_warning.b && a == theme.diagnostic_warning.a,
+         "diagnostic underlines should use the severity color from the theme");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestMeasureWidthCachesRepeatedStrings() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -567,6 +635,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view composes selected rows and inline highlights through decorated rows",
           TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecoratedGrid);
+  AddTest(tests,
+          "TextRenderer editor view paints diagnostic underlines",
+          TestEditorViewRendererPaintsDiagnosticUnderlines);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",

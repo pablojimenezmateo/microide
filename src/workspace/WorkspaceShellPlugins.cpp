@@ -28,6 +28,26 @@ WorkspaceShell::WorkspaceShell() {
           [this](std::string_view id) {
             return ExecuteAction(ActionId::SidebarShow, {std::string(id)}, ActionSource::Shortcut);
           },
+      .publish_diagnostics =
+          [this](std::string_view owner,
+                 const std::filesystem::path& path,
+                 std::vector<editor::Diagnostic> diagnostics) {
+            if (diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics))) {
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_file_diagnostics =
+          [this](std::string_view owner, const std::filesystem::path& path) {
+            if (diagnostics_store_.ClearOwnerFile(owner, path)) {
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_owner_diagnostics =
+          [this](std::string_view owner) {
+            if (diagnostics_store_.ClearOwner(owner)) {
+              RequestEditorSurfaceRedraw();
+            }
+          },
       .log_sink = {},
   });
 }
