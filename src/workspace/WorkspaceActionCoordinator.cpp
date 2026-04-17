@@ -1,4 +1,4 @@
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceActionCoordinator.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -396,56 +396,58 @@ FocusRequest BuildFocusRequest(const std::vector<std::string>& args) {
 
 }  // namespace
 
-bool WorkspaceShell::ExecuteAction(ActionId id,
+WorkspaceShell::ActionCoordinator::ActionCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+
+bool WorkspaceShell::ActionCoordinator::Execute(ActionId id,
                                    const std::vector<std::string>& args,
                                    ActionSource source) {
   if (source != ActionSource::ContextMenu) {
-    CloseTreeContextMenu();
+    shell_.CloseTreeContextMenu();
   }
 
   const auto reject_command = [&](std::string feedback) {
-    return CommandPromptCoordinator(*this).RejectAction(source, std::move(feedback));
+    return CommandPromptCoordinator(shell_).RejectAction(source, std::move(feedback));
   };
 
   std::string rejection_feedback;
-  const auto dispatch_result = [&](ActionDispatchResult result) -> std::optional<bool> {
+  const auto dispatch_result = [&](DispatchResult result) -> std::optional<bool> {
     switch (result) {
-      case ActionDispatchResult::Unhandled:
+      case DispatchResult::Unhandled:
         return std::nullopt;
-      case ActionDispatchResult::Handled:
+      case DispatchResult::Handled:
         return true;
-      case ActionDispatchResult::Rejected:
+      case DispatchResult::Rejected:
         return reject_command(std::move(rejection_feedback));
     }
     return std::nullopt;
   };
 
   if (const auto handled =
-          dispatch_result(ExecuteProjectAction(id, args, source, &rejection_feedback));
+          dispatch_result(ExecuteProject(id, args, source, &rejection_feedback));
       handled.has_value()) {
     return *handled;
   }
   if (const auto handled =
-          dispatch_result(ExecuteSidebarAction(id, args, source, &rejection_feedback));
+          dispatch_result(ExecuteSidebar(id, args, source, &rejection_feedback));
       handled.has_value()) {
     return *handled;
   }
   if (const auto handled =
-          dispatch_result(ExecuteSearchAction(id, args, source, &rejection_feedback));
+          dispatch_result(ExecuteSearch(id, args, source, &rejection_feedback));
       handled.has_value()) {
     return *handled;
   }
-  if (const auto handled = dispatch_result(ExecuteTabAction(id, args, source, &rejection_feedback));
-      handled.has_value()) {
-    return *handled;
-  }
-  if (const auto handled =
-          dispatch_result(ExecuteEditAction(id, args, source, &rejection_feedback));
+  if (const auto handled = dispatch_result(ExecuteTab(id, args, source, &rejection_feedback));
       handled.has_value()) {
     return *handled;
   }
   if (const auto handled =
-          dispatch_result(ExecuteGlobalAction(id, args, source, &rejection_feedback));
+          dispatch_result(ExecuteEdit(id, args, source, &rejection_feedback));
+      handled.has_value()) {
+    return *handled;
+  }
+  if (const auto handled =
+          dispatch_result(ExecuteGlobal(id, args, source, &rejection_feedback));
       handled.has_value()) {
     return *handled;
   }
@@ -453,7 +455,7 @@ bool WorkspaceShell::ExecuteAction(ActionId id,
   return true;
 }
 
-WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
+WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordinator::ExecuteProject(
     ActionId id,
     const std::vector<std::string>& args,
     ActionSource source,
@@ -462,64 +464,64 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteProjectAction(
     if (rejection_feedback != nullptr) {
       *rejection_feedback = std::move(feedback);
     }
-    return ActionDispatchResult::Rejected;
+    return DispatchResult::Rejected;
   };
 
   switch (id) {
     case ActionId::ProjectOpen: {
       const ProjectOpenRequest request = BuildProjectOpenRequest(args);
       if (request.use_native_picker) {
-        switch (OpenNativeProjectPicker(nullptr)) {
+        switch (shell_.OpenNativeProjectPicker(nullptr)) {
           case ProjectOpenDialogLaunchResult::Launched:
           case ProjectOpenDialogLaunchResult::AlreadyOpen:
-            return ActionDispatchResult::Handled;
+            return DispatchResult::Handled;
           case ProjectOpenDialogLaunchResult::Unavailable:
             if (source == ActionSource::Menu) {
-              const bool bottom_panel_was_visible = BottomPanelVisible();
-              surface_.command_mode = true;
-              surface_.focus = FocusTarget::Panel;
-              command_.input = "project-open ";
-              CommandPromptCoordinator(*this).ResetSessionState();
-              RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+              const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
+              shell_.surface_.command_mode = true;
+              shell_.surface_.focus = FocusTarget::Panel;
+              shell_.command_.input = "project-open ";
+              CommandPromptCoordinator(shell_).ResetSessionState();
+              shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
             }
-            return ActionDispatchResult::Handled;
+            return DispatchResult::Handled;
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
-      if (!OpenProjectTab(request.path, true, true)) {
+      if (!shell_.OpenProjectTab(request.path, true, true)) {
         return reject("Failed to open project: " + request.path.string());
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::ProjectClose:
-      if (project_catalog_.entries.empty() || project_root_.empty()) {
+      if (shell_.project_catalog_.entries.empty() || shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      RequestCloseProject(project_catalog_.active_index);
-      return ActionDispatchResult::Handled;
+      shell_.RequestCloseProject(shell_.project_catalog_.active_index);
+      return DispatchResult::Handled;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev: {
-      if (project_catalog_.entries.empty() || project_root_.empty()) {
+      if (shell_.project_catalog_.entries.empty() || shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      if (project_catalog_.entries.size() == 1) {
+      if (shell_.project_catalog_.entries.size() == 1) {
         return reject("Only one project tab is open");
       }
       const ProjectCycleRequest request =
           BuildProjectCycleRequest(id == ActionId::ProjectNext ? 1 : -1);
-      const int project_count = static_cast<int>(project_catalog_.entries.size());
+      const int project_count = static_cast<int>(shell_.project_catalog_.entries.size());
       const int next_index =
-          (static_cast<int>(project_catalog_.active_index) + request.delta + project_count) %
+          (static_cast<int>(shell_.project_catalog_.active_index) + request.delta + project_count) %
           project_count;
-      SwitchProject(static_cast<std::size_t>(next_index), true);
-      return ActionDispatchResult::Handled;
+      shell_.SwitchProject(static_cast<std::size_t>(next_index), true);
+      return DispatchResult::Handled;
     }
     default:
-      return ActionDispatchResult::Unhandled;
+      return DispatchResult::Unhandled;
   }
 }
 
-WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
+WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordinator::ExecuteSidebar(
     ActionId id,
     const std::vector<std::string>& args,
     ActionSource source,
@@ -528,7 +530,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
     if (rejection_feedback != nullptr) {
       *rejection_feedback = std::move(feedback);
     }
-    return ActionDispatchResult::Rejected;
+    return DispatchResult::Rejected;
   };
 
   switch (id) {
@@ -537,159 +539,159 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
       const std::string plugin_id = args.empty() ? std::string{} : args.front();
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Git) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
-          CloseSidebar();
+        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode) {
+          shell_.CloseSidebar();
         } else {
-          ShowGitSidebar();
+          shell_.ShowGitSidebar();
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Tree) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
-          CloseSidebar();
+        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode) {
+          shell_.CloseSidebar();
         } else {
-          ShowTreeSidebar(request.root);
+          shell_.ShowTreeSidebar(request.root);
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Search) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode &&
-            !surface_.sidebar_temporary) {
-          CloseSidebar();
+        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode &&
+            !shell_.surface_.sidebar_temporary) {
+          shell_.CloseSidebar();
         } else {
-          ShowSearchSidebar(request.query, false);
+          shell_.ShowSearchSidebar(request.query, false);
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Problems) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
-          CloseSidebar();
+        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode) {
+          shell_.CloseSidebar();
         } else {
-          ShowProblemsSidebar();
+          shell_.ShowProblemsSidebar();
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
-      if (!plugin_id.empty() && plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
-        if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Plugin &&
-            surface_.sidebar_plugin_id == plugin_id) {
-          CloseSidebar();
-        } else if (!ShowPluginSidebar(plugin_id, false)) {
+      if (!plugin_id.empty() && shell_.plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
+        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin &&
+            shell_.surface_.sidebar_plugin_id == plugin_id) {
+          shell_.CloseSidebar();
+        } else if (!shell_.ShowPluginSidebar(plugin_id, false)) {
           return reject("Failed to show plugin sidebar: " + plugin_id);
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
-      ToggleSidebar();
-      return ActionDispatchResult::Handled;
+      shell_.ToggleSidebar();
+      return DispatchResult::Handled;
     }
     case ActionId::SidebarShow: {
       const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
       const std::string plugin_id = args.empty() ? std::string{} : args.front();
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Git) {
-        ShowGitSidebar();
-        return ActionDispatchResult::Handled;
+        shell_.ShowGitSidebar();
+        return DispatchResult::Handled;
       }
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Tree) {
-        ShowTreeSidebar(request.root);
-        return ActionDispatchResult::Handled;
+        shell_.ShowTreeSidebar(request.root);
+        return DispatchResult::Handled;
       }
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Search) {
-        ShowSearchSidebar(request.query, false);
-        return ActionDispatchResult::Handled;
+        shell_.ShowSearchSidebar(request.query, false);
+        return DispatchResult::Handled;
       }
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Problems) {
-        ShowProblemsSidebar();
-        return ActionDispatchResult::Handled;
+        shell_.ShowProblemsSidebar();
+        return DispatchResult::Handled;
       }
-      if (!plugin_id.empty() && plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
-        if (!ShowPluginSidebar(plugin_id, false)) {
+      if (!plugin_id.empty() && shell_.plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
+        if (!shell_.ShowPluginSidebar(plugin_id, false)) {
           return reject("Failed to show plugin sidebar: " + plugin_id);
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
-      surface_.sidebar_visible = true;
-      surface_.focus = FocusTarget::Sidebar;
-      return ActionDispatchResult::Handled;
+      shell_.surface_.sidebar_visible = true;
+      shell_.surface_.focus = FocusTarget::Sidebar;
+      return DispatchResult::Handled;
     }
     case ActionId::SidebarHide:
     case ActionId::SidebarClose:
-      CloseSidebar();
-      return ActionDispatchResult::Handled;
+      shell_.CloseSidebar();
+      return DispatchResult::Handled;
     case ActionId::SidebarWidth: {
       const std::optional<SidebarWidthRequest> request = BuildSidebarWidthRequest(args);
       if (!request.has_value()) {
         return reject("sidebar-width requires a numeric width");
       }
       const float current_width =
-          CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1.0f;
-      surface_.sidebar_width = ClampSidebarWidth(request->width,
+          shell_.CurrentWindowRect().has_value() ? shell_.CurrentWindowRect()->w : 1.0f;
+      shell_.surface_.sidebar_width = ClampSidebarWidth(request->width,
                                                  std::max(1.0f, current_width));
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::TreeRefresh:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      RefreshProjectFiles();
-      ReloadCleanOpenBuffersFromDisk();
-      return ActionDispatchResult::Handled;
+      shell_.RefreshProjectFiles();
+      shell_.ReloadCleanOpenBuffersFromDisk();
+      return DispatchResult::Handled;
     case ActionId::GitRefresh:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      RefreshProjectFiles();
-      ReloadCleanOpenBuffersFromDisk();
-      return ActionDispatchResult::Handled;
+      shell_.RefreshProjectFiles();
+      shell_.ReloadCleanOpenBuffersFromDisk();
+      return DispatchResult::Handled;
     case ActionId::CreateFile:
     case ActionId::CreateDirectory: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::filesystem::path base_path = TreeMutationBasePath(source);
+      const std::filesystem::path base_path = shell_.TreeMutationBasePath(source);
       if (base_path.empty()) {
         return reject("No target directory selected");
       }
-      OpenPromptSurface(id == ActionId::CreateFile ? PromptSurfaceState::Action::CreateFile
+      shell_.OpenPromptSurface(id == ActionId::CreateFile ? PromptSurfaceState::Action::CreateFile
                                                    : PromptSurfaceState::Action::CreateDirectory,
                         PromptSurfaceState::Kind::TextInput, base_path);
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::RenamePath: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::filesystem::path path = ResolveTreeActionPath(source);
+      const std::filesystem::path path = shell_.ResolveTreeActionPath(source);
       if (path.empty()) {
         return reject("No path selected");
       }
-      OpenPromptSurface(PromptSurfaceState::Action::RenamePath,
+      shell_.OpenPromptSurface(PromptSurfaceState::Action::RenamePath,
                         PromptSurfaceState::Kind::TextInput, path, path.filename().string());
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::DeletePath: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::filesystem::path path = ResolveTreeActionPath(source);
+      const std::filesystem::path path = shell_.ResolveTreeActionPath(source);
       if (path.empty()) {
         return reject("No path selected");
       }
-      OpenPromptSurface(PromptSurfaceState::Action::DeletePath,
+      shell_.OpenPromptSurface(PromptSurfaceState::Action::DeletePath,
                         PromptSurfaceState::Kind::Confirm, path);
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::CopyRelativePath:
     case ActionId::CopyAbsolutePath: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::filesystem::path path = ResolveTreeActionPath(source);
+      const std::filesystem::path path = shell_.ResolveTreeActionPath(source);
       if (path.empty()) {
         return reject("No path selected");
       }
@@ -697,7 +699,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
       std::string clipboard_text;
       if (id == ActionId::CopyRelativePath) {
         std::error_code error;
-        const std::filesystem::path relative = std::filesystem::relative(path, project_root_, error);
+        const std::filesystem::path relative = std::filesystem::relative(path, shell_.project_root_, error);
         if (error || relative.empty()) {
           return reject("Unable to resolve a relative path for the selection");
         }
@@ -706,23 +708,23 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
         clipboard_text = path.lexically_normal().string();
       }
 
-      WriteClipboardText(clipboard_text);
-      return ActionDispatchResult::Handled;
+      shell_.WriteClipboardText(clipboard_text);
+      return DispatchResult::Handled;
     }
     case ActionId::Tree: {
       const TreeRootRequest request = BuildTreeRootRequest(args);
-      if (request.root.empty() && project_root_.empty()) {
+      if (request.root.empty() && shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      ShowTreeSidebar(request.root);
-      return ActionDispatchResult::Handled;
+      shell_.ShowTreeSidebar(request.root);
+      return DispatchResult::Handled;
     }
     default:
-      return ActionDispatchResult::Unhandled;
+      return DispatchResult::Unhandled;
   }
 }
 
-WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSearchAction(
+WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordinator::ExecuteSearch(
     ActionId id,
     const std::vector<std::string>& args,
     ActionSource source,
@@ -732,79 +734,79 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSearchAction(
     if (rejection_feedback != nullptr) {
       *rejection_feedback = std::move(feedback);
     }
-    return ActionDispatchResult::Rejected;
+    return DispatchResult::Rejected;
   };
 
   switch (id) {
     case ActionId::Term:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      OpenTerminal(JoinCommandArguments(args, 0));
-      return ActionDispatchResult::Handled;
+      shell_.OpenTerminal(JoinCommandArguments(args, 0));
+      return DispatchResult::Handled;
     case ActionId::Find:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      file_index_.Refresh();
-      file_finder_.SetIndex(&file_index_);
-      file_finder_.SetQuery(JoinCommandArguments(args, 0));
-      ShowOverlay(OverlayMode::FileFinder);
-      return ActionDispatchResult::Handled;
+      shell_.file_index_.Refresh();
+      shell_.file_finder_.SetIndex(&shell_.file_index_);
+      shell_.file_finder_.SetQuery(JoinCommandArguments(args, 0));
+      shell_.ShowOverlay(OverlayMode::FileFinder);
+      return DispatchResult::Handled;
     case ActionId::Files: {
       const FilesRequest request = BuildFilesRequest(args);
-      if (!request.project_root.empty() && !OpenProjectTab(request.project_root, true, true)) {
+      if (!request.project_root.empty() && !shell_.OpenProjectTab(request.project_root, true, true)) {
         return reject("Failed to open project: " + request.project_root.string());
       }
-      if (source == ActionSource::Shortcut && surface_.overlay_visible) {
-        DismissOverlay();
-        return ActionDispatchResult::Handled;
+      if (source == ActionSource::Shortcut && shell_.surface_.overlay_visible) {
+        shell_.DismissOverlay();
+        return DispatchResult::Handled;
       }
-      if (source != ActionSource::Shortcut && project_root_.empty()) {
+      if (source != ActionSource::Shortcut && shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      ShowOverlay(OverlayMode::FileFinder);
-      file_index_.Refresh();
-      file_finder_.SetIndex(&file_index_);
-      file_finder_.SetQuery("");
-      return ActionDispatchResult::Handled;
+      shell_.ShowOverlay(OverlayMode::FileFinder);
+      shell_.file_index_.Refresh();
+      shell_.file_finder_.SetIndex(&shell_.file_index_);
+      shell_.file_finder_.SetQuery("");
+      return DispatchResult::Handled;
     }
     case ActionId::ProjectSearch:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      ShowSearchSidebar(JoinCommandArguments(args, 0), true);
-      return ActionDispatchResult::Handled;
+      shell_.ShowSearchSidebar(JoinCommandArguments(args, 0), true);
+      return DispatchResult::Handled;
     case ActionId::Search:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
+      if (shell_.ActiveTabIsCompare() || shell_.ActiveTabIsMerge()) {
         return reject("search is unavailable in compare and merge tabs");
       }
-      OpenBufferSearch();
-      overlay_workflow_.buffer_search.query = JoinCommandArguments(args, 0);
-      RefreshBufferSearch();
-      return ActionDispatchResult::Handled;
+      shell_.OpenBufferSearch();
+      shell_.overlay_workflow_.buffer_search.query = JoinCommandArguments(args, 0);
+      shell_.RefreshBufferSearch();
+      return DispatchResult::Handled;
     case ActionId::ReplaceInBuffer:
-      OpenBufferReplace();
-      return ActionDispatchResult::Handled;
+      shell_.OpenBufferReplace();
+      return DispatchResult::Handled;
     case ActionId::Compare: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const CompareRequest request = BuildCompareRequest(args, project_root_);
+      const CompareRequest request = BuildCompareRequest(args, shell_.project_root_);
       std::filesystem::path path = request.path;
       if (path.empty() && source == ActionSource::ContextMenu) {
-        path = ResolveTreeActionPath(source);
-      } else if (path.empty() && !text_viewport_.path().empty()) {
-        path = text_viewport_.path().lexically_normal();
-      } else if (path.empty() && surface_.sidebar_visible &&
-                 surface_.sidebar_mode == SidebarMode::Tree) {
-        const auto& entries = directory_tree_.entries();
-        if (directory_tree_.selected_index() < entries.size() &&
-            !entries[directory_tree_.selected_index()].is_directory) {
-          path = entries[directory_tree_.selected_index()].path.lexically_normal();
+        path = shell_.ResolveTreeActionPath(source);
+      } else if (path.empty() && !shell_.text_viewport_.path().empty()) {
+        path = shell_.text_viewport_.path().lexically_normal();
+      } else if (path.empty() && shell_.surface_.sidebar_visible &&
+                 shell_.surface_.sidebar_mode == SidebarMode::Tree) {
+        const auto& entries = shell_.directory_tree_.entries();
+        if (shell_.directory_tree_.selected_index() < entries.size() &&
+            !entries[shell_.directory_tree_.selected_index()].is_directory) {
+          path = entries[shell_.directory_tree_.selected_index()].path.lexically_normal();
         }
       }
 
@@ -815,33 +817,33 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSearchAction(
         return reject("Compare path does not exist: " + path.string());
       }
 
-      OpenComparePickerForPath(path, request.commit_spec);
-      return ActionDispatchResult::Handled;
+      shell_.OpenComparePickerForPath(path, request.commit_spec);
+      return DispatchResult::Handled;
     }
     case ActionId::CompareHead: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::filesystem::path path = ResolveTreeActionPath(source);
+      const std::filesystem::path path = shell_.ResolveTreeActionPath(source);
       if (path.empty()) {
         return reject("No file selected for compare-head");
       }
       if (!std::filesystem::exists(path)) {
         return reject("Compare path does not exist: " + path.string());
       }
-      overlay_workflow_.compare_picker.path = path.lexically_normal();
-      OpenComparison(project::GitCommitEntry{
+      shell_.overlay_workflow_.compare_picker.path = path.lexically_normal();
+      shell_.OpenComparison(project::GitCommitEntry{
           .hash = "HEAD",
           .short_hash = "HEAD",
           .subject = "HEAD",
       });
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::Merge: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::optional<MergeRequest> request = BuildMergeRequest(args, project_root_);
+      const std::optional<MergeRequest> request = BuildMergeRequest(args, shell_.project_root_);
       if (!request.has_value()) {
         return reject("merge requires base, incoming, current, and optional output paths");
       }
@@ -850,16 +852,16 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSearchAction(
           !std::filesystem::exists(request->current_path)) {
         return reject("merge requires existing base, incoming, and current files");
       }
-      OpenMergeEditor(request->base_path, request->incoming_path, request->current_path,
+      shell_.OpenMergeEditor(request->base_path, request->incoming_path, request->current_path,
                       request->output_path);
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     default:
-      return ActionDispatchResult::Unhandled;
+      return DispatchResult::Unhandled;
   }
 }
 
-WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteTabAction(
+WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordinator::ExecuteTab(
     ActionId id,
     const std::vector<std::string>& args,
     ActionSource source,
@@ -868,90 +870,90 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteTabAction(
     if (rejection_feedback != nullptr) {
       *rejection_feedback = std::move(feedback);
     }
-    return ActionDispatchResult::Rejected;
+    return DispatchResult::Rejected;
   };
 
   switch (id) {
     case ActionId::Open: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::optional<OpenPathRequest> request = BuildOpenPathRequest(args, project_root_);
+      const std::optional<OpenPathRequest> request = BuildOpenPathRequest(args, shell_.project_root_);
       if (!request.has_value()) {
         return reject("open requires a path");
       }
       const std::filesystem::path& path = request->path;
 
-      auto* editor_tab = ActiveEditorTab();
+      auto* editor_tab = shell_.ActiveEditorTab();
       if (editor_tab != nullptr && editor_tab->views.size() > 1) {
         editor::TextViewport opened_view;
         if (!opened_view.OpenFile(path)) {
           return reject("Failed to open file: " + path.string());
         }
-        if (!ReplaceActiveEditorView(opened_view)) {
+        if (!shell_.ReplaceActiveEditorView(opened_view)) {
           return reject("Failed to replace the active split with: " + path.string());
         }
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
-      OpenFile(path);
-      return ActionDispatchResult::Handled;
+      shell_.OpenFile(path);
+      return DispatchResult::Handled;
     }
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      const std::filesystem::path path = ResolveTreeActionPath(source);
+      const std::filesystem::path path = shell_.ResolveTreeActionPath(source);
       if (path.empty()) {
         return reject("No path selected");
       }
       if (id == ActionId::OpenSelectedTreeItemInNewTab) {
-        if (!OpenFileInNewTab(path)) {
+        if (!shell_.OpenFileInNewTab(path)) {
           return reject("Failed to open file in a new tab: " + path.string());
         }
       } else {
-        OpenFile(path);
+        shell_.OpenFile(path);
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::Tab:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
       {
-        const TabPathsRequest request = BuildTabPathsRequest(args, project_root_);
+        const TabPathsRequest request = BuildTabPathsRequest(args, shell_.project_root_);
         if (request.open_untitled) {
-          OpenUntitledTab();
-          return ActionDispatchResult::Handled;
+          shell_.OpenUntitledTab();
+          return DispatchResult::Handled;
         }
 
         for (const std::filesystem::path& path : request.paths) {
-          if (!OpenFileInNewTab(path)) {
+          if (!shell_.OpenFileInNewTab(path)) {
             return reject("Failed to open file in a new tab: " + path.string());
           }
         }
 
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
     case ActionId::TabSwitch: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
       std::string error_message;
       const TabSwitchRequest request = BuildTabSwitchRequest(args);
       const std::optional<std::size_t> tab_index =
-          FindTabIndexBySpecifier(request.specifier, &error_message);
+          shell_.FindTabIndexBySpecifier(request.specifier, &error_message);
       if (!tab_index.has_value()) {
         return reject(error_message.empty() ? "No matching tab" : error_message);
       }
-      ActivateTab(*tab_index);
-      return ActionDispatchResult::Handled;
+      shell_.ActivateTab(*tab_index);
+      return DispatchResult::Handled;
     }
     case ActionId::TabMove:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      if (open_tabs_.empty()) {
+      if (shell_.open_tabs_.empty()) {
         return reject("No open tabs");
       }
       {
@@ -959,41 +961,41 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteTabAction(
         if (!request.has_value()) {
           return reject("tabmove requires a tab slot or relative offset");
         }
-        const int current_slot = static_cast<int>(active_tab_index_) + 1;
+        const int current_slot = static_cast<int>(shell_.active_tab_index_) + 1;
         const int requested_slot = request->relative ? current_slot + request->slot : request->slot;
         const int clamped_slot =
-            std::clamp(requested_slot, 1, static_cast<int>(open_tabs_.size()));
-        MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
-        return ActionDispatchResult::Handled;
+            std::clamp(requested_slot, 1, static_cast<int>(shell_.open_tabs_.size()));
+        shell_.MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
+        return DispatchResult::Handled;
       }
     case ActionId::Reopen:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      ReopenActiveTab();
-      return ActionDispatchResult::Handled;
+      shell_.ReopenActiveTab();
+      return DispatchResult::Handled;
     case ActionId::Save:
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
-      if (SaveTab(active_tab_index_)) {
+      if (shell_.SaveTab(shell_.active_tab_index_)) {
         if (source == ActionSource::Shortcut) {
-          ResetCaretBlink();
+          shell_.ResetCaretBlink();
         }
       } else {
         return reject("Save failed");
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     case ActionId::Vsplit: {
-      if (project_root_.empty()) {
+      if (shell_.project_root_.empty()) {
         return reject("No active project");
       }
       const EditorSplitOrientation orientation = EditorSplitOrientation::Vertical;
-      const TabPathsRequest request = BuildTabPathsRequest(args, project_root_);
+      const TabPathsRequest request = BuildTabPathsRequest(args, shell_.project_root_);
 
       if (request.open_untitled) {
-        SplitActiveEditor(orientation);
-        return ActionDispatchResult::Handled;
+        shell_.SplitActiveEditor(orientation);
+        return DispatchResult::Handled;
       }
 
       for (const std::filesystem::path& path : request.paths) {
@@ -1001,79 +1003,79 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteTabAction(
         if (!opened_view.OpenFile(path)) {
           return reject("Failed to open file: " + path.string());
         }
-        if (!SplitActiveEditor(orientation)) {
+        if (!shell_.SplitActiveEditor(orientation)) {
           return reject("Failed to split the active editor");
         }
-        if (!ReplaceActiveEditorView(opened_view)) {
+        if (!shell_.ReplaceActiveEditorView(opened_view)) {
           return reject("Failed to replace the active split with: " + path.string());
         }
       }
 
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::Unsplit:
-      UnsplitActiveEditor();
-      return ActionDispatchResult::Handled;
+      shell_.UnsplitActiveEditor();
+      return DispatchResult::Handled;
     case ActionId::SplitNext:
-      CycleEditorSplit(1);
-      return ActionDispatchResult::Handled;
+      shell_.CycleEditorSplit(1);
+      return DispatchResult::Handled;
     case ActionId::SplitPrev:
-      CycleEditorSplit(-1);
-      return ActionDispatchResult::Handled;
+      shell_.CycleEditorSplit(-1);
+      return DispatchResult::Handled;
     case ActionId::SplitFirst:
-      ActivateOrderedEditorSplit(0);
-      return ActionDispatchResult::Handled;
+      shell_.ActivateOrderedEditorSplit(0);
+      return DispatchResult::Handled;
     case ActionId::SplitLast: {
-      auto* editor_tab = ActiveEditorTab();
+      auto* editor_tab = shell_.ActiveEditorTab();
       const std::size_t last_index =
           editor_tab == nullptr || editor_tab->views.empty() ? 0 : editor_tab->views.size() - 1;
-      ActivateOrderedEditorSplit(last_index);
-      return ActionDispatchResult::Handled;
+      shell_.ActivateOrderedEditorSplit(last_index);
+      return DispatchResult::Handled;
     }
     case ActionId::CloseActiveTab:
-      if (!open_tabs_.empty()) {
-        RequestCloseTab(active_tab_index_);
+      if (!shell_.open_tabs_.empty()) {
+        shell_.RequestCloseTab(shell_.active_tab_index_);
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     case ActionId::CloseAllTabs:
-      CloseAllTabs();
-      return ActionDispatchResult::Handled;
+      shell_.CloseAllTabs();
+      return DispatchResult::Handled;
     case ActionId::CloseOtherTabs: {
       std::vector<std::size_t> indices;
-      if (!open_tabs_.empty()) {
-        indices.reserve(open_tabs_.size() - 1);
+      if (!shell_.open_tabs_.empty()) {
+        indices.reserve(shell_.open_tabs_.size() - 1);
       }
-      for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
-        if (i != active_tab_index_) {
+      for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
+        if (i != shell_.active_tab_index_) {
           indices.push_back(i);
         }
       }
-      RequestCloseTabs(std::move(indices));
-      return ActionDispatchResult::Handled;
+      shell_.RequestCloseTabs(std::move(indices));
+      return DispatchResult::Handled;
     }
     case ActionId::CloseTabsToRight: {
       std::vector<std::size_t> indices;
-      for (std::size_t i = active_tab_index_ + 1; i < open_tabs_.size(); ++i) {
+      for (std::size_t i = shell_.active_tab_index_ + 1; i < shell_.open_tabs_.size(); ++i) {
         indices.push_back(i);
       }
-      RequestCloseTabs(std::move(indices));
-      return ActionDispatchResult::Handled;
+      shell_.RequestCloseTabs(std::move(indices));
+      return DispatchResult::Handled;
     }
     case ActionId::CloseTabsToLeft: {
       std::vector<std::size_t> indices;
-      indices.reserve(active_tab_index_);
-      for (std::size_t i = 0; i < active_tab_index_; ++i) {
+      indices.reserve(shell_.active_tab_index_);
+      for (std::size_t i = 0; i < shell_.active_tab_index_; ++i) {
         indices.push_back(i);
       }
-      RequestCloseTabs(std::move(indices));
-      return ActionDispatchResult::Handled;
+      shell_.RequestCloseTabs(std::move(indices));
+      return DispatchResult::Handled;
     }
     default:
-      return ActionDispatchResult::Unhandled;
+      return DispatchResult::Unhandled;
   }
 }
 
-WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
+WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordinator::ExecuteEdit(
     ActionId id,
     const std::vector<std::string>& args,
     ActionSource source,
@@ -1084,23 +1086,23 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
   switch (id) {
     case ActionId::Goto:
     case ActionId::Jump: {
-      if (ActiveTabIsCompare() || ActiveTabIsMerge()) {
-        return ActionDispatchResult::Handled;
+      if (shell_.ActiveTabIsCompare() || shell_.ActiveTabIsMerge()) {
+        return DispatchResult::Handled;
       }
       const std::optional<LineNavigationRequest> request =
           BuildLineNavigationRequest(args, id == ActionId::Jump);
       if (!request.has_value()) {
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
 
       if (id == ActionId::Goto && request->requested_line == 0) {
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
 
-      const std::size_t line_count = std::max<std::size_t>(1, text_viewport_.line_count());
+      const std::size_t line_count = std::max<std::size_t>(1, shell_.text_viewport_.line_count());
       std::size_t line = 0;
       if (id == ActionId::Jump) {
-        const long long current_line = static_cast<long long>(text_viewport_.cursor_line()) + 1;
+        const long long current_line = static_cast<long long>(shell_.text_viewport_.cursor_line()) + 1;
         const long long target_line = current_line + request->requested_line;
         line = static_cast<std::size_t>(
             std::clamp(target_line - 1, 0LL, static_cast<long long>(line_count - 1)));
@@ -1111,178 +1113,178 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteEditAction(
         line = from_end >= line_count ? 0 : line_count - from_end;
       }
 
-      text_viewport_.MoveCursorTo(line, request->column > 0 ? request->column - 1 : 0);
-      surface_.focus = FocusTarget::Editor;
-      RequestFocusedEditorRedraw();
-      return ActionDispatchResult::Handled;
+      shell_.text_viewport_.MoveCursorTo(line, request->column > 0 ? request->column - 1 : 0);
+      shell_.surface_.focus = FocusTarget::Editor;
+      shell_.RequestFocusedEditorRedraw();
+      return DispatchResult::Handled;
     }
     case ActionId::SelectAll:
-      if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+      if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
         viewport->SelectAll();
-        ResetCaretBlink();
-        RequestFocusedEditorRedraw();
+        shell_.ResetCaretBlink();
+        shell_.RequestFocusedEditorRedraw();
       }
-      surface_.focus = FocusTarget::Editor;
-      return ActionDispatchResult::Handled;
+      shell_.surface_.focus = FocusTarget::Editor;
+      return DispatchResult::Handled;
     case ActionId::Undo:
-      if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+      if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
         const bool was_dirty = viewport->dirty();
         const std::vector<std::string> before_lines = viewport->lines();
         const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
         const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
         if (viewport->Undo()) {
-          if (auto* compare_tab = ActiveCompareTab();
+          if (auto* compare_tab = shell_.ActiveCompareTab();
               compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-            RefreshCompareTabDerivedState(*compare_tab);
-            SyncCompareSelectionFromViewport(*compare_tab, true);
+            shell_.RefreshCompareTabDerivedState(*compare_tab);
+            shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
           }
-          if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr &&
+          if (auto* merge_tab = shell_.ActiveMergeTab(); merge_tab != nullptr &&
                                                     viewport == &merge_tab->result_viewport) {
-            UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
+            shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                                  cursor_before);
           }
-          ResetCaretBlink();
-          RequestActiveTabRedraw(false);
-          RequestFocusedEditorRedraw();
-          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          shell_.ResetCaretBlink();
+          shell_.RequestActiveTabRedraw(false);
+          shell_.RequestFocusedEditorRedraw();
+          shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
           if (viewport->dirty() != was_dirty) {
-            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+            shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
                                                         viewport->cursor_line());
-            RequestTabStripRedraw();
+            shell_.RequestTabStripRedraw();
           }
         }
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     case ActionId::Redo:
-      if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+      if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
         const bool was_dirty = viewport->dirty();
         const std::vector<std::string> before_lines = viewport->lines();
         const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
         const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
         if (viewport->Redo()) {
-          if (auto* compare_tab = ActiveCompareTab();
+          if (auto* compare_tab = shell_.ActiveCompareTab();
               compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-            RefreshCompareTabDerivedState(*compare_tab);
-            SyncCompareSelectionFromViewport(*compare_tab, true);
+            shell_.RefreshCompareTabDerivedState(*compare_tab);
+            shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
           }
-          if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr &&
+          if (auto* merge_tab = shell_.ActiveMergeTab(); merge_tab != nullptr &&
                                                     viewport == &merge_tab->result_viewport) {
-            UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
+            shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                                  cursor_before);
           }
-          ResetCaretBlink();
-          RequestActiveTabRedraw(false);
-          RequestFocusedEditorRedraw();
-          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          shell_.ResetCaretBlink();
+          shell_.RequestActiveTabRedraw(false);
+          shell_.RequestFocusedEditorRedraw();
+          shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
           if (viewport->dirty() != was_dirty) {
-            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+            shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
                                                         viewport->cursor_line());
-            RequestTabStripRedraw();
+            shell_.RequestTabStripRedraw();
           }
         }
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     case ActionId::CopySelection: {
       std::string text;
-      if (surface_.focus == FocusTarget::Panel && TerminalHasSelection()) {
-        text = SelectedTerminalText();
-      } else if (ActiveEditableViewport() != nullptr) {
-        text = ActiveEditableViewport()->SelectedText();
+      if (shell_.surface_.focus == FocusTarget::Panel && shell_.TerminalHasSelection()) {
+        text = shell_.SelectedTerminalText();
+      } else if (shell_.ActiveEditableViewport() != nullptr) {
+        text = shell_.ActiveEditableViewport()->SelectedText();
       }
       if (!text.empty()) {
-        WriteClipboardText(text);
-        WritePrimarySelectionText(text);
+        shell_.WriteClipboardText(text);
+        shell_.WritePrimarySelectionText(text);
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::CopyLastTerminalCommand: {
-      const std::optional<std::string> text = LastTerminalCommandText();
+      const std::optional<std::string> text = shell_.LastTerminalCommandText();
       if (text.has_value()) {
-        WriteClipboardText(*text);
+        shell_.WriteClipboardText(*text);
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::CopySelectionWithContext: {
-      const std::optional<std::string> text = SelectionTextWithContext();
+      const std::optional<std::string> text = shell_.SelectionTextWithContext();
       if (text.has_value()) {
-        WriteClipboardText(*text);
-        WritePrimarySelectionText(*text);
+        shell_.WriteClipboardText(*text);
+        shell_.WritePrimarySelectionText(*text);
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::CutSelection: {
-      if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+      if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
         const bool was_dirty = viewport->dirty();
         const std::string text = viewport->SelectedText();
-        if (!text.empty() && WriteClipboardText(text)) {
-          WritePrimarySelectionText(text);
+        if (!text.empty() && shell_.WriteClipboardText(text)) {
+          shell_.WritePrimarySelectionText(text);
           const std::vector<std::string> before_lines = viewport->lines();
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
           viewport->DeleteSelectedText();
-          if (auto* compare_tab = ActiveCompareTab();
+          if (auto* compare_tab = shell_.ActiveCompareTab();
               compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-            RefreshCompareTabDerivedState(*compare_tab);
-            SyncCompareSelectionFromViewport(*compare_tab, true);
+            shell_.RefreshCompareTabDerivedState(*compare_tab);
+            shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
           }
-          if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr &&
+          if (auto* merge_tab = shell_.ActiveMergeTab(); merge_tab != nullptr &&
                                                     viewport == &merge_tab->result_viewport) {
-            UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
+            shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                                  cursor_before);
           }
-          ResetCaretBlink();
-          RequestActiveTabRedraw(false);
-          RequestFocusedEditorRedraw();
-          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          shell_.ResetCaretBlink();
+          shell_.RequestActiveTabRedraw(false);
+          shell_.RequestFocusedEditorRedraw();
+          shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
           if (viewport->dirty() != was_dirty) {
-            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+            shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
                                                         viewport->cursor_line());
-            RequestTabStripRedraw();
+            shell_.RequestTabStripRedraw();
           }
         }
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::PasteClipboard: {
-      if (const std::optional<std::string> clipboard_text = ReadClipboardText();
+      if (const std::optional<std::string> clipboard_text = shell_.ReadClipboardText();
           clipboard_text.has_value()) {
-        if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
-          PasteClipboardIntoTerminal();
-        } else if (auto* viewport = ActiveEditableViewport(); viewport != nullptr) {
+        if (shell_.surface_.focus == FocusTarget::Panel && shell_.ActiveTerminalTab() != nullptr) {
+          shell_.PasteClipboardIntoTerminal();
+        } else if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
           const bool was_dirty = viewport->dirty();
           const std::vector<std::string> before_lines = viewport->lines();
           const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
           const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
           viewport->InsertText(*clipboard_text);
-          if (auto* compare_tab = ActiveCompareTab();
+          if (auto* compare_tab = shell_.ActiveCompareTab();
               compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-            RefreshCompareTabDerivedState(*compare_tab);
-            SyncCompareSelectionFromViewport(*compare_tab, true);
+            shell_.RefreshCompareTabDerivedState(*compare_tab);
+            shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
           }
-          if (auto* merge_tab = ActiveMergeTab(); merge_tab != nullptr &&
+          if (auto* merge_tab = shell_.ActiveMergeTab(); merge_tab != nullptr &&
                                                     viewport == &merge_tab->result_viewport) {
-            UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
+            shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
                                                  cursor_before);
           }
-          ResetCaretBlink();
-          RequestActiveTabRedraw(false);
-          RequestFocusedEditorRedraw();
-          RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+          shell_.ResetCaretBlink();
+          shell_.RequestActiveTabRedraw(false);
+          shell_.RequestFocusedEditorRedraw();
+          shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
           if (viewport->dirty() != was_dirty) {
-            RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
+            shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
                                                         viewport->cursor_line());
-            RequestTabStripRedraw();
+            shell_.RequestTabStripRedraw();
           }
         }
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     default:
-      return ActionDispatchResult::Unhandled;
+      return DispatchResult::Unhandled;
   }
 }
 
-WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
+WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordinator::ExecuteGlobal(
     ActionId id,
     const std::vector<std::string>& args,
     ActionSource source,
@@ -1292,23 +1294,23 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
     if (rejection_feedback != nullptr) {
       *rejection_feedback = std::move(feedback);
     }
-    return ActionDispatchResult::Rejected;
+    return DispatchResult::Rejected;
   };
-  PersistenceCoordinator persistence(*this);
+  PersistenceCoordinator persistence(shell_);
 
   switch (id) {
     case ActionId::Colorscheme: {
       const std::optional<ColorschemeRequest> request = BuildColorschemeRequest(args);
       if (!request.has_value()) {
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
       if (request->list) {
         persistence.RefreshAvailableColorschemeNames();
-        return ActionDispatchResult::Handled;
+        return DispatchResult::Handled;
       }
       persistence.RefreshAvailableColorschemeNames();
       persistence.ApplyColorscheme(request->name, true, true);
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::TabSize: {
       const std::optional<EditorPreferenceSizeRequest> request =
@@ -1316,10 +1318,10 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       if (!request.has_value()) {
         return reject("tab-size requires an integer from 1 to 16");
       }
-      editor_preferences_.tab_size = request->value;
-      ApplyEditorPreferencesToAllTabs();
+      shell_.editor_preferences_.tab_size = request->value;
+      shell_.ApplyEditorPreferencesToAllTabs();
       persistence.SaveConfigState();
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::IndentWidth: {
       const std::optional<EditorPreferenceSizeRequest> request =
@@ -1327,10 +1329,10 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       if (!request.has_value()) {
         return reject("indent-width requires an integer from 1 to 16");
       }
-      editor_preferences_.indent_width = request->value;
-      ApplyEditorPreferencesToAllTabs();
+      shell_.editor_preferences_.indent_width = request->value;
+      shell_.ApplyEditorPreferencesToAllTabs();
       persistence.SaveConfigState();
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::UiScale: {
       const std::optional<UiScaleRequest> request = BuildUiScaleRequest(args);
@@ -1339,7 +1341,7 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
       }
       switch (request->kind) {
         case UiScaleRequest::Kind::Step:
-          persistence.ApplyUiScale(StepUiScale(ui_scale_, request->delta), true, true);
+          persistence.ApplyUiScale(StepUiScale(shell_.ui_scale_, request->delta), true, true);
           break;
         case UiScaleRequest::Kind::Reset:
           persistence.ApplyUiScale(1.0f, true, true);
@@ -1348,34 +1350,34 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
           persistence.ApplyUiScale(request->scale, true, true);
           break;
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::SoftTabs: {
       const std::optional<SoftTabsRequest> request = BuildSoftTabsRequest(args);
       if (!request.has_value()) {
         return reject("soft-tabs expects on or off");
       }
-      editor_preferences_.soft_tabs = request->enabled;
-      ApplyEditorPreferencesToAllTabs();
+      shell_.editor_preferences_.soft_tabs = request->enabled;
+      shell_.ApplyEditorPreferencesToAllTabs();
       persistence.SaveConfigState();
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     }
     case ActionId::Focus: {
       const FocusRequest request = BuildFocusRequest(args);
       switch (request.target) {
         case FocusRequestTarget::Sidebar:
-          if (surface_.sidebar_visible) {
-            surface_.focus = FocusTarget::Sidebar;
-            return ActionDispatchResult::Handled;
+          if (shell_.surface_.sidebar_visible) {
+            shell_.surface_.focus = FocusTarget::Sidebar;
+            return DispatchResult::Handled;
           }
           break;
         case FocusRequestTarget::Editor:
-          surface_.focus = FocusTarget::Editor;
-          return ActionDispatchResult::Handled;
+          shell_.surface_.focus = FocusTarget::Editor;
+          return DispatchResult::Handled;
         case FocusRequestTarget::Panel:
-          if (surface_.command_mode || ActiveTerminalTab() != nullptr) {
-            surface_.focus = FocusTarget::Panel;
-            return ActionDispatchResult::Handled;
+          if (shell_.surface_.command_mode || shell_.ActiveTerminalTab() != nullptr) {
+            shell_.surface_.focus = FocusTarget::Panel;
+            return DispatchResult::Handled;
           }
           break;
         case FocusRequestTarget::Unknown:
@@ -1385,26 +1387,26 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteGlobalAction(
                     (request.raw_target.empty() ? std::string("<empty>") : request.raw_target));
     }
     case ActionId::OpenCommandPrompt: {
-        const bool bottom_panel_was_visible = BottomPanelVisible();
-        surface_.command_mode = true;
-        surface_.focus = FocusTarget::Panel;
-        command_.input.clear();
-        CommandPromptCoordinator(*this).ResetSessionState();
-        RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+        const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
+        shell_.surface_.command_mode = true;
+        shell_.surface_.focus = FocusTarget::Panel;
+        shell_.command_.input.clear();
+        CommandPromptCoordinator(shell_).ResetSessionState();
+        shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
       }
-      return ActionDispatchResult::Handled;
+      return DispatchResult::Handled;
     case ActionId::PluginsReload:
-      if (!plugin_host_.enabled()) {
+      if (!shell_.plugin_host_.enabled()) {
         return reject("Lua plugin runtime unavailable");
       }
-      ReloadPluginsForCurrentProject();
-      CommandPromptCoordinator(*this).SetFeedback(PluginRuntimeReloadSummary());
-      return ActionDispatchResult::Handled;
+      shell_.ReloadPluginsForCurrentProject();
+      CommandPromptCoordinator(shell_).SetFeedback(shell_.PluginRuntimeReloadSummary());
+      return DispatchResult::Handled;
     case ActionId::Quit:
-      RequestQuit();
-      return ActionDispatchResult::Handled;
+      shell_.RequestQuit();
+      return DispatchResult::Handled;
     default:
-      return ActionDispatchResult::Unhandled;
+      return DispatchResult::Unhandled;
   }
 }
 

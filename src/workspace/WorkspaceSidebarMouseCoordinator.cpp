@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -112,7 +113,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
     }
     if (Contains(shell_.GitSidebarRefreshButtonRect(layout.sidebar), event.button.x,
                  event.button.y)) {
-      return shell_.ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+      return ActionCoordinator(shell_).Execute(ActionId::GitRefresh, {}, ActionSource::Shortcut);
     }
     if (event.button.y < shell_.GitSidebarListTop(layout.sidebar)) {
       return true;
@@ -212,7 +213,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
   if (event.button.button == SDL_BUTTON_LEFT &&
       Contains(shell_.TreeSidebarRefreshButtonRect(layout.sidebar), event.button.x,
                event.button.y)) {
-    return shell_.ExecuteAction(ActionId::TreeRefresh, {}, ActionSource::Shortcut);
+    return ActionCoordinator(shell_).Execute(ActionId::TreeRefresh, {}, ActionSource::Shortcut);
   }
 
   if (local_y < 0.0f) {

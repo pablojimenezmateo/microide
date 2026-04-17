@@ -5,6 +5,7 @@
 #include <cmath>
 #include <optional>
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -81,7 +82,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
     return true;
   }
   if (Contains(toolbar.save_rect, event.button.x, event.button.y)) {
-    shell_.ExecuteAction(ActionId::Save, {}, ActionSource::Menu);
+    ActionCoordinator(shell_).Execute(ActionId::Save, {}, ActionSource::Menu);
     return true;
   }
   if (Contains(toolbar.open_rect, event.button.x, event.button.y)) {

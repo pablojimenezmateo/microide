@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -143,6 +144,7 @@ bool WorkspaceShell::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                          SDL_Keymod modifiers,
                                          bool active_compare_tab,
                                          bool active_merge_tab) {
+  ActionCoordinator action(*this);
   if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
       event.key == SDLK_N) {
     return OpenUntitledTab();
@@ -151,73 +153,73 @@ bool WorkspaceShell::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
       surface_.focus == FocusTarget::Editor && !active_compare_tab &&
       ActiveEditableViewport() != nullptr && event.key == SDLK_A) {
-    ExecuteAction(ActionId::SelectAll, {}, ActionSource::Shortcut);
+    action.Execute(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !surface_.command_mode && !surface_.overlay_visible &&
       surface_.focus == FocusTarget::Editor && !active_compare_tab) {
     if (!active_merge_tab && (modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_F) {
-      ExecuteAction(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
       return true;
     }
     if (!active_merge_tab && event.key == SDLK_H) {
-      ExecuteAction(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
       return true;
     }
     if (!active_merge_tab && event.key == SDLK_F) {
-      ExecuteAction(ActionId::Search, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::Search, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_W) {
-      ExecuteAction(ActionId::CloseActiveTab, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::CloseActiveTab, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_Z) {
-      ExecuteAction((modifiers & SDL_KMOD_SHIFT) != 0 ? ActionId::Redo : ActionId::Undo, {},
-                    ActionSource::Shortcut);
+      action.Execute((modifiers & SDL_KMOD_SHIFT) != 0 ? ActionId::Redo : ActionId::Undo, {},
+                     ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_Y) {
-      ExecuteAction(ActionId::Redo, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::Redo, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_C) {
-      ExecuteAction(ActionId::CopySelection, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::CopySelection, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_X) {
-      ExecuteAction(ActionId::CutSelection, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::CutSelection, {}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_V) {
-      ExecuteAction(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
       return true;
     }
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !active_compare_tab && event.key == SDLK_S) {
-    ExecuteAction(ActionId::Save, {}, ActionSource::Shortcut);
+    action.Execute(ActionId::Save, {}, ActionSource::Shortcut);
     return true;
   }
 
   if (modifiers & SDL_KMOD_CTRL) {
     if (event.key == SDLK_0 || event.key == SDLK_KP_0) {
-      ExecuteAction(ActionId::UiScale, {"reset"}, ActionSource::Shortcut);
+      action.Execute(ActionId::UiScale, {"reset"}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_MINUS || event.key == SDLK_KP_MINUS) {
-      ExecuteAction(ActionId::UiScale, {"down"}, ActionSource::Shortcut);
+      action.Execute(ActionId::UiScale, {"down"}, ActionSource::Shortcut);
       return true;
     }
     if (event.key == SDLK_EQUALS || event.key == SDLK_PLUS || event.key == SDLK_KP_PLUS) {
-      ExecuteAction(ActionId::UiScale, {"up"}, ActionSource::Shortcut);
+      action.Execute(ActionId::UiScale, {"up"}, ActionSource::Shortcut);
       return true;
     }
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_E) {
-    ExecuteAction(ActionId::OpenCommandPrompt, {}, ActionSource::Shortcut);
+    action.Execute(ActionId::OpenCommandPrompt, {}, ActionSource::Shortcut);
     return true;
   }
 
@@ -226,12 +228,13 @@ bool WorkspaceShell::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
 
 bool WorkspaceShell::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event,
                                                     SDL_Keymod modifiers) {
+  ActionCoordinator action(*this);
   switch (event.key) {
     case SDLK_F8:
-      ExecuteAction(ActionId::SidebarToggle, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::SidebarToggle, {}, ActionSource::Shortcut);
       return true;
     case SDLK_F6:
-      ExecuteAction(ActionId::Files, {}, ActionSource::Shortcut);
+      action.Execute(ActionId::Files, {}, ActionSource::Shortcut);
       return true;
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -588,7 +591,7 @@ bool WorkspaceShell::HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       case SDLK_KP_ENTER:
         return OpenGitSidebarEntry(git_sidebar_.selected_index);
       case SDLK_R:
-        return ExecuteAction(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+        return ActionCoordinator(*this).Execute(ActionId::GitRefresh, {}, ActionSource::Shortcut);
       default: {
         const char input_character = KeycodeToAscii(event.key, modifiers);
         if (input_character == 's') {

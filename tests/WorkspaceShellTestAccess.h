@@ -1,5 +1,6 @@
 #pragma once
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
@@ -236,19 +237,19 @@ struct WorkspaceShellTestAccess {
                  shell.window_presentation_.logical_height);
   }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteProjectOpenFromCommand(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::ProjectOpen, {},
-                               WorkspaceShell::ActionSource::Command);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Command);
   }
   static void ResetProjectScopedState(WorkspaceShell& shell, bool show_welcome) {
     shell.ResetProjectScopedState(show_welcome);
   }
   static bool ExecuteFilesFromShortcut(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::Files, {},
-                               WorkspaceShell::ActionSource::Shortcut);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(WorkspaceShell::ActionId::Files, {},
+                                                            WorkspaceShell::ActionSource::Shortcut);
   }
   static void SetClipboardTextReader(
       WorkspaceShell& shell,
@@ -348,44 +349,46 @@ struct WorkspaceShellTestAccess {
     return shell.diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
   }
   static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::CopySelectionWithContext, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::CopySelectionWithContext, {},
+        WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::PasteClipboard, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCopyLastTerminalCommand(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
+        WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseAllTabs(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseAllTabs, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::CloseAllTabs, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseOtherTabs(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseOtherTabs, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::CloseOtherTabs, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseTabsToRight(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseTabsToRight, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::CloseTabsToRight, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseTabsToLeft(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::CloseTabsToLeft, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::CloseTabsToLeft, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteTreeRefresh(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::TreeRefresh, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::TreeRefresh, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteGitRefresh(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::GitRefresh, {},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::GitRefresh, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteShowGitSidebar(WorkspaceShell& shell) {
-    return shell.ExecuteAction(WorkspaceShell::ActionId::SidebarShow, {"git"},
-                               WorkspaceShell::ActionSource::Menu);
+    return WorkspaceShell::ActionCoordinator(shell).Execute(
+        WorkspaceShell::ActionId::SidebarShow, {"git"}, WorkspaceShell::ActionSource::Menu);
   }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }

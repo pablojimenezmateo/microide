@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShellShared.h"
 
@@ -452,7 +453,7 @@ bool WorkspaceShell::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
     args.emplace_back(item.args[i]);
   }
   CloseMenuBar();
-  return ExecuteAction(item.action, args, ActionSource::Menu);
+  return ActionCoordinator(*this).Execute(item.action, args, ActionSource::Menu);
 }
 
 bool WorkspaceShell::SwitchMenuBarMenu(int delta) {
@@ -539,7 +540,8 @@ bool WorkspaceShell::ExecuteTreeContextMenuItem(std::size_t item_index) {
   for (std::size_t i = 0; i < item.arg_count; ++i) {
     args.emplace_back(item.args[i]);
   }
-  const bool handled = ExecuteAction(item.action, args, ActionSource::ContextMenu);
+  const bool handled =
+      ActionCoordinator(*this).Execute(item.action, args, ActionSource::ContextMenu);
   CloseTreeContextMenu();
   return handled;
 }

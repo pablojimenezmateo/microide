@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceConstants.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -285,7 +286,7 @@ bool WorkspaceShell::CommandPromptCoordinator::ExecuteCommandLine(
 
   const ActionSpec* action = FindWorkspaceActionByCommand(command);
   if (action != nullptr) {
-    return shell_.ExecuteAction(action->id, args, ActionSource::Command);
+    return ActionCoordinator(shell_).Execute(action->id, args, ActionSource::Command);
   }
 
   const std::size_t message_count_before = shell_.plugin_host_.Messages().size();

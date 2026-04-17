@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "editor/SyntaxDefinitionLoader.h"
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 namespace microide::workspace {
@@ -39,7 +40,8 @@ WorkspaceShell::WorkspaceShell() {
           },
       .show_sidebar =
           [this](std::string_view id) {
-            return ExecuteAction(ActionId::SidebarShow, {std::string(id)}, ActionSource::Shortcut);
+            return ActionCoordinator(*this).Execute(ActionId::SidebarShow, {std::string(id)},
+                                                    ActionSource::Shortcut);
           },
       .publish_diagnostics =
           [this](std::string_view owner,

@@ -715,12 +715,6 @@ class WorkspaceShell {
     ContextMenu,
   };
 
-  enum class ActionDispatchResult {
-    Unhandled,
-    Handled,
-    Rejected,
-  };
-
   struct ActionSpec {
     ActionId id;
     std::string_view command_name;
@@ -934,6 +928,7 @@ class WorkspaceShell {
   class TabMouseCoordinator;
   class SidebarMouseCoordinator;
   class PanelMouseCoordinator;
+  class ActionCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -947,33 +942,6 @@ class WorkspaceShell {
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
   static const std::vector<std::string>& CommandNames();
   bool IsActionEnabled(ActionId id) const;
-  bool ExecuteAction(ActionId id,
-                     const std::vector<std::string>& args,
-                     ActionSource source);
-  ActionDispatchResult ExecuteProjectAction(ActionId id,
-                                           const std::vector<std::string>& args,
-                                           ActionSource source,
-                                           std::string* rejection_feedback);
-  ActionDispatchResult ExecuteSidebarAction(ActionId id,
-                                           const std::vector<std::string>& args,
-                                           ActionSource source,
-                                           std::string* rejection_feedback);
-  ActionDispatchResult ExecuteSearchAction(ActionId id,
-                                          const std::vector<std::string>& args,
-                                          ActionSource source,
-                                          std::string* rejection_feedback);
-  ActionDispatchResult ExecuteTabAction(ActionId id,
-                                       const std::vector<std::string>& args,
-                                       ActionSource source,
-                                       std::string* rejection_feedback);
-  ActionDispatchResult ExecuteEditAction(ActionId id,
-                                        const std::vector<std::string>& args,
-                                        ActionSource source,
-                                        std::string* rejection_feedback);
-  ActionDispatchResult ExecuteGlobalAction(ActionId id,
-                                          const std::vector<std::string>& args,
-                                          ActionSource source,
-                                          std::string* rejection_feedback);
   static std::span<const MenuSpec> MenuSpecs();
   static const MenuSpec* FindMenuSpec(MenuId id);
   std::span<const MenuItemSpec> MenuItems(MenuId id) const;

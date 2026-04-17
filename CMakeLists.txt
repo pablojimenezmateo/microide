@@ -149,12 +149,12 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceChromeMouseCoordinator.cpp
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
+  src/workspace/WorkspaceActionCoordinator.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
-  src/workspace/WorkspaceShellActions.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp
