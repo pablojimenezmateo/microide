@@ -930,6 +930,7 @@ class WorkspaceShell {
   class PanelMouseCoordinator;
   class ActionCoordinator;
   class MenuCoordinator;
+  class KeyInputCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -1470,20 +1471,6 @@ class WorkspaceShell {
   bool HandleMouseButtonUp(const SDL_Event& event);
   bool HandleMouseMotion(const SDL_Event& event);
   bool HandleMouseWheel(const SDL_Event& event);
-  bool HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event);
-  bool HandleMenuBarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event);
-  bool HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
-                           SDL_Keymod modifiers,
-                           bool active_compare_tab,
-                           bool active_merge_tab);
-  bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   float ProjectTabWidthForIndex(std::size_t index) const;

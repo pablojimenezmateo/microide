@@ -153,6 +153,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
+  src/workspace/WorkspaceKeyInputCoordinator.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
   src/workspace/WorkspaceMenuCoordinator.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
@@ -162,7 +163,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceDirtyPromptCoordinator.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellInput.cpp
-  src/workspace/WorkspaceShellKeyInput.cpp
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp

@@ -68,6 +68,8 @@ Current state:
   dedicated action coordinator instead of living in `WorkspaceShellActions.cpp`
 - menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
+- SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input
+  coordinator instead of keeping those routing paths embedded directly on `WorkspaceShell`
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:

@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceKeyInputCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -27,12 +28,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
         .redraw = ConsumePendingRenderInvalidation(),
     };
   };
-  const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.HasAnyRedraw()) {
-      request_redraw();
-    }
-  };
-
   if (project_open_dialog_event_type_ != 0 && event.type == project_open_dialog_event_type_) {
     ConsumePendingProjectOpenDialogResult();
     return finish(true);
@@ -79,99 +74,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       return finish(false);
   }
 
-  const SDL_Keymod modifiers =
-      event.key.mod != SDL_KMOD_NONE ? event.key.mod : SDL_GetModState();
-  if (prompts_.dirty_visible) {
-    const bool handled = HandleDirtyPromptKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestPromptRedraw(); });
-    }
-    return finish(handled);
-  }
-  if (surface_.tree_context_menu.open) {
-    const bool handled = HandleTreeContextMenuKeyDown(event.key);
-    if (handled) {
-      ensure_redraw([this]() { RequestChromeRedraw(); });
-    }
-    return finish(handled);
-  }
-  if (surface_.menu_bar_open) {
-    const bool handled = HandleMenuBarKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestChromeRedraw(); });
-    }
-    return finish(handled);
-  }
-  if (CompositionConsumesKey(event.key.key, modifiers)) {
-    return finish(true);
-  }
-  if (prompts_.surface_visible) {
-    const bool handled = HandlePromptSurfaceKeyDown(event.key);
-    if (handled) {
-      ensure_redraw([this]() { RequestPromptRedraw(); });
-    }
-    return finish(handled);
-  }
-  const bool active_compare_tab = ActiveTabIsCompare();
-  const bool active_merge_tab = ActiveTabIsMerge();
-  if (HandleGlobalKeyDown(event.key, modifiers, active_compare_tab, active_merge_tab)) {
-    return finish(true);
-  }
-  if (surface_.command_mode) {
-    const bool handled = CommandPromptCoordinator(*this).HandleKeyDown(event.key);
-    if (handled) {
-      ensure_redraw([this]() { RequestBottomPanelCommandRedraw(); });
-    }
-    return finish(handled);
-  }
-  if (HandleSurfaceNavigationKeyDown(event.key, modifiers)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
-    return finish(true);
-  }
-  if (surface_.focus == FocusTarget::Overlay) {
-    const bool handled = HandleOverlayKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestOverlayRedraw(); });
-    }
-    return finish(handled);
-  }
-  if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible) {
-    const bool handled = HandleSidebarKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestSidebarRedraw(); });
-    }
-    return finish(handled);
-  }
-
-  if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
-    const bool handled = HandleTerminalKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestBottomPanelContentRedraw(); });
-    }
-    return finish(handled);
-  }
-
-  if (surface_.focus == FocusTarget::Editor && active_compare_tab) {
-    const bool handled = HandleCompareKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestFocusedEditorRedraw(); });
-    }
-    return finish(handled);
-  }
-
-  if (surface_.focus == FocusTarget::Editor && active_merge_tab) {
-    const bool handled = HandleMergeKeyDown(event.key, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { RequestFocusedEditorRedraw(); });
-    }
-    return finish(handled);
-  }
-
-  const bool handled = HandleDefaultEditorKeyDown(event.key, modifiers);
-  if (handled) {
-    ensure_redraw([this]() { RequestFocusedEditorRedraw(); });
-  }
-  return finish(handled);
+  return finish(KeyInputCoordinator(*this).HandleKeyDown(event.key));
 }
 
 void WorkspaceShell::SyncTextInputSurface(SDL_Window* window) {
