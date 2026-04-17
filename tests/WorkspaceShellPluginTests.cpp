@@ -318,6 +318,122 @@ void TestWorkspaceShellDiagnosticHoverPopupShowsMessages() {
          "diagnostic hover popup should expose the published diagnostic message");
 }
 
+void TestWorkspaceShellPluginHoverPopupShowsMessages() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "alpha beta\n");
+
+  WritePluginInit(
+      plugins_root, "hover",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "hover",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "hover.readme",
+      provide = function(buffer, position)
+        if buffer.relative_path == "README.md" and position.line == 1 and position.column == 3 then
+          return {
+            title = "Hover README",
+            content = "hover:" .. buffer.relative_path .. ":" .. tostring(position.line) .. ":" .. tostring(position.column)
+          }
+        end
+        return nil
+      end
+    })
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "plugin hover fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float hover_x =
+      metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
+  const float hover_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering a provider-backed editor position should be handled");
+
+  const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell);
+  Expect(popup_rect.has_value(), "hovering a provider-backed editor position should open a popup");
+  Expect(WorkspaceShellTestAccess::ActiveEditorPluginHoverContent(shell).has_value() &&
+             *WorkspaceShellTestAccess::ActiveEditorPluginHoverContent(shell) ==
+                 "hover:README.md:1:3",
+         "plugin hover popup should expose the provider-returned content");
+}
+
+void TestWorkspaceShellPluginHoverPopupShowsMessagesInComparePane() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "repo";
+  const std::filesystem::path source = project_root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  WritePluginInit(
+      plugins_root, "hover-compare",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "hover-compare",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "hover-compare.provider",
+      provide = function(buffer, position)
+        if buffer.relative_path == "src/main.cpp" and position.line == 1 and position.column == 1 then
+          return {
+            title = "Compare hover",
+            content = "hover:" .. buffer.relative_path .. ":" .. tostring(position.line) .. ":" .. tostring(position.column)
+          }
+        end
+        return nil
+      end
+    })
+  end
+})
+)");
+
+  InitializeGitRepo(project_root);
+  CommitAll(project_root, "Add compare hover fixture", "compare hover fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "plugin compare-hover fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "plugin compare-hover fixture should open a working-tree comparison");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float hover_x =
+      surface.right_x + surface.gutter_width + WorkspaceShellTestAccess::TextCharWidth(shell) * 0.5f;
+  const float hover_y = surface.rows_y + surface.line_height * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering the compare editable pane should be handled");
+
+  Expect(WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell).has_value(),
+         "hovering the compare editable pane should open a popup");
+  Expect(WorkspaceShellTestAccess::ActiveEditorPluginHoverContent(shell).has_value() &&
+             *WorkspaceShellTestAccess::ActiveEditorPluginHoverContent(shell) ==
+                 "hover:src/main.cpp:1:1",
+         "compare hover popups should resolve provider content against the editable file path");
+}
+
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -443,6 +559,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches);
   AddTest(tests, "WorkspaceShell/DiagnosticHoverPopupShowsMessages",
           TestWorkspaceShellDiagnosticHoverPopupShowsMessages);
+  AddTest(tests, "WorkspaceShell/PluginHoverPopupShowsMessages",
+          TestWorkspaceShellPluginHoverPopupShowsMessages);
+  AddTest(tests, "WorkspaceShell/PluginHoverPopupShowsMessagesInComparePane",
+          TestWorkspaceShellPluginHoverPopupShowsMessagesInComparePane);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

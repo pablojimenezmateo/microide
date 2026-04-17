@@ -433,6 +433,68 @@ return ide.plugin({
          "plugin shutdown should clear the owner's diagnostics");
 }
 
+void TestPluginHostPhase3HoverApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase3 hover\n");
+
+  WritePluginInit(
+      global_plugins, "phase3-hover",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase3-hover",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "phase3-hover.provider",
+      provide = function(buffer, position)
+        if buffer.relative_path == "README.md" and position.line == 1 and position.column == 3 then
+          return {
+            title = "Hover README",
+            content = buffer.relative_path .. ":" .. tostring(position.line) .. ":" .. tostring(position.column)
+          }
+        end
+        return nil
+      end
+    })
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
+      .log_sink = {},
+  });
+
+  Expect(host.Reload(project_root), "phase3 hover plugin should reload successfully");
+  PluginHost::HoverResult hover;
+  std::string hover_error;
+  Expect(host.QueryHover(project_root / "README.md", 1, 3, &hover, &hover_error),
+         "hover query should find a matching plugin-provided result");
+  Expect(hover_error.empty(), "successful hover queries should not set an error");
+  Expect(hover.title == "Hover README" && hover.content == "README.md:1:3",
+         "hover queries should preserve the returned title and content");
+
+  hover = PluginHost::HoverResult{};
+  Expect(!host.QueryHover(project_root / "README.md", 2, 1, &hover, &hover_error),
+         "hover query should report no result when providers return nil");
+  Expect(hover_error.empty(), "missing hover results should not set an error");
+  Expect(hover.title.empty() && hover.content.empty(),
+         "missing hover results should leave the output empty");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -442,6 +504,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
+  AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
 }
 
 }  // namespace microide::tests

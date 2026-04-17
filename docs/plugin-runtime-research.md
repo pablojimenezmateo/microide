@@ -36,11 +36,13 @@ Phase 2 status:
 
 Phase 3 status:
 
-- partially implemented on 2026-04-17 in the host codebase
+- implemented on 2026-04-17 in coherent host-owned slices
 - added a host-owned `editor::DiagnosticsStore` that keeps plugin diagnostics scoped by owner and file path
 - plugins can now publish and clear diagnostics through `ctx.diagnostics.publish(path, diagnostics)` and `ctx.diagnostics.clear(path_or_nil)`
 - editor tabs, compare right panes, and merge result panes now render diagnostic underlines through the host using theme-backed severity colors
 - project-tab switching now preserves each workspace state's diagnostics without leaking or clearing them across projects
+- plugins can now register hover providers through `ctx.hover.add({ id, provide })`
+- hover requests now resolve through the host in editor tabs, compare right panes, and merge result panes, then render through the shared host popup path
 - the host now exposes a built-in Problems sidebar that snapshots merged diagnostics, preserves per-project sidebar state, and opens files at diagnostic locations
 - host rename and delete flows now retarget or clear diagnostics so underlines, hover popups, and Problems entries do not keep stale file paths
 
@@ -902,13 +904,21 @@ This pass landed the first coherent editor-extensibility slice:
 
 What this slice still does not include:
 
-- hover providers beyond the built-in blame and diagnostics path
 - gutter markers or problem badges
 - document-revision tracking for suppressing stale diagnostics beyond the current dirty-buffer hiding policy
 
+### Phase 3: Landed Hover Provider Slice
+
+This follow-up pass finished the host-owned hover-routing half of editor extensibility:
+
+- plugins can now register hover providers through `ctx.hover.add({ id, provide })`
+- hover callbacks receive `(buffer, position)` tables with the same project-relative buffer metadata used by lifecycle hooks plus 1-based line and column coordinates
+- the shell resolves hover requests in normal editor tabs, compare right panes, merge result panes, and split editors without exposing `WorkspaceShell` internals to plugins
+- popup rendering stays host-owned and text-only, so providers return structured text while the host keeps layout, precedence, and interaction rules
+- blame still wins first, diagnostics still win second, and plugin hover providers fill the remaining generic text-hover slot
+
 ### Phase 3: Remaining Editor Extensibility
 
-- hover providers
 - richer diagnostics presentation beyond underlines and hover popups
 
 ### Phase 4: Syntax Contributions

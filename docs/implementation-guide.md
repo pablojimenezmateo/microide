@@ -72,7 +72,7 @@ These decisions should stay fixed unless there is a clear product reason to revi
 - a terminal tab should be open by default for loaded projects
 - colorscheme and editor preferences remain project-local
 - compare, merge, search, git, and terminal workflows are built-in product features, not plugins
-- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, and host-rendered diagnostic presentation, but they do not replace built-in editing, search, git, compare, merge, terminal, or built-in diagnostics workflows
+- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-rendered diagnostic or hover presentation, but they do not replace built-in editing, search, git, compare, merge, terminal, or built-in diagnostics workflows
 
 ## Explicit Non-Goals
 

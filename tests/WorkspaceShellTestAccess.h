@@ -764,6 +764,12 @@ struct WorkspaceShellTestAccess {
                ? std::make_optional(popup->diagnostic->message)
                : std::nullopt;
   }
+  static std::optional<std::string> ActiveEditorPluginHoverContent(WorkspaceShell& shell) {
+    const auto popup = shell.ActiveEditorHoverPopupLayout();
+    return popup.has_value() && popup->plugin_hover.has_value()
+               ? std::make_optional(popup->plugin_hover->content)
+               : std::nullopt;
+  }
   static std::optional<SDL_FRect> ActiveEditorBlamePopupRect(WorkspaceShell& shell) {
     const auto popup = shell.ActiveEditorBlamePopupLayout();
     return popup.has_value() ? std::make_optional(popup->rect) : std::nullopt;

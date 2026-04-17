@@ -513,18 +513,21 @@ class WorkspaceShell {
     enum class Kind {
       Blame,
       Diagnostic,
+      Plugin,
     };
 
     Kind kind = Kind::Blame;
     SDL_FRect anchor_rect{};
     std::size_t blame_line_index = 0;
     std::optional<editor::PublishedDiagnostic> diagnostic;
+    std::optional<plugin::PluginHost::HoverResult> plugin_hover;
 
     bool operator==(const EditorHoverTarget& other) const {
       return kind == other.kind && anchor_rect.x == other.anchor_rect.x &&
              anchor_rect.y == other.anchor_rect.y && anchor_rect.w == other.anchor_rect.w &&
              anchor_rect.h == other.anchor_rect.h &&
-             blame_line_index == other.blame_line_index && diagnostic == other.diagnostic;
+             blame_line_index == other.blame_line_index && diagnostic == other.diagnostic &&
+             plugin_hover == other.plugin_hover;
     }
   };
 
@@ -534,6 +537,7 @@ class WorkspaceShell {
     SDL_FRect rect{};
     std::size_t blame_line_index = 0;
     std::optional<editor::PublishedDiagnostic> diagnostic;
+    std::optional<plugin::PluginHost::HoverResult> plugin_hover;
     std::optional<SDL_FRect> primary_action_rect;
   };
 
@@ -1334,6 +1338,20 @@ class WorkspaceShell {
       const editor::TextViewport& viewport,
       const TextGridInteractionLayout& interaction,
       std::span<const editor::PublishedDiagnostic> diagnostics,
+      float x,
+      float y) const;
+  std::optional<EditorHoverTarget> PluginHoverTargetAtPosition(float x, float y) const;
+  std::optional<EditorHoverTarget> PluginHoverTargetForViewport(
+      const editor::TextViewport& viewport,
+      const TextGridInteractionLayout& interaction,
+      float x,
+      float y) const;
+  std::optional<EditorHoverTarget> PluginHoverTargetForLine(
+      const std::filesystem::path& path,
+      std::string_view line,
+      std::size_t line_index,
+      std::size_t tab_size,
+      const TextGridInteractionLayout& interaction,
       float x,
       float y) const;
   std::optional<EditorHoverPopupLayout> ActiveEditorHoverPopupLayout() const;

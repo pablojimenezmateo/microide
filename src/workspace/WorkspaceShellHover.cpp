@@ -1,12 +1,14 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 
 #include "editor/DiagnosticsRender.h"
+#include "editor/TextLayout.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -22,6 +24,8 @@ constexpr float kEditorHoverPopupLineGap = 2.0f;
 constexpr float kEditorHoverPopupSectionGap = 8.0f;
 constexpr std::size_t kEditorHoverPopupMaxSummaryLines = 4;
 constexpr std::size_t kEditorHoverPopupMaxDiagnosticLines = 6;
+constexpr std::size_t kEditorHoverPopupMaxPluginTitleLines = 2;
+constexpr std::size_t kEditorHoverPopupMaxPluginContentLines = 6;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingX = 12.0f;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingY = 6.0f;
 
@@ -141,11 +145,91 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
           .anchor_rect = *rect,
           .blame_line_index = 0,
           .diagnostic = diagnostic,
+          .plugin_hover = std::nullopt,
       };
     }
   }
 
   return std::nullopt;
+}
+
+std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetForLine(
+    const std::filesystem::path& path,
+    std::string_view line,
+    std::size_t line_index,
+    std::size_t tab_size,
+    const TextGridInteractionLayout& interaction,
+    float x,
+    float y) const {
+  if (path.empty() || x < interaction.text_x || !Contains(interaction.rect, x, y)) {
+    return std::nullopt;
+  }
+
+  const std::optional<std::size_t> hovered_line = VisibleTextGridLineAtY(interaction, y);
+  if (!hovered_line.has_value() || *hovered_line != line_index) {
+    return std::nullopt;
+  }
+
+  const std::string line_text(line);
+  if (line_text.empty()) {
+    return std::nullopt;
+  }
+
+  const std::size_t line_visual_width =
+      editor::TextLayout::VisualColumnForTextColumn(line_text, line_text.size(), tab_size);
+  const float local_x = std::max(0.0f, x - interaction.text_x);
+  const std::size_t visual_column =
+      interaction.horizontal_scroll +
+      static_cast<std::size_t>(std::floor(local_x / std::max(1.0f, interaction.char_width)));
+  if (visual_column >= line_visual_width) {
+    return std::nullopt;
+  }
+
+  const std::size_t text_column =
+      editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, tab_size);
+  plugin::PluginHost::HoverResult hover;
+  if (!plugin_host_.QueryHover(path, line_index + 1, text_column + 1, &hover, nullptr)) {
+    return std::nullopt;
+  }
+
+  const std::size_t start_visual =
+      editor::TextLayout::VisualColumnForTextColumn(line_text, text_column, tab_size);
+  const std::size_t end_visual =
+      text_column < line_text.size()
+          ? editor::TextLayout::VisualColumnForTextColumn(
+                line_text, editor::TextLayout::NextTextColumn(line_text, text_column), tab_size)
+          : start_visual + 1;
+  const float line_y = TextGridLineY(interaction, line_index);
+  const SDL_FRect anchor_rect =
+      MakeRect(TextGridCursorX(interaction, start_visual), line_y + interaction.line_height - 2.0f,
+               std::max(1.0f, static_cast<float>(std::max<std::size_t>(1, end_visual - start_visual)) *
+                                   interaction.char_width),
+               2.0f);
+  return EditorHoverTarget{
+      .kind = EditorHoverTarget::Kind::Plugin,
+      .anchor_rect = anchor_rect,
+      .blame_line_index = 0,
+      .diagnostic = std::nullopt,
+      .plugin_hover = std::move(hover),
+  };
+}
+
+std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetForViewport(
+    const editor::TextViewport& viewport,
+    const TextGridInteractionLayout& interaction,
+    float x,
+    float y) const {
+  if (viewport.path().empty() || viewport.dirty() || !Contains(interaction.rect, x, y)) {
+    return std::nullopt;
+  }
+
+  const std::optional<std::size_t> line_index = VisibleTextGridLineAtY(interaction, y);
+  if (!line_index.has_value() || *line_index >= viewport.lines().size()) {
+    return std::nullopt;
+  }
+
+  return PluginHoverTargetForLine(viewport.path(), viewport.lines()[*line_index], *line_index,
+                                  viewport.tab_size(), interaction, x, y);
 }
 
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition(
@@ -208,6 +292,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
             .anchor_rect = *rect,
             .blame_line_index = 0,
             .diagnostic = diagnostic,
+            .plugin_hover = std::nullopt,
         };
       }
     }
@@ -277,6 +362,97 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   return std::nullopt;
 }
 
+std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
+    float x,
+    float y) const {
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
+
+  if (ActiveTabIsCompare()) {
+    const CompareTabState* compare_tab = ActiveCompareTab();
+    if (compare_tab == nullptr || !compare_tab->right_editable ||
+        compare_tab->right_viewport.path().empty() || compare_tab->right_viewport.dirty()) {
+      return std::nullopt;
+    }
+
+    const CompareSurfaceLayout surface =
+        ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
+    const TextGridInteractionLayout interaction = ComputeTextGridInteractionLayout(
+        MakeRect(surface.right_x, surface.rows_y, surface.gutter_width + surface.right_width,
+                 static_cast<float>(surface.visible_rows) * surface.line_height),
+        surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
+        text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab->scroll_row)),
+        compare_tab->model.rows.size(), compare_tab->horizontal_scroll,
+        static_cast<std::size_t>(surface.visible_rows), surface.right_visible_columns);
+    if (!Contains(interaction.rect, x, y)) {
+      return std::nullopt;
+    }
+
+    const std::optional<std::size_t> model_row = VisibleTextGridLineAtY(interaction, y);
+    if (!model_row.has_value() || *model_row >= compare_tab->model.rows.size()) {
+      return std::nullopt;
+    }
+
+    const auto& row = compare_tab->model.rows[*model_row];
+    if (row.right_line <= 0 ||
+        static_cast<std::size_t>(row.right_line) > compare_tab->right_viewport.lines().size()) {
+      return std::nullopt;
+    }
+
+    const std::size_t line_index = static_cast<std::size_t>(row.right_line - 1);
+    return PluginHoverTargetForLine(compare_tab->right_viewport.path(), row.right_text, line_index,
+                                    compare_tab->right_viewport.tab_size(), interaction, x, y);
+  }
+
+  if (ActiveTabIsMerge()) {
+    const MergeTabState* merge_tab = ActiveMergeTab();
+    if (merge_tab == nullptr || merge_tab->result_viewport.path().empty() ||
+        merge_tab->result_viewport.dirty()) {
+      return std::nullopt;
+    }
+
+    const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
+    const SDL_FRect result_rect = ComputeMergeResultViewportRect(
+        layout.editor_surface, surface.center_x, surface.rows_y, surface.gutter_width,
+        surface.center_width, surface.show_horizontal);
+    return PluginHoverTargetForViewport(
+        merge_tab->result_viewport,
+        BuildEditorInteractionLayout(text_renderer_, merge_tab->result_viewport, result_rect), x, y);
+  }
+
+  if (!ActiveTabIsEditor()) {
+    return std::nullopt;
+  }
+
+  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
+  if (panes.empty() && !text_viewport_.is_placeholder()) {
+    return PluginHoverTargetForViewport(
+        text_viewport_,
+        BuildEditorInteractionLayout(text_renderer_, text_viewport_, layout.editor_surface), x, y);
+  }
+
+  for (const EditorPaneLayout& pane : panes) {
+    const editor::TextViewport* viewport =
+        pane.active ? &text_viewport_
+                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
+      continue;
+    }
+
+    if (const auto target = PluginHoverTargetForViewport(
+            *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect), x, y);
+        target.has_value()) {
+      return target;
+    }
+  }
+
+  return std::nullopt;
+}
+
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
     float x,
     float y) const {
@@ -287,10 +463,15 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTarg
         .anchor_rect = blame_line->rect,
         .blame_line_index = blame_line->line_index,
         .diagnostic = std::nullopt,
+        .plugin_hover = std::nullopt,
     };
   }
 
-  return DiagnosticHoverTargetAtPosition(x, y);
+  if (const auto diagnostic = DiagnosticHoverTargetAtPosition(x, y); diagnostic.has_value()) {
+    return diagnostic;
+  }
+
+  return PluginHoverTargetAtPosition(x, y);
 }
 
 std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
@@ -352,7 +533,68 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
         .rect = card_rect,
         .blame_line_index = blame_line->line_index,
         .diagnostic = std::nullopt,
+        .plugin_hover = std::nullopt,
         .primary_action_rect = action_rect,
+    };
+  }
+
+  if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::Plugin) {
+    if (!active_editor_hover_target_->plugin_hover.has_value()) {
+      return std::nullopt;
+    }
+    const plugin::PluginHost::HoverResult& hover = *active_editor_hover_target_->plugin_hover;
+    const float title_width =
+        hover.title.empty()
+            ? 0.0f
+            : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                       text_renderer_.MeasureWidth(hover.title));
+    const float content_width =
+        hover.content.empty()
+            ? 0.0f
+            : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                       text_renderer_.MeasureWidth(hover.content));
+    const float preferred_width = std::max(
+        kEditorHoverPopupMinWidth,
+        std::max(title_width, content_width) + kEditorHoverPopupPadding * 2.0f);
+    const float minimum_width =
+        std::max(title_width, content_width) + kEditorHoverPopupPadding * 2.0f;
+    const float card_width = ClampPopupWidth(preferred_width, minimum_width, max_card_width);
+    const auto title_lines =
+        hover.title.empty()
+            ? std::vector<std::string>{}
+            : WrapEditorHoverPopupText(
+                  hover.title, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
+                  kEditorHoverPopupMaxPluginTitleLines);
+    const auto content_lines =
+        hover.content.empty()
+            ? std::vector<std::string>{}
+            : WrapEditorHoverPopupText(
+                  hover.content, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
+                  kEditorHoverPopupMaxPluginContentLines);
+    const float title_height =
+        static_cast<float>(title_lines.size()) * line_height +
+        (title_lines.empty() ? 0.0f
+                             : static_cast<float>(title_lines.size() - 1) *
+                                   kEditorHoverPopupLineGap);
+    const float content_height =
+        static_cast<float>(content_lines.size()) * line_height +
+        (content_lines.empty() ? 0.0f
+                               : static_cast<float>(content_lines.size() - 1) *
+                                     kEditorHoverPopupLineGap);
+    const float card_height =
+        kEditorHoverPopupPadding * 2.0f + title_height +
+        (title_lines.empty() || content_lines.empty() ? 0.0f : kEditorHoverPopupSectionGap) +
+        content_height;
+    const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
+                                                   card_width, card_height, layout.editor_surface);
+    return EditorHoverPopupLayout{
+        .kind = EditorHoverTarget::Kind::Plugin,
+        .anchor_rect = active_editor_hover_target_->anchor_rect,
+        .rect = card_rect,
+        .blame_line_index = 0,
+        .diagnostic = std::nullopt,
+        .plugin_hover = hover,
+        .primary_action_rect = std::nullopt,
     };
   }
 
@@ -389,6 +631,7 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
       .rect = card_rect,
       .blame_line_index = 0,
       .diagnostic = diagnostic,
+      .plugin_hover = std::nullopt,
       .primary_action_rect = std::nullopt,
   };
 }

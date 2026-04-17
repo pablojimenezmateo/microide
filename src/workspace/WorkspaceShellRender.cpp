@@ -591,6 +591,34 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
           }
         }
       }
+    } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
+      const auto title_lines =
+          popup->plugin_hover->title.empty()
+              ? std::vector<std::string>{}
+              : WrapEditorHoverPopupText(popup->plugin_hover->title, text_width, 2);
+      const auto content_lines =
+          popup->plugin_hover->content.empty()
+              ? std::vector<std::string>{}
+              : WrapEditorHoverPopupText(popup->plugin_hover->content, text_width, 6);
+      for (std::size_t i = 0; i < title_lines.size(); ++i) {
+        draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
+                     title_lines[i]);
+        text_y += text_renderer_.LineHeight();
+        if (i + 1 < title_lines.size()) {
+          text_y += 2.0f;
+        }
+      }
+      if (!title_lines.empty() && !content_lines.empty()) {
+        text_y += 8.0f;
+      }
+      for (std::size_t i = 0; i < content_lines.size(); ++i) {
+        draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
+                     content_lines[i]);
+        text_y += text_renderer_.LineHeight();
+        if (i + 1 < content_lines.size()) {
+          text_y += 2.0f;
+        }
+      }
     } else if (popup->diagnostic.has_value()) {
       const auto severity = editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
       std::string_view severity_label = "Diagnostic";

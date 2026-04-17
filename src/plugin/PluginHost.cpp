@@ -261,6 +261,15 @@ struct PluginHost::Impl {
 #endif
   };
 
+  struct HoverProvider {
+    std::string id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int provide_ref = LUA_NOREF;
+#endif
+  };
+
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
   std::vector<PluginInstance> plugins;
@@ -268,6 +277,8 @@ struct PluginHost::Impl {
   std::vector<std::string> command_names;
   std::unordered_map<std::string, SidebarProvider> sidebars;
   std::vector<SidebarProviderInfo> sidebar_providers;
+  std::unordered_map<std::string, HoverProvider> hovers;
+  std::vector<std::string> hover_provider_order;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -298,6 +309,10 @@ struct PluginHost::Impl {
     }
     reload_summary += " and " + std::to_string(sidebar_providers.size()) + " sidebar";
     if (sidebar_providers.size() != 1) {
+      reload_summary += "s";
+    }
+    reload_summary += " and " + std::to_string(hover_provider_order.size()) + " hover provider";
+    if (hover_provider_order.size() != 1) {
       reload_summary += "s";
     }
     if (!errors.empty()) {
@@ -587,6 +602,71 @@ struct PluginHost::Impl {
     if (host == nullptr || !host->RegisterSidebar(state, 1, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to register plugin sidebar"
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
+  bool RegisterHoverProvider(lua_State* state, int table_index, std::string* error_message) {
+    PluginInstance* plugin = FindPluginByState(state);
+    if (plugin == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "hover provider registration requires an active plugin";
+      }
+      return false;
+    }
+
+    const int absolute_index = lua_absindex(state, table_index);
+    lua_getfield(state, absolute_index, "id");
+    if (!lua_isstring(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "hover provider id must be a string";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    const std::string id = lua_tostring(state, -1);
+    lua_pop(state, 1);
+    if (!IsValidIdentifier(id)) {
+      if (error_message != nullptr) {
+        *error_message = "invalid hover provider id: " + id;
+      }
+      return false;
+    }
+    if (hovers.contains(id)) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate hover provider: " + id;
+      }
+      return false;
+    }
+
+    lua_getfield(state, absolute_index, "provide");
+    if (!lua_isfunction(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "hover provider provide must be a function";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    const int provide_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+
+    hovers.emplace(id, HoverProvider{
+                           .id = id,
+                           .plugin_id = plugin->id,
+                           .state = state,
+                           .provide_ref = provide_ref,
+                       });
+    hover_provider_order.push_back(id);
+    return true;
+  }
+
+  static int LuaHoverAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error_message;
+    if (host == nullptr || !host->RegisterHoverProvider(state, 1, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to register hover provider"
                                               : error_message.c_str());
     }
     return 0;
@@ -968,7 +1048,7 @@ struct PluginHost::Impl {
   }
 
   void PushPluginContext(lua_State* state) {
-    lua_createtable(state, 0, 6);
+    lua_createtable(state, 0, 7);
 
     lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaLog, 1);
@@ -1024,6 +1104,12 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaSidebarShow, 1);
     lua_setfield(state, -2, "show");
     lua_setfield(state, -2, "sidebar");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaHoverAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "hover");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -1046,6 +1132,70 @@ struct PluginHost::Impl {
       lua_pushstring(state, relative->c_str());
       lua_setfield(state, -2, "relative_path");
     }
+  }
+
+  static void PushHoverPositionTable(lua_State* state, std::size_t line, std::size_t column) {
+    lua_createtable(state, 0, 2);
+    lua_pushinteger(state, static_cast<lua_Integer>(line));
+    lua_setfield(state, -2, "line");
+    lua_pushinteger(state, static_cast<lua_Integer>(column));
+    lua_setfield(state, -2, "column");
+  }
+
+  bool ReadHoverResultTable(lua_State* state,
+                            int table_index,
+                            PluginHost::HoverResult* result,
+                            std::string_view provider_id,
+                            std::string* error_message) const {
+    if (result == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "hover result output pointer is required";
+      }
+      return false;
+    }
+
+    const int absolute_index = lua_absindex(state, table_index);
+    result->title.clear();
+    result->content.clear();
+
+    lua_getfield(state, absolute_index, "title");
+    if (lua_isstring(state, -1)) {
+      result->title = lua_tostring(state, -1);
+    } else if (!lua_isnil(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "plugin hover '" + std::string(provider_id) +
+                         "' title must be a string when present";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, absolute_index, "content");
+    if (lua_isstring(state, -1)) {
+      result->content = lua_tostring(state, -1);
+    } else if (!lua_isnil(state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "plugin hover '" + std::string(provider_id) +
+                         "' content must be a string when present";
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    lua_pop(state, 1);
+
+    if (result->title.empty() && result->content.empty()) {
+      if (error_message != nullptr) {
+        *error_message = "plugin hover '" + std::string(provider_id) +
+                         "' must return a title or content";
+      }
+      return false;
+    }
+
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return true;
   }
 
   static SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
@@ -1216,6 +1366,54 @@ struct PluginHost::Impl {
     return true;
   }
 
+  bool QueryHoverProvider(const HoverProvider& provider,
+                          const std::filesystem::path& path,
+                          std::size_t line,
+                          std::size_t column,
+                          PluginHost::HoverResult* result,
+                          std::string* error_message) {
+    if (provider.state == nullptr || provider.provide_ref == LUA_NOREF || result == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "plugin hover provider is unavailable";
+      }
+      return false;
+    }
+
+    lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.provide_ref);
+    PushBufferTable(provider.state, path);
+    PushHoverPositionTable(provider.state, line, column);
+    if (lua_pcall(provider.state, 2, 1, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message = "plugin hover '" + provider.id + "' failed: " +
+                         LuaErrorString(provider.state);
+      }
+      lua_pop(provider.state, 1);
+      return false;
+    }
+
+    if (lua_isnil(provider.state, -1)) {
+      lua_pop(provider.state, 1);
+      result->title.clear();
+      result->content.clear();
+      if (error_message != nullptr) {
+        error_message->clear();
+      }
+      return true;
+    }
+
+    if (!lua_istable(provider.state, -1)) {
+      if (error_message != nullptr) {
+        *error_message = "plugin hover '" + provider.id + "' must return a table or nil";
+      }
+      lua_pop(provider.state, 1);
+      return false;
+    }
+
+    const bool ok = ReadHoverResultTable(provider.state, -1, result, provider.id, error_message);
+    lua_pop(provider.state, 1);
+    return ok;
+  }
+
   void ClearPluginDiagnostics(const PluginInstance* plugin) {
     if (plugin == nullptr || plugin->id.empty() || !callbacks.clear_owner_diagnostics) {
       return;
@@ -1267,6 +1465,19 @@ struct PluginHost::Impl {
       it = sidebars.erase(it);
     }
     RebuildSidebarProviders();
+
+    for (auto it = hovers.begin(); it != hovers.end();) {
+      if (it->second.state != state) {
+        ++it;
+        continue;
+      }
+      luaL_unref(state, LUA_REGISTRYINDEX, it->second.provide_ref);
+      it = hovers.erase(it);
+    }
+    hover_provider_order.erase(
+        std::remove_if(hover_provider_order.begin(), hover_provider_order.end(),
+                       [&](std::string_view id) { return !hovers.contains(std::string(id)); }),
+        hover_provider_order.end());
   }
 
   void ConfigurePackage(lua_State* state, const std::filesystem::path& plugin_root) {
@@ -1598,6 +1809,8 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
     impl_->command_names.clear();
     impl_->sidebars.clear();
     impl_->sidebar_providers.clear();
+    impl_->hovers.clear();
+    impl_->hover_provider_order.clear();
     impl_->plugins.clear();
     impl_->SetReloadSummary();
     return false;
@@ -1634,6 +1847,8 @@ void PluginHost::Shutdown() {
     impl_->command_names.clear();
     impl_->sidebars.clear();
     impl_->sidebar_providers.clear();
+    impl_->hovers.clear();
+    impl_->hover_provider_order.clear();
     impl_->current_project_root.clear();
     impl_->SetReloadSummary();
     return;
@@ -1754,6 +1969,52 @@ bool PluginHost::ConfirmSidebarItem(std::string_view id,
     return false;
   }
   return impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
+}
+
+bool PluginHost::QueryHover(const std::filesystem::path& path,
+                            std::size_t line,
+                            std::size_t column,
+                            HoverResult* result,
+                            std::string* error_message) const {
+  if (result == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "hover result output pointer is required";
+    }
+    return false;
+  }
+  result->title.clear();
+  result->content.clear();
+
+  if (!impl_->enabled() || path.empty() || line == 0 || column == 0) {
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return false;
+  }
+
+  const std::filesystem::path resolved_path =
+      ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
+  Impl* impl = impl_.get();
+  for (const std::string& provider_id : impl->hover_provider_order) {
+    const auto it = impl->hovers.find(provider_id);
+    if (it == impl->hovers.end()) {
+      continue;
+    }
+    if (!impl->QueryHoverProvider(it->second, resolved_path, line, column, result, error_message)) {
+      return false;
+    }
+    if (!result->title.empty() || !result->content.empty()) {
+      if (error_message != nullptr) {
+        error_message->clear();
+      }
+      return true;
+    }
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return false;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {

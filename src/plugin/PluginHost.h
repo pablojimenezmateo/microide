@@ -34,6 +34,13 @@ class PluginHost {
     std::size_t column = 0;
   };
 
+  struct HoverResult {
+    std::string title;
+    std::string content;
+
+    bool operator==(const HoverResult&) const = default;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -72,6 +79,11 @@ class PluginHost {
   bool ConfirmSidebarItem(std::string_view id,
                           const SidebarItem& item,
                           std::string* error_message = nullptr);
+  bool QueryHover(const std::filesystem::path& path,
+                  std::size_t line,
+                  std::size_t column,
+                  HoverResult* result,
+                  std::string* error_message = nullptr) const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();
