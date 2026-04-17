@@ -272,7 +272,8 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
   }
   if ((item.action == ActionId::SidebarShow || item.action == ActionId::SidebarToggle) &&
       item.arg_count > 0 &&
-      (item.args[0] == "tree" || item.args[0] == "search" || item.args[0] == "git")) {
+      (item.args[0] == "tree" || item.args[0] == "search" || item.args[0] == "problems" ||
+       item.args[0] == "git")) {
     return !project_root_.empty();
   }
 
@@ -293,6 +294,9 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
     }
     if (item.args[0] == "search") {
       return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search && !surface_.sidebar_temporary;
+    }
+    if (item.args[0] == "problems") {
+      return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Problems;
     }
     if (item.args[0] == "git") {
       return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Git;

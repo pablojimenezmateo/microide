@@ -191,6 +191,16 @@ const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPath(
   return it == merged_by_path_.end() ? nullptr : &it->second.diagnostics;
 }
 
+std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotAll() const {
+  std::vector<PublishedDiagnostic> diagnostics;
+  for (const auto& entry : merged_by_path_) {
+    diagnostics.insert(diagnostics.end(), entry.second.diagnostics.begin(),
+                       entry.second.diagnostics.end());
+  }
+  SortDiagnostics(&diagnostics);
+  return diagnostics;
+}
+
 std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotForOwner(std::string_view owner) const {
   const auto owner_it = diagnostics_by_owner_.find(std::string(owner));
   if (owner_it == diagnostics_by_owner_.end()) {

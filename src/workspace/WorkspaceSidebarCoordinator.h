@@ -15,6 +15,7 @@ class WorkspaceShell::SidebarCoordinator {
   void ShowMode(SidebarMode mode, bool temporary = false);
   void ShowTree(const std::filesystem::path& root = {});
   void ShowSearch(std::string query = {}, bool temporary = false);
+  void ShowProblems();
   void ShowGit();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
@@ -22,13 +23,17 @@ class WorkspaceShell::SidebarCoordinator {
   void RestorePrevious();
   void RefreshProjectFiles();
   void RefreshGit();
+  bool RefreshProblems();
   bool RefreshPlugin();
   void RevealSelectedTreeLine();
   void RevealSelectedGitLine();
+  void RevealSelectedProblemsLine();
   void RevealSelectedPluginLine();
   void MoveGitSelection(int delta);
+  void MoveProblemsSelection(int delta);
   void MovePluginSelection(int delta);
   bool OpenGitEntry(std::size_t entry_index);
+  bool OpenProblemItem();
   bool OpenPluginItem();
   bool CanStageAllGitEntries() const;
   bool CanDiscardAllGitEntries() const;

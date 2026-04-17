@@ -40,7 +40,7 @@ These are implemented and should not be treated as open migration work:
 - PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
 - runtime syntax highlighting from the in-tree generated syntax snapshot
 - manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, argv-based process helpers, and `plugins-reload`
-- plugin-published diagnostics with host-owned storage, theme-backed underline rendering, and host-owned blame/diagnostic hover popups in editor surfaces
+- plugin-published diagnostics with host-owned storage, theme-backed underline rendering, host-owned blame/diagnostic hover popups in editor surfaces, and a built-in Problems sidebar
 - targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
 
 ## Active Phases
@@ -60,7 +60,7 @@ Open work:
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
 - continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
-- finish the editor-extensibility pass with richer hover routing/providers and any remaining diagnostics-facing UI beyond hover popups
+- finish the editor-extensibility pass with richer hover routing/providers, stale-diagnostics cleanup where host workflows mutate paths, and any diagnostics presentation beyond the current underlines, hover popups, and Problems sidebar
 - decide whether syntax, colorscheme, or other runtime asset contribution belongs in the same host-managed extension model
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in product features even when plugins can extend around them
 

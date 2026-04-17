@@ -561,6 +561,15 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
         }
         return ActionDispatchResult::Handled;
       }
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Problems) {
+        if (surface_.sidebar_visible && surface_.sidebar_mode == request.tool->mode) {
+          CloseSidebar();
+        } else {
+          ShowProblemsSidebar();
+        }
+        return ActionDispatchResult::Handled;
+      }
       if (!plugin_id.empty() && plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
         if (surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Plugin &&
             surface_.sidebar_plugin_id == plugin_id) {
@@ -589,6 +598,11 @@ WorkspaceShell::ActionDispatchResult WorkspaceShell::ExecuteSidebarAction(
       if (request.tool != nullptr &&
           request.tool->mode == SidebarMode::Search) {
         ShowSearchSidebar(request.query, false);
+        return ActionDispatchResult::Handled;
+      }
+      if (request.tool != nullptr &&
+          request.tool->mode == SidebarMode::Problems) {
+        ShowProblemsSidebar();
         return ActionDispatchResult::Handled;
       }
       if (!plugin_id.empty() && plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {

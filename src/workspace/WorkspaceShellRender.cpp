@@ -1238,6 +1238,61 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
       draw_vertical_scrollbar(
           list_layout.list_rect, static_cast<float>(lines.size()), list_layout.visible_units,
           static_cast<float>(scroll_row), surface_.drag_target == DragTarget::SidebarScrollbar);
+    } else if (surface_.sidebar_mode == SidebarMode::Problems) {
+      const auto list_layout =
+          ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
+      const int scroll_row = list_layout.scroll_row;
+
+      for (int row = 0; row < list_layout.visible_rows; ++row) {
+        const int item_index = scroll_row + row;
+        if (item_index >= static_cast<int>(problems_sidebar_.entries.size())) {
+          break;
+        }
+
+        const auto& item = problems_sidebar_.entries[static_cast<std::size_t>(item_index)];
+        SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
+        const bool selected =
+            static_cast<std::size_t>(item_index) == problems_sidebar_.selected_index;
+        const SDL_Color row_background =
+            selected ? theme_.row_highlight : theme_.surface_background;
+        if (selected) {
+          DrawFilledRect(renderer, row_rect, theme_.row_highlight);
+        }
+
+        const SDL_Color severity =
+            editor::DiagnosticSeverityColor(theme_, item.diagnostic.severity);
+        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h), severity);
+
+        const float text_x = row_rect.x + 8.0f;
+        const float text_y =
+            row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
+        const float max_width = std::max(20.0f, row_rect.w - 14.0f);
+        const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
+        const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
+        const std::string primary =
+            text_renderer_.TruncateToWidth(item.primary_label,
+                                           item.detail_label.empty() ? max_width : max_width * 0.58f);
+        draw_text_on(text_x, text_y, primary_color, row_background, primary);
+        if (!item.detail_label.empty()) {
+          const float detail_x = text_x + text_renderer_.MeasureWidth(primary) + 8.0f;
+          const float detail_width = std::max(0.0f, row_rect.x + row_rect.w - 6.0f - detail_x);
+          if (detail_width > 24.0f) {
+            draw_text_on(detail_x, text_y, secondary_color, row_background,
+                         text_renderer_.TruncateToWidth(item.detail_label, detail_width));
+          }
+        }
+      }
+
+      if (problems_sidebar_.entries.empty()) {
+        draw_text_on(layout.sidebar.x + kSidebarInset, list_layout.row_y + 4.0f,
+                     theme_.text_muted, theme_.surface_background,
+                     TruncateLabel("No diagnostics", layout.sidebar.w - kSidebarInset * 2.0f));
+      }
+
+      draw_vertical_scrollbar(
+          list_layout.list_rect, static_cast<float>(problems_sidebar_.entries.size()),
+          list_layout.visible_units, static_cast<float>(scroll_row),
+          surface_.drag_target == DragTarget::SidebarScrollbar);
     } else if (surface_.sidebar_mode == SidebarMode::Plugin) {
       const auto list_layout =
           ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());

@@ -1580,6 +1580,30 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Pointer;
     }
+    if (surface_.sidebar_mode == SidebarMode::Problems) {
+      const auto list_layout =
+          ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
+      const auto line_index = ScrollableListIndexAtY(list_layout, y);
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(problems_sidebar_.entries.size())) {
+        return CursorKind::Default;
+      }
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
+      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+    }
+    if (surface_.sidebar_mode == SidebarMode::Plugin) {
+      const auto list_layout =
+          ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
+      const auto line_index = ScrollableListIndexAtY(list_layout, y);
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(plugin_sidebar_.items.size())) {
+        return CursorKind::Default;
+      }
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
+      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+    }
 
     if (Contains(TreeSidebarCollapseButtonRect(layout.sidebar), x, y) &&
         directory_tree_.CanCollapseAll()) {

@@ -157,6 +157,28 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
     return true;
   }
 
+  if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+    if (local_y < 0.0f) {
+      return true;
+    }
+
+    const auto list_layout = shell_.ComputeProblemsSidebarListLayout(
+        layout.sidebar, shell_.problems_sidebar_.entries.size());
+    const auto item_index =
+        ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+    if (!item_index.has_value() || *item_index < 0 ||
+        *item_index >= static_cast<int>(shell_.problems_sidebar_.entries.size())) {
+      return true;
+    }
+
+    shell_.problems_sidebar_.selected_index = static_cast<std::size_t>(*item_index);
+    shell_.RevealSelectedProblemsSidebarLine();
+    if (event.button.button == SDL_BUTTON_LEFT) {
+      shell_.OpenSelectedProblemSidebarItem();
+    }
+    return true;
+  }
+
   if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
     if (local_y < 0.0f) {
       return true;
@@ -278,6 +300,19 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
             *list_layout.scrollbar, static_cast<float>(event.motion.y),
             shell_.surface_.drag_scrollbar_offset))),
         0, list_layout.max_scroll);
+  } else if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+    const auto list_layout = shell_.ComputeProblemsSidebarListLayout(
+        layout.sidebar, shell_.problems_sidebar_.entries.size());
+    if (!list_layout.scrollbar.has_value()) {
+      shell_.surface_.drag_target = DragTarget::None;
+      shell_.surface_.drag_scrollbar_offset = 0.0f;
+      return false;
+    }
+    shell_.surface_.sidebar_scroll_row = std::clamp(
+        static_cast<int>(std::lround(ScrollUnitsForPointer(
+            *list_layout.scrollbar, static_cast<float>(event.motion.y),
+            shell_.surface_.drag_scrollbar_offset))),
+        0, list_layout.max_scroll);
   } else if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
     const auto list_layout = shell_.ComputePluginSidebarListLayout(
         layout.sidebar, shell_.plugin_sidebar_.items.size());
@@ -329,6 +364,10 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleWheel(const SDL_Event& event
     const auto lines = shell_.BuildGitSidebarLines();
     max_scroll =
         shell_.ComputeGitSidebarListLayout(layout.sidebar, lines.size()).max_scroll;
+  } else if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+    max_scroll = shell_.ComputeProblemsSidebarListLayout(layout.sidebar,
+                                                         shell_.problems_sidebar_.entries.size())
+                     .max_scroll;
   } else if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
     max_scroll = shell_.ComputePluginSidebarListLayout(layout.sidebar,
                                                        shell_.plugin_sidebar_.items.size())
@@ -379,6 +418,10 @@ bool WorkspaceShell::SidebarMouseCoordinator::BeginScrollbarDrag(
   if (shell_.surface_.sidebar_mode == SidebarMode::Git) {
     const auto lines = shell_.BuildGitSidebarLines();
     return begin_drag(shell_.ComputeGitSidebarListLayout(layout.sidebar, lines.size()));
+  }
+  if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+    return begin_drag(shell_.ComputeProblemsSidebarListLayout(
+        layout.sidebar, shell_.problems_sidebar_.entries.size()));
   }
   if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
     return begin_drag(shell_.ComputePluginSidebarListLayout(layout.sidebar,

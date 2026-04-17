@@ -287,6 +287,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   git_sidebar_.base_label.clear();
   git_sidebar_.repo_available = false;
   git_sidebar_.selected_index = 0;
+  problems_sidebar_.entries.clear();
+  problems_sidebar_.selected_index = 0;
   plugin_sidebar_.items.clear();
   plugin_sidebar_.error.clear();
   plugin_sidebar_.selected_index = 0;
@@ -428,6 +430,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   state.overlay_workflow = std::move(overlay_workflow_);
   state.overlay_workflow.project_search.running = false;
   state.git_sidebar = std::move(git_sidebar_);
+  state.problems_sidebar = std::move(problems_sidebar_);
   state.plugin_sidebar = std::move(plugin_sidebar_);
   state.diagnostics_store = std::move(diagnostics_store_);
   state.command = std::move(command_);
@@ -456,6 +459,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   overlay_workflow_ = std::move(state.overlay_workflow);
   overlay_workflow_.project_search.running = false;
   git_sidebar_ = std::move(state.git_sidebar);
+  problems_sidebar_ = std::move(state.problems_sidebar);
   plugin_sidebar_ = std::move(state.plugin_sidebar);
   diagnostics_store_ = std::move(state.diagnostics_store);
   command_ = std::move(state.command);
@@ -499,6 +503,7 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   file_finder_.SetIndex(&file_index_);
   surface_.sidebar_scroll_row = 0;
   RefreshGitSidebar();
+  RefreshProblemsSidebar();
 
   if (surface_.sidebar_mode == SidebarMode::Search && !overlay_workflow_.project_search.query.empty()) {
     RefreshProjectSearch();

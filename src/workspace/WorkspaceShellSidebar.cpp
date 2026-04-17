@@ -108,6 +108,12 @@ ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRec
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
+ScrollableListLayout WorkspaceShell::ComputeProblemsSidebarListLayout(
+    const SDL_FRect& sidebar_rect,
+    std::size_t line_count) const {
+  return ComputeTreeSidebarListLayout(sidebar_rect, line_count);
+}
+
 ScrollableListLayout WorkspaceShell::ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                     std::size_t line_count) const {
   return ComputeTreeSidebarListLayout(sidebar_rect, line_count);

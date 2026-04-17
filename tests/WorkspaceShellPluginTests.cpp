@@ -165,13 +165,13 @@ void TestWorkspaceShellPluginSidebarOpensItems() {
   WriteFile(source, "alpha\nbeta\n");
 
   WritePluginInit(
-      plugins_root, "problems",
+      plugins_root, "plugin-problems",
       R"(local ide = require("microide")
 return ide.plugin({
-  id = "problems",
+  id = "plugin-problems",
   setup = function(ctx)
     ctx.sidebar.add({
-      id = "problems",
+      id = "plugin-problems",
       label = "Problems",
       snapshot = function()
         return {
@@ -192,11 +192,11 @@ return ide.plugin({
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "plugin sidebar fixture should open the project");
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show problems"),
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show plugin-problems"),
          "sidebar-show should accept plugin sidebar ids");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
          "plugin sidebar should activate the plugin sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "problems",
+  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "plugin-problems",
          "plugin sidebar should record the active provider id");
   Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
          "plugin sidebar should snapshot its items when shown");
@@ -207,7 +207,8 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing Enter in a plugin sidebar should confirm the selected item");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
-             WorkspaceShellTestAccess::PluginMessages(shell).back() == "problems: confirm:main.txt",
+             WorkspaceShellTestAccess::PluginMessages(shell).back() ==
+                 "plugin-problems: confirm:main.txt",
          "plugin sidebar confirm should run the plugin callback");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 1,
@@ -317,6 +318,118 @@ void TestWorkspaceShellDiagnosticHoverPopupShowsMessages() {
          "diagnostic hover popup should expose the published diagnostic message");
 }
 
+void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path readme = project_root / "README.md";
+  const std::filesystem::path source = project_root / "src" / "main.txt";
+  WriteFile(readme, "workspace problems\n");
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, readme);
+
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "diagnostics", source,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 1, .column = 1},
+                         .end = microide::editor::TextPosition{.line = 1, .column = 4},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Error,
+                 .message = "Unexpected beta token",
+             }}),
+         "problems sidebar fixture should publish one diagnostic");
+  Expect(WorkspaceShellTestAccess::RefreshProblemsSidebar(shell),
+         "refreshing the problems sidebar should snapshot published diagnostics");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show problems"),
+         "sidebar-show should activate the built-in problems sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+         "showing problems should activate the problems sidebar mode");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
+         "problems sidebar should expose one entry for the published diagnostic");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().primary_label ==
+             "Unexpected beta token",
+         "problems sidebar should normalize the diagnostic message into the primary label");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().detail_label ==
+             "src/main.txt:2:2 | diagnostics",
+         "problems sidebar should expose the project-relative location and owner");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing Enter in the problems sidebar should open the selected diagnostic");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
+         "opening a problem should load the diagnostic's file");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 1,
+         "opening a problem should move the editor cursor to the diagnostic location");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "opening a problem should return focus to the editor");
+}
+
+void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  WriteFile(project_a / "README.md", "alpha project\n");
+  WriteFile(project_b / "README.md", "beta project\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "problems project-switch fixture should open the first project");
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "lint-a", project_a / "README.md",
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 0},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 4},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Warning,
+                 .message = "Alpha issue",
+             }}),
+         "first project should accept diagnostics");
+  Expect(WorkspaceShellTestAccess::RefreshProblemsSidebar(shell),
+         "first project problems sidebar should refresh from diagnostics");
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "problems project-switch fixture should open the second project");
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "lint-b", project_b / "README.md",
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 0},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 4},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Error,
+                 .message = "Beta issue",
+             }}),
+         "second project should accept diagnostics");
+  Expect(WorkspaceShellTestAccess::RefreshProblemsSidebar(shell),
+         "second project problems sidebar should refresh from diagnostics");
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1 &&
+             WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().primary_label ==
+                 "Beta issue",
+         "second project should show only its own problems");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "problems project-switch fixture should switch back to the first project");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+         "switching back should restore the first project's problems sidebar mode");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1 &&
+             WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().primary_label ==
+                 "Alpha issue",
+         "switching back should restore the first project's problems entries");
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().detail_label ==
+             "README.md:1:1 | lint-a",
+         "restored problems should preserve their location metadata");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
@@ -330,6 +443,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches);
   AddTest(tests, "WorkspaceShell/DiagnosticHoverPopupShowsMessages",
           TestWorkspaceShellDiagnosticHoverPopupShowsMessages);
+  AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
+          TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
+  AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",
+          TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches);
 }
 
 }  // namespace microide::tests

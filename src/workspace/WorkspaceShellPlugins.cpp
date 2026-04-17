@@ -33,18 +33,21 @@ WorkspaceShell::WorkspaceShell() {
                  const std::filesystem::path& path,
                  std::vector<editor::Diagnostic> diagnostics) {
             if (diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics))) {
+              RefreshProblemsSidebar();
               RequestEditorSurfaceRedraw();
             }
           },
       .clear_file_diagnostics =
           [this](std::string_view owner, const std::filesystem::path& path) {
             if (diagnostics_store_.ClearOwnerFile(owner, path)) {
+              RefreshProblemsSidebar();
               RequestEditorSurfaceRedraw();
             }
           },
       .clear_owner_diagnostics =
           [this](std::string_view owner) {
             if (diagnostics_store_.ClearOwner(owner)) {
+              RefreshProblemsSidebar();
               RequestEditorSurfaceRedraw();
             }
           },
@@ -58,6 +61,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject() {
   }
   const bool clean_reload = plugin_host_.Reload(project_root_);
   RefreshPluginSidebar();
+  RefreshProblemsSidebar();
   NotifyPluginsAboutOpenBuffers();
   return clean_reload;
 }

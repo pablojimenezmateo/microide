@@ -384,8 +384,16 @@ struct WorkspaceShellTestAccess {
                                 bool temporary = false) {
     shell.ShowSearchSidebar(std::move(query), temporary);
   }
+  static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
+  static bool RefreshProblemsSidebar(WorkspaceShell& shell) {
+    return shell.RefreshProblemsSidebar();
+  }
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
+  static const std::vector<WorkspaceShell::ProblemsSidebarEntry>& ProblemsSidebarEntries(
+      const WorkspaceShell& shell) {
+    return shell.problems_sidebar_.entries;
+  }
   static const std::vector<WorkspaceShell::GitSidebarEntry>& GitSidebarEntries(
       const WorkspaceShell& shell) {
     return shell.git_sidebar_.entries;
@@ -921,6 +929,9 @@ struct WorkspaceShellTestAccess {
   }
   static const std::string& SidebarPluginId(const WorkspaceShell& shell) {
     return shell.surface_.sidebar_plugin_id;
+  }
+  static std::size_t ProblemsSidebarSelectedIndex(const WorkspaceShell& shell) {
+    return shell.problems_sidebar_.selected_index;
   }
   static const std::vector<plugin::PluginHost::SidebarItem>& PluginSidebarItems(
       const WorkspaceShell& shell) {

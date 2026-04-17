@@ -233,8 +233,13 @@ void TestWorkspaceSidebarRegistry() {
   Expect(git != nullptr && git->mode == WorkspaceShell::SidebarMode::Git,
          "sidebar registry should resolve the git tool by command name");
 
+  const SidebarToolSpec* problems = FindBuiltinSidebarTool("problems");
+  Expect(problems != nullptr && problems->mode == WorkspaceShell::SidebarMode::Problems,
+         "sidebar registry should resolve the problems tool by command name");
+
   const std::vector<std::string>& tool_names = BuiltinSidebarToolNames();
-  Expect(tool_names.size() == 3 && tool_names[0] == "git" && tool_names[2] == "tree",
+  Expect(tool_names.size() == 4 && tool_names[0] == "git" && tool_names[1] == "problems" &&
+             tool_names[3] == "tree",
          "sidebar registry should preserve built-in tool completion names");
 
   const SidebarToolRequest search_request =
@@ -254,10 +259,13 @@ void TestWorkspaceSidebarRegistry() {
          "sidebar request parser should keep explicit tree roots");
 
   const auto menu_items = BuiltinSidebarModeMenuItems();
-  Expect(menu_items.size() == 3, "sidebar registry should expose three built-in sidebar menu items");
+  Expect(menu_items.size() == 4,
+         "sidebar registry should expose four built-in sidebar menu items");
   Expect(menu_items[0].label == "Project" && menu_items[0].args[0] == "tree",
          "sidebar mode menu should keep the project item first");
-  Expect(menu_items[2].label == "Source Control" && menu_items[2].args[0] == "git",
+  Expect(menu_items[2].label == "Problems" && menu_items[2].args[0] == "problems",
+         "sidebar mode menu should expose the problems item");
+  Expect(menu_items[3].label == "Source Control" && menu_items[3].args[0] == "git",
          "sidebar mode menu should keep the source-control item");
 }
 

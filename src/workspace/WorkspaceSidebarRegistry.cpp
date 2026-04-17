@@ -25,6 +25,7 @@ std::span<const SidebarToolSpec> BuiltinSidebarToolSpecs() {
   static const auto kSpecs = std::to_array<SidebarToolSpec>({
       SidebarToolSpec{"tree", "Project", WorkspaceShell::SidebarMode::Tree},
       SidebarToolSpec{"search", "Search", WorkspaceShell::SidebarMode::Search},
+      SidebarToolSpec{"problems", "Problems", WorkspaceShell::SidebarMode::Problems},
       SidebarToolSpec{"git", "Source Control", WorkspaceShell::SidebarMode::Git},
   });
   return kSpecs;
@@ -51,6 +52,7 @@ const SidebarToolSpec* FindBuiltinSidebarTool(WorkspaceShell::SidebarMode mode) 
 const std::vector<std::string>& BuiltinSidebarToolNames() {
   static const std::vector<std::string> kNames = {
       "git",
+      "problems",
       "search",
       "tree",
   };
@@ -76,6 +78,7 @@ SidebarToolRequest ParseBuiltinSidebarToolRequest(const std::vector<std::string>
     case WorkspaceShell::SidebarMode::Search:
       request.query = JoinCommandArguments(args, 1);
       break;
+    case WorkspaceShell::SidebarMode::Problems:
     case WorkspaceShell::SidebarMode::Git:
     case WorkspaceShell::SidebarMode::None:
     case WorkspaceShell::SidebarMode::Plugin:
@@ -89,10 +92,13 @@ std::span<const WorkspaceShell::MenuItemSpec> BuiltinSidebarModeMenuItems() {
   static const auto kItems = [] {
     const SidebarToolSpec* tree = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Tree);
     const SidebarToolSpec* search = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Search);
+    const SidebarToolSpec* problems =
+        FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Problems);
     const SidebarToolSpec* git = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Git);
     return std::to_array<WorkspaceShell::MenuItemSpec>({
         SidebarModeMenuItem(*tree),
         SidebarModeMenuItem(*search),
+        SidebarModeMenuItem(*problems),
         SidebarModeMenuItem(*git),
     });
   }();

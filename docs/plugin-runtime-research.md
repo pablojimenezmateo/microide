@@ -41,6 +41,7 @@ Phase 3 status:
 - plugins can now publish and clear diagnostics through `ctx.diagnostics.publish(path, diagnostics)` and `ctx.diagnostics.clear(path_or_nil)`
 - editor tabs, compare right panes, and merge result panes now render diagnostic underlines through the host using theme-backed severity colors
 - project-tab switching now preserves each workspace state's diagnostics without leaking or clearing them across projects
+- the host now exposes a built-in Problems sidebar that snapshots merged diagnostics, preserves per-project sidebar state, and opens files at diagnostic locations
 
 Constraints for this pass:
 

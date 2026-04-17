@@ -83,12 +83,39 @@ void TestDiagnosticsStoreClearsOwnersIndependently() {
          "clearing the last owner should remove the merged file snapshot");
 }
 
+void TestDiagnosticsStoreSnapshotAllSortsAcrossFiles() {
+  DiagnosticsStore store;
+  const std::filesystem::path alpha = "/tmp/project/alpha.cpp";
+  const std::filesystem::path beta = "/tmp/project/src/beta.cpp";
+
+  Expect(store.ReplaceForOwnerFile(
+             "lint", beta,
+             {MakeDiagnostic(3, 2, 3, 6, DiagnosticSeverity::Warning, "late warning")}),
+         "beta diagnostics should publish");
+  Expect(store.ReplaceForOwnerFile(
+             "lint", alpha,
+             {MakeDiagnostic(1, 0, 1, 4, DiagnosticSeverity::Error, "early error"),
+              MakeDiagnostic(1, 8, 1, 9, DiagnosticSeverity::Hint, "late hint")}),
+         "alpha diagnostics should publish");
+
+  const auto snapshot = store.SnapshotAll();
+  Expect(snapshot.size() == 3, "snapshot-all should flatten merged diagnostics from every file");
+  Expect(snapshot[0].path == alpha && snapshot[0].message == "early error",
+         "snapshot-all should sort by path and line");
+  Expect(snapshot[1].path == alpha && snapshot[1].message == "late hint",
+         "snapshot-all should preserve later diagnostics from the same file");
+  Expect(snapshot[2].path == beta && snapshot[2].message == "late warning",
+         "snapshot-all should include diagnostics from later-sorted files");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DiagnosticsStore/MergesOwnersPerFile", TestDiagnosticsStoreMergesOwnersPerFile);
   AddTest(tests, "DiagnosticsStore/ClearsOwnersIndependently",
           TestDiagnosticsStoreClearsOwnersIndependently);
+  AddTest(tests, "DiagnosticsStore/SnapshotAllSortsAcrossFiles",
+          TestDiagnosticsStoreSnapshotAllSortsAcrossFiles);
 }
 
 }  // namespace microide::tests

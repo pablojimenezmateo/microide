@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "project/GitStatusService.h"
+#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 
@@ -67,6 +68,12 @@ void WorkspaceShell::SidebarCoordinator::ShowSearch(std::string query, bool temp
   shell_.overlay_workflow_.project_search.selected_index = 0;
   shell_.RefreshProjectSearch();
   ShowMode(SidebarMode::Search, temporary);
+}
+
+void WorkspaceShell::SidebarCoordinator::ShowProblems() {
+  RefreshProblems();
+  ShowMode(SidebarMode::Problems, false);
+  RevealSelectedProblemsLine();
 }
 
 void WorkspaceShell::SidebarCoordinator::ShowGit() {
@@ -150,6 +157,8 @@ void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
   shell_.surface_.sidebar_scroll_row = 0;
   if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
     RefreshPlugin();
+  } else if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+    RefreshProblems();
   }
   shell_.RequestSidebarRedraw();
 }
@@ -160,6 +169,7 @@ void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
   shell_.file_index_.Refresh();
   shell_.file_finder_.SetIndex(&shell_.file_index_);
   RefreshGit();
+  RefreshProblems();
   RefreshPlugin();
   if (shell_.surface_.sidebar_visible) {
     shell_.RequestSidebarRedraw();
@@ -232,6 +242,46 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
   if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Git) {
     shell_.RequestSidebarRedraw();
   }
+}
+
+bool WorkspaceShell::SidebarCoordinator::RefreshProblems() {
+  std::optional<editor::PublishedDiagnostic> previous_diagnostic;
+  if (shell_.problems_sidebar_.selected_index < shell_.problems_sidebar_.entries.size()) {
+    previous_diagnostic =
+        shell_.problems_sidebar_.entries[shell_.problems_sidebar_.selected_index].diagnostic;
+  }
+
+  shell_.problems_sidebar_.entries.clear();
+  shell_.problems_sidebar_.selected_index = 0;
+  for (const auto& diagnostic : shell_.diagnostics_store_.SnapshotAll()) {
+    ProblemsSidebarEntry entry;
+    const std::string collapsed_message = CollapseWhitespace(diagnostic.message);
+    entry.diagnostic = diagnostic;
+    entry.primary_label = collapsed_message.empty() ? "Diagnostic" : collapsed_message;
+    entry.detail_label =
+        RelativePathLabel(shell_.project_root_, diagnostic.path) + ":" +
+        std::to_string(diagnostic.range.start.line + 1) + ":" +
+        std::to_string(diagnostic.range.start.column + 1);
+    if (!diagnostic.owner.empty()) {
+      entry.detail_label += " | " + diagnostic.owner;
+    }
+    shell_.problems_sidebar_.entries.push_back(std::move(entry));
+  }
+
+  if (previous_diagnostic.has_value()) {
+    for (std::size_t i = 0; i < shell_.problems_sidebar_.entries.size(); ++i) {
+      if (shell_.problems_sidebar_.entries[i].diagnostic == *previous_diagnostic) {
+        shell_.problems_sidebar_.selected_index = i;
+        break;
+      }
+    }
+  }
+
+  RevealSelectedProblemsLine();
+  if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+    shell_.RequestSidebarRedraw();
+  }
+  return !shell_.problems_sidebar_.entries.empty();
 }
 
 bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
@@ -315,6 +365,25 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedGitLine() {
       RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
 }
 
+void WorkspaceShell::SidebarCoordinator::RevealSelectedProblemsLine() {
+  if (shell_.problems_sidebar_.entries.empty() ||
+      shell_.problems_sidebar_.selected_index >= shell_.problems_sidebar_.entries.size()) {
+    return;
+  }
+  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
+  if (layout.sidebar.h <= 0.0f) {
+    return;
+  }
+  const auto list_layout = shell_.ComputeProblemsSidebarListLayout(
+      layout.sidebar, shell_.problems_sidebar_.entries.size());
+  shell_.surface_.sidebar_scroll_row = RevealScrollableListIndex(
+      list_layout, static_cast<int>(shell_.problems_sidebar_.selected_index));
+}
+
 void WorkspaceShell::SidebarCoordinator::RevealSelectedPluginLine() {
   if (shell_.plugin_sidebar_.items.empty() ||
       shell_.plugin_sidebar_.selected_index >= shell_.plugin_sidebar_.items.size()) {
@@ -343,6 +412,17 @@ void WorkspaceShell::SidebarCoordinator::MoveGitSelection(int delta) {
   shell_.git_sidebar_.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealSelectedGitLine();
+}
+
+void WorkspaceShell::SidebarCoordinator::MoveProblemsSelection(int delta) {
+  if (shell_.problems_sidebar_.entries.empty() || delta == 0) {
+    return;
+  }
+  const int current = static_cast<int>(shell_.problems_sidebar_.selected_index);
+  const int max_index = static_cast<int>(shell_.problems_sidebar_.entries.size()) - 1;
+  shell_.problems_sidebar_.selected_index =
+      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  RevealSelectedProblemsLine();
 }
 
 void WorkspaceShell::SidebarCoordinator::MovePluginSelection(int delta) {
@@ -383,6 +463,25 @@ bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
     shell_.RequestSidebarRedraw();
   }
   return opened;
+}
+
+bool WorkspaceShell::SidebarCoordinator::OpenProblemItem() {
+  if (shell_.problems_sidebar_.entries.empty() ||
+      shell_.problems_sidebar_.selected_index >= shell_.problems_sidebar_.entries.size()) {
+    return false;
+  }
+  const auto& entry = shell_.problems_sidebar_.entries[shell_.problems_sidebar_.selected_index];
+  if (entry.diagnostic.path.empty()) {
+    return false;
+  }
+  shell_.OpenFile(entry.diagnostic.path);
+  shell_.text_viewport_.MoveCursorTo(entry.diagnostic.range.start.line,
+                                     entry.diagnostic.range.start.column);
+  if (shell_.surface_.sidebar_temporary) {
+    shell_.RestorePreviousSidebar();
+  }
+  shell_.surface_.focus = FocusTarget::Editor;
+  return true;
 }
 
 bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
@@ -564,6 +663,10 @@ void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
   SidebarCoordinator(*this).ShowSearch(std::move(query), temporary);
 }
 
+void WorkspaceShell::ShowProblemsSidebar() {
+  SidebarCoordinator(*this).ShowProblems();
+}
+
 void WorkspaceShell::ShowGitSidebar() {
   SidebarCoordinator(*this).ShowGit();
 }
@@ -592,12 +695,20 @@ void WorkspaceShell::RefreshGitSidebar() {
   SidebarCoordinator(*this).RefreshGit();
 }
 
+bool WorkspaceShell::RefreshProblemsSidebar() {
+  return SidebarCoordinator(*this).RefreshProblems();
+}
+
 bool WorkspaceShell::RefreshPluginSidebar() {
   return SidebarCoordinator(*this).RefreshPlugin();
 }
 
 void WorkspaceShell::RevealSelectedGitSidebarLine() {
   SidebarCoordinator(*this).RevealSelectedGitLine();
+}
+
+void WorkspaceShell::RevealSelectedProblemsSidebarLine() {
+  SidebarCoordinator(*this).RevealSelectedProblemsLine();
 }
 
 void WorkspaceShell::RevealSelectedTreeSidebarLine() {
@@ -612,12 +723,20 @@ void WorkspaceShell::MoveGitSidebarSelection(int delta) {
   SidebarCoordinator(*this).MoveGitSelection(delta);
 }
 
+void WorkspaceShell::MoveProblemsSidebarSelection(int delta) {
+  SidebarCoordinator(*this).MoveProblemsSelection(delta);
+}
+
 void WorkspaceShell::MovePluginSidebarSelection(int delta) {
   SidebarCoordinator(*this).MovePluginSelection(delta);
 }
 
 bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
   return SidebarCoordinator(*this).OpenGitEntry(entry_index);
+}
+
+bool WorkspaceShell::OpenSelectedProblemSidebarItem() {
+  return SidebarCoordinator(*this).OpenProblemItem();
 }
 
 bool WorkspaceShell::OpenSelectedPluginSidebarItem() {

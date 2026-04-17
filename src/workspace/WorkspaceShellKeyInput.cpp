@@ -645,6 +645,49 @@ bool WorkspaceShell::HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     }
   }
 
+  if (surface_.sidebar_mode == SidebarMode::Problems) {
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        if (surface_.sidebar_temporary) {
+          CloseSidebar();
+          return true;
+        }
+        return false;
+      case SDLK_UP:
+        MoveProblemsSidebarSelection(-1);
+        return true;
+      case SDLK_DOWN:
+        MoveProblemsSidebarSelection(1);
+        return true;
+      case SDLK_HOME:
+        if (!problems_sidebar_.entries.empty()) {
+          problems_sidebar_.selected_index = 0;
+          RevealSelectedProblemsSidebarLine();
+        }
+        return true;
+      case SDLK_END:
+        if (!problems_sidebar_.entries.empty()) {
+          problems_sidebar_.selected_index = problems_sidebar_.entries.size() - 1;
+          RevealSelectedProblemsSidebarLine();
+        }
+        return true;
+      case SDLK_PAGEUP:
+        MoveProblemsSidebarSelection(-8);
+        return true;
+      case SDLK_PAGEDOWN:
+        MoveProblemsSidebarSelection(8);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+      case SDLK_RIGHT:
+        return OpenSelectedProblemSidebarItem();
+      case SDLK_R:
+        return RefreshProblemsSidebar();
+      default:
+        return false;
+    }
+  }
+
   if (surface_.sidebar_mode == SidebarMode::Plugin) {
     switch (event.key) {
       case SDLK_ESCAPE:

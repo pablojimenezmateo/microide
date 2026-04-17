@@ -122,6 +122,7 @@ class WorkspaceShell {
     None,
     Tree,
     Search,
+    Problems,
     Git,
     Plugin,
   };
@@ -466,6 +467,14 @@ class WorkspaceShell {
     std::optional<SDL_FRect> primary_rect;
     std::optional<SDL_FRect> discard_rect;
     float content_right_edge = 0.0f;
+  };
+
+  struct ProblemsSidebarEntry {
+    editor::PublishedDiagnostic diagnostic;
+    std::string primary_label;
+    std::string detail_label;
+
+    bool operator==(const ProblemsSidebarEntry&) const = default;
   };
 
   struct EditorPaneLayout {
@@ -849,6 +858,11 @@ class WorkspaceShell {
     std::size_t selected_index = 0;
   };
 
+  struct ProblemsSidebarState {
+    std::vector<ProblemsSidebarEntry> entries;
+    std::size_t selected_index = 0;
+  };
+
   struct PluginSidebarState {
     std::vector<plugin::PluginHost::SidebarItem> items;
     std::string error;
@@ -880,6 +894,7 @@ class WorkspaceShell {
     std::size_t active_terminal_tab_index = 0;
     OverlayWorkflowState overlay_workflow;
     GitSidebarState git_sidebar;
+    ProblemsSidebarState problems_sidebar;
     PluginSidebarState plugin_sidebar;
     editor::DiagnosticsStore diagnostics_store;
     CommandState command;
@@ -1245,6 +1260,7 @@ class WorkspaceShell {
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
+  void ShowProblemsSidebar();
   void ShowGitSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
   std::string SidebarModeControlLabel() const;
@@ -1254,6 +1270,7 @@ class WorkspaceShell {
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
+  bool RefreshProblemsSidebar();
   bool RefreshPluginSidebar();
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
@@ -1269,6 +1286,8 @@ class WorkspaceShell {
                                                    std::size_t line_count) const;
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
+  ScrollableListLayout ComputeProblemsSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                        std::size_t line_count) const;
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
@@ -1278,10 +1297,13 @@ class WorkspaceShell {
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
   void RevealSelectedTreeSidebarLine();
   void RevealSelectedGitSidebarLine();
+  void RevealSelectedProblemsSidebarLine();
   void RevealSelectedPluginSidebarLine();
   void MoveGitSidebarSelection(int delta);
+  void MoveProblemsSidebarSelection(int delta);
   void MovePluginSidebarSelection(int delta);
   bool OpenGitSidebarEntry(std::size_t entry_index);
+  bool OpenSelectedProblemSidebarItem();
   bool OpenSelectedPluginSidebarItem();
   bool CanStageAllGitSidebarEntries() const;
   bool CanDiscardAllGitSidebarEntries() const;
@@ -1632,6 +1654,7 @@ class WorkspaceShell {
   WindowPresentationState window_presentation_;
   OverlayWorkflowState overlay_workflow_;
   GitSidebarState git_sidebar_;
+  ProblemsSidebarState problems_sidebar_;
   PluginSidebarState plugin_sidebar_;
   editor::DiagnosticsStore diagnostics_store_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
