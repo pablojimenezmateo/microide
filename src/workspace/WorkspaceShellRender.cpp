@@ -12,6 +12,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 
@@ -217,7 +218,7 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
       ComputeLayout(static_cast<float>(width), static_cast<float>(height), surface_.sidebar_visible,
                     BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
-  SyncTextInputSurface(render_window);
+  TextInputCoordinator(*this).SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
     SyncActiveEditorTab();
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {

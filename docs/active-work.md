@@ -70,6 +70,8 @@ Current state:
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input
   coordinator instead of keeping those routing paths embedded directly on `WorkspaceShell`
+- text composition, typed-input routing, and terminal text entry now run through a dedicated
+  text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:

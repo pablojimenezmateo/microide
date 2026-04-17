@@ -931,6 +931,7 @@ class WorkspaceShell {
   class ActionCoordinator;
   class MenuCoordinator;
   class KeyInputCoordinator;
+  class TextInputCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -1412,10 +1413,6 @@ class WorkspaceShell {
   std::filesystem::path ProjectStateDirectory() const;
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
-  bool HandleTextInput(const SDL_TextInputEvent& event);
-  bool HandleTextEditing(const SDL_TextEditingEvent& event);
-  bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
-  bool PasteClipboardIntoTerminal();
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;
@@ -1430,8 +1427,6 @@ class WorkspaceShell {
   void SubmitTerminalPendingInput();
   std::optional<std::string> LastTerminalCommandText() const;
   TextInputSurface CurrentTextInputSurface() const;
-  void SyncTextInputSurface(SDL_Window* window);
-  bool CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const;
   TerminalTabState* ActiveTerminalTab();
   const TerminalTabState* ActiveTerminalTab() const;
   std::optional<std::size_t> FocusedTerminalTabIndex() const;

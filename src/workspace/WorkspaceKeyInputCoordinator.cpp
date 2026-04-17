@@ -7,6 +7,7 @@
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 
@@ -21,6 +22,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
 
   const SDL_Keymod modifiers =
       event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
+  TextInputCoordinator text_input(shell_);
   if (shell_.prompts_.dirty_visible) {
     const bool handled = HandleDirtyPromptKeyDown(event, modifiers);
     if (handled) {
@@ -42,7 +44,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
     }
     return handled;
   }
-  if (shell_.CompositionConsumesKey(event.key, modifiers)) {
+  if (text_input.CompositionConsumesKey(event.key, modifiers)) {
     return true;
   }
   if (shell_.prompts_.surface_visible) {
@@ -84,7 +86,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
     return handled;
   }
   if (shell_.surface_.focus == FocusTarget::Panel && shell_.ActiveTerminalTab() != nullptr) {
-    const bool handled = shell_.HandleTerminalKeyDown(event, modifiers);
+    const bool handled = text_input.HandleTerminalKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestBottomPanelContentRedraw(); });
     }

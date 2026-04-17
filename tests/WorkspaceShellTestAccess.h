@@ -5,6 +5,7 @@
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceTextInputCoordinator.h"
 
 #include <algorithm>
 #include <array>
@@ -462,13 +463,13 @@ struct WorkspaceShellTestAccess {
                                     SDL_Keymod modifiers) {
     SDL_KeyboardEvent event{};
     event.key = key;
-    return shell.HandleTerminalKeyDown(event, modifiers);
+    return WorkspaceShell::TextInputCoordinator(shell).HandleTerminalKeyDown(event, modifiers);
   }
   static bool HandleTextInput(WorkspaceShell& shell, std::string_view text) {
     SDL_TextInputEvent event{};
     const std::string storage(text);
     event.text = storage.c_str();
-    return shell.HandleTextInput(event);
+    return WorkspaceShell::TextInputCoordinator(shell).HandleTextInput(event);
   }
   static bool HandleKeyEvent(WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
     SDL_Event event{};

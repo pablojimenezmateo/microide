@@ -10,6 +10,7 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
+#include "workspace/WorkspaceTextInputCoordinator.h"
 #include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
@@ -1250,7 +1251,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
       if (const std::optional<std::string> clipboard_text = shell_.ReadClipboardText();
           clipboard_text.has_value()) {
         if (shell_.surface_.focus == FocusTarget::Panel && shell_.ActiveTerminalTab() != nullptr) {
-          shell_.PasteClipboardIntoTerminal();
+          TextInputCoordinator(shell_).PasteClipboardIntoTerminal();
         } else if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
           const bool was_dirty = viewport->dirty();
           const std::vector<std::string> before_lines = viewport->lines();
