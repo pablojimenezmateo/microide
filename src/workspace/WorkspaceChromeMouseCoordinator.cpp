@@ -240,7 +240,8 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
             item.enabled ? static_cast<int>(item.index) : -1;
         const MenuSpec* menu = shell_.FindMenuSpec(shell_.surface_.active_menu_id);
         if (menu != nullptr && item.enabled) {
-          const MenuItemSpec& spec = menu->items[item.index];
+          const auto items = shell_.MenuItems(shell_.surface_.active_menu_id);
+          const MenuItemSpec& spec = items[item.index];
           if (spec.submenu != MenuId::None) {
             shell_.OpenSubmenu(spec.submenu, item.rect);
           } else {

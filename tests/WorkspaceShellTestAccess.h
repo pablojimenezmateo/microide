@@ -879,6 +879,49 @@ struct WorkspaceShellTestAccess {
     }
     return std::nullopt;
   }
+  static std::vector<std::string> VisiblePopupMenuLabels(WorkspaceShell& shell,
+                                                         WorkspaceShell::MenuId id) {
+    std::vector<std::string> labels;
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto popup_rect = shell.ComputePopupMenuRect(layout.menu_bar, id);
+    if (!popup_rect.has_value()) {
+      return labels;
+    }
+    const auto items = shell.MenuItems(id);
+    for (const auto& visible_item : shell.ComputeVisiblePopupMenuItems(id, *popup_rect)) {
+      if (visible_item.separator) {
+        continue;
+      }
+      labels.push_back(shell.MenuItemLabel(items[visible_item.index]));
+    }
+    return labels;
+  }
+  static std::optional<SDL_FRect> PopupMenuItemRect(WorkspaceShell& shell,
+                                                    WorkspaceShell::MenuId id,
+                                                    std::string_view label) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto popup_rect = shell.ComputePopupMenuRect(layout.menu_bar, id);
+    if (!popup_rect.has_value()) {
+      return std::nullopt;
+    }
+    const auto items = shell.MenuItems(id);
+    for (const auto& visible_item : shell.ComputeVisiblePopupMenuItems(id, *popup_rect)) {
+      if (visible_item.separator) {
+        continue;
+      }
+      if (shell.MenuItemLabel(items[visible_item.index]) == label) {
+        return visible_item.rect;
+      }
+    }
+    return std::nullopt;
+  }
+  static std::vector<std::string> SidebarModeMenuLabels(WorkspaceShell& shell) {
+    return VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::SidebarMode);
+  }
+  static std::optional<SDL_FRect> SidebarModeMenuItemRect(WorkspaceShell& shell,
+                                                          std::string_view label) {
+    return PopupMenuItemRect(shell, WorkspaceShell::MenuId::SidebarMode, label);
+  }
   static SDL_FRect SidebarModeButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.SidebarModeControlRect(layout.sidebar);

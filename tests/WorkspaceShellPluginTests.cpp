@@ -319,6 +319,49 @@ return ide.plugin({
          "plugin sidebar confirm should be able to open files at the requested location");
 }
 
+void TestWorkspaceShellSidebarModeMenuListsPluginSidebars() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "sidebar menu fixture\n");
+  CopyRepoPlugin(plugins_root, "bookmarks");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "sidebar mode menu fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
+  const float click_x = button_rect.x + button_rect.w * 0.5f;
+  const float click_y = button_rect.y + button_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking the sidebar mode control should open the sidebar menu");
+  Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
+         "clicking the sidebar mode control should open the anchored sidebar menu");
+
+  const auto labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
+  Expect(std::find(labels.begin(), labels.end(), "Bookmarks") != labels.end(),
+         "sidebar mode menu should list loaded plugin sidebars by label");
+
+  const auto bookmarks_rect = WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Bookmarks");
+  Expect(bookmarks_rect.has_value(),
+         "sidebar mode menu should expose a clickable menu row for the plugin sidebar");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, bookmarks_rect->x + bookmarks_rect->w * 0.5f,
+             bookmarks_rect->y + bookmarks_rect->h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the plugin sidebar menu row should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
+         "selecting a plugin sidebar from the dropdown should activate plugin sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "project-bookmarks",
+         "selecting a plugin sidebar from the dropdown should target the provider id");
+}
+
 void TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -762,6 +805,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginsReloadRefreshesRuntimeSyntaxHighlighting);
   AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
           TestWorkspaceShellPluginSidebarOpensItems);
+  AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",
+          TestWorkspaceShellSidebarModeMenuListsPluginSidebars);
   AddTest(tests, "WorkspaceShell/PluginDiagnosticsPersistAcrossProjectSwitches",
           TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches);
   AddTest(tests, "WorkspaceShell/DiagnosticHoverPopupShowsMessages",

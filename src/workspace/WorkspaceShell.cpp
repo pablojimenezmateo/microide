@@ -286,7 +286,7 @@ std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
       MenuSpec{MenuId::View, "View", kViewItems},
-      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", BuiltinSidebarModeMenuItems()},
+      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
       MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
@@ -300,6 +300,40 @@ const WorkspaceShell::MenuSpec* WorkspaceShell::FindMenuSpec(MenuId id) {
   const auto it = std::find_if(menus.begin(), menus.end(),
                                [id](const MenuSpec& spec) { return spec.id == id; });
   return it == menus.end() ? nullptr : &(*it);
+}
+
+std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId id) const {
+  if (id != MenuId::SidebarMode) {
+    const MenuSpec* menu = FindMenuSpec(id);
+    return menu == nullptr ? std::span<const MenuItemSpec>{} : menu->items;
+  }
+
+  const auto builtin_items = BuiltinSidebarModeMenuItems();
+  const auto& plugin_providers = plugin_host_.SidebarProviders();
+  sidebar_mode_menu_items_.clear();
+  sidebar_mode_menu_plugin_entries_.clear();
+  sidebar_mode_menu_items_.reserve(builtin_items.size() + plugin_providers.size());
+  sidebar_mode_menu_plugin_entries_.reserve(plugin_providers.size());
+
+  sidebar_mode_menu_items_.insert(sidebar_mode_menu_items_.end(), builtin_items.begin(),
+                                  builtin_items.end());
+  for (const auto& provider : plugin_providers) {
+    sidebar_mode_menu_plugin_entries_.push_back(
+        SidebarModeMenuPluginEntry{.label = provider.label, .id = provider.id});
+    const auto& entry = sidebar_mode_menu_plugin_entries_.back();
+    sidebar_mode_menu_items_.push_back(MenuItemSpec{
+        .action = ActionId::SidebarShow,
+        .label = entry.label,
+        .accelerator = {},
+        .args = std::array<std::string_view, 2>{entry.id, {}},
+        .arg_count = 1,
+        .separator = false,
+        .checkable = true,
+        .submenu = MenuId::None,
+    });
+  }
+
+  return sidebar_mode_menu_items_;
 }
 
 const project::TreeEntry* WorkspaceShell::SelectedTreeEntry() const {

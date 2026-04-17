@@ -970,6 +970,7 @@ class WorkspaceShell {
                                           std::string* rejection_feedback);
   static std::span<const MenuSpec> MenuSpecs();
   static const MenuSpec* FindMenuSpec(MenuId id);
+  std::span<const MenuItemSpec> MenuItems(MenuId id) const;
   static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
   std::vector<VisibleMenuBarItem> ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
   std::vector<VisibleWindowControlButton> ComputeVisibleWindowControlButtons(
@@ -1677,6 +1678,12 @@ class WorkspaceShell {
   ProblemsSidebarState problems_sidebar_;
   PluginSidebarState plugin_sidebar_;
   editor::DiagnosticsStore diagnostics_store_;
+  struct SidebarModeMenuPluginEntry {
+    std::string label;
+    std::string id;
+  };
+  mutable std::vector<SidebarModeMenuPluginEntry> sidebar_mode_menu_plugin_entries_;
+  mutable std::vector<MenuItemSpec> sidebar_mode_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   plugin::PluginHost plugin_host_;
   std::size_t runtime_syntax_plugin_definition_count_ = 0;

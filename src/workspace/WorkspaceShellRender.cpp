@@ -1791,6 +1791,7 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
           if (menu == nullptr) {
             return;
           }
+          const auto items = MenuItems(menu_id);
           const auto popup_rect =
               anchor_rect.has_value() ? ActiveSubmenuRect(layout.menu_bar)
                                       : ComputePopupMenuRect(layout.menu_bar, menu_id);
@@ -1801,7 +1802,7 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
           DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
           DrawRect(renderer, *popup_rect, theme_.border);
           for (const VisiblePopupMenuItem& item :
-               ComputeVisiblePopupMenuItems(menu->items, active_item_index, *popup_rect)) {
+               ComputeVisiblePopupMenuItems(items, active_item_index, *popup_rect)) {
             if (item.separator) {
               DrawFilledRect(renderer,
                              MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,
@@ -1810,7 +1811,7 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
               continue;
             }
 
-            const MenuItemSpec& spec = menu->items[item.index];
+            const MenuItemSpec& spec = items[item.index];
             const SDL_Color background =
                 item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
             const SDL_Color text_color = !item.enabled ? theme_.text_disabled
