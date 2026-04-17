@@ -4,9 +4,9 @@
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
-#include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "util/TextFileIO.h"
 

@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "workspace/WorkspaceCommandParsing.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
 

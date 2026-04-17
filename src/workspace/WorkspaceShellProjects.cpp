@@ -11,7 +11,7 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
 

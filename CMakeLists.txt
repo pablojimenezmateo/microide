@@ -174,6 +174,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp
+  src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp

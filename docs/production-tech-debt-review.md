@@ -57,8 +57,9 @@ Evidence:
 - `WorkspaceCommandParsing*` now owns command-line parsing, completion, and ui-scale text
   parsing.
 - `WorkspacePathUtils*` now owns relative-path and path-prefix helpers.
-- `WorkspaceShellShared.*` still contains git-sidebar line helpers, project-search line maps,
-  project-state naming, colors, and tab-or-breadcrumb presentation helpers.
+- `WorkspaceProjectPresentation*` now owns project-state naming, tab-or-breadcrumb presentation,
+  and project color or accent helpers.
+- `WorkspaceShellShared.*` still contains git-sidebar line helpers and project-search line maps.
 
 References:
 - `src/workspace/WorkspaceLayout.h`
@@ -71,6 +72,8 @@ References:
 - `src/workspace/WorkspaceCommandParsing.cpp`
 - `src/workspace/WorkspacePathUtils.h`
 - `src/workspace/WorkspacePathUtils.cpp`
+- `src/workspace/WorkspaceProjectPresentation.h`
+- `src/workspace/WorkspaceProjectPresentation.cpp`
 - `src/workspace/WorkspaceShellShared.h`
 - `src/workspace/WorkspaceShellShared.cpp`
 
@@ -80,9 +83,10 @@ Why this matters:
 
 Recommended next step:
 - Continue the split after the shipped `WorkspaceLayout*`, `WorkspaceTerminalSelection*`,
-  `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, and `WorkspacePathUtils*` extractions, with
-  the next focused unit centered on the remaining project-presentation, git-sidebar, and
-  search-result formatting helpers.
+  `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, `WorkspacePathUtils*`, and
+  `WorkspaceProjectPresentation*` extractions, with the next focused unit centered on the
+  remaining git-sidebar and search-result formatting helpers so `WorkspaceShellShared.*` can
+  disappear entirely.
 
 ### 3. Action handling is still too centralized in the shell
 

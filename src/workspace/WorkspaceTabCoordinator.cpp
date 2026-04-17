@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "workspace/WorkspacePathUtils.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {

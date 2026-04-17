@@ -9,7 +9,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {

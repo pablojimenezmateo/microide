@@ -16,8 +16,8 @@
 #include <string_view>
 
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
-#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 
