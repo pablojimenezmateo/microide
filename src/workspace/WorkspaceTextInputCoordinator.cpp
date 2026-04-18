@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 

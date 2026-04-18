@@ -4,9 +4,9 @@
 #include <cmath>
 #include <vector>
 
+#include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 

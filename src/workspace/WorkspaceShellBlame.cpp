@@ -7,8 +7,6 @@
 #include <optional>
 #include <sstream>
 
-#include "workspace/WorkspaceShellShared.h"
-
 namespace microide::workspace {
 
 namespace {

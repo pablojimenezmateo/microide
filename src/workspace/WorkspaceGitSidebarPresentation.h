@@ -6,8 +6,6 @@
 #include <string_view>
 #include <vector>
 
-#include "project/ProjectSearchService.h"
-
 namespace microide::workspace {
 
 enum class GitSidebarSection {
@@ -41,9 +39,6 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
     const std::vector<GitSidebarLineSpec>& lines,
     std::size_t selected_entry_index);
-std::vector<int> BuildProjectSearchResultLineMap(
-    const std::vector<project::ProjectSearchResult>& results);
-int FindProjectSearchResultLine(const std::vector<int>& line_map, std::size_t result_index);
 GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::path& relative_path,
                                                        bool staged);
 

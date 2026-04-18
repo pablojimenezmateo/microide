@@ -11,7 +11,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 

@@ -4,8 +4,6 @@
 #include <utility>
 #include <vector>
 
-#include "workspace/WorkspaceShellShared.h"
-
 namespace microide::workspace {
 
 namespace {

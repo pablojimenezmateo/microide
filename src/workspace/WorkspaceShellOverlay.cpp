@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "project/ProjectFileScanner.h"
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {

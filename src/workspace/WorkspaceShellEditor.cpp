@@ -4,8 +4,6 @@
 #include <cmath>
 #include <optional>
 
-#include "workspace/WorkspaceShellShared.h"
-
 namespace microide::workspace {
 
 namespace {

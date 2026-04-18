@@ -11,7 +11,6 @@
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
-#include "workspace/WorkspaceShellShared.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
 
 namespace microide::workspace {

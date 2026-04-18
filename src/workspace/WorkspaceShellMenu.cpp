@@ -3,7 +3,6 @@
 #include <algorithm>
 
 #include "workspace/WorkspaceSidebarRegistry.h"
-#include "workspace/WorkspaceShellShared.h"
 
 namespace microide::workspace {
 

@@ -358,9 +358,10 @@ Before widening the plugin API, `microide` should continue the work already call
 `docs/production-tech-debt-review.md`:
 
 - narrow `WorkspaceShell`
-- finish the remaining `WorkspaceShellShared.*` split after the shipped `WorkspaceLayout*`,
-  `WorkspaceTerminalSelection*`, `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, and
-  `WorkspacePathUtils*`, and `WorkspaceProjectPresentation*` extractions
+- keep the shipped helper seams cohesive across `WorkspaceLayout*`, `WorkspaceTerminalSelection*`,
+  `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, `WorkspacePathUtils*`,
+  `WorkspaceProjectPresentation*`, `WorkspaceGitSidebarPresentation*`, and
+  `WorkspaceProjectSearchPresentation*` instead of reintroducing a shared helper bucket
 - move command handling behind registries and per-domain executors
 - reduce shell ownership of sidebar and surface state
 
@@ -569,10 +570,11 @@ added.
 Deliverables:
 
 - narrower `WorkspaceShell`
-- split `WorkspaceShellShared.*` into dedicated modules such as the shipped `WorkspaceLayout*`,
-  `WorkspaceTerminalSelection*`, `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, and
-  `WorkspacePathUtils*`, and `WorkspaceProjectPresentation*` seams, then finish the remaining
-  git-sidebar and search-result formatting split
+- keep helper code in dedicated modules such as the shipped `WorkspaceLayout*`,
+  `WorkspaceTerminalSelection*`, `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`,
+  `WorkspacePathUtils*`, `WorkspaceProjectPresentation*`, `WorkspaceGitSidebarPresentation*`,
+  and `WorkspaceProjectSearchPresentation*` seams instead of reintroducing
+  `WorkspaceShellShared.*`
 - process service
 - task executor with cancellation
 - filesystem and watcher service

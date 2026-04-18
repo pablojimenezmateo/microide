@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceShellShared.h"
+#include "workspace/WorkspaceGitSidebarPresentation.h"
+#include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 #include <filesystem>
@@ -140,17 +141,17 @@ void TestWorkspaceSharedProjectSearchLineMapHelpers() {
 }  // namespace
 
 void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
-  AddTest(tests, "WorkspaceShared/GitSidebarLineHelpers",
+  AddTest(tests, "WorkspaceGitSidebarPresentation/LineHelpers",
           TestWorkspaceSharedGitSidebarLineHelpers);
-  AddTest(tests, "WorkspaceShared/GitSidebarEmptyStates",
+  AddTest(tests, "WorkspaceGitSidebarPresentation/EmptyStates",
           TestWorkspaceSharedGitSidebarEmptyStates);
-  AddTest(tests, "WorkspaceShared/GitSidebarEntryTextModel",
+  AddTest(tests, "WorkspaceGitSidebarPresentation/EntryTextModel",
           TestWorkspaceSharedGitSidebarEntryTextModel);
-  AddTest(tests, "WorkspaceShared/LiteralSearchHelpers",
+  AddTest(tests, "WorkspaceTextSearch/LiteralSearchHelpers",
           TestWorkspaceSharedLiteralSearchHelpers);
-  AddTest(tests, "WorkspaceShared/LiteralReplaceModeHelpers",
+  AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",
           TestWorkspaceSharedLiteralReplaceModeHelpers);
-  AddTest(tests, "WorkspaceShared/ProjectSearchLineMapHelpers",
+  AddTest(tests, "WorkspaceProjectSearchPresentation/LineMapHelpers",
           TestWorkspaceSharedProjectSearchLineMapHelpers);
 }
 

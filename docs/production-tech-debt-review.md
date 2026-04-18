@@ -41,13 +41,12 @@ Recommended next step:
 - Continue splitting shell-owned state and APIs by subsystem, starting with project/editor/panel/
   sidebar state objects or a narrower shell-core facade.
 
-### 2. `WorkspaceShellShared.*` is still a mixed-responsibility module
+### 2. The helper split is no longer the main blocker
 
 Impact:
-- High
-- One shared utility unit still carries unrelated parsing, persistence-facing text formats,
-  command or path helpers, and project-presentation helpers even after the recent layout and text
-  splits.
+- Medium
+- `WorkspaceShellShared.*` is gone, so the next architectural bottleneck is the still-broad
+  shell-owned state and coordinator surface rather than helper-file coupling.
 
 Evidence:
 - `WorkspaceLayout*` and `WorkspaceTerminalSelection*` now own layout, scroll, compare-or-merge
@@ -59,7 +58,10 @@ Evidence:
 - `WorkspacePathUtils*` now owns relative-path and path-prefix helpers.
 - `WorkspaceProjectPresentation*` now owns project-state naming, tab-or-breadcrumb presentation,
   and project color or accent helpers.
-- `WorkspaceShellShared.*` still contains git-sidebar line helpers and project-search line maps.
+- `WorkspaceGitSidebarPresentation*` now owns git-sidebar line and entry presentation helpers.
+- `WorkspaceProjectSearchPresentation*` now owns project-search result line-map helpers.
+- `WorkspaceShellShared.*` has been deleted instead of being kept as a shrinking compatibility
+  bucket.
 
 References:
 - `src/workspace/WorkspaceLayout.h`
@@ -74,19 +76,19 @@ References:
 - `src/workspace/WorkspacePathUtils.cpp`
 - `src/workspace/WorkspaceProjectPresentation.h`
 - `src/workspace/WorkspaceProjectPresentation.cpp`
-- `src/workspace/WorkspaceShellShared.h`
-- `src/workspace/WorkspaceShellShared.cpp`
+- `src/workspace/WorkspaceGitSidebarPresentation.h`
+- `src/workspace/WorkspaceGitSidebarPresentation.cpp`
+- `src/workspace/WorkspaceProjectSearchPresentation.h`
+- `src/workspace/WorkspaceProjectSearchPresentation.cpp`
 
 Why this matters:
-- This is still a “shared dump” instead of a cohesive subsystem boundary.
-- It increases compile-time coupling and makes unrelated changes land in the same file.
+- It removes a source of unrelated coupling and clarifies the next real debt target.
+- It also means future refactors should focus on shell ownership, registries, and service seams
+  instead of reviving shared helper files.
 
 Recommended next step:
-- Continue the split after the shipped `WorkspaceLayout*`, `WorkspaceTerminalSelection*`,
-  `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`, `WorkspacePathUtils*`, and
-  `WorkspaceProjectPresentation*` extractions, with the next focused unit centered on the
-  remaining git-sidebar and search-result formatting helpers so `WorkspaceShellShared.*` can
-  disappear entirely.
+- Keep the new helper seams cohesive and shift the next structural work toward narrower shell-owned
+  sidebar, surface, and coordinator state.
 
 ### 3. Action handling is still too centralized in the shell
 
@@ -162,10 +164,10 @@ Recommended next step:
 ## Recommended Order
 
 1. Reduce `WorkspaceShell` ownership further.
-2. Split `WorkspaceShellShared.*` into cohesive modules.
-3. Decentralize action registration and dispatch.
-4. Narrow the top-level render pipeline.
-5. Move the git process layer behind a compiled service boundary.
+2. Decentralize action registration and dispatch.
+3. Narrow the top-level render pipeline.
+4. Move the git process layer behind a compiled service boundary.
+5. Keep new helper seams cohesive; do not reintroduce a shared utility bucket.
 
 ## Non-Findings
 

@@ -174,6 +174,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp
+  src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
@@ -189,9 +190,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabMouseCoordinator.cpp
   src/workspace/WorkspaceTabCoordinator.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
+  src/workspace/WorkspaceGitSidebarPresentation.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
-  src/workspace/WorkspaceShellShared.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceTerminalSelection.cpp

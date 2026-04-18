@@ -632,7 +632,8 @@ Without this, ESLint integration will end up reusing unrelated colors such as di
 
 ### Strongly Recommended Soon After
 
-1. Split `WorkspaceShellShared.*` into cohesive modules.
+1. Keep the shipped workspace helper seams cohesive instead of reintroducing
+   `WorkspaceShellShared.*`.
 
    This reduces unrelated coupling when registries are added.
 
