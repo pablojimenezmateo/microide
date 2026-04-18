@@ -132,19 +132,26 @@ Recommended next step:
 Impact:
 - Medium
 - Render ownership is clearer than before, but the shell still owns broad sidebar, overlay,
-  bottom-panel, and prompt rendering behavior through one state-heavy surface model.
+  bottom-panel, menu, and prompt surface state through one state-heavy shell model.
 
 Evidence:
 - Top-level render orchestration is now split across `WorkspaceShellRender.cpp`,
-  `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`, and
-  `WorkspaceShellRenderTextInput.cpp`.
-- The remaining render branches still operate directly on shell-owned state for sidebar,
-  overlay, prompt, and bottom-panel surfaces.
+  `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,
+  `WorkspaceShellRenderSidebar.cpp`, `WorkspaceShellRenderOverlay.cpp`,
+  `WorkspaceShellRenderBottomPanel.cpp`, `WorkspaceShellRenderMenus.cpp`,
+  `WorkspaceShellRenderPrompts.cpp`, and `WorkspaceShellRenderTextInput.cpp`.
+- Sidebar, overlay, bottom-panel, menu, and prompt drawing now live in dedicated translation
+  units, but they still operate directly on shell-owned surface state and helper methods.
 
 References:
 - `src/workspace/WorkspaceShellRender.cpp`
 - `src/workspace/WorkspaceShellRenderFrame.cpp`
 - `src/workspace/WorkspaceShellRenderChrome.cpp`
+- `src/workspace/WorkspaceShellRenderSidebar.cpp`
+- `src/workspace/WorkspaceShellRenderOverlay.cpp`
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp`
+- `src/workspace/WorkspaceShellRenderMenus.cpp`
+- `src/workspace/WorkspaceShellRenderPrompts.cpp`
 - `src/workspace/WorkspaceShellRenderTextInput.cpp`
 
 Why this matters:
@@ -153,8 +160,9 @@ Why this matters:
 - UI regressions remain harder to isolate than they should be.
 
 Recommended next step:
-- Continue pushing sidebar, overlay, bottom-panel, and prompt rendering behind narrower
-  surface-specific renderers or state objects instead of routing them all through `WorkspaceShell`.
+- Keep the new surface-specific render files narrow, then peel sidebar, overlay, bottom-panel,
+  menu, and prompt state behind smaller renderer inputs or service-owned models instead of routing
+  them all through `WorkspaceShell`.
 
 ### 5. The git process layer is no longer the main process-boundary debt
 

@@ -97,9 +97,12 @@ Current state:
   coordinator instead of keeping those routing paths embedded directly on `WorkspaceShell`
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
-- top-level render orchestration now runs through explicit frame, active-surface, chrome/sidebar,
-  and text-input phase methods backed by dedicated `WorkspaceShellRenderFrame.cpp`,
-  `WorkspaceShellRenderChrome.cpp`, and `WorkspaceShellRenderTextInput.cpp` units instead of one
+- top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
+  sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
+  `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,
+  `WorkspaceShellRenderSidebar.cpp`, `WorkspaceShellRenderOverlay.cpp`,
+  `WorkspaceShellRenderBottomPanel.cpp`, `WorkspaceShellRenderMenus.cpp`,
+  `WorkspaceShellRenderPrompts.cpp`, and `WorkspaceShellRenderTextInput.cpp` units instead of one
   monolithic `WorkspaceShellRender.cpp`
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
