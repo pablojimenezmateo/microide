@@ -47,6 +47,10 @@ Evidence:
   `WorkspacePersistenceCoordinatorSession.cpp`, and
   `WorkspacePersistenceCoordinatorWorkspaceSession.cpp` units instead of one large coordinator
   file.
+- Overlay routing still targets the shell, but generic overlay flow, project-search sidebar
+  behavior, and buffer-search actions now live across `WorkspaceShellOverlay.cpp`,
+  `WorkspaceShellProjectSearch.cpp`, and `WorkspaceShellBufferSearch.cpp` instead of one
+  catch-all overlay/search file.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 

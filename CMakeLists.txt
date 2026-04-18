@@ -182,6 +182,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellMouseMotion.cpp
   src/workspace/WorkspaceShellOverlay.cpp
+  src/workspace/WorkspaceShellProjectSearch.cpp
+  src/workspace/WorkspaceShellBufferSearch.cpp
   src/workspace/WorkspaceShellPresentation.cpp
   src/workspace/WorkspaceShellRedraw.cpp
   src/workspace/WorkspaceShellRenderFrame.cpp

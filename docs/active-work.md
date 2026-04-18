@@ -113,6 +113,9 @@ Current state:
   `WorkspacePersistenceCoordinatorConfig.cpp`,
   `WorkspacePersistenceCoordinatorSession.cpp`, and
   `WorkspacePersistenceCoordinatorWorkspaceSession.cpp` instead of one large coordinator file
+- overlay lifecycle, project-search sidebar flow, and buffer-search actions now live across
+  `WorkspaceShellOverlay.cpp`, `WorkspaceShellProjectSearch.cpp`, and
+  `WorkspaceShellBufferSearch.cpp` instead of one catch-all overlay/search file
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - shell redraw invalidation, caret timing, clipboard or text-input-surface routing,
