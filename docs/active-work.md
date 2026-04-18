@@ -108,6 +108,11 @@ Current state:
 - top-level shell mouse routing now splits button-up or button-down handling from motion or wheel
   handling across `WorkspaceShellMouse.cpp` and `WorkspaceShellMouseMotion.cpp` instead of one
   catch-all shell mouse unit
+- workspace persistence now splits config/theme state, per-project session state, and
+  workspace-session state across `WorkspacePersistenceCoordinator.cpp`,
+  `WorkspacePersistenceCoordinatorConfig.cpp`,
+  `WorkspacePersistenceCoordinatorSession.cpp`, and
+  `WorkspacePersistenceCoordinatorWorkspaceSession.cpp` instead of one large coordinator file
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - shell redraw invalidation, caret timing, clipboard or text-input-surface routing,

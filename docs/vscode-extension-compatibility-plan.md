@@ -576,6 +576,7 @@ Deliverables:
   `WorkspaceActionTypes*`, `WorkspaceActionRequests*`, `WorkspaceMenuRegistry*`,
   `WorkspaceKeyInputCoordinator*`, `WorkspaceSidebarCoordinator*`,
   `WorkspaceSidebarMouseCoordinator*`, `WorkspaceShellMouse*`,
+  `WorkspacePersistenceCoordinator*`,
   `WorkspaceShellRedraw*`, `WorkspaceShellInteraction*`, `WorkspaceShellCursor*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,

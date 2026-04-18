@@ -41,6 +41,12 @@ Evidence:
 - Top-level mouse routing still targets the shell, but button lifecycle handling now lives apart
   from motion and wheel flow in dedicated `WorkspaceShellMouse.cpp` and
   `WorkspaceShellMouseMotion.cpp` units instead of one catch-all shell mouse file.
+- Persistence still targets the shell, but config/theme state, project-session state, and
+  workspace-session state now live in dedicated `WorkspacePersistenceCoordinator.cpp`,
+  `WorkspacePersistenceCoordinatorConfig.cpp`,
+  `WorkspacePersistenceCoordinatorSession.cpp`, and
+  `WorkspacePersistenceCoordinatorWorkspaceSession.cpp` units instead of one large coordinator
+  file.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 
