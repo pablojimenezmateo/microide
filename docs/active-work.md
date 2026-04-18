@@ -94,7 +94,10 @@ Current state:
 - menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input
-  coordinator instead of keeping those routing paths embedded directly on `WorkspaceShell`
+  coordinator, with modal or menu, surface, and editor-domain handling split across dedicated
+  `WorkspaceKeyInputCoordinator.cpp`, `WorkspaceKeyInputCoordinatorModal.cpp`,
+  `WorkspaceKeyInputCoordinatorSurfaces.cpp`, and `WorkspaceKeyInputCoordinatorEditor.cpp`
+  units instead of one monolithic coordinator translation unit
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - shell redraw invalidation, caret timing, clipboard or text-input-surface routing,
@@ -118,6 +121,9 @@ Open work:
   current Linux-backed asset watcher while keeping snapshot fallback only where hosts or missing
   roots still require it, and by continuing to peel remaining registry and coordinator concerns
   out of `WorkspaceShell`
+  This non-Linux watcher parity work is deferred until target-host build and runtime validation
+  are available; from the current Linux-only environment, snapshot fallback remains the correct
+  baseline for macOS and Windows hosts.
 - continue moving remaining hardcoded accelerators, menu wiring, sidebar tools, and extension
   points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them

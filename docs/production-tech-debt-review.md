@@ -28,6 +28,9 @@ Evidence:
   and breadcrumb or project-tab presentation now live in dedicated
   `WorkspaceShellRedraw.cpp`, `WorkspaceShellInteraction.cpp`, `WorkspaceShellCursor.cpp`, and
   `WorkspaceShellPresentation.cpp` units instead of staying mixed into `WorkspaceShell.cpp`.
+- Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
+  handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
+  monolithic coordinator file.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 

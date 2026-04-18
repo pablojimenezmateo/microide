@@ -103,6 +103,8 @@ Important current constraints:
 - there is no settings, keybinding, output, task, test, SCM, or AI registry
 - host-owned process, app-directory, and file-watching services exist, but native watcher coverage
   and higher-level plugin registries are still incomplete
+  Non-Linux watcher parity is deferred until target-host build and runtime validation are
+  available; snapshot fallback remains the current safe baseline away from Linux.
 
 ## What Zed Gets Right
 
@@ -572,6 +574,7 @@ Deliverables:
 - narrower `WorkspaceShell`
 - keep host-owned action, menu, and helper code in dedicated modules such as the shipped
   `WorkspaceActionTypes*`, `WorkspaceActionRequests*`, `WorkspaceMenuRegistry*`,
+  `WorkspaceKeyInputCoordinator*`,
   `WorkspaceShellRedraw*`, `WorkspaceShellInteraction*`, `WorkspaceShellCursor*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,
