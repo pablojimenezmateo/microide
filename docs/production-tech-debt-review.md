@@ -131,55 +131,61 @@ Recommended next step:
 
 Impact:
 - Medium
-- The render entry point still combines frame preparation, state sync, terminal resize, editor/
-  compare/merge dispatch, text-input area updates, and shell chrome drawing.
+- Render ownership is clearer than before, but the shell still owns broad sidebar, overlay,
+  bottom-panel, and prompt rendering behavior through one state-heavy surface model.
 
 Evidence:
-- `WorkspaceShell::Render()` still performs substantial pre-render and render-time orchestration in
-  one function.
+- Top-level render orchestration is now split across `WorkspaceShellRender.cpp`,
+  `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`, and
+  `WorkspaceShellRenderTextInput.cpp`.
+- The remaining render branches still operate directly on shell-owned state for sidebar,
+  overlay, prompt, and bottom-panel surfaces.
 
 References:
-- `src/workspace/WorkspaceShellRender.cpp:192`
+- `src/workspace/WorkspaceShellRender.cpp`
+- `src/workspace/WorkspaceShellRenderFrame.cpp`
+- `src/workspace/WorkspaceShellRenderChrome.cpp`
+- `src/workspace/WorkspaceShellRenderTextInput.cpp`
 
 Why this matters:
-- The compare and merge extractions helped, but the top-level render path still knows too much.
+- The top-level render entry point is smaller, but shell-owned render behavior still spans too
+  many unrelated UI surfaces.
 - UI regressions remain harder to isolate than they should be.
 
 Recommended next step:
-- Split the render entry point into smaller shell-owned frame phases, for example:
-- frame preparation
-- chrome/layout draw
-- active-surface draw
-- text-input/IME presentation
+- Continue pushing sidebar, overlay, bottom-panel, and prompt rendering behind narrower
+  surface-specific renderers or state objects instead of routing them all through `WorkspaceShell`.
 
-### 5. The git process layer is still a low-level inline header implementation
+### 5. The git process layer is no longer the main process-boundary debt
 
 Impact:
-- Medium
-- The git runner is safer than before, but process management still lives inline in a shared header
-  and is tightly bound to `fork`/`execvp` details.
+- Low
+- The old inline-header process concern is resolved, so future process work should focus on
+  higher-level git-service behavior instead of redoing the execution seam.
 
 Evidence:
-- `GitCommandUtil.h` contains the full command execution implementation.
+- `GitCommandUtil.cpp` now owns git command execution and delegates to the host subprocess
+  service in `platform/Subprocess.*`.
 
 References:
-- `src/project/GitCommandUtil.h:14`
+- `src/project/GitCommandUtil.cpp`
+- `src/platform/Subprocess.cpp`
 
 Why this matters:
-- It limits error-model evolution, timeout handling, and future portability work.
-- It also spreads process-level implementation through header inclusion instead of keeping it in a
-  smaller compiled boundary.
+- It means the next debt here is higher-level git-service shaping, not fixing a stale low-level
+  execution boundary that already moved behind compiled code.
 
 Recommended next step:
-- Move git command execution behind a `.cpp`-backed process service with a narrower public API.
+- Keep git execution on the subprocess service and only widen or reshape it if git-specific
+  workflows need better cancellation, streaming, or richer error reporting.
 
 ## Recommended Order
 
 1. Reduce `WorkspaceShell` ownership further.
 2. Decentralize action registration and dispatch.
-3. Narrow the top-level render pipeline.
-4. Move the git process layer behind a compiled service boundary.
-5. Keep new helper seams cohesive; do not reintroduce a shared utility bucket.
+3. Keep narrowing render and surface ownership.
+4. Keep git and other external-tool integrations on narrow compiled services.
+5. Keep new helper and render seams cohesive; do not reintroduce catch-all buckets.
 
 ## Non-Findings
 

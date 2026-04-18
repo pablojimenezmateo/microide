@@ -176,6 +176,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp
+  src/workspace/WorkspaceShellRenderFrame.cpp
+  src/workspace/WorkspaceShellRenderChrome.cpp
+  src/workspace/WorkspaceShellRenderTextInput.cpp
   src/workspace/WorkspaceShellHover.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp

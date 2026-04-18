@@ -1355,6 +1355,32 @@ class WorkspaceShell {
   bool HandleMouseWheel(const SDL_Event& event);
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
+  void RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderActiveWorkspaceSurface(SDL_Renderer* renderer,
+                                    const WorkspaceLayout& layout,
+                                    bool draw_editor_caret,
+                                    std::optional<SDL_FRect>* active_editor_pane_rect);
+  void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
+  void RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
+  void RenderBottomPanelSurface(SDL_Renderer* renderer,
+                                const WorkspaceLayout& layout,
+                                std::size_t terminal_line_count);
+  void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderPromptSurface(
+      SDL_Renderer* renderer,
+      const WorkspaceLayout& layout,
+      const std::optional<TextInputVisual>& active_text_input_visual) const;
+  void RenderDirtyPromptSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  std::optional<TextInputVisual> BuildActiveTextInputVisual(
+      const WorkspaceLayout& layout,
+      const std::optional<SDL_FRect>& active_editor_pane_rect) const;
+  void UpdateTextInputArea(SDL_Renderer* renderer,
+                           SDL_Window* render_window,
+                           const std::optional<TextInputVisual>& visual) const;
+  void RenderEditorHoverPopup(SDL_Renderer* renderer) const;
+  void RenderTextComposition(SDL_Renderer* renderer,
+                             const std::optional<TextInputVisual>& visual) const;
   float ProjectTabWidthForIndex(std::size_t index) const;
   void EnsureActiveProjectVisible();
   std::vector<VisibleStripTab> ComputeVisibleProjectTabs(
