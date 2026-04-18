@@ -575,6 +575,7 @@ Deliverables:
 - keep host-owned action, menu, and helper code in dedicated modules such as the shipped
   `WorkspaceActionTypes*`, `WorkspaceActionRequests*`, `WorkspaceMenuRegistry*`,
   `WorkspaceKeyInputCoordinator*`, `WorkspaceSidebarCoordinator*`,
+  `WorkspaceSidebarMouseCoordinator*`,
   `WorkspaceShellRedraw*`, `WorkspaceShellInteraction*`, `WorkspaceShellCursor*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,

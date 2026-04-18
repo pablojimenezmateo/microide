@@ -34,6 +34,10 @@ Evidence:
 - Sidebar mode switching still targets the shell, but refresh and entry-action handling now live
   in dedicated `WorkspaceSidebarCoordinator.cpp`, `WorkspaceSidebarCoordinatorRefresh.cpp`, and
   `WorkspaceSidebarCoordinatorActions.cpp` units instead of one monolithic coordinator file.
+- Sidebar mouse dispatch still targets the shell, but per-surface button handling and scroll
+  routing now live in dedicated `WorkspaceSidebarMouseCoordinator.cpp` and
+  `WorkspaceSidebarMouseCoordinatorScroll.cpp` units instead of one catch-all mouse coordinator
+  file.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 

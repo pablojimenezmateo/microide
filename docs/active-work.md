@@ -102,6 +102,9 @@ Current state:
   through a dedicated sidebar coordinator split across `WorkspaceSidebarCoordinator.cpp`,
   `WorkspaceSidebarCoordinatorRefresh.cpp`, and `WorkspaceSidebarCoordinatorActions.cpp`
   instead of one monolithic coordinator translation unit
+- sidebar mouse input now routes through per-surface button handlers plus dedicated scroll logic
+  in `WorkspaceSidebarMouseCoordinator.cpp` and
+  `WorkspaceSidebarMouseCoordinatorScroll.cpp` instead of one catch-all mouse coordinator file
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - shell redraw invalidation, caret timing, clipboard or text-input-surface routing,

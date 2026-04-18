@@ -212,6 +212,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp
   src/workspace/WorkspaceSidebarCoordinatorActions.cpp
   src/workspace/WorkspaceSidebarMouseCoordinator.cpp
+  src/workspace/WorkspaceSidebarMouseCoordinatorScroll.cpp
   src/workspace/WorkspaceTabMouseCoordinator.cpp
   src/workspace/WorkspaceTabCoordinator.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
