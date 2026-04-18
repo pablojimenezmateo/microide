@@ -768,6 +768,32 @@ void TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes() 
          "middle-clicking the editor should paste the primary selection at the click location");
 }
 
+void TestWorkspaceShellTextInputSurfaceTracksEditorOverlayAndPrompt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.txt";
+  WriteFile(file, "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::TextInputSurfaceIsEditor(shell),
+         "the active editor should own text input by default");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "opening the file-finder overlay should be handled");
+  Expect(WorkspaceShellTestAccess::TextInputSurfaceIsFileFinder(shell),
+         "the file-finder overlay should take text-input ownership when visible");
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, file, "renamed.txt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "rename prompt fixture should open the prompt surface");
+  Expect(WorkspaceShellTestAccess::TextInputSurfaceIsPromptInput(shell),
+         "prompt input should override the underlying overlay or editor text-input surface");
+}
+
 void TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1073,6 +1099,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/EditorSelectionWritesPrimaryBufferAndMiddleClickPastes",
           TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes);
+  AddTest(tests, "WorkspaceShell/TextInputSurfaceTracksEditorOverlayAndPrompt",
+          TestWorkspaceShellTextInputSurfaceTracksEditorOverlayAndPrompt);
   AddTest(tests, "WorkspaceShell/SidebarModeButtonTogglesAnchoredMenu",
           TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu);
   AddTest(tests, "WorkspaceShell/ProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog",

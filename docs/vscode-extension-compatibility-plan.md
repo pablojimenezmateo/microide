@@ -572,6 +572,8 @@ Deliverables:
 - narrower `WorkspaceShell`
 - keep host-owned action, menu, and helper code in dedicated modules such as the shipped
   `WorkspaceActionTypes*`, `WorkspaceActionRequests*`, `WorkspaceMenuRegistry*`,
+  `WorkspaceShellRedraw*`, `WorkspaceShellInteraction*`, `WorkspaceShellCursor*`,
+  `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,
   `WorkspaceShellRenderSidebar*`, `WorkspaceShellRenderOverlay*`,
   `WorkspaceShellRenderBottomPanel*`, `WorkspaceShellRenderMenus*`,

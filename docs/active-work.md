@@ -97,6 +97,11 @@ Current state:
   coordinator instead of keeping those routing paths embedded directly on `WorkspaceShell`
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
+- shell redraw invalidation, caret timing, clipboard or text-input-surface routing,
+  cursor or hit-testing, and breadcrumb or project-tab presentation now live in dedicated
+  `WorkspaceShellRedraw.cpp`, `WorkspaceShellInteraction.cpp`,
+  `WorkspaceShellCursor.cpp`, and `WorkspaceShellPresentation.cpp` units instead of staying
+  bundled into `WorkspaceShell.cpp`
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

@@ -24,6 +24,10 @@ Evidence:
 - `WorkspaceShell` still owns window presentation, project catalog state, tree/index/finder,
   editor tabs, terminal tabs, overlays, git sidebar, prompts, clipboard hooks, cursor state, and
   dialog plumbing.
+- Shell redraw invalidation, caret timing, clipboard or text-input routing, cursor hit-testing,
+  and breadcrumb or project-tab presentation now live in dedicated
+  `WorkspaceShellRedraw.cpp`, `WorkspaceShellInteraction.cpp`, `WorkspaceShellCursor.cpp`, and
+  `WorkspaceShellPresentation.cpp` units instead of staying mixed into `WorkspaceShell.cpp`.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 
@@ -31,6 +35,10 @@ References:
 - `src/workspace/WorkspaceShell.h:35`
 - `src/workspace/WorkspaceShell.h:636`
 - `src/workspace/WorkspaceShell.h:1446`
+- `src/workspace/WorkspaceShellRedraw.cpp`
+- `src/workspace/WorkspaceShellInteraction.cpp`
+- `src/workspace/WorkspaceShellCursor.cpp`
+- `src/workspace/WorkspaceShellPresentation.cpp`
 
 Why this matters:
 - Ownership is clearer than before, but the shell remains the place where multiple subsystems meet
@@ -124,8 +132,8 @@ Why this matters:
 
 Recommended next step:
 - Continue moving project, sidebar, search, tab, edit, and global behavior behind narrower
-  subsystem-owned services or facades instead of keeping those executors coupled directly to
-  `WorkspaceShell`.
+  subsystem-owned services or facades, and keep shrinking the shell’s remaining state exposure
+  rather than rebuilding a new core catch-all around the fresh helper seams.
 
 ### 4. The main render path is still too wide
 

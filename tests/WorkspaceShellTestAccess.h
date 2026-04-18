@@ -996,6 +996,15 @@ struct WorkspaceShellTestAccess {
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
     return shell.surface_.overlay_mode == WorkspaceShell::OverlayMode::FileFinder;
   }
+  static bool TextInputSurfaceIsEditor(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::Editor;
+  }
+  static bool TextInputSurfaceIsFileFinder(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::FileFinder;
+  }
+  static bool TextInputSurfaceIsPromptInput(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::PromptInput;
+  }
   static bool SidebarVisible(const WorkspaceShell& shell) { return shell.surface_.sidebar_visible; }
   static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
     return shell.surface_.sidebar_mode;

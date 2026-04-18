@@ -169,13 +169,17 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabActionExecutor.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
+  src/workspace/WorkspaceShellCursor.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp
   src/workspace/WorkspaceDirtyPromptCoordinator.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellInput.cpp
+  src/workspace/WorkspaceShellInteraction.cpp
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellOverlay.cpp
+  src/workspace/WorkspaceShellPresentation.cpp
+  src/workspace/WorkspaceShellRedraw.cpp
   src/workspace/WorkspaceShellRenderFrame.cpp
   src/workspace/WorkspaceShellRenderSidebar.cpp
   src/workspace/WorkspaceShellRenderOverlay.cpp
