@@ -570,7 +570,8 @@ added.
 Deliverables:
 
 - narrower `WorkspaceShell`
-- keep helper code in dedicated modules such as the shipped `WorkspaceLayout*`,
+- keep host-owned action, menu, and helper code in dedicated modules such as the shipped
+  `WorkspaceActionTypes*`, `WorkspaceMenuRegistry*`, `WorkspaceLayout*`,
   `WorkspaceTerminalSelection*`, `WorkspaceTextSearch*`, `WorkspaceCommandParsing*`,
   `WorkspacePathUtils*`, `WorkspaceProjectPresentation*`, `WorkspaceGitSidebarPresentation*`,
   and `WorkspaceProjectSearchPresentation*` seams instead of reintroducing

@@ -157,6 +157,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceKeyInputCoordinator.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
   src/workspace/WorkspaceMenuCoordinator.cpp
+  src/workspace/WorkspaceMenuRegistry.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
   src/workspace/WorkspaceTextInputCoordinator.cpp
   src/workspace/WorkspaceShellChrome.cpp

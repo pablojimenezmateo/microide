@@ -53,6 +53,9 @@ Current state:
 
 - manual Lua plugin loading is shipped
 - command and sidebar registries exist
+- workspace action ids and specs plus built-in menu-bar and tree-context definitions now live in
+  dedicated `WorkspaceActionTypes*` and `WorkspaceMenuRegistry*` modules instead of staying
+  embedded directly in `WorkspaceShell`
 - the host already exposes narrow file, workspace, process, diagnostics, and hover extension points
 - host-owned app-directory, subprocess, output-channel, task-executor, and persistence-format
   services now back plugin, search, blame, and workspace state flows instead of keeping that work
@@ -99,7 +102,8 @@ Open work:
   current Linux-backed asset watcher while keeping snapshot fallback only where hosts or missing
   roots still require it, and by continuing to peel remaining registry and coordinator concerns
   out of `WorkspaceShell`
-- continue moving hardcoded commands, sidebar tools, and extension points behind stable registries where plugin pressure justifies it
+- continue moving remaining hardcoded accelerators, menu wiring, sidebar tools, and extension
+  points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in product features even when plugins can extend around them

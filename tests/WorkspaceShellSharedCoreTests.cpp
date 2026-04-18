@@ -1,7 +1,9 @@
 #include "TestSupport.h"
 
+#include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -20,6 +22,8 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::ActionId;
+using microide::workspace::ActionSpec;
 using microide::workspace::BuildCompareBreadcrumbLabel;
 using microide::workspace::BuildEditorBreadcrumbLabel;
 using microide::workspace::BuildMergeBreadcrumbLabel;
@@ -30,6 +34,7 @@ using microide::workspace::CommonPrefix;
 using microide::workspace::DecodeSessionNodePath;
 using microide::workspace::DetectLineEnding;
 using microide::workspace::EncodeSessionNodePath;
+using microide::workspace::FindWorkspaceMenuSpec;
 using microide::workspace::SidebarToolRequest;
 using microide::workspace::SidebarToolSpec;
 using microide::workspace::FindBuiltinSidebarTool;
@@ -39,6 +44,8 @@ using microide::workspace::FormatCommandCompletionToken;
 using microide::workspace::BuiltinSidebarModeMenuItems;
 using microide::workspace::BuiltinSidebarToolNames;
 using microide::workspace::JoinCommandArguments;
+using microide::workspace::MenuId;
+using microide::workspace::MenuSpec;
 using microide::workspace::ParseCommandLine;
 using microide::workspace::ParseBuiltinSidebarToolRequest;
 using microide::workspace::ParseProjectConfigText;
@@ -64,12 +71,15 @@ using microide::workspace::SerializeProjectSession;
 using microide::workspace::SerializeUserConfig;
 using microide::workspace::SerializeWorkspaceSession;
 using microide::workspace::SplitSyntaxLines;
+using microide::workspace::TreeContextTargetKind;
 using microide::workspace::ToLower;
 using microide::workspace::Utf8ByteOffsetForCodepointCount;
 using microide::workspace::Utf8CodepointCount;
 using microide::workspace::WorkspaceCommandNames;
+using microide::workspace::WorkspaceMenuSpecs;
 using microide::workspace::WorkspaceDocumentedCommandUsages;
 using microide::workspace::WorkspaceShell;
+using microide::workspace::WorkspaceTreeContextMenuItems;
 using microide::util::ReadTextFile;
 using microide::util::WriteTextFileAtomically;
 
@@ -208,15 +218,13 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
 }
 
 void TestWorkspaceCommandRegistry() {
-  const WorkspaceShell::ActionSpec* save = FindWorkspaceActionSpec(WorkspaceShell::ActionId::Save);
+  const ActionSpec* save = FindWorkspaceActionSpec(ActionId::Save);
   Expect(save != nullptr, "command registry should expose built-in save metadata");
   Expect(save->command_name == "save", "save metadata should preserve the command name");
 
-  const WorkspaceShell::ActionSpec* sidebar_toggle =
-      FindWorkspaceActionByCommand("sidebar-toggle");
-  Expect(sidebar_toggle != nullptr,
-         "command registry should resolve actions by command name");
-  Expect(sidebar_toggle->id == WorkspaceShell::ActionId::SidebarToggle,
+  const ActionSpec* sidebar_toggle = FindWorkspaceActionByCommand("sidebar-toggle");
+  Expect(sidebar_toggle != nullptr, "command registry should resolve actions by command name");
+  Expect(sidebar_toggle->id == ActionId::SidebarToggle,
          "command registry should map sidebar-toggle to the toggle action");
 
   const std::vector<std::string>& command_names = WorkspaceCommandNames();
@@ -226,6 +234,33 @@ void TestWorkspaceCommandRegistry() {
 
   Expect(WorkspaceDocumentedCommandUsages() == WorkspaceShell::DocumentedCommandUsages(),
          "workspace shell command docs should delegate to the registry");
+}
+
+void TestWorkspaceMenuRegistry() {
+  const MenuSpec* view = FindWorkspaceMenuSpec(MenuId::View);
+  Expect(view != nullptr, "menu registry should expose the view menu");
+  Expect(view->label == "View", "view menu should preserve its label");
+
+  const auto menus = WorkspaceMenuSpecs();
+  Expect(std::find_if(menus.begin(), menus.end(),
+                      [](const MenuSpec& spec) { return spec.id == MenuId::SidebarMode; }) !=
+             menus.end(),
+         "menu registry should keep the sidebar-mode menu");
+
+  const auto root_items = WorkspaceTreeContextMenuItems(TreeContextTargetKind::Root);
+  Expect(std::find_if(root_items.begin(), root_items.end(),
+                      [](const auto& item) { return item.action == ActionId::ProjectClose; }) !=
+             root_items.end(),
+         "tree-context registry should keep the root close-project action");
+
+  const auto file_items = WorkspaceTreeContextMenuItems(TreeContextTargetKind::File);
+  Expect(std::find_if(file_items.begin(), file_items.end(),
+                      [](const auto& item) {
+                        return item.action == ActionId::CompareHead ||
+                               item.action == ActionId::DeletePath ||
+                               item.action == ActionId::CopyAbsolutePath;
+                      }) != file_items.end(),
+         "tree-context registry should expose file actions");
 }
 
 void TestWorkspaceSidebarRegistry() {
@@ -529,6 +564,7 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);
+  AddTest(tests, "Workspace/MenuRegistry", TestWorkspaceMenuRegistry);
   AddTest(tests, "Workspace/SidebarRegistry", TestWorkspaceSidebarRegistry);
   AddTest(tests, "WorkspaceShared/PathAndCaseHelpers", TestWorkspaceSharedPathAndCaseHelpers);
   AddTest(tests, "WorkspaceShared/PathMutationHelpers", TestWorkspaceSharedPathMutationHelpers);

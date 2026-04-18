@@ -8,67 +8,7 @@ namespace microide::workspace {
 
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuItems(
     TreeContextTargetKind target) {
-  const auto item = [](ActionId action, std::string_view label = {}) {
-    return MenuItemSpec{action, label, {}, {}, 0, false, false};
-  };
-  const auto separator = [] {
-    return MenuItemSpec{ActionId::Colorscheme, {}, {}, {}, 0, true, false};
-  };
-
-  static const auto kFileItems = std::to_array<MenuItemSpec>({
-      item(ActionId::OpenSelectedTreeItem),
-      item(ActionId::OpenSelectedTreeItemInNewTab),
-      separator(),
-      item(ActionId::CompareHead),
-      item(ActionId::Compare),
-      separator(),
-      item(ActionId::RenamePath),
-      item(ActionId::DeletePath),
-      separator(),
-      item(ActionId::CopyRelativePath),
-      item(ActionId::CopyAbsolutePath),
-  });
-  static const auto kDirectoryItems = std::to_array<MenuItemSpec>({
-      item(ActionId::CreateFile),
-      item(ActionId::CreateDirectory),
-      separator(),
-      item(ActionId::RenamePath),
-      item(ActionId::DeletePath),
-      separator(),
-      item(ActionId::TreeRefresh, "Refresh"),
-      separator(),
-      item(ActionId::CopyRelativePath),
-      item(ActionId::CopyAbsolutePath),
-  });
-  static const auto kRootItems = std::to_array<MenuItemSpec>({
-      item(ActionId::CreateFile),
-      item(ActionId::CreateDirectory),
-      separator(),
-      item(ActionId::TreeRefresh, "Refresh"),
-      item(ActionId::ProjectClose),
-      separator(),
-      item(ActionId::CopyAbsolutePath),
-  });
-  static const auto kBackgroundItems = std::to_array<MenuItemSpec>({
-      item(ActionId::CreateFile),
-      item(ActionId::CreateDirectory),
-      separator(),
-      item(ActionId::TreeRefresh, "Refresh"),
-  });
-
-  switch (target) {
-    case TreeContextTargetKind::File:
-      return kFileItems;
-    case TreeContextTargetKind::Directory:
-      return kDirectoryItems;
-    case TreeContextTargetKind::Root:
-      return kRootItems;
-    case TreeContextTargetKind::Background:
-      return kBackgroundItems;
-    case TreeContextTargetKind::None:
-    default:
-      return {};
-  }
+  return WorkspaceTreeContextMenuItems(target);
 }
 
 std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
@@ -229,12 +169,12 @@ std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   if (!item.label.empty()) {
     return std::string(item.label);
   }
-  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr &&
-                                                        !action->label.empty()) {
+  if (const ActionSpec* action = FindActionSpec(item.action);
+      action != nullptr && !action->label.empty()) {
     return std::string(action->label);
   }
-  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr &&
-                                                        !action->command_name.empty()) {
+  if (const ActionSpec* action = FindActionSpec(item.action);
+      action != nullptr && !action->command_name.empty()) {
     return std::string(action->command_name);
   }
   return {};
@@ -247,8 +187,8 @@ std::string WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) const 
   if (!item.accelerator.empty()) {
     return std::string(item.accelerator);
   }
-  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr &&
-                                                        !action->accelerator.empty()) {
+  if (const ActionSpec* action = FindActionSpec(item.action);
+      action != nullptr && !action->accelerator.empty()) {
     return std::string(action->accelerator);
   }
   return {};

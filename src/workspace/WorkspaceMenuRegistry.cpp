@@ -1,0 +1,156 @@
+#include "workspace/WorkspaceMenuRegistry.h"
+
+#include <algorithm>
+#include <array>
+
+namespace microide::workspace {
+
+namespace {
+
+MenuItemSpec MenuItem(ActionId action,
+                      std::string_view label = {},
+                      std::string_view accelerator = {},
+                      std::array<std::string_view, 2> args = {},
+                      std::size_t arg_count = 0,
+                      bool checkable = false,
+                      MenuId submenu = MenuId::None) {
+  return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable, submenu};
+}
+
+MenuItemSpec MenuSeparator() {
+  return MenuItemSpec{ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None};
+}
+
+}  // namespace
+
+std::span<const MenuSpec> WorkspaceMenuSpecs() {
+  static const auto kFileItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::ProjectOpen, "New Project Tab..."),
+      MenuSeparator(),
+      MenuItem(ActionId::Tab),
+      MenuItem(ActionId::Save),
+      MenuItem(ActionId::CloseActiveTab),
+      MenuItem(ActionId::CloseAllTabs),
+      MenuItem(ActionId::Reopen),
+      MenuSeparator(),
+      MenuItem(ActionId::ProjectClose),
+      MenuSeparator(),
+      MenuItem(ActionId::Quit),
+  });
+  static const auto kEditItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::Undo),
+      MenuItem(ActionId::Redo),
+      MenuSeparator(),
+      MenuItem(ActionId::CutSelection),
+      MenuItem(ActionId::CopySelection),
+      MenuItem(ActionId::CopySelectionWithContext),
+      MenuItem(ActionId::PasteClipboard),
+      MenuItem(ActionId::SelectAll),
+  });
+  static const auto kViewItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
+      MenuSeparator(),
+      MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}},
+               1),
+      MenuItem(ActionId::UiScale, "Zoom Out", "Ctrl+-",
+               std::array<std::string_view, 2>{"down", {}}, 1),
+      MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
+               std::array<std::string_view, 2>{"reset", {}}, 1),
+  });
+  static const auto kSearchItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::Search),
+      MenuItem(ActionId::ReplaceInBuffer),
+      MenuItem(ActionId::Files),
+      MenuItem(ActionId::ProjectSearch),
+  });
+  static const auto kTerminalContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CopySelection),
+      MenuItem(ActionId::PasteClipboard),
+  });
+  static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CloseActiveTab, "Close Tab"),
+      MenuItem(ActionId::CloseOtherTabs),
+      MenuItem(ActionId::CloseTabsToRight),
+      MenuItem(ActionId::CloseTabsToLeft),
+  });
+  static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CopyLastTerminalCommand),
+  });
+  static const auto kMenus = std::to_array<MenuSpec>({
+      MenuSpec{MenuId::File, "File", kFileItems},
+      MenuSpec{MenuId::Edit, "Edit", kEditItems},
+      MenuSpec{MenuId::View, "View", kViewItems},
+      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
+      MenuSpec{MenuId::Search, "Search", kSearchItems},
+      MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
+      MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
+      MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
+  });
+  return kMenus;
+}
+
+const MenuSpec* FindWorkspaceMenuSpec(MenuId id) {
+  const auto menus = WorkspaceMenuSpecs();
+  const auto it =
+      std::find_if(menus.begin(), menus.end(), [id](const MenuSpec& spec) { return spec.id == id; });
+  return it == menus.end() ? nullptr : &(*it);
+}
+
+std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKind target) {
+  static const auto kFileItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::OpenSelectedTreeItem),
+      MenuItem(ActionId::OpenSelectedTreeItemInNewTab),
+      MenuSeparator(),
+      MenuItem(ActionId::CompareHead),
+      MenuItem(ActionId::Compare),
+      MenuSeparator(),
+      MenuItem(ActionId::RenamePath),
+      MenuItem(ActionId::DeletePath),
+      MenuSeparator(),
+      MenuItem(ActionId::CopyRelativePath),
+      MenuItem(ActionId::CopyAbsolutePath),
+  });
+  static const auto kDirectoryItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CreateFile),
+      MenuItem(ActionId::CreateDirectory),
+      MenuSeparator(),
+      MenuItem(ActionId::RenamePath),
+      MenuItem(ActionId::DeletePath),
+      MenuSeparator(),
+      MenuItem(ActionId::TreeRefresh, "Refresh"),
+      MenuSeparator(),
+      MenuItem(ActionId::CopyRelativePath),
+      MenuItem(ActionId::CopyAbsolutePath),
+  });
+  static const auto kRootItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CreateFile),
+      MenuItem(ActionId::CreateDirectory),
+      MenuSeparator(),
+      MenuItem(ActionId::TreeRefresh, "Refresh"),
+      MenuItem(ActionId::ProjectClose),
+      MenuSeparator(),
+      MenuItem(ActionId::CopyAbsolutePath),
+  });
+  static const auto kBackgroundItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CreateFile),
+      MenuItem(ActionId::CreateDirectory),
+      MenuSeparator(),
+      MenuItem(ActionId::TreeRefresh, "Refresh"),
+  });
+
+  switch (target) {
+    case TreeContextTargetKind::File:
+      return kFileItems;
+    case TreeContextTargetKind::Directory:
+      return kDirectoryItems;
+    case TreeContextTargetKind::Root:
+      return kRootItems;
+    case TreeContextTargetKind::Background:
+      return kBackgroundItems;
+    case TreeContextTargetKind::None:
+    default:
+      return {};
+  }
+}
+
+}  // namespace microide::workspace

@@ -221,90 +221,16 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
 }
 
 std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {
-  const auto item = [](ActionId action, std::string_view label = {},
-                       std::string_view accelerator = {},
-                       std::array<std::string_view, 2> args = {}, std::size_t arg_count = 0,
-                       bool checkable = false, MenuId submenu = MenuId::None) {
-    return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable, submenu};
-  };
-  const auto separator = [] {
-    return MenuItemSpec{ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None};
-  };
-
-  static const auto kFileItems = std::to_array<MenuItemSpec>({
-      item(ActionId::ProjectOpen, "New Project Tab..."),
-      separator(),
-      item(ActionId::Tab),
-      item(ActionId::Save),
-      item(ActionId::CloseActiveTab),
-      item(ActionId::CloseAllTabs),
-      item(ActionId::Reopen),
-      separator(),
-      item(ActionId::ProjectClose),
-      separator(),
-      item(ActionId::Quit),
-  });
-  static const auto kEditItems = std::to_array<MenuItemSpec>({
-      item(ActionId::Undo),
-      item(ActionId::Redo),
-      separator(),
-      item(ActionId::CutSelection),
-      item(ActionId::CopySelection),
-      item(ActionId::CopySelectionWithContext),
-      item(ActionId::PasteClipboard),
-      item(ActionId::SelectAll),
-  });
-  static const auto kViewItems = std::to_array<MenuItemSpec>({
-      item(ActionId::SidebarToggle, {}, {}, {}, 0, true),
-      separator(),
-      item(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
-      item(ActionId::UiScale, "Zoom Out", "Ctrl+-",
-           std::array<std::string_view, 2>{"down", {}}, 1),
-      item(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
-           std::array<std::string_view, 2>{"reset", {}}, 1),
-  });
-  static const auto kSearchItems = std::to_array<MenuItemSpec>({
-      item(ActionId::Search),
-      item(ActionId::ReplaceInBuffer),
-      item(ActionId::Files),
-      item(ActionId::ProjectSearch),
-  });
-  static const auto kTerminalContextItems = std::to_array<MenuItemSpec>({
-      item(ActionId::CopySelection),
-      item(ActionId::PasteClipboard),
-  });
-  static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
-      item(ActionId::CloseActiveTab, "Close Tab"),
-      item(ActionId::CloseOtherTabs),
-      item(ActionId::CloseTabsToRight),
-      item(ActionId::CloseTabsToLeft),
-  });
-  static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
-      item(ActionId::CopyLastTerminalCommand),
-  });
-  static const auto kMenus = std::to_array<MenuSpec>({
-      MenuSpec{MenuId::File, "File", kFileItems},
-      MenuSpec{MenuId::Edit, "Edit", kEditItems},
-      MenuSpec{MenuId::View, "View", kViewItems},
-      MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
-      MenuSpec{MenuId::Search, "Search", kSearchItems},
-      MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
-      MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
-      MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
-  });
-  return kMenus;
+  return WorkspaceMenuSpecs();
 }
 
 const WorkspaceShell::MenuSpec* WorkspaceShell::FindMenuSpec(MenuId id) {
-  const auto menus = MenuSpecs();
-  const auto it = std::find_if(menus.begin(), menus.end(),
-                               [id](const MenuSpec& spec) { return spec.id == id; });
-  return it == menus.end() ? nullptr : &(*it);
+  return FindWorkspaceMenuSpec(id);
 }
 
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId id) const {
   if (id != MenuId::SidebarMode) {
-    const MenuSpec* menu = FindMenuSpec(id);
+    const MenuSpec* menu = FindWorkspaceMenuSpec(id);
     return menu == nullptr ? std::span<const MenuItemSpec>{} : menu->items;
   }
 

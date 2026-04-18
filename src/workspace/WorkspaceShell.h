@@ -29,6 +29,8 @@
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
@@ -39,6 +41,14 @@ namespace microide::workspace {
 
 class WorkspaceShell {
  public:
+  using ActionId = workspace::ActionId;
+  using ActionSource = workspace::ActionSource;
+  using ActionSpec = workspace::ActionSpec;
+  using MenuId = workspace::MenuId;
+  using TreeContextTargetKind = workspace::TreeContextTargetKind;
+  using MenuItemSpec = workspace::MenuItemSpec;
+  using MenuSpec = workspace::MenuSpec;
+
   enum class WindowAction {
     None,
     Minimize,
@@ -144,28 +154,6 @@ class WorkspaceShell {
   enum class BufferSearchField {
     Search,
     Replace,
-  };
-
-  enum class MenuId {
-    None,
-    File,
-    Edit,
-    View,
-    SidebarMode,
-    Search,
-    EditorTabContext,
-    Project,
-    Terminal,
-    TerminalContext,
-    TerminalTabContext,
-  };
-
-  enum class TreeContextTargetKind {
-    None,
-    File,
-    Directory,
-    Root,
-    Background,
   };
 
   enum class TextInputSurface {
@@ -640,109 +628,6 @@ class WorkspaceShell {
     bool soft_tabs = false;
   };
 
- public:
-  enum class ActionId {
-    Colorscheme,
-    Compare,
-    CompareHead,
-    Merge,
-    CopyAbsolutePath,
-    CopyRelativePath,
-    CreateDirectory,
-    CreateFile,
-    DeletePath,
-    Files,
-    Find,
-    Focus,
-    Goto,
-    GitRefresh,
-    IndentWidth,
-    Jump,
-    Open,
-    OpenSelectedTreeItem,
-    OpenSelectedTreeItemInNewTab,
-    ProjectClose,
-    ProjectNext,
-    ProjectOpen,
-    ProjectPrev,
-    ProjectSearch,
-    PluginsReload,
-    Quit,
-    RenamePath,
-    Reopen,
-    Save,
-    Search,
-    SidebarClose,
-    SidebarHide,
-    SidebarShow,
-    SidebarToggle,
-    SidebarWidth,
-    SoftTabs,
-    SplitFirst,
-    SplitLast,
-    SplitNext,
-    SplitPrev,
-    Tab,
-    TabSize,
-    TabMove,
-    TabSwitch,
-    Term,
-    Tree,
-    TreeRefresh,
-    UiScale,
-    Unsplit,
-    Vsplit,
-    CloseActiveTab,
-    CloseAllTabs,
-    CloseOtherTabs,
-    CloseTabsToRight,
-    CloseTabsToLeft,
-    CopyLastTerminalCommand,
-    CopySelection,
-    CopySelectionWithContext,
-    CutSelection,
-    OpenCommandPrompt,
-    PasteClipboard,
-    Redo,
-    ReplaceInBuffer,
-    SelectAll,
-    Undo,
-  };
-
-  enum class ActionSource {
-    Command,
-    Shortcut,
-    Menu,
-    ContextMenu,
-  };
-
-  struct ActionSpec {
-    ActionId id;
-    std::string_view command_name;
-    std::string_view command_usage;
-    std::string_view label;
-    std::string_view accelerator;
-    bool checkable = false;
-  };
-
-  struct MenuItemSpec {
-    ActionId action = ActionId::Colorscheme;
-    std::string_view label;
-    std::string_view accelerator;
-    std::array<std::string_view, 2> args{};
-    std::size_t arg_count = 0;
-    bool separator = false;
-    bool checkable = false;
-    MenuId submenu = MenuId::None;
-  };
-
-  struct MenuSpec {
-    MenuId id = MenuId::None;
-    std::string_view label;
-    std::span<const MenuItemSpec> items;
-  };
-
- private:
   struct VisiblePopupMenuItem {
     std::size_t index = 0;
     SDL_FRect rect{};

@@ -9,9 +9,9 @@ namespace microide::workspace {
 
 namespace {
 
-WorkspaceShell::MenuItemSpec SidebarModeMenuItem(const SidebarToolSpec& tool) {
-  WorkspaceShell::MenuItemSpec item{};
-  item.action = WorkspaceShell::ActionId::SidebarShow;
+MenuItemSpec SidebarModeMenuItem(const SidebarToolSpec& tool) {
+  MenuItemSpec item{};
+  item.action = ActionId::SidebarShow;
   item.label = tool.label;
   item.args = std::array<std::string_view, 2>{tool.command_name, {}};
   item.arg_count = 1;
@@ -88,14 +88,14 @@ SidebarToolRequest ParseBuiltinSidebarToolRequest(const std::vector<std::string>
   return request;
 }
 
-std::span<const WorkspaceShell::MenuItemSpec> BuiltinSidebarModeMenuItems() {
+std::span<const MenuItemSpec> BuiltinSidebarModeMenuItems() {
   static const auto kItems = [] {
     const SidebarToolSpec* tree = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Tree);
     const SidebarToolSpec* search = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Search);
     const SidebarToolSpec* problems =
         FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Problems);
     const SidebarToolSpec* git = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Git);
-    return std::to_array<WorkspaceShell::MenuItemSpec>({
+    return std::to_array<MenuItemSpec>({
         SidebarModeMenuItem(*tree),
         SidebarModeMenuItem(*search),
         SidebarModeMenuItem(*problems),

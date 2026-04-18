@@ -13,6 +13,9 @@ Phase 0 status:
 - implemented on 2026-04-15 in the host codebase
 - added `src/workspace/WorkspaceCommandRegistry.*` for built-in command metadata and lookup
 - added `src/workspace/WorkspaceSidebarRegistry.*` for built-in sidebar tool metadata, parsing, and menu items
+- updated on 2026-04-18 with `src/workspace/WorkspaceActionTypes.*` and
+  `src/workspace/WorkspaceMenuRegistry.*` so built-in action metadata plus menu-bar and
+  tree-context definitions no longer live directly in `WorkspaceShell`
 - kept runtime behavior stable; this pass does not add plugin loading yet
 
 Phase 1 status:
@@ -598,11 +601,14 @@ Without this, ESLint integration will end up reusing unrelated colors such as di
    - `src/workspace/WorkspaceSidebarCoordinator.cpp`
    - `src/workspace/WorkspaceShellActions.cpp`
 
-2. Move command registration behind a registry independent of `WorkspaceShell::ActionSpec`.
+2. Keep command and menu registration behind registries independent of `WorkspaceShell`.
 
    Why:
 
    - plugin commands should not require editing a host enum and multiple shell switches
+   - built-in action metadata now lives in `WorkspaceCommandRegistry.*` and
+     `WorkspaceActionTypes.*`, and built-in menu definitions now live in
+     `WorkspaceMenuRegistry.*`; the remaining debt is the shell-owned execution and routing logic
 
 3. Add a generic editor-decoration and hover-provider layer.
 
