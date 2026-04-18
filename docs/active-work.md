@@ -87,6 +87,10 @@ Current state:
   command-prompt coordinator instead of living directly on `WorkspaceShell`
 - action dispatch for project, sidebar, search, tab, edit, and global commands now runs through a
   dedicated action coordinator instead of living in `WorkspaceShellActions.cpp`
+- action request parsing now lives in `WorkspaceActionRequests*`, and the project, sidebar,
+  search, tab, edit, and global action-domain implementations now live in dedicated
+  `Workspace*ActionExecutor.cpp` translation units instead of one monolithic
+  `WorkspaceActionCoordinator.cpp`
 - menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input

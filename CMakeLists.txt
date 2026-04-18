@@ -150,16 +150,23 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
   src/workspace/WorkspaceActionCoordinator.cpp
+  src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
+  src/workspace/WorkspaceEditActionExecutor.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
+  src/workspace/WorkspaceGlobalActionExecutor.cpp
   src/workspace/WorkspaceKeyInputCoordinator.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
   src/workspace/WorkspaceMenuCoordinator.cpp
   src/workspace/WorkspaceMenuRegistry.cpp
   src/workspace/WorkspacePanelMouseCoordinator.cpp
+  src/workspace/WorkspaceProjectActionExecutor.cpp
+  src/workspace/WorkspaceSearchActionExecutor.cpp
+  src/workspace/WorkspaceSidebarActionExecutor.cpp
   src/workspace/WorkspaceTextInputCoordinator.cpp
+  src/workspace/WorkspaceTabActionExecutor.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp

@@ -94,26 +94,38 @@ Recommended next step:
 
 Impact:
 - Medium
-- Adding or changing commands still tends to require shell-header and shell-action edits even when
-  the behavior belongs to a narrower subsystem.
+- Action ownership is clearer than before, but execution still depends on a shell-owned
+  coordinator with broad access to unrelated shell internals.
 
 Evidence:
-- The action enum/spec model still lives in `WorkspaceShell`.
-- Dispatch still routes through large domain switches in `WorkspaceShellActions.cpp`.
+- Built-in action ids and metadata now live in `WorkspaceActionTypes.*` and
+  `WorkspaceCommandRegistry.*` instead of `WorkspaceShell`.
+- Action request parsing now lives in `WorkspaceActionRequests.*`.
+- Dispatch is now split by project, sidebar, search, tab, edit, and global domains across
+  dedicated executor translation units, but those executors are still methods on the
+  shell-owned `WorkspaceShell::ActionCoordinator`.
 
 References:
-- `src/workspace/WorkspaceShell.h:620`
-- `src/workspace/WorkspaceShell.h:836`
-- `src/workspace/WorkspaceShellActions.cpp:430`
-- `src/workspace/WorkspaceShellActions.cpp:1209`
+- `src/workspace/WorkspaceActionTypes.h`
+- `src/workspace/WorkspaceCommandRegistry.cpp`
+- `src/workspace/WorkspaceActionRequests.cpp`
+- `src/workspace/WorkspaceActionCoordinator.cpp`
+- `src/workspace/WorkspaceProjectActionExecutor.cpp`
+- `src/workspace/WorkspaceSidebarActionExecutor.cpp`
+- `src/workspace/WorkspaceSearchActionExecutor.cpp`
+- `src/workspace/WorkspaceTabActionExecutor.cpp`
+- `src/workspace/WorkspaceEditActionExecutor.cpp`
+- `src/workspace/WorkspaceGlobalActionExecutor.cpp`
 
 Why this matters:
-- It preserves a shell-centric command model even after other ownership extractions.
-- It makes command growth scale linearly with shell complexity.
+- Registration, parsing, and file ownership are better than before, but action behavior still
+  scales with shell complexity because execution keeps broad write access to shell state.
+- That limits how much plugins or future built-ins can reuse narrower subsystem contracts.
 
 Recommended next step:
-- Move action registration and dispatch behind subsystem-owned handlers or an action registry with
-  per-domain executors.
+- Continue moving project, sidebar, search, tab, edit, and global behavior behind narrower
+  subsystem-owned services or facades instead of keeping those executors coupled directly to
+  `WorkspaceShell`.
 
 ### 4. The main render path is still too wide
 
