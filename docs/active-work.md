@@ -105,6 +105,9 @@ Current state:
 - sidebar mouse input now routes through per-surface button handlers plus dedicated scroll logic
   in `WorkspaceSidebarMouseCoordinator.cpp` and
   `WorkspaceSidebarMouseCoordinatorScroll.cpp` instead of one catch-all mouse coordinator file
+- top-level shell mouse routing now splits button-up or button-down handling from motion or wheel
+  handling across `WorkspaceShellMouse.cpp` and `WorkspaceShellMouseMotion.cpp` instead of one
+  catch-all shell mouse unit
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - shell redraw invalidation, caret timing, clipboard or text-input-surface routing,

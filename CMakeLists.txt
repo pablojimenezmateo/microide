@@ -180,6 +180,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellInteraction.cpp
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
+  src/workspace/WorkspaceShellMouseMotion.cpp
   src/workspace/WorkspaceShellOverlay.cpp
   src/workspace/WorkspaceShellPresentation.cpp
   src/workspace/WorkspaceShellRedraw.cpp

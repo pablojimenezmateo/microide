@@ -38,6 +38,9 @@ Evidence:
   routing now live in dedicated `WorkspaceSidebarMouseCoordinator.cpp` and
   `WorkspaceSidebarMouseCoordinatorScroll.cpp` units instead of one catch-all mouse coordinator
   file.
+- Top-level mouse routing still targets the shell, but button lifecycle handling now lives apart
+  from motion and wheel flow in dedicated `WorkspaceShellMouse.cpp` and
+  `WorkspaceShellMouseMotion.cpp` units instead of one catch-all shell mouse file.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 
