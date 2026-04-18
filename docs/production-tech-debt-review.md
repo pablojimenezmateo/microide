@@ -31,6 +31,9 @@ Evidence:
 - Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
   handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
   monolithic coordinator file.
+- Sidebar mode switching still targets the shell, but refresh and entry-action handling now live
+  in dedicated `WorkspaceSidebarCoordinator.cpp`, `WorkspaceSidebarCoordinatorRefresh.cpp`, and
+  `WorkspaceSidebarCoordinatorActions.cpp` units instead of one monolithic coordinator file.
 - The shell private surface still spans action dispatch, input handling, render helpers, compare,
   merge, persistence, and terminal behavior.
 

@@ -98,6 +98,10 @@ Current state:
   `WorkspaceKeyInputCoordinator.cpp`, `WorkspaceKeyInputCoordinatorModal.cpp`,
   `WorkspaceKeyInputCoordinatorSurfaces.cpp`, and `WorkspaceKeyInputCoordinatorEditor.cpp`
   units instead of one monolithic coordinator translation unit
+- sidebar mode transitions, refresh logic, and git or problem or plugin entry actions now run
+  through a dedicated sidebar coordinator split across `WorkspaceSidebarCoordinator.cpp`,
+  `WorkspaceSidebarCoordinatorRefresh.cpp`, and `WorkspaceSidebarCoordinatorActions.cpp`
+  instead of one monolithic coordinator translation unit
 - text composition, typed-input routing, and terminal text entry now run through a dedicated
   text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - shell redraw invalidation, caret timing, clipboard or text-input-surface routing,
