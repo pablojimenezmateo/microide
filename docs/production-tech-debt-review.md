@@ -31,6 +31,9 @@ Evidence:
 - Editor tab activation or restore flow, close or reload lifecycle, and split-tree or pane-layout
   logic now live across `WorkspaceShellEditor.cpp` and `WorkspaceShellEditorSplits.cpp` instead
   of one catch-all editor translation unit.
+- Project state capture or restore, project-root initialization, and native project-picker flow
+  now live across `WorkspaceShellProjects.cpp`, `WorkspaceProjectStateCoordinator.cpp`, and
+  `WorkspaceProjectDialogCoordinator.cpp` instead of one catch-all project translation unit.
 - Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
   handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
   monolithic coordinator file.

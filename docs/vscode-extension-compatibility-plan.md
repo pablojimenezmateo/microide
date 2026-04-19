@@ -579,6 +579,8 @@ Deliverables:
   `WorkspacePersistenceCoordinator*`, `WorkspaceShellOverlay*`,
   `WorkspaceShellRedraw*`, `WorkspaceShellInteraction*`, `WorkspaceShellCursor*`,
   `WorkspaceShellEditor*`,
+  `WorkspaceProjectCatalogCoordinator*`, `WorkspaceProjectStateCoordinator*`,
+  `WorkspaceProjectDialogCoordinator*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,
   `WorkspaceShellRenderSidebar*`, `WorkspaceShellRenderOverlay*`,

@@ -126,6 +126,9 @@ Current state:
 - editor tab activation or restore flow, close or reload lifecycle, and split-tree or pane-layout
   logic now live across `WorkspaceShellEditor.cpp` and
   `WorkspaceShellEditorSplits.cpp` instead of one catch-all editor translation unit
+- project state capture or restore, project-root initialization, and native project-picker flow
+  now live across `WorkspaceShellProjects.cpp`, `WorkspaceProjectStateCoordinator.cpp`, and
+  `WorkspaceProjectDialogCoordinator.cpp` instead of one catch-all project translation unit
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

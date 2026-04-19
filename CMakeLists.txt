@@ -212,6 +212,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceCoordinatorConfig.cpp
   src/workspace/WorkspacePersistenceCoordinatorSession.cpp
   src/workspace/WorkspacePersistenceCoordinatorWorkspaceSession.cpp
+  src/workspace/WorkspaceProjectDialogCoordinator.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
@@ -223,6 +224,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabMouseCoordinator.cpp
   src/workspace/WorkspaceTabCoordinator.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
+  src/workspace/WorkspaceProjectStateCoordinator.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
