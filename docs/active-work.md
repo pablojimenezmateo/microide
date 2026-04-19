@@ -136,6 +136,10 @@ Current state:
 - project state capture or restore, project-root initialization, and native project-picker flow
   now live across `WorkspaceShellProjects.cpp`, `WorkspaceProjectStateCoordinator.cpp`, and
   `WorkspaceProjectDialogCoordinator.cpp` instead of one catch-all project translation unit
+- the active workspace now reuses the same `ProjectWorkspaceState` container shape as project
+  catalog entries, so project switching and persistence no longer hand-maintain duplicated move or
+  reset lists for tabs, tree or index state, terminals, overlays, diagnostics, command history,
+  colorscheme, or editor preferences
 - editor blame, diagnostic, or plugin hover targeting now lives apart from popup layout or hover
   lifetime across `WorkspaceShellHoverTargets.cpp` and `WorkspaceShellHoverPopup.cpp` instead of
   one catch-all hover translation unit
@@ -162,7 +166,9 @@ Open work:
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
 - Phase 1 host-service extraction from `docs/vscode-extension-compatibility-plan.md` is complete;
   Phase 2 contribution and override seams are now active, with unified sidebar view registration
-  landed as the first slice rather than more plugin runtime plumbing
+  landed as the first slice rather than more plugin runtime plumbing; the remaining Phase 1
+  follow-up work is now mostly shell-ownership shaping and opportunistic debt cleanup rather than
+  missing core services
 - validate broader native file-watch coverage beyond the current Linux-backed asset watcher once
   target-host build and runtime validation are available; until then snapshot fallback remains
   the correct baseline for macOS and Windows hosts

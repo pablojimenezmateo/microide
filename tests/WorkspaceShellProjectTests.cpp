@@ -201,6 +201,55 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
          "project-next should activate the next project tab");
 }
 
+void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  Expect(ExecuteCommand(shell, "soft-tabs on"),
+         "first project should accept a project-scoped command");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "first project should persist its editor preferences after the command");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "second project should start from default editor preferences");
+  Expect(ExecuteCommand(shell, "soft-tabs off"),
+         "second project should accept its own project-scoped command");
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "second project should keep its own editor preferences");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "switching back to the first project should succeed");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "switching back should restore the first project's editor preferences");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt after switching back");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_UP, SDL_KMOD_NONE),
+         "up should recall command history for the restored first project");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
+         "switching back should restore the first project's command history");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "escape should dismiss the recalled first-project command prompt");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
+         "switching to the second project should succeed");
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "switching forward should restore the second project's editor preferences");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "Ctrl+E should open the command prompt after switching forward");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_UP, SDL_KMOD_NONE),
+         "up should recall command history for the restored second project");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs off",
+         "switching forward should restore the second project's command history");
+}
+
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1059,6 +1108,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpenCommandRequiresPath);
   AddTest(tests, "WorkspaceShell/ProjectNextAndPrevCommandsCycleProjects",
           TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesProjectScopedCommandState",
+          TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
           TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
   AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",

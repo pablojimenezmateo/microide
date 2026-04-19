@@ -35,6 +35,11 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   state.file_finder.SetIndex(&state.file_index);
 }
 
+void WorkspaceShell::ResetCurrentProjectStateStorage() {
+  current_project_state_ = ProjectWorkspaceState{};
+  RebindProjectState(current_project_state_);
+}
+
 WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
     const SurfaceState& state) {
   return ProjectSurfaceState{
@@ -110,72 +115,14 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   MenuCoordinator(*this).CloseTreeContextMenu();
   ClearEditorBlame();
 
-  project_root_.clear();
-  directory_tree_ = project::DirectoryTree{};
-  file_index_ = project::FileIndex{};
-  file_finder_ = project::FileFinder{};
-  text_viewport_ = editor::TextViewport{};
-  open_tabs_.clear();
-  active_tab_index_ = 0;
-  tab_scroll_index_ = 0;
-  surface_.sidebar_visible = !show_welcome;
-  surface_.sidebar_mode = SidebarMode::Tree;
-  surface_.sidebar_prev_mode = SidebarMode::None;
-  surface_.sidebar_view_id = "tree";
-  surface_.sidebar_prev_view_id.clear();
-  surface_.sidebar_temporary = false;
-  surface_.overlay_visible = false;
-  surface_.overlay_mode = OverlayMode::FileFinder;
-  surface_.buffer_search_field = BufferSearchField::Search;
-  surface_.command_mode = false;
-  surface_.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
+  ResetCurrentProjectStateStorage();
+
+  ProjectSurfaceState project_surface = current_project_state_.surface;
+  project_surface.sidebar_visible = !show_welcome;
+  project_surface.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
+  current_project_state_.surface = project_surface;
+  ApplyProjectSurfaceState(project_surface);
   tab_drag_state_ = TabDragState{};
-  surface_.sidebar_width = 288.0f;
-  surface_.bottom_panel_height = 184.0f;
-  surface_.sidebar_scroll_row = 0;
-  surface_.overlay_scroll_row = 0;
-  terminal_tabs_.clear();
-  active_terminal_tab_index_ = 0;
-  overlay_workflow_.buffer_search.query.clear();
-  overlay_workflow_.buffer_search.replace_text.clear();
-  overlay_workflow_.buffer_search.matches.clear();
-  overlay_workflow_.buffer_search.selected_index = 0;
-  overlay_workflow_.project_search.query.clear();
-  overlay_workflow_.project_search.options = {};
-  overlay_workflow_.project_search.edit_buffer.clear();
-  overlay_workflow_.project_search.editing = false;
-  overlay_workflow_.project_search.edit_field = ProjectSearchEditField::Query;
-  overlay_workflow_.project_search.replace_text.clear();
-  overlay_workflow_.project_search.results.clear();
-  overlay_workflow_.project_search.selected_index = 0;
-  overlay_workflow_.project_search.running = false;
-  overlay_workflow_.project_search.truncated = false;
-  overlay_workflow_.project_search.error.clear();
-  git_sidebar_.entries.clear();
-  git_sidebar_.base_ref.clear();
-  git_sidebar_.base_label.clear();
-  git_sidebar_.repo_available = false;
-  git_sidebar_.selected_index = 0;
-  problems_sidebar_.entries.clear();
-  problems_sidebar_.selected_index = 0;
-  plugin_sidebar_.items.clear();
-  plugin_sidebar_.error.clear();
-  plugin_sidebar_.selected_index = 0;
-  diagnostics_store_.Clear();
-  overlay_workflow_.compare_picker.path.clear();
-  overlay_workflow_.compare_picker.query.clear();
-  overlay_workflow_.compare_picker.commits.clear();
-  overlay_workflow_.compare_picker.matches.clear();
-  overlay_workflow_.compare_picker.selected_index = 0;
-  command_.input.clear();
-  command_.history.clear();
-  command_.history_index.reset();
-  command_.history_pending_input.clear();
-  command_.feedback_text.clear();
-  active_colorscheme_name_ = "default";
-  project_base_color_ = std::nullopt;
-  editor_preferences_ = EditorPreferences{};
-  file_finder_.SetIndex(&file_index_);
   persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferences(text_viewport_);
   if (show_welcome) {
@@ -284,30 +231,13 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   StopProjectSearch();
   MenuCoordinator(*this).CloseTreeContextMenu();
 
-  state.initialized = true;
-  state.restore_persistence_on_activate = false;
-  state.root = project_root_;
-  state.directory_tree = std::move(directory_tree_);
-  state.file_index = std::move(file_index_);
-  state.file_finder = std::move(file_finder_);
-  state.text_viewport = std::move(text_viewport_);
-  state.open_tabs = std::move(open_tabs_);
-  state.active_tab_index = active_tab_index_;
-  state.tab_scroll_index = tab_scroll_index_;
-  state.surface = CaptureProjectSurfaceState(surface_);
-  state.terminal_tabs = std::move(terminal_tabs_);
-  state.active_terminal_tab_index = active_terminal_tab_index_;
-  state.overlay_workflow = std::move(overlay_workflow_);
-  state.overlay_workflow.project_search.running = false;
-  state.git_sidebar = std::move(git_sidebar_);
-  state.problems_sidebar = std::move(problems_sidebar_);
-  state.plugin_sidebar = std::move(plugin_sidebar_);
-  state.diagnostics_store = std::move(diagnostics_store_);
-  state.command = std::move(command_);
-  state.active_colorscheme_name = active_colorscheme_name_;
-  state.project_base_color = project_base_color_;
-  state.editor_preferences = editor_preferences_;
+  current_project_state_.initialized = true;
+  current_project_state_.restore_persistence_on_activate = false;
+  current_project_state_.surface = CaptureProjectSurfaceState(surface_);
+  current_project_state_.overlay_workflow.project_search.running = false;
+  state = std::move(current_project_state_);
   RebindProjectState(state);
+  ResetCurrentProjectStateStorage();
 }
 
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
@@ -316,30 +246,15 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   MenuCoordinator(*this).CloseTreeContextMenu();
   ClearEditorBlame();
 
-  project_root_ = state.root;
-  directory_tree_ = std::move(state.directory_tree);
-  file_index_ = std::move(state.file_index);
-  file_finder_ = std::move(state.file_finder);
-  text_viewport_ = std::move(state.text_viewport);
-  open_tabs_ = std::move(state.open_tabs);
-  active_tab_index_ = state.active_tab_index;
-  tab_scroll_index_ = state.tab_scroll_index;
-  ApplyProjectSurfaceState(state.surface);
-  terminal_tabs_ = std::move(state.terminal_tabs);
-  active_terminal_tab_index_ = state.active_terminal_tab_index;
-  overlay_workflow_ = std::move(state.overlay_workflow);
-  overlay_workflow_.project_search.running = false;
-  git_sidebar_ = std::move(state.git_sidebar);
-  problems_sidebar_ = std::move(state.problems_sidebar);
-  plugin_sidebar_ = std::move(state.plugin_sidebar);
-  diagnostics_store_ = std::move(state.diagnostics_store);
-  command_ = std::move(state.command);
-  active_colorscheme_name_ = state.active_colorscheme_name;
-  project_base_color_ = state.project_base_color;
-  editor_preferences_ = state.editor_preferences;
+  current_project_state_ = std::move(state);
+  current_project_state_.overlay_workflow.project_search.running = false;
+  RebindProjectState(current_project_state_);
+  ApplyProjectSurfaceState(current_project_state_.surface);
 
+  state = ProjectWorkspaceState{};
   state.root = project_root_;
-  file_finder_.SetIndex(&file_index_);
+  state.initialized = true;
+  state.restore_persistence_on_activate = false;
   persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferencesToAllTabs();
   if (text_viewport_.is_placeholder()) {

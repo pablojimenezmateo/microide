@@ -590,6 +590,10 @@ Status:
 - `WorkspaceShell` no longer directly owns plugin host lifecycle, plugin asset watching, plugin
   output channels, or runtime syntax reload bookkeeping; that work now lives in
   `WorkspacePluginRuntime*`
+- follow-up cleanup on 2026-04-19 now keeps the active workspace on the shell in the same
+  `ProjectWorkspaceState` container shape used by project-catalog entries, removing duplicated
+  project-switch and persistence bookkeeping for tabs, search state, terminals, diagnostics,
+  command history, colorscheme, and editor preferences
 - the next active phase is Phase 2
 
 Deliverables:

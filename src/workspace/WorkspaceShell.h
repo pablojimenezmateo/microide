@@ -868,6 +868,7 @@ class WorkspaceShell {
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
   void RebindProjectState(ProjectWorkspaceState& state);
+  void ResetCurrentProjectStateStorage();
   bool HasActiveProjectCatalogEntry() const;
   ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index);
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
@@ -1485,23 +1486,26 @@ class WorkspaceShell {
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
   ProjectCatalogState project_catalog_;
-  std::filesystem::path project_root_;
-  project::DirectoryTree directory_tree_;
-  project::FileIndex file_index_;
-  project::FileFinder file_finder_;
-  editor::TextViewport text_viewport_;
-  std::vector<TabEntry> open_tabs_;
-  std::size_t active_tab_index_ = 0;
-  int tab_scroll_index_ = 0;
+  // Keep the active workspace in the same state container used by project-catalog entries so
+  // project activation, persistence, and reset paths do not hand-maintain duplicated field lists.
+  ProjectWorkspaceState current_project_state_;
+  std::filesystem::path& project_root_ = current_project_state_.root;
+  project::DirectoryTree& directory_tree_ = current_project_state_.directory_tree;
+  project::FileIndex& file_index_ = current_project_state_.file_index;
+  project::FileFinder& file_finder_ = current_project_state_.file_finder;
+  editor::TextViewport& text_viewport_ = current_project_state_.text_viewport;
+  std::vector<TabEntry>& open_tabs_ = current_project_state_.open_tabs;
+  std::size_t& active_tab_index_ = current_project_state_.active_tab_index;
+  int& tab_scroll_index_ = current_project_state_.tab_scroll_index;
   SurfaceState surface_;
-  std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs_;
-  std::size_t active_terminal_tab_index_ = 0;
+  std::vector<std::unique_ptr<TerminalTabState>>& terminal_tabs_ = current_project_state_.terminal_tabs;
+  std::size_t& active_terminal_tab_index_ = current_project_state_.active_terminal_tab_index;
   WindowPresentationState window_presentation_;
-  OverlayWorkflowState overlay_workflow_;
-  GitSidebarState git_sidebar_;
-  ProblemsSidebarState problems_sidebar_;
-  PluginSidebarState plugin_sidebar_;
-  editor::DiagnosticsStore diagnostics_store_;
+  OverlayWorkflowState& overlay_workflow_ = current_project_state_.overlay_workflow;
+  GitSidebarState& git_sidebar_ = current_project_state_.git_sidebar;
+  ProblemsSidebarState& problems_sidebar_ = current_project_state_.problems_sidebar;
+  PluginSidebarState& plugin_sidebar_ = current_project_state_.plugin_sidebar;
+  editor::DiagnosticsStore& diagnostics_store_ = current_project_state_.diagnostics_store;
   struct SidebarModeMenuEntry {
     std::string label;
     std::string id;
@@ -1529,11 +1533,11 @@ class WorkspaceShell {
   PendingProjectOpenDialogResult pending_project_open_dialog_result_;
   PromptState prompts_;
   bool quit_requested_ = false;
-  CommandState command_;
+  CommandState& command_ = current_project_state_.command;
   std::vector<std::string> available_colorscheme_names_;
-  std::string active_colorscheme_name_ = "default";
-  std::optional<SDL_Color> project_base_color_;
-  EditorPreferences editor_preferences_;
+  std::string& active_colorscheme_name_ = current_project_state_.active_colorscheme_name;
+  std::optional<SDL_Color>& project_base_color_ = current_project_state_.project_base_color;
+  EditorPreferences& editor_preferences_ = current_project_state_.editor_preferences;
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
