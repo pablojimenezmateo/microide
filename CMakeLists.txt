@@ -216,6 +216,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectDialogCoordinator.cpp
   src/workspace/WorkspaceShellPrompts.cpp
   src/workspace/WorkspaceShellMerge.cpp
+  src/workspace/WorkspaceShellMergeState.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
   src/workspace/WorkspaceSidebarCoordinator.cpp
   src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp

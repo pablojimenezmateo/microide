@@ -135,6 +135,9 @@ Current state:
 - terminal tab open or close, focus-event sync, wake-event consumption, and exited-tab reaping
   now live across `WorkspaceShellTerminal.cpp` and `WorkspaceShellTerminalTabs.cpp` instead of
   one catch-all terminal translation unit
+- compare-tab rebuild, compare viewport sync, merge conflict tracking, and merge-tab rebuild now
+  live across `WorkspaceShellCompare.cpp` and `WorkspaceShellMergeState.cpp` instead of one mixed
+  compare-or-merge state translation unit
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

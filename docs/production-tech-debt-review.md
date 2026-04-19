@@ -40,6 +40,9 @@ Evidence:
 - Terminal tab open or close, focus-event sync, wake-event consumption, and exited-tab reaping
   now live across `WorkspaceShellTerminal.cpp` and `WorkspaceShellTerminalTabs.cpp` instead of
   one catch-all terminal translation unit.
+- Compare-tab rebuild or viewport sync, merge conflict tracking, and merge-tab rebuild now live
+  across `WorkspaceShellCompare.cpp` and `WorkspaceShellMergeState.cpp` instead of one mixed
+  compare-or-merge state translation unit.
 - Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
   handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
   monolithic coordinator file.
