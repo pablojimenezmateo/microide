@@ -76,7 +76,8 @@ Shipped today:
 
 - manual Lua plugin loading from user and project directories
 - plugin commands
-- one host-rendered plugin sidebar mode
+- a unified host-rendered sidebar view registry spanning built-in Tree, Search, Problems, and Git
+  views plus plugin sidebar providers
 - diagnostics publication and clearing
 - hover providers
 - runtime syntax contributions
@@ -99,7 +100,8 @@ Important current constraints:
 
 - plugins do not get `WorkspaceShell`
 - rendering remains host-owned
-- the current sidebar contribution path is one special-case surface, not a general view system
+- sidebar switching now routes through a unified host view registry, but contributions are still
+  limited to one host-owned left-sidebar container without hide, reorder, or override policy
 - plugin process execution is synchronous
 - there is no generic background task runner for plugins
 - there is no settings, keybinding, output, task, test, SCM, or AI registry
@@ -394,7 +396,16 @@ Minimum service set:
 
 ### 3. Replace the single plugin sidebar with a general contribution system
 
-The current sidebar contribution model is too special-case.
+The current sidebar contribution model has started to move onto the right seam, but it is still
+too limited.
+
+Already landed:
+
+- built-in Tree, Search, Problems, and Git views plus plugin sidebar providers now share one
+  host-owned sidebar view registry, menu path, command parser, completion path, and project-scoped
+  active view ID
+- project switching now restores the active sidebar view through stable contribution IDs instead of
+  a plugin-only sidebar slot
 
 Needed next:
 
@@ -617,6 +628,12 @@ This is the main structural precondition for everything else.
 ### Phase 2. Build the contribution and override model
 
 This is now the active phase.
+
+Started on 2026-04-19:
+
+- left-sidebar built-ins and plugin providers now share stable view IDs through one
+  `WorkspaceSidebarRegistry*` path for menu wiring, command parsing or completion, and
+  project-scoped active view persistence
 
 Deliverables:
 

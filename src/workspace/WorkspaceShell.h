@@ -648,8 +648,8 @@ class WorkspaceShell {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
     SidebarMode sidebar_prev_mode = SidebarMode::None;
-    std::string sidebar_plugin_id;
-    std::string sidebar_prev_plugin_id;
+    std::string sidebar_view_id = "tree";
+    std::string sidebar_prev_view_id;
     bool sidebar_temporary = false;
     bool overlay_visible = false;
     OverlayMode overlay_mode = OverlayMode::FileFinder;
@@ -680,8 +680,8 @@ class WorkspaceShell {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
     SidebarMode sidebar_prev_mode = SidebarMode::None;
-    std::string sidebar_plugin_id;
-    std::string sidebar_prev_plugin_id;
+    std::string sidebar_view_id = "tree";
+    std::string sidebar_prev_view_id;
     bool sidebar_temporary = false;
     bool overlay_visible = false;
     OverlayMode overlay_mode = OverlayMode::FileFinder;
@@ -1502,11 +1502,11 @@ class WorkspaceShell {
   ProblemsSidebarState problems_sidebar_;
   PluginSidebarState plugin_sidebar_;
   editor::DiagnosticsStore diagnostics_store_;
-  struct SidebarModeMenuPluginEntry {
+  struct SidebarModeMenuEntry {
     std::string label;
     std::string id;
   };
-  mutable std::vector<SidebarModeMenuPluginEntry> sidebar_mode_menu_plugin_entries_;
+  mutable std::vector<SidebarModeMenuEntry> sidebar_mode_menu_entries_;
   mutable std::vector<MenuItemSpec> sidebar_mode_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspacePluginRuntime plugin_runtime_;

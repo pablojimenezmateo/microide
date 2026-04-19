@@ -99,7 +99,7 @@ bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
   const auto& item = shell_.plugin_sidebar_.items[shell_.plugin_sidebar_.selected_index];
   std::string error_message;
   const bool confirmed = shell_.plugin_runtime_.Host().ConfirmSidebarItem(
-      shell_.surface_.sidebar_plugin_id, item, &error_message);
+      shell_.surface_.sidebar_view_id, item, &error_message);
   if (!confirmed && !error_message.empty()) {
     shell_.plugin_sidebar_.error = std::move(error_message);
   }

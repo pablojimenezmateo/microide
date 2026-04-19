@@ -158,19 +158,16 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     return menu == nullptr ? std::span<const MenuItemSpec>{} : menu->items;
   }
 
-  const auto builtin_items = BuiltinSidebarModeMenuItems();
-  const auto& plugin_providers = plugin_runtime_.Host().SidebarProviders();
+  const auto views = SidebarViews(plugin_runtime_.Host());
   sidebar_mode_menu_items_.clear();
-  sidebar_mode_menu_plugin_entries_.clear();
-  sidebar_mode_menu_items_.reserve(builtin_items.size() + plugin_providers.size());
-  sidebar_mode_menu_plugin_entries_.reserve(plugin_providers.size());
+  sidebar_mode_menu_entries_.clear();
+  sidebar_mode_menu_items_.reserve(views.size());
+  sidebar_mode_menu_entries_.reserve(views.size());
 
-  sidebar_mode_menu_items_.insert(sidebar_mode_menu_items_.end(), builtin_items.begin(),
-                                  builtin_items.end());
-  for (const auto& provider : plugin_providers) {
-    sidebar_mode_menu_plugin_entries_.push_back(
-        SidebarModeMenuPluginEntry{.label = provider.label, .id = provider.id});
-    const auto& entry = sidebar_mode_menu_plugin_entries_.back();
+  for (const SidebarViewInfo& view : views) {
+    sidebar_mode_menu_entries_.push_back(
+        SidebarModeMenuEntry{.label = std::string(view.label), .id = std::string(view.id)});
+    const auto& entry = sidebar_mode_menu_entries_.back();
     sidebar_mode_menu_items_.push_back(MenuItemSpec{
         .action = ActionId::SidebarShow,
         .label = entry.label,

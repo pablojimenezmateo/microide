@@ -141,16 +141,14 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 }
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
-  if (surface_.sidebar_mode == SidebarMode::Plugin &&
-      !surface_.sidebar_plugin_id.empty()) {
-    if (const auto* provider = plugin_runtime_.Host().FindSidebarProvider(surface_.sidebar_plugin_id);
-        provider != nullptr) {
-      return provider->label;
-    }
+  if (const std::optional<SidebarViewInfo> view =
+          FindSidebarView(surface_.sidebar_view_id, plugin_runtime_.Host());
+      view.has_value()) {
+    return std::string(view->label);
   }
-  if (const SidebarToolSpec* tool = FindBuiltinSidebarTool(surface_.sidebar_mode);
-      tool != nullptr) {
-    return std::string(tool->label);
+  if (const SidebarViewSpec* view = FindBuiltinSidebarView(surface_.sidebar_mode);
+      view != nullptr) {
+    return std::string(view->label);
   }
   return "Project";
 }

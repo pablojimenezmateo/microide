@@ -125,26 +125,22 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
   shell_.plugin_sidebar_.items.clear();
   shell_.plugin_sidebar_.error.clear();
   shell_.plugin_sidebar_.selected_index = 0;
-  if (shell_.surface_.sidebar_plugin_id.empty()) {
-    if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
-      shell_.RequestSidebarRedraw();
-    }
+  if (shell_.surface_.sidebar_mode != SidebarMode::Plugin) {
     return false;
   }
-  if (shell_.plugin_runtime_.Host().FindSidebarProvider(shell_.surface_.sidebar_plugin_id) ==
-      nullptr) {
-    shell_.surface_.sidebar_plugin_id.clear();
-    if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
-      shell_.surface_.sidebar_mode = SidebarMode::Tree;
-      if (shell_.surface_.sidebar_visible) {
-        shell_.RequestSidebarRedraw();
-      }
+  if (shell_.surface_.sidebar_view_id.empty() ||
+      shell_.plugin_runtime_.Host().FindSidebarProvider(shell_.surface_.sidebar_view_id) ==
+          nullptr) {
+    shell_.surface_.sidebar_mode = SidebarMode::Tree;
+    shell_.surface_.sidebar_view_id = "tree";
+    if (shell_.surface_.sidebar_visible) {
+      shell_.RequestSidebarRedraw();
     }
     return false;
   }
 
   std::string error_message;
-  if (!shell_.plugin_runtime_.Host().SnapshotSidebar(shell_.surface_.sidebar_plugin_id,
+  if (!shell_.plugin_runtime_.Host().SnapshotSidebar(shell_.surface_.sidebar_view_id,
                                                      &shell_.plugin_sidebar_.items,
                                                      &error_message)) {
     shell_.plugin_sidebar_.error = std::move(error_message);

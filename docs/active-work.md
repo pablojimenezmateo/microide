@@ -94,6 +94,10 @@ Current state:
   search, tab, edit, and global action-domain implementations now live in dedicated
   `Workspace*ActionExecutor.cpp` translation units instead of one monolithic
   `WorkspaceActionCoordinator.cpp`
+- built-in Tree, Search, Problems, and Git sidebar views plus plugin sidebar providers now share
+  one `WorkspaceSidebarRegistry*` path for ids, menu wiring, command parsing or completion, and
+  project-scoped active-view persistence instead of keeping plugin sidebars as a special-case
+  shell path
 - menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input
@@ -157,13 +161,15 @@ Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
 - Phase 1 host-service extraction from `docs/vscode-extension-compatibility-plan.md` is complete;
-  the next plugin-platform work is Phase 2 contribution and override seams rather than more
-  plugin runtime plumbing
+  Phase 2 contribution and override seams are now active, with unified sidebar view registration
+  landed as the first slice rather than more plugin runtime plumbing
 - validate broader native file-watch coverage beyond the current Linux-backed asset watcher once
   target-host build and runtime validation are available; until then snapshot fallback remains
   the correct baseline for macOS and Windows hosts
-- continue moving remaining hardcoded accelerators, menu wiring, sidebar tools, and extension
-  points behind stable registries where plugin pressure justifies it
+- extend the new sidebar contribution seam with view ordering, hide or disable controls, built-in
+  overrides, and additional host-owned view-container models where plugin pressure justifies it
+- continue moving remaining hardcoded accelerators, menu wiring, and extension points behind
+  stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them
 - extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in product features even when plugins can extend around them

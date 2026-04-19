@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "plugin/PluginHost.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -34,20 +35,17 @@ using microide::workspace::CommonPrefix;
 using microide::workspace::DecodeSessionNodePath;
 using microide::workspace::DetectLineEnding;
 using microide::workspace::EncodeSessionNodePath;
-using microide::workspace::FindWorkspaceMenuSpec;
-using microide::workspace::SidebarToolRequest;
-using microide::workspace::SidebarToolSpec;
-using microide::workspace::FindBuiltinSidebarTool;
+using microide::workspace::FindBuiltinSidebarView;
+using microide::workspace::FindSidebarView;
 using microide::workspace::FindWorkspaceActionByCommand;
 using microide::workspace::FindWorkspaceActionSpec;
+using microide::workspace::FindWorkspaceMenuSpec;
 using microide::workspace::FormatCommandCompletionToken;
-using microide::workspace::BuiltinSidebarModeMenuItems;
-using microide::workspace::BuiltinSidebarToolNames;
 using microide::workspace::JoinCommandArguments;
 using microide::workspace::MenuId;
 using microide::workspace::MenuSpec;
 using microide::workspace::ParseCommandLine;
-using microide::workspace::ParseBuiltinSidebarToolRequest;
+using microide::workspace::ParseSidebarViewRequest;
 using microide::workspace::ParseProjectConfigText;
 using microide::workspace::ParseProjectSessionText;
 using microide::workspace::ParseUiScaleValue;
@@ -70,6 +68,10 @@ using microide::workspace::SerializeProjectConfig;
 using microide::workspace::SerializeProjectSession;
 using microide::workspace::SerializeUserConfig;
 using microide::workspace::SerializeWorkspaceSession;
+using microide::workspace::SidebarViewIds;
+using microide::workspace::SidebarViewRequest;
+using microide::workspace::SidebarViewSpec;
+using microide::workspace::SidebarViews;
 using microide::workspace::SplitSyntaxLines;
 using microide::workspace::TreeContextTargetKind;
 using microide::workspace::ToLower;
@@ -264,49 +266,51 @@ void TestWorkspaceMenuRegistry() {
 }
 
 void TestWorkspaceSidebarRegistry() {
-  const SidebarToolSpec* tree = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Tree);
+  const SidebarViewSpec* tree = FindBuiltinSidebarView(WorkspaceShell::SidebarMode::Tree);
   Expect(tree != nullptr, "sidebar registry should expose the tree tool");
-  Expect(tree->command_name == "tree" && tree->label == "Project",
+  Expect(tree->id == "tree" && tree->label == "Project",
          "tree sidebar tool metadata mismatch");
 
-  const SidebarToolSpec* git = FindBuiltinSidebarTool("git");
+  const SidebarViewSpec* git = FindBuiltinSidebarView("git");
   Expect(git != nullptr && git->mode == WorkspaceShell::SidebarMode::Git,
          "sidebar registry should resolve the git tool by command name");
 
-  const SidebarToolSpec* problems = FindBuiltinSidebarTool("problems");
+  const SidebarViewSpec* problems = FindBuiltinSidebarView("problems");
   Expect(problems != nullptr && problems->mode == WorkspaceShell::SidebarMode::Problems,
          "sidebar registry should resolve the problems tool by command name");
 
-  const std::vector<std::string>& tool_names = BuiltinSidebarToolNames();
-  Expect(tool_names.size() == 4 && tool_names[0] == "git" && tool_names[1] == "problems" &&
-             tool_names[3] == "tree",
-         "sidebar registry should preserve built-in tool completion names");
+  microide::plugin::PluginHost plugin_host;
+  const auto views = SidebarViews(plugin_host);
+  Expect(views.size() == 4, "sidebar registry should expose four built-in views");
+  Expect(views[0].id == "tree" && views[0].label == "Project" &&
+             views[1].id == "search" && views[3].id == "git",
+         "sidebar registry should preserve built-in view ordering");
 
-  const SidebarToolRequest search_request =
-      ParseBuiltinSidebarToolRequest({"search", "lint", "errors"});
-  Expect(search_request.tool != nullptr &&
-             search_request.tool->mode == WorkspaceShell::SidebarMode::Search,
+  const auto problems_view = FindSidebarView("problems", plugin_host);
+  Expect(problems_view.has_value() &&
+             problems_view->mode == WorkspaceShell::SidebarMode::Problems,
+         "sidebar registry should resolve the problems view against the host");
+
+  const auto view_ids = SidebarViewIds(plugin_host);
+  Expect(view_ids.size() == 4 && view_ids[0] == "git" && view_ids[1] == "problems" &&
+             view_ids[3] == "tree",
+         "sidebar registry should preserve built-in view completion ids");
+
+  const SidebarViewRequest search_request =
+      ParseSidebarViewRequest({"search", "lint", "errors"}, plugin_host);
+  Expect(search_request.view.has_value() &&
+             search_request.view->mode == WorkspaceShell::SidebarMode::Search,
          "sidebar request parser should resolve the search tool");
   Expect(search_request.query == "lint errors",
          "sidebar request parser should join search queries");
 
-  const SidebarToolRequest tree_request =
-      ParseBuiltinSidebarToolRequest({"tree", "plugins"});
-  Expect(tree_request.tool != nullptr &&
-             tree_request.tool->mode == WorkspaceShell::SidebarMode::Tree,
+  const SidebarViewRequest tree_request =
+      ParseSidebarViewRequest({"tree", "plugins"}, plugin_host);
+  Expect(tree_request.view.has_value() &&
+             tree_request.view->mode == WorkspaceShell::SidebarMode::Tree,
          "sidebar request parser should resolve the tree tool");
   Expect(tree_request.root == std::filesystem::path("plugins"),
          "sidebar request parser should keep explicit tree roots");
-
-  const auto menu_items = BuiltinSidebarModeMenuItems();
-  Expect(menu_items.size() == 4,
-         "sidebar registry should expose four built-in sidebar menu items");
-  Expect(menu_items[0].label == "Project" && menu_items[0].args[0] == "tree",
-         "sidebar mode menu should keep the project item first");
-  Expect(menu_items[2].label == "Problems" && menu_items[2].args[0] == "problems",
-         "sidebar mode menu should expose the problems item");
-  Expect(menu_items[3].label == "Source Control" && menu_items[3].args[0] == "git",
-         "sidebar mode menu should keep the source-control item");
 }
 
 void TestWorkspaceSharedPathAndCaseHelpers() {

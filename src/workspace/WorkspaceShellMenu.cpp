@@ -213,10 +213,10 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
   }
   if ((item.action == ActionId::SidebarShow || item.action == ActionId::SidebarToggle) &&
       item.arg_count > 0) {
-    if (FindBuiltinSidebarTool(item.args[0]) != nullptr) {
+    if (FindBuiltinSidebarView(item.args[0]) != nullptr) {
       return !project_root_.empty();
     }
-    return plugin_runtime_.Host().FindSidebarProvider(item.args[0]) != nullptr;
+    return FindSidebarView(item.args[0], plugin_runtime_.Host()).has_value();
   }
 
   return IsActionEnabled(item.action);
@@ -231,24 +231,13 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
     return surface_.sidebar_visible;
   }
   if (item.action == ActionId::SidebarShow && item.arg_count > 0) {
-    if (const SidebarToolSpec* tool = FindBuiltinSidebarTool(item.args[0]); tool != nullptr) {
-      if (tool->mode == SidebarMode::Tree) {
-        return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Tree;
+    const std::optional<SidebarViewInfo> view = FindSidebarView(item.args[0], plugin_runtime_.Host());
+    if (view.has_value()) {
+      if (view->mode == SidebarMode::Search && surface_.sidebar_temporary) {
+        return false;
       }
-      if (tool->mode == SidebarMode::Search) {
-        return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Search &&
-               !surface_.sidebar_temporary;
-      }
-      if (tool->mode == SidebarMode::Problems) {
-        return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Problems;
-      }
-      if (tool->mode == SidebarMode::Git) {
-        return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Git;
-      }
-    }
-    if (plugin_runtime_.Host().FindSidebarProvider(item.args[0]) != nullptr) {
-      return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Plugin &&
-             surface_.sidebar_plugin_id == item.args[0];
+      return surface_.sidebar_visible && surface_.sidebar_mode == view->mode &&
+             surface_.sidebar_view_id == view->id;
     }
   }
   return false;

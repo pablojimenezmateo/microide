@@ -7,70 +7,102 @@
 
 namespace microide::workspace {
 
-namespace {
-
-MenuItemSpec SidebarModeMenuItem(const SidebarToolSpec& tool) {
-  MenuItemSpec item{};
-  item.action = ActionId::SidebarShow;
-  item.label = tool.label;
-  item.args = std::array<std::string_view, 2>{tool.command_name, {}};
-  item.arg_count = 1;
-  item.checkable = true;
-  return item;
-}
-
-}  // namespace
-
-std::span<const SidebarToolSpec> BuiltinSidebarToolSpecs() {
-  static const auto kSpecs = std::to_array<SidebarToolSpec>({
-      SidebarToolSpec{"tree", "Project", WorkspaceShell::SidebarMode::Tree},
-      SidebarToolSpec{"search", "Search", WorkspaceShell::SidebarMode::Search},
-      SidebarToolSpec{"problems", "Problems", WorkspaceShell::SidebarMode::Problems},
-      SidebarToolSpec{"git", "Source Control", WorkspaceShell::SidebarMode::Git},
+std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
+  static const auto kSpecs = std::to_array<SidebarViewSpec>({
+      SidebarViewSpec{"tree", "Project", WorkspaceShell::SidebarMode::Tree},
+      SidebarViewSpec{"search", "Search", WorkspaceShell::SidebarMode::Search},
+      SidebarViewSpec{"problems", "Problems", WorkspaceShell::SidebarMode::Problems},
+      SidebarViewSpec{"git", "Source Control", WorkspaceShell::SidebarMode::Git},
   });
   return kSpecs;
 }
 
-const SidebarToolSpec* FindBuiltinSidebarTool(std::string_view command_name) {
-  const auto specs = BuiltinSidebarToolSpecs();
+const SidebarViewSpec* FindBuiltinSidebarView(std::string_view id) {
+  const auto specs = BuiltinSidebarViewSpecs();
   const auto it = std::find_if(specs.begin(), specs.end(),
-                               [command_name](const SidebarToolSpec& spec) {
-                                 return spec.command_name == command_name;
+                               [id](const SidebarViewSpec& spec) {
+                                 return spec.id == id;
                                });
   return it == specs.end() ? nullptr : &(*it);
 }
 
-const SidebarToolSpec* FindBuiltinSidebarTool(WorkspaceShell::SidebarMode mode) {
-  const auto specs = BuiltinSidebarToolSpecs();
+const SidebarViewSpec* FindBuiltinSidebarView(WorkspaceShell::SidebarMode mode) {
+  const auto specs = BuiltinSidebarViewSpecs();
   const auto it = std::find_if(specs.begin(), specs.end(),
-                               [mode](const SidebarToolSpec& spec) {
+                               [mode](const SidebarViewSpec& spec) {
                                  return spec.mode == mode;
                                });
   return it == specs.end() ? nullptr : &(*it);
 }
 
-const std::vector<std::string>& BuiltinSidebarToolNames() {
-  static const std::vector<std::string> kNames = {
-      "git",
-      "problems",
-      "search",
-      "tree",
-  };
-  return kNames;
+std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host) {
+  std::vector<SidebarViewInfo> views;
+  const auto builtins = BuiltinSidebarViewSpecs();
+  const auto& plugin_providers = plugin_host.SidebarProviders();
+  views.reserve(builtins.size() + plugin_providers.size());
+  for (const SidebarViewSpec& spec : builtins) {
+    views.push_back(SidebarViewInfo{
+        .id = spec.id,
+        .label = spec.label,
+        .mode = spec.mode,
+    });
+  }
+  for (const auto& provider : plugin_providers) {
+    views.push_back(SidebarViewInfo{
+        .id = provider.id,
+        .label = provider.label,
+        .mode = WorkspaceShell::SidebarMode::Plugin,
+    });
+  }
+  return views;
 }
 
-SidebarToolRequest ParseBuiltinSidebarToolRequest(const std::vector<std::string>& args) {
-  SidebarToolRequest request;
+std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
+                                               const plugin::PluginHost& plugin_host) {
+  if (const SidebarViewSpec* builtin = FindBuiltinSidebarView(id); builtin != nullptr) {
+    return SidebarViewInfo{
+        .id = builtin->id,
+        .label = builtin->label,
+        .mode = builtin->mode,
+    };
+  }
+
+  if (const auto* plugin_view = plugin_host.FindSidebarProvider(id); plugin_view != nullptr) {
+    return SidebarViewInfo{
+        .id = plugin_view->id,
+        .label = plugin_view->label,
+        .mode = WorkspaceShell::SidebarMode::Plugin,
+    };
+  }
+
+  return std::nullopt;
+}
+
+std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host) {
+  std::vector<std::string> ids;
+  const auto views = SidebarViews(plugin_host);
+  ids.reserve(views.size());
+  for (const SidebarViewInfo& view : views) {
+    ids.emplace_back(view.id);
+  }
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  return ids;
+}
+
+SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
+                                          const plugin::PluginHost& plugin_host) {
+  SidebarViewRequest request;
   if (args.empty()) {
     return request;
   }
 
-  request.tool = FindBuiltinSidebarTool(args.front());
-  if (request.tool == nullptr) {
+  request.view = FindSidebarView(args.front(), plugin_host);
+  if (!request.view.has_value()) {
     return request;
   }
 
-  switch (request.tool->mode) {
+  switch (request.view->mode) {
     case WorkspaceShell::SidebarMode::Tree:
       request.root =
           args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
@@ -86,23 +118,6 @@ SidebarToolRequest ParseBuiltinSidebarToolRequest(const std::vector<std::string>
   }
 
   return request;
-}
-
-std::span<const MenuItemSpec> BuiltinSidebarModeMenuItems() {
-  static const auto kItems = [] {
-    const SidebarToolSpec* tree = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Tree);
-    const SidebarToolSpec* search = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Search);
-    const SidebarToolSpec* problems =
-        FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Problems);
-    const SidebarToolSpec* git = FindBuiltinSidebarTool(WorkspaceShell::SidebarMode::Git);
-    return std::to_array<MenuItemSpec>({
-        SidebarModeMenuItem(*tree),
-        SidebarModeMenuItem(*search),
-        SidebarModeMenuItem(*problems),
-        SidebarModeMenuItem(*git),
-    });
-  }();
-  return kItems;
 }
 
 }  // namespace microide::workspace

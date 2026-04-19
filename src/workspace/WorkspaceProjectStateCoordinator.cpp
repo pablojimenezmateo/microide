@@ -41,8 +41,8 @@ WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
       .sidebar_visible = state.sidebar_visible,
       .sidebar_mode = state.sidebar_mode,
       .sidebar_prev_mode = state.sidebar_prev_mode,
-      .sidebar_plugin_id = state.sidebar_plugin_id,
-      .sidebar_prev_plugin_id = state.sidebar_prev_plugin_id,
+      .sidebar_view_id = state.sidebar_view_id,
+      .sidebar_prev_view_id = state.sidebar_prev_view_id,
       .sidebar_temporary = state.sidebar_temporary,
       .overlay_visible = state.overlay_visible,
       .overlay_mode = state.overlay_mode,
@@ -60,8 +60,8 @@ void WorkspaceShell::ApplyProjectSurfaceState(const ProjectSurfaceState& state) 
   surface_.sidebar_visible = state.sidebar_visible;
   surface_.sidebar_mode = state.sidebar_mode;
   surface_.sidebar_prev_mode = state.sidebar_prev_mode;
-  surface_.sidebar_plugin_id = state.sidebar_plugin_id;
-  surface_.sidebar_prev_plugin_id = state.sidebar_prev_plugin_id;
+  surface_.sidebar_view_id = state.sidebar_view_id;
+  surface_.sidebar_prev_view_id = state.sidebar_prev_view_id;
   surface_.sidebar_temporary = state.sidebar_temporary;
   surface_.overlay_visible = state.overlay_visible;
   surface_.overlay_mode = state.overlay_mode;
@@ -121,8 +121,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   surface_.sidebar_visible = !show_welcome;
   surface_.sidebar_mode = SidebarMode::Tree;
   surface_.sidebar_prev_mode = SidebarMode::None;
-  surface_.sidebar_plugin_id.clear();
-  surface_.sidebar_prev_plugin_id.clear();
+  surface_.sidebar_view_id = "tree";
+  surface_.sidebar_prev_view_id.clear();
   surface_.sidebar_temporary = false;
   surface_.overlay_visible = false;
   surface_.overlay_mode = OverlayMode::FileFinder;

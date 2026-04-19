@@ -26,79 +26,79 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
 
   switch (id) {
     case ActionId::SidebarToggle: {
-      const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
-      const std::string plugin_id = args.empty() ? std::string{} : args.front();
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Git) {
-        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode) {
-          shell_.CloseSidebar();
-        } else {
-          shell_.ShowGitSidebar();
+      const SidebarViewRequest request = ParseSidebarViewRequest(args, shell_.plugin_runtime_.Host());
+      if (request.view.has_value()) {
+        const bool same_view =
+            shell_.surface_.sidebar_visible &&
+            shell_.surface_.sidebar_mode == request.view->mode &&
+            shell_.surface_.sidebar_view_id == request.view->id;
+        switch (request.view->mode) {
+          case SidebarMode::Tree:
+            if (same_view) {
+              shell_.CloseSidebar();
+            } else {
+              shell_.ShowTreeSidebar(request.root);
+            }
+            return DispatchResult::Handled;
+          case SidebarMode::Search:
+            if (same_view && !shell_.surface_.sidebar_temporary) {
+              shell_.CloseSidebar();
+            } else {
+              shell_.ShowSearchSidebar(request.query, false);
+            }
+            return DispatchResult::Handled;
+          case SidebarMode::Problems:
+            if (same_view) {
+              shell_.CloseSidebar();
+            } else {
+              shell_.ShowProblemsSidebar();
+            }
+            return DispatchResult::Handled;
+          case SidebarMode::Git:
+            if (same_view) {
+              shell_.CloseSidebar();
+            } else {
+              shell_.ShowGitSidebar();
+            }
+            return DispatchResult::Handled;
+          case SidebarMode::Plugin:
+            if (same_view) {
+              shell_.CloseSidebar();
+            } else if (!shell_.ShowPluginSidebar(request.view->id, false)) {
+              return reject("Failed to show plugin sidebar: " + std::string(request.view->id));
+            }
+            return DispatchResult::Handled;
+          case SidebarMode::None:
+            break;
         }
-        return DispatchResult::Handled;
-      }
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Tree) {
-        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode) {
-          shell_.CloseSidebar();
-        } else {
-          shell_.ShowTreeSidebar(request.root);
-        }
-        return DispatchResult::Handled;
-      }
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Search) {
-        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode &&
-            !shell_.surface_.sidebar_temporary) {
-          shell_.CloseSidebar();
-        } else {
-          shell_.ShowSearchSidebar(request.query, false);
-        }
-        return DispatchResult::Handled;
-      }
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Problems) {
-        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == request.tool->mode) {
-          shell_.CloseSidebar();
-        } else {
-          shell_.ShowProblemsSidebar();
-        }
-        return DispatchResult::Handled;
-      }
-      if (!plugin_id.empty() &&
-          shell_.plugin_runtime_.Host().FindSidebarProvider(plugin_id) != nullptr) {
-        if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin &&
-            shell_.surface_.sidebar_plugin_id == plugin_id) {
-          shell_.CloseSidebar();
-        } else if (!shell_.ShowPluginSidebar(plugin_id, false)) {
-          return reject("Failed to show plugin sidebar: " + plugin_id);
-        }
-        return DispatchResult::Handled;
       }
       shell_.ToggleSidebar();
       return DispatchResult::Handled;
     }
     case ActionId::SidebarShow: {
-      const SidebarToolRequest request = ParseBuiltinSidebarToolRequest(args);
-      const std::string plugin_id = args.empty() ? std::string{} : args.front();
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Git) {
-        shell_.ShowGitSidebar();
-        return DispatchResult::Handled;
-      }
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Tree) {
-        shell_.ShowTreeSidebar(request.root);
-        return DispatchResult::Handled;
-      }
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Search) {
-        shell_.ShowSearchSidebar(request.query, false);
-        return DispatchResult::Handled;
-      }
-      if (request.tool != nullptr && request.tool->mode == SidebarMode::Problems) {
-        shell_.ShowProblemsSidebar();
-        return DispatchResult::Handled;
-      }
-      if (!plugin_id.empty() &&
-          shell_.plugin_runtime_.Host().FindSidebarProvider(plugin_id) != nullptr) {
-        if (!shell_.ShowPluginSidebar(plugin_id, false)) {
-          return reject("Failed to show plugin sidebar: " + plugin_id);
+      const SidebarViewRequest request = ParseSidebarViewRequest(args, shell_.plugin_runtime_.Host());
+      if (request.view.has_value()) {
+        switch (request.view->mode) {
+          case SidebarMode::Tree:
+            shell_.ShowTreeSidebar(request.root);
+            return DispatchResult::Handled;
+          case SidebarMode::Search:
+            shell_.ShowSearchSidebar(request.query, false);
+            return DispatchResult::Handled;
+          case SidebarMode::Problems:
+            shell_.ShowProblemsSidebar();
+            return DispatchResult::Handled;
+          case SidebarMode::Git:
+            shell_.ShowGitSidebar();
+            return DispatchResult::Handled;
+          case SidebarMode::Plugin:
+            if (!shell_.ShowPluginSidebar(request.view->id, false)) {
+              return reject("Failed to show plugin sidebar: " + std::string(request.view->id));
+            }
+            return DispatchResult::Handled;
+          case SidebarMode::None:
+            break;
         }
-        return DispatchResult::Handled;
       }
       shell_.surface_.sidebar_visible = true;
       shell_.surface_.focus = FocusTarget::Sidebar;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,23 +12,32 @@
 
 namespace microide::workspace {
 
-struct SidebarToolSpec {
-  std::string_view command_name;
+struct SidebarViewSpec {
+  std::string_view id;
   std::string_view label;
   WorkspaceShell::SidebarMode mode = WorkspaceShell::SidebarMode::None;
 };
 
-struct SidebarToolRequest {
-  const SidebarToolSpec* tool = nullptr;
+struct SidebarViewInfo {
+  std::string_view id;
+  std::string_view label;
+  WorkspaceShell::SidebarMode mode = WorkspaceShell::SidebarMode::None;
+};
+
+struct SidebarViewRequest {
+  std::optional<SidebarViewInfo> view;
   std::filesystem::path root;
   std::string query;
 };
 
-std::span<const SidebarToolSpec> BuiltinSidebarToolSpecs();
-const SidebarToolSpec* FindBuiltinSidebarTool(std::string_view command_name);
-const SidebarToolSpec* FindBuiltinSidebarTool(WorkspaceShell::SidebarMode mode);
-const std::vector<std::string>& BuiltinSidebarToolNames();
-SidebarToolRequest ParseBuiltinSidebarToolRequest(const std::vector<std::string>& args);
-std::span<const MenuItemSpec> BuiltinSidebarModeMenuItems();
+std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs();
+const SidebarViewSpec* FindBuiltinSidebarView(std::string_view id);
+const SidebarViewSpec* FindBuiltinSidebarView(WorkspaceShell::SidebarMode mode);
+std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host);
+std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
+                                               const plugin::PluginHost& plugin_host);
+std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host);
+SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
+                                          const plugin::PluginHost& plugin_host);
 
 }  // namespace microide::workspace

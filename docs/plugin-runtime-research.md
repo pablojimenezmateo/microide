@@ -1,6 +1,6 @@
 # Plugin Runtime Research
 
-Reviewed on 2026-04-18.
+Reviewed on 2026-04-19.
 
 Scope:
 
@@ -12,7 +12,7 @@ Phase 0 status:
 
 - implemented on 2026-04-15 in the host codebase
 - added `src/workspace/WorkspaceCommandRegistry.*` for built-in command metadata and lookup
-- added `src/workspace/WorkspaceSidebarRegistry.*` for built-in sidebar tool metadata, parsing, and menu items
+- added `src/workspace/WorkspaceSidebarRegistry.*` for built-in sidebar view metadata and lookup
 - updated on 2026-04-18 with `src/workspace/WorkspaceActionTypes.*` and
   `src/workspace/WorkspaceMenuRegistry.*` so built-in action metadata plus menu-bar and
   tree-context definitions no longer live directly in `WorkspaceShell`
@@ -32,6 +32,9 @@ Phase 2 status:
 - implemented on 2026-04-15 in the host codebase
 - plugin setup can now register host-rendered sidebar providers through `ctx.sidebar.add({...})`
 - plugins can show those providers through `ctx.sidebar.show(id)` or the built-in `sidebar-show <id>` command
+- updated on 2026-04-19 so built-in Tree, Search, Problems, and Git views plus plugin sidebar
+  providers share one host-owned sidebar view registry, menu path, command parser, completion
+  path, and project-scoped active view IDs instead of a plugin-only sidebar slot
 - the workspace API now supports `ctx.workspace.open_file(path, line, column)`
 - plugins now have basic project-relative file helpers: `ctx.files.read_text`, `ctx.files.write_text`, and `ctx.files.exists`
 - plugins now have an argv-based process helper: `ctx.process.run(argv, { cwd = ..., stdin = ..., env = ... })`
@@ -889,6 +892,8 @@ This pass extended the runtime without changing the core product boundary:
 - command registration remains the same Phase 1 `ctx.commands.add(name, fn)` surface
 - plugins can now register left-sidebar list providers through `ctx.sidebar.add({ id, label, snapshot, on_confirm })`
 - plugin sidebars render through the host and participate in the existing sidebar command flow through `sidebar-show <id>` and `ctx.sidebar.show(id)`
+- built-in Tree, Search, Problems, and Git views plus plugin sidebar providers now share stable
+  IDs, menu wiring, command parsing or completion, and project-scoped active-view persistence
 - `ctx.workspace.open_file(path, line, column)` now supports jumping directly to a location
 - `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, and `ctx.files.exists(path)` provide project-relative file access
 - `ctx.process.run(argv, { cwd, stdin, env })` provides argv-based external tool execution and returns `ok`, `exit_code`, `stdout`, and `stderr`

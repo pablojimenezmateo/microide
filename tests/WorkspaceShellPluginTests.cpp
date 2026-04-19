@@ -441,7 +441,7 @@ return ide.plugin({
          "sidebar-show should accept plugin sidebar ids");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
          "plugin sidebar should activate the plugin sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "plugin-problems",
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "plugin-problems",
          "plugin sidebar should record the active provider id");
   Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
          "plugin sidebar should snapshot its items when shown");
@@ -499,7 +499,7 @@ void TestWorkspaceShellSidebarModeMenuListsPluginSidebars() {
          "clicking the plugin sidebar menu row should be handled");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
          "selecting a plugin sidebar from the dropdown should activate plugin sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "project-bookmarks",
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
          "selecting a plugin sidebar from the dropdown should target the provider id");
 }
 
@@ -800,7 +800,7 @@ void TestWorkspaceShellRepoBookmarksPluginAddsSidebarItems() {
          "bookmarks.add should execute through the shell command prompt");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
          "bookmarks.add should show the plugin sidebar after writing the bookmark");
-  Expect(WorkspaceShellTestAccess::SidebarPluginId(shell) == "project-bookmarks",
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
          "bookmarks.add should activate the repo plugin's sidebar id");
   Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
          "bookmarks sidebar should expose the saved bookmark");
@@ -926,6 +926,8 @@ void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
          "problems project-switch fixture should switch back to the first project");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
          "switching back should restore the first project's problems sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "problems",
+         "switching back should restore the first project's problems sidebar view id");
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1 &&
              WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().primary_label ==
                  "Alpha issue",
@@ -933,6 +935,56 @@ void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().detail_label ==
              "README.md:1:1 | lint-a",
          "restored problems should preserve their location metadata");
+}
+
+void TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  const std::filesystem::path source_a = project_a / "src" / "main.txt";
+  WriteFile(project_a / "README.md", "alpha project\n");
+  WriteFile(source_a, "alpha\nbeta\n");
+  WriteFile(project_b / "README.md", "beta project\n");
+  CopyRepoPlugin(plugins_root, "bookmarks");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "plugin project-switch fixture should open the first project");
+  WorkspaceShellTestAccess::OpenFile(shell, source_a);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "bookmarks.add Alpha bookmark"),
+         "plugin project-switch fixture should create one project-local bookmark");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
+         "adding the bookmark should activate the plugin sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
+         "adding the bookmark should record the plugin sidebar view id");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
+         "adding the bookmark should populate the plugin sidebar");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "plugin project-switch fixture should open the second project");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Tree,
+         "a fresh project should keep its default tree sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "tree",
+         "a fresh project should keep the default tree sidebar view id");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "plugin project-switch fixture should switch back to the first project");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
+         "switching back should restore the first project's plugin sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
+         "switching back should restore the first project's plugin sidebar view id");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1 &&
+             WorkspaceShellTestAccess::PluginSidebarItems(shell).front().label ==
+                 "Alpha bookmark",
+         "switching back should restore the first project's plugin sidebar items");
 }
 
 }  // namespace
@@ -968,6 +1020,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",
           TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches);
+  AddTest(tests, "WorkspaceShell/PluginSidebarPersistsAcrossProjectSwitches",
+          TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches);
 }
 
 }  // namespace microide::tests

@@ -28,6 +28,7 @@ struct WorkspaceShellTestAccess {
     shell.file_finder_.SetIndex(&shell.file_index_);
     shell.surface_.sidebar_visible = true;
     shell.surface_.sidebar_mode = WorkspaceShell::SidebarMode::Tree;
+    shell.surface_.sidebar_view_id = "tree";
     shell.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
   }
 
@@ -1011,8 +1012,8 @@ struct WorkspaceShellTestAccess {
   static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
     return shell.surface_.sidebar_mode;
   }
-  static const std::string& SidebarPluginId(const WorkspaceShell& shell) {
-    return shell.surface_.sidebar_plugin_id;
+  static const std::string& SidebarViewId(const WorkspaceShell& shell) {
+    return shell.surface_.sidebar_view_id;
   }
   static std::size_t ProblemsSidebarSelectedIndex(const WorkspaceShell& shell) {
     return shell.problems_sidebar_.selected_index;

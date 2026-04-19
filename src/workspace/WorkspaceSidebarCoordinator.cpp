@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "workspace/WorkspaceMenuCoordinator.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
 
@@ -24,15 +25,17 @@ void WorkspaceShell::SidebarCoordinator::ShowMode(SidebarMode mode, bool tempora
   if (temporary) {
     if (!shell_.surface_.sidebar_temporary && shell_.surface_.sidebar_visible) {
       shell_.surface_.sidebar_prev_mode = shell_.surface_.sidebar_mode;
-      shell_.surface_.sidebar_prev_plugin_id = shell_.surface_.sidebar_plugin_id;
+      shell_.surface_.sidebar_prev_view_id = shell_.surface_.sidebar_view_id;
     }
   } else {
     shell_.surface_.sidebar_prev_mode = SidebarMode::None;
-    shell_.surface_.sidebar_prev_plugin_id.clear();
+    shell_.surface_.sidebar_prev_view_id.clear();
   }
 
   if (mode != SidebarMode::Plugin) {
-    shell_.surface_.sidebar_plugin_id.clear();
+    if (const SidebarViewSpec* view = FindBuiltinSidebarView(mode); view != nullptr) {
+      shell_.surface_.sidebar_view_id = std::string(view->id);
+    }
   }
   shell_.surface_.sidebar_mode = mode;
   shell_.surface_.sidebar_temporary = temporary;
@@ -83,7 +86,7 @@ bool WorkspaceShell::SidebarCoordinator::ShowPlugin(std::string_view id, bool te
     return false;
   }
 
-  shell_.surface_.sidebar_plugin_id = provider->id;
+  shell_.surface_.sidebar_view_id = provider->id;
   ShowMode(SidebarMode::Plugin, temporary);
   return RefreshPlugin();
 }
@@ -103,7 +106,7 @@ void WorkspaceShell::SidebarCoordinator::Close() {
   shell_.surface_.sidebar_visible = false;
   shell_.surface_.sidebar_temporary = false;
   shell_.surface_.sidebar_prev_mode = SidebarMode::None;
-  shell_.surface_.sidebar_prev_plugin_id.clear();
+  shell_.surface_.sidebar_prev_view_id.clear();
   if (shell_.surface_.focus == FocusTarget::Sidebar) {
     shell_.surface_.focus = FocusTarget::Editor;
   }
@@ -122,9 +125,19 @@ void WorkspaceShell::SidebarCoordinator::Toggle() {
   if (shell_.surface_.sidebar_mode == SidebarMode::None) {
     shell_.surface_.sidebar_mode = SidebarMode::Tree;
   }
+  if (shell_.surface_.sidebar_mode == SidebarMode::Plugin &&
+      shell_.surface_.sidebar_view_id.empty()) {
+    shell_.surface_.sidebar_mode = SidebarMode::Tree;
+  }
+  if (shell_.surface_.sidebar_mode != SidebarMode::Plugin) {
+    if (const SidebarViewSpec* view = FindBuiltinSidebarView(shell_.surface_.sidebar_mode);
+        view != nullptr) {
+      shell_.surface_.sidebar_view_id = std::string(view->id);
+    }
+  }
   shell_.surface_.sidebar_visible = true;
   shell_.surface_.sidebar_temporary = false;
-  shell_.surface_.sidebar_prev_plugin_id.clear();
+  shell_.surface_.sidebar_prev_view_id.clear();
   shell_.surface_.focus = FocusTarget::Sidebar;
   if (!was_visible) {
     shell_.RequestWindowRedraw();
@@ -143,9 +156,16 @@ void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
   }
 
   shell_.surface_.sidebar_mode = shell_.surface_.sidebar_prev_mode;
-  shell_.surface_.sidebar_plugin_id = shell_.surface_.sidebar_prev_plugin_id;
+  shell_.surface_.sidebar_view_id = shell_.surface_.sidebar_prev_view_id;
+  if (shell_.surface_.sidebar_mode != SidebarMode::Plugin &&
+      shell_.surface_.sidebar_view_id.empty()) {
+    if (const SidebarViewSpec* view = FindBuiltinSidebarView(shell_.surface_.sidebar_mode);
+        view != nullptr) {
+      shell_.surface_.sidebar_view_id = std::string(view->id);
+    }
+  }
   shell_.surface_.sidebar_prev_mode = SidebarMode::None;
-  shell_.surface_.sidebar_prev_plugin_id.clear();
+  shell_.surface_.sidebar_prev_view_id.clear();
   shell_.surface_.sidebar_temporary = false;
   shell_.surface_.sidebar_visible = true;
   shell_.surface_.focus = FocusTarget::Sidebar;
