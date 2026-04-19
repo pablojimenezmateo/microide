@@ -176,6 +176,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceDiffTabCoordinator.cpp
   src/workspace/WorkspaceDirtyPromptCoordinator.cpp
   src/workspace/WorkspaceShellEditor.cpp
+  src/workspace/WorkspaceShellEditorSplits.cpp
   src/workspace/WorkspaceShellInput.cpp
   src/workspace/WorkspaceShellInteraction.cpp
   src/workspace/WorkspaceShellMenu.cpp

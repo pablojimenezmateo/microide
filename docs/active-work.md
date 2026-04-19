@@ -123,6 +123,9 @@ Current state:
   `WorkspaceShellRedraw.cpp`, `WorkspaceShellInteraction.cpp`,
   `WorkspaceShellCursor.cpp`, and `WorkspaceShellPresentation.cpp` units instead of staying
   bundled into `WorkspaceShell.cpp`
+- editor tab activation or restore flow, close or reload lifecycle, and split-tree or pane-layout
+  logic now live across `WorkspaceShellEditor.cpp` and
+  `WorkspaceShellEditorSplits.cpp` instead of one catch-all editor translation unit
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

@@ -578,6 +578,7 @@ Deliverables:
   `WorkspaceSidebarMouseCoordinator*`, `WorkspaceShellMouse*`,
   `WorkspacePersistenceCoordinator*`, `WorkspaceShellOverlay*`,
   `WorkspaceShellRedraw*`, `WorkspaceShellInteraction*`, `WorkspaceShellCursor*`,
+  `WorkspaceShellEditor*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,
   `WorkspaceShellRenderSidebar*`, `WorkspaceShellRenderOverlay*`,
