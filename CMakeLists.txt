@@ -212,6 +212,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspacePersistenceFormat.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
+  src/workspace/WorkspacePluginRuntime.cpp
   src/workspace/WorkspacePersistenceCoordinatorConfig.cpp
   src/workspace/WorkspacePersistenceCoordinatorSession.cpp
   src/workspace/WorkspacePersistenceCoordinatorWorkspaceSession.cpp

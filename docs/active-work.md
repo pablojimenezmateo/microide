@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-18.
+Reviewed on 2026-04-19.
 
 This is the single source of truth for:
 
@@ -64,6 +64,9 @@ Current state:
 - host-owned filesystem helpers and a host-owned tree watcher now back plugin discovery, runtime
   syntax loading, theme enumeration, and automatic plugin reload, with Linux native file-watch
   wakeups plus snapshot fallback where native coverage is not available
+- plugin host lifecycle, runtime syntax reload bookkeeping, asset watching, and plugin output
+  channels now run through a dedicated `WorkspacePluginRuntime*` service instead of living
+  directly on `WorkspaceShell`
 - workspace layout, scroll geometry, compare-or-merge marker math, and terminal-selection helpers
   now live in dedicated `WorkspaceLayout*` and `WorkspaceTerminalSelection*` modules instead of
   staying bundled into `WorkspaceShellShared.*`
@@ -153,13 +156,12 @@ Current state:
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
-- keep paying phase-1 host-service debt by broadening native file-watch coverage beyond the
-  current Linux-backed asset watcher while keeping snapshot fallback only where hosts or missing
-  roots still require it, and by continuing to peel remaining registry and coordinator concerns
-  out of `WorkspaceShell`
-  This non-Linux watcher parity work is deferred until target-host build and runtime validation
-  are available; from the current Linux-only environment, snapshot fallback remains the correct
-  baseline for macOS and Windows hosts.
+- Phase 1 host-service extraction from `docs/vscode-extension-compatibility-plan.md` is complete;
+  the next plugin-platform work is Phase 2 contribution and override seams rather than more
+  plugin runtime plumbing
+- validate broader native file-watch coverage beyond the current Linux-backed asset watcher once
+  target-host build and runtime validation are available; until then snapshot fallback remains
+  the correct baseline for macOS and Windows hosts
 - continue moving remaining hardcoded accelerators, menu wiring, sidebar tools, and extension
   points behind stable registries where plugin pressure justifies it
 - add async or background plugin task surfaces only if real plugin workloads require them

@@ -31,9 +31,8 @@
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceMenuRegistry.h"
-#include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePersistenceFormat.h"
-#include "workspace/WorkspacePluginAssetMonitor.h"
+#include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -1510,12 +1509,7 @@ class WorkspaceShell {
   mutable std::vector<SidebarModeMenuPluginEntry> sidebar_mode_menu_plugin_entries_;
   mutable std::vector<MenuItemSpec> sidebar_mode_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
-  WorkspaceOutputChannels output_channels_;
-  WorkspacePluginAssetMonitor plugin_asset_monitor_;
-  plugin::PluginHost plugin_host_;
-  std::size_t runtime_syntax_plugin_definition_count_ = 0;
-  std::vector<std::string> runtime_syntax_errors_;
-  Uint32 plugin_asset_event_type_ = 0;
+  WorkspacePluginRuntime plugin_runtime_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

@@ -112,7 +112,7 @@ void WorkspaceShell::CommandPromptCoordinator::CompleteInput() {
   const std::filesystem::path completion_root =
       shell_.project_root_.empty() ? std::filesystem::current_path() : shell_.project_root_;
   std::vector<std::string> command_names = WorkspaceCommandNames();
-  const auto& plugin_command_names = shell_.plugin_host_.CommandNames();
+  const auto& plugin_command_names = shell_.plugin_runtime_.Host().CommandNames();
   command_names.insert(command_names.end(), plugin_command_names.begin(), plugin_command_names.end());
 
   std::vector<CommandCompletionCandidate> candidates;
@@ -158,7 +158,7 @@ void WorkspaceShell::CommandPromptCoordinator::CompleteInput() {
   } else if (command == "sidebar-show" || command == "sidebar-toggle") {
     if (active_index == 1) {
       std::vector<std::string> sidebar_names = BuiltinSidebarToolNames();
-      for (const auto& provider : shell_.plugin_host_.SidebarProviders()) {
+      for (const auto& provider : shell_.plugin_runtime_.Host().SidebarProviders()) {
         sidebar_names.push_back(provider.id);
       }
       std::sort(sidebar_names.begin(), sidebar_names.end());
@@ -291,11 +291,11 @@ bool WorkspaceShell::CommandPromptCoordinator::ExecuteCommandLine(
     return ActionCoordinator(shell_).Execute(action->id, args, ActionSource::Command);
   }
 
-  const std::size_t message_count_before = shell_.plugin_host_.Messages().size();
+  const std::size_t message_count_before = shell_.plugin_runtime_.Host().Messages().size();
   std::string plugin_error;
-  if (shell_.plugin_host_.ExecuteCommand(command, args, &plugin_error)) {
-    if (shell_.plugin_host_.Messages().size() > message_count_before) {
-      SetFeedback(shell_.plugin_host_.Messages().back());
+  if (shell_.plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error)) {
+    if (shell_.plugin_runtime_.Host().Messages().size() > message_count_before) {
+      SetFeedback(shell_.plugin_runtime_.Host().Messages().back());
     }
     return true;
   }

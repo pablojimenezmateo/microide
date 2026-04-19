@@ -78,7 +78,7 @@ void WorkspaceShell::SidebarCoordinator::ShowGit() {
 }
 
 bool WorkspaceShell::SidebarCoordinator::ShowPlugin(std::string_view id, bool temporary) {
-  const auto* provider = shell_.plugin_host_.FindSidebarProvider(id);
+  const auto* provider = shell_.plugin_runtime_.Host().FindSidebarProvider(id);
   if (provider == nullptr) {
     return false;
   }

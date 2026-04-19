@@ -159,7 +159,7 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
   }
 
   const auto builtin_items = BuiltinSidebarModeMenuItems();
-  const auto& plugin_providers = plugin_host_.SidebarProviders();
+  const auto& plugin_providers = plugin_runtime_.Host().SidebarProviders();
   sidebar_mode_menu_items_.clear();
   sidebar_mode_menu_plugin_entries_.clear();
   sidebar_mode_menu_items_.reserve(builtin_items.size() + plugin_providers.size());

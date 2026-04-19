@@ -101,7 +101,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   const std::size_t text_column =
       editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, tab_size);
   plugin::PluginHost::HoverResult hover;
-  if (!plugin_host_.QueryHover(path, line_index + 1, text_column + 1, &hover, nullptr)) {
+  if (!plugin_runtime_.Host().QueryHover(path, line_index + 1, text_column + 1, &hover,
+                                         nullptr)) {
     return std::nullopt;
   }
 

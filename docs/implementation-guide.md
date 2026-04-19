@@ -54,6 +54,8 @@ The current SDL shell already includes:
 - a PTY-backed terminal panel with tabs, scrollback, selection, clipboard paste shortcuts, alternate-screen support, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, and common ANSI scroll-region handling
 - project-local editor preferences, colorscheme persistence, and session restore
 - runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets plus runtime-loaded plugin syntax contributions
+- a host-owned plugin runtime service for plugin lifecycle, syntax-asset reload bookkeeping,
+  asset watching, and plugin output logging
 - repo-owned Lua dogfood plugins for ESLint diagnostics and project-local bookmarks, exercising the same narrow host APIs exposed to user plugins
 - an optional `SDL3_ttf` backend with a debug-text fallback
 
@@ -103,8 +105,9 @@ The codebase is organized by responsibility:
 - `src/terminal`: PTY session and terminal screen state
 - `src/render`: themes and text-renderer backends
 
-`WorkspaceShell` is still the main coordinator, but project, terminal, compare, and rendering work
-should continue to move into narrower subsystems rather than accrete more logic in one file.
+`WorkspaceShell` is still the main coordinator, but plugin runtime, project, terminal, compare,
+and rendering work should continue to move into narrower subsystems rather than accrete more
+logic in one file.
 
 ## External Tool Boundary
 

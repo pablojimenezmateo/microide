@@ -321,22 +321,24 @@ struct WorkspaceShellTestAccess {
     return WorkspaceShell::CommandPromptCoordinator(shell).ExecuteCommandLine(command_line);
   }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
-    return shell.plugin_host_.Messages();
+    return shell.plugin_runtime_.Host().Messages();
   }
   static const std::vector<std::string>& PluginErrors(const WorkspaceShell& shell) {
-    return shell.plugin_host_.Errors();
+    return shell.plugin_runtime_.Host().Errors();
   }
-  static void ClearPluginMessages(WorkspaceShell& shell) { shell.plugin_host_.ClearMessages(); }
+  static void ClearPluginMessages(WorkspaceShell& shell) {
+    shell.plugin_runtime_.Host().ClearMessages();
+  }
   static void SetPluginAssetPollInterval(WorkspaceShell& shell,
                                          std::chrono::milliseconds poll_interval) {
-    shell.plugin_asset_monitor_.SetPollInterval(poll_interval);
+    shell.plugin_runtime_.SetPollInterval(poll_interval);
   }
   static WorkspaceShell::EventResult HandleScheduledWake(WorkspaceShell& shell) {
     return shell.HandleScheduledWake();
   }
   static const std::vector<std::string>* OutputChannelEntries(const WorkspaceShell& shell,
                                                               std::string_view id) {
-    return shell.output_channels_.Entries(id);
+    return shell.plugin_runtime_.OutputChannelEntries(id);
   }
   static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
       const WorkspaceShell& shell,

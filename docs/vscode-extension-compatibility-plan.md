@@ -1,6 +1,6 @@
 # Plugin Platform Expansion Plan
 
-Reviewed on 2026-04-18.
+Reviewed on 2026-04-19.
 
 This document supersedes the earlier compatibility-first framing.
 The top VS Code Marketplace extensions remain a useful demand signal, but they are no longer the
@@ -83,6 +83,8 @@ Shipped today:
 - project-relative file helpers
 - active-buffer metadata
 - synchronous argv-based process execution
+- a host-owned plugin runtime service for plugin lifecycle, runtime syntax reload bookkeeping,
+  plugin asset watching, and plugin output channels
 
 Concrete local references:
 
@@ -101,8 +103,8 @@ Important current constraints:
 - plugin process execution is synchronous
 - there is no generic background task runner for plugins
 - there is no settings, keybinding, output, task, test, SCM, or AI registry
-- host-owned process, app-directory, and file-watching services exist, but native watcher coverage
-  and higher-level plugin registries are still incomplete
+- host-owned process, task, app-directory, persistence, output-channel, and file-watching
+  services now form the Phase 1 service layer, but higher-level registries are still incomplete
   Non-Linux watcher parity is deferred until target-host build and runtime validation are
   available; snapshot fallback remains the current safe baseline away from Linux.
 
@@ -354,7 +356,9 @@ Non-goal:
 
 ### 1. Split `WorkspaceShell` pressure before broadening plugins
 
-This remains the first structural prerequisite.
+This was the first structural prerequisite.
+The current codebase now satisfies it well enough to treat Phase 1 as complete and move on to
+contribution-model work.
 
 Before widening the plugin API, `microide` should continue the work already called out in
 `docs/production-tech-debt-review.md`:
@@ -569,6 +573,14 @@ added.
 
 ### Phase 1. Extract host services and portability seams
 
+Status:
+
+- completed on 2026-04-19
+- `WorkspaceShell` no longer directly owns plugin host lifecycle, plugin asset watching, plugin
+  output channels, or runtime syntax reload bookkeeping; that work now lives in
+  `WorkspacePluginRuntime*`
+- the next active phase is Phase 2
+
 Deliverables:
 
 - narrower `WorkspaceShell`
@@ -603,6 +615,8 @@ Deliverables:
 This is the main structural precondition for everything else.
 
 ### Phase 2. Build the contribution and override model
+
+This is now the active phase.
 
 Deliverables:
 

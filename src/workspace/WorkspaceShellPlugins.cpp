@@ -3,14 +3,13 @@
 #include <filesystem>
 #include <string_view>
 
-#include "editor/SyntaxDefinitionLoader.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 namespace microide::workspace {
 
 WorkspaceShell::WorkspaceShell() {
-  plugin_host_.SetCallbacks(plugin::PluginHost::Callbacks{
+  plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
       .is_command_name_available =
           [](std::string_view name) { return FindWorkspaceActionByCommand(name) == nullptr; },
       .open_file =
@@ -68,45 +67,33 @@ WorkspaceShell::WorkspaceShell() {
           },
       .error_sink =
           [this](const std::string& text) {
-            output_channels_.AppendLine("plugins.error", "Plugin Errors", text);
+            plugin_runtime_.AppendError(text);
           },
       .log_sink =
           [this](const std::string& text) {
-            output_channels_.AppendLine("plugins.log", "Plugin Log", text);
+            plugin_runtime_.AppendLog(text);
           },
   });
 }
 
 bool WorkspaceShell::ReloadPluginsForCurrentProject() {
-  const bool clean_reload = plugin_host_.enabled() ? plugin_host_.Reload(project_root_) : false;
-  std::vector<std::string> syntax_loader_errors;
-  const std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> syntax_definitions =
-      editor::runtime_syntax::LoadDefinitionsFromDirectories(
-          plugin_host_.DataDirectories("syntax"), &syntax_loader_errors);
-  const editor::runtime_syntax::RuntimeSyntaxReloadResult syntax_reload =
-      editor::runtime_syntax::ReloadDefinitions(syntax_definitions, &runtime_syntax_errors_);
-  runtime_syntax_errors_.insert(runtime_syntax_errors_.end(), syntax_loader_errors.begin(),
-                                syntax_loader_errors.end());
-  runtime_syntax_plugin_definition_count_ = syntax_reload.plugin_definition_count;
-  plugin_asset_monitor_.SetProjectRoot(project_root_);
+  const bool clean_reload = plugin_runtime_.Reload(project_root_);
   InvalidateRuntimeSyntaxStateCaches();
   RefreshPluginSidebar();
   RefreshProblemsSidebar();
   NotifyPluginsAboutOpenBuffers();
   RequestEditorSurfaceRedraw();
-  return clean_reload && runtime_syntax_errors_.empty();
+  return clean_reload;
 }
 
 bool WorkspaceShell::ReloadPluginsIfPluginAssetsChanged(bool force_check) {
-  const bool changed =
-      force_check ? plugin_asset_monitor_.ConsumePendingChanges() : plugin_asset_monitor_.PollForChanges();
+  const bool changed = plugin_runtime_.ConsumeAssetChanges(force_check);
   if (!changed) {
     return false;
   }
 
   ReloadPluginsForCurrentProject();
-  output_channels_.AppendLine("plugins.log", "Plugin Log",
-                              "Detected plugin asset changes: " + PluginRuntimeReloadSummary());
+  plugin_runtime_.AppendLog("Detected plugin asset changes: " + PluginRuntimeReloadSummary());
   return true;
 }
 
@@ -146,22 +133,11 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches() {
 }
 
 std::string WorkspaceShell::PluginRuntimeReloadSummary() const {
-  std::string summary = plugin_host_.ReloadSummary();
-  summary += " and " + std::to_string(runtime_syntax_plugin_definition_count_) + " syntax definition";
-  if (runtime_syntax_plugin_definition_count_ != 1) {
-    summary += "s";
-  }
-  if (!runtime_syntax_errors_.empty()) {
-    summary += " with " + std::to_string(runtime_syntax_errors_.size()) + " syntax error";
-    if (runtime_syntax_errors_.size() != 1) {
-      summary += "s";
-    }
-  }
-  return summary;
+  return plugin_runtime_.ReloadSummary();
 }
 
 void WorkspaceShell::NotifyPluginsAboutOpenBuffers() {
-  if (!plugin_host_.enabled()) {
+  if (!plugin_runtime_.enabled()) {
     return;
   }
   for (const auto& tab : open_tabs_) {
@@ -173,17 +149,17 @@ void WorkspaceShell::NotifyPluginsAboutOpenBuffers() {
 }
 
 void WorkspaceShell::NotifyPluginBufferOpen(const std::filesystem::path& path) {
-  if (!plugin_host_.enabled() || path.empty()) {
+  if (!plugin_runtime_.enabled() || path.empty()) {
     return;
   }
-  plugin_host_.OnBufferOpen(path.lexically_normal());
+  plugin_runtime_.Host().OnBufferOpen(path.lexically_normal());
 }
 
 void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
-  if (!plugin_host_.enabled() || path.empty()) {
+  if (!plugin_runtime_.enabled() || path.empty()) {
     return;
   }
-  plugin_host_.OnBufferSave(path.lexically_normal());
+  plugin_runtime_.Host().OnBufferSave(path.lexically_normal());
 }
 
 }  // namespace microide::workspace

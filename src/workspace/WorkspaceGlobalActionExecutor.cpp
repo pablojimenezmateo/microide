@@ -124,7 +124,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
       return DispatchResult::Handled;
     }
     case ActionId::PluginsReload:
-      if (!shell_.plugin_host_.enabled()) {
+      if (!shell_.plugin_runtime_.enabled()) {
         return reject("Lua plugin runtime unavailable");
       }
       shell_.ReloadPluginsForCurrentProject();

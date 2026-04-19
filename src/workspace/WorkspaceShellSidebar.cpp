@@ -143,7 +143,7 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 std::string WorkspaceShell::SidebarModeControlLabel() const {
   if (surface_.sidebar_mode == SidebarMode::Plugin &&
       !surface_.sidebar_plugin_id.empty()) {
-    if (const auto* provider = plugin_host_.FindSidebarProvider(surface_.sidebar_plugin_id);
+    if (const auto* provider = plugin_runtime_.Host().FindSidebarProvider(surface_.sidebar_plugin_id);
         provider != nullptr) {
       return provider->label;
     }

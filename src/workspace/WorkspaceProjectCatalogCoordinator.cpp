@@ -100,7 +100,7 @@ void WorkspaceShell::ProjectCatalogCoordinator::PersistActiveEntry() {
   persistence.SaveConfigState();
   persistence.SaveSessionState();
   shell_.StoreCurrentProjectState(*shell_.project_catalog_.entries[shell_.project_catalog_.active_index]);
-  shell_.plugin_host_.Shutdown();
+  shell_.plugin_runtime_.ShutdownHost();
 }
 
 void WorkspaceShell::ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {

@@ -577,7 +577,7 @@ std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
 
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
-  if (const auto plugin_delay = plugin_asset_monitor_.NextPollDelay(); plugin_delay.has_value()) {
+  if (const auto plugin_delay = plugin_runtime_.NextPollDelay(); plugin_delay.has_value()) {
     const Uint32 plugin_delay_ms =
         static_cast<Uint32>(std::max<std::int64_t>(0, plugin_delay->count()));
     if (!next_delay.has_value() || plugin_delay_ms < *next_delay) {

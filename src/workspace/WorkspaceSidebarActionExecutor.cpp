@@ -61,7 +61,8 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
         }
         return DispatchResult::Handled;
       }
-      if (!plugin_id.empty() && shell_.plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
+      if (!plugin_id.empty() &&
+          shell_.plugin_runtime_.Host().FindSidebarProvider(plugin_id) != nullptr) {
         if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin &&
             shell_.surface_.sidebar_plugin_id == plugin_id) {
           shell_.CloseSidebar();
@@ -92,7 +93,8 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
         shell_.ShowProblemsSidebar();
         return DispatchResult::Handled;
       }
-      if (!plugin_id.empty() && shell_.plugin_host_.FindSidebarProvider(plugin_id) != nullptr) {
+      if (!plugin_id.empty() &&
+          shell_.plugin_runtime_.Host().FindSidebarProvider(plugin_id) != nullptr) {
         if (!shell_.ShowPluginSidebar(plugin_id, false)) {
           return reject("Failed to show plugin sidebar: " + plugin_id);
         }

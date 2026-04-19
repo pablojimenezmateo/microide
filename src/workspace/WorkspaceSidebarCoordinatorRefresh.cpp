@@ -131,7 +131,8 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
     }
     return false;
   }
-  if (shell_.plugin_host_.FindSidebarProvider(shell_.surface_.sidebar_plugin_id) == nullptr) {
+  if (shell_.plugin_runtime_.Host().FindSidebarProvider(shell_.surface_.sidebar_plugin_id) ==
+      nullptr) {
     shell_.surface_.sidebar_plugin_id.clear();
     if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
       shell_.surface_.sidebar_mode = SidebarMode::Tree;
@@ -143,8 +144,9 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
   }
 
   std::string error_message;
-  if (!shell_.plugin_host_.SnapshotSidebar(shell_.surface_.sidebar_plugin_id,
-                                           &shell_.plugin_sidebar_.items, &error_message)) {
+  if (!shell_.plugin_runtime_.Host().SnapshotSidebar(shell_.surface_.sidebar_plugin_id,
+                                                     &shell_.plugin_sidebar_.items,
+                                                     &error_message)) {
     shell_.plugin_sidebar_.error = std::move(error_message);
     if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
       shell_.RequestSidebarRedraw();

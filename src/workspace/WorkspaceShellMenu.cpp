@@ -216,7 +216,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     if (FindBuiltinSidebarTool(item.args[0]) != nullptr) {
       return !project_root_.empty();
     }
-    return plugin_host_.FindSidebarProvider(item.args[0]) != nullptr;
+    return plugin_runtime_.Host().FindSidebarProvider(item.args[0]) != nullptr;
   }
 
   return IsActionEnabled(item.action);
@@ -246,7 +246,7 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
         return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Git;
       }
     }
-    if (plugin_host_.FindSidebarProvider(item.args[0]) != nullptr) {
+    if (plugin_runtime_.Host().FindSidebarProvider(item.args[0]) != nullptr) {
       return surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Plugin &&
              surface_.sidebar_plugin_id == item.args[0];
     }

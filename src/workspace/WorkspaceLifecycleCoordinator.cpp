@@ -22,12 +22,9 @@ void WorkspaceShell::LifecycleCoordinator::ResetStartupState() {
 }
 
 void WorkspaceShell::LifecycleCoordinator::RegisterWakeEvents() {
-  shell_.plugin_asset_event_type_ = SDL_RegisterEvents(1);
-  if (shell_.plugin_asset_event_type_ != static_cast<Uint32>(-1)) {
-    shell_.plugin_asset_monitor_.SetWakeEventType(shell_.plugin_asset_event_type_);
-  } else {
-    shell_.plugin_asset_event_type_ = 0;
-  }
+  const Uint32 plugin_asset_event_type = SDL_RegisterEvents(1);
+  shell_.plugin_runtime_.SetWakeEventType(
+      plugin_asset_event_type != static_cast<Uint32>(-1) ? plugin_asset_event_type : 0);
 
   shell_.git_blame_event_type_ = SDL_RegisterEvents(1);
   if (shell_.git_blame_event_type_ != static_cast<Uint32>(-1)) {
@@ -125,9 +122,7 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
 
 void WorkspaceShell::LifecycleCoordinator::Shutdown() {
   PersistenceCoordinator persistence(shell_);
-  shell_.plugin_asset_monitor_.SetWakeEventType(0);
-  shell_.plugin_asset_monitor_.Reset();
-  shell_.plugin_host_.Shutdown();
+  shell_.plugin_runtime_.Shutdown();
   persistence.SaveUserConfig();
   shell_.git_blame_service_.Stop();
 
