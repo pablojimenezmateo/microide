@@ -37,6 +37,9 @@ Evidence:
 - Editor blame, diagnostic, or plugin hover targeting now lives apart from popup layout or hover
   lifetime across `WorkspaceShellHoverTargets.cpp` and `WorkspaceShellHoverPopup.cpp` instead of
   one catch-all hover translation unit.
+- Terminal tab open or close, focus-event sync, wake-event consumption, and exited-tab reaping
+  now live across `WorkspaceShellTerminal.cpp` and `WorkspaceShellTerminalTabs.cpp` instead of
+  one catch-all terminal translation unit.
 - Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
   handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
   monolithic coordinator file.

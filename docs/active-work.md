@@ -132,6 +132,9 @@ Current state:
 - editor blame, diagnostic, or plugin hover targeting now lives apart from popup layout or hover
   lifetime across `WorkspaceShellHoverTargets.cpp` and `WorkspaceShellHoverPopup.cpp` instead of
   one catch-all hover translation unit
+- terminal tab open or close, focus-event sync, wake-event consumption, and exited-tab reaping
+  now live across `WorkspaceShellTerminal.cpp` and `WorkspaceShellTerminalTabs.cpp` instead of
+  one catch-all terminal translation unit
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

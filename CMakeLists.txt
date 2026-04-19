@@ -230,6 +230,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellTerminal.cpp
+  src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
