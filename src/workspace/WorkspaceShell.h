@@ -644,6 +644,17 @@ class WorkspaceShell {
     int active_item_index = -1;
   };
 
+  struct MenuSurfaceState {
+    bool menu_bar_open = false;
+    MenuId active_menu_id = MenuId::None;
+    int active_menu_item_index = -1;
+    MenuId active_submenu_id = MenuId::None;
+    int active_submenu_item_index = -1;
+    std::optional<SDL_FRect> active_menu_anchor_rect;
+    std::optional<SDL_FRect> active_submenu_anchor_rect;
+    TreeContextMenuState tree_context_menu;
+  };
+
   struct ProjectSurfaceState {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
@@ -664,14 +675,6 @@ class WorkspaceShell {
 
   struct SurfaceState : ProjectSurfaceState {
     bool window_has_input_focus = true;
-    bool menu_bar_open = false;
-    MenuId active_menu_id = MenuId::None;
-    int active_menu_item_index = -1;
-    MenuId active_submenu_id = MenuId::None;
-    int active_submenu_item_index = -1;
-    std::optional<SDL_FRect> active_menu_anchor_rect;
-    std::optional<SDL_FRect> active_submenu_anchor_rect;
-    TreeContextMenuState tree_context_menu;
     bool mouse_selecting = false;
     DragTarget drag_target = DragTarget::None;
     float drag_scrollbar_offset = 0.0f;
@@ -1483,6 +1486,7 @@ class WorkspaceShell {
   std::size_t& active_tab_index_ = current_project_state_.active_tab_index;
   int& tab_scroll_index_ = current_project_state_.tab_scroll_index;
   SurfaceState surface_;
+  MenuSurfaceState menu_state_;
   std::vector<std::unique_ptr<TerminalTabState>>& terminal_tabs_ = current_project_state_.terminal_tabs;
   std::size_t& active_terminal_tab_index_ = current_project_state_.active_terminal_tab_index;
   WindowPresentationState window_presentation_;

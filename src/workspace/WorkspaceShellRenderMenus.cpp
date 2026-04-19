@@ -6,7 +6,7 @@ using namespace detail;
 
 void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
                                       const WorkspaceLayout& layout) const {
-  if (surface_.menu_bar_open) {
+  if (menu_state_.menu_bar_open) {
     const auto draw_popup_menu =
         [&](MenuId menu_id, int active_item_index, const std::optional<SDL_FRect>& anchor_rect) {
           const MenuSpec* menu = FindMenuSpec(menu_id);
@@ -64,18 +64,18 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             }
           }
         };
-    draw_popup_menu(surface_.active_menu_id, surface_.active_menu_item_index, std::nullopt);
-    if (surface_.active_submenu_id != MenuId::None) {
-      draw_popup_menu(surface_.active_submenu_id, surface_.active_submenu_item_index,
-                      surface_.active_submenu_anchor_rect);
+    draw_popup_menu(menu_state_.active_menu_id, menu_state_.active_menu_item_index, std::nullopt);
+    if (menu_state_.active_submenu_id != MenuId::None) {
+      draw_popup_menu(menu_state_.active_submenu_id, menu_state_.active_submenu_item_index,
+                      menu_state_.active_submenu_anchor_rect);
     }
   }
 
-  if (!surface_.tree_context_menu.open) {
+  if (!menu_state_.tree_context_menu.open) {
     return;
   }
 
-  const auto items = TreeContextMenuItems(surface_.tree_context_menu.target);
+  const auto items = TreeContextMenuItems(menu_state_.tree_context_menu.target);
   const auto popup_rect = ComputeTreeContextMenuRect();
   if (items.empty() || !popup_rect.has_value()) {
     return;
@@ -84,7 +84,7 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
   DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
   DrawRect(renderer, *popup_rect, theme_.border);
   for (const VisiblePopupMenuItem& item : ComputeVisiblePopupMenuItems(
-           items, surface_.tree_context_menu.active_item_index, *popup_rect)) {
+           items, menu_state_.tree_context_menu.active_item_index, *popup_rect)) {
     if (item.separator) {
       DrawFilledRect(renderer,
                      MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,

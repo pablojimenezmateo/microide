@@ -100,6 +100,8 @@ Current state:
   shell path
 - menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
+- menu-bar, anchored-menu, and tree-context-menu popup state now lives in a dedicated
+  `MenuSurfaceState` on the shell instead of staying flattened into the generic `SurfaceState`
 - SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input
   coordinator, with modal or menu, surface, and editor-domain handling split across dedicated
   `WorkspaceKeyInputCoordinator.cpp`, `WorkspaceKeyInputCoordinatorModal.cpp`,

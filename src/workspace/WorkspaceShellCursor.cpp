@@ -82,7 +82,7 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
     return false;
   }
 
-  if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
+  if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     return false;
   }
 
@@ -170,12 +170,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
   const WorkspaceLayout layout = *layout_state;
 
-  if (surface_.tree_context_menu.open) {
+  if (menu_state_.tree_context_menu.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect();
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(TreeContextMenuItems(surface_.tree_context_menu.target),
-                                        surface_.tree_context_menu.active_item_index, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(TreeContextMenuItems(menu_state_.tree_context_menu.target),
+                                        menu_state_.tree_context_menu.active_item_index,
+                                        *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
@@ -184,21 +185,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
-  if (surface_.menu_bar_open) {
+  if (menu_state_.menu_bar_open) {
     if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(surface_.active_submenu_id, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(menu_state_.active_submenu_id, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
       }
       return CursorKind::Default;
     }
-    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, surface_.active_menu_id);
+    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(surface_.active_menu_id, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(menu_state_.active_menu_id, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }

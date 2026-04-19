@@ -393,8 +393,8 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
   }
 
   std::optional<SDL_FRect> rect = layout->menu_bar;
-  if (surface_.menu_bar_open) {
-    if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, surface_.active_menu_id);
+  if (menu_state_.menu_bar_open) {
+    if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value()) {
       rect = UnionRects(rect, *popup_rect);
     }
@@ -403,7 +403,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
       rect = UnionRects(rect, *submenu_rect);
     }
   }
-  if (surface_.tree_context_menu.open) {
+  if (menu_state_.tree_context_menu.open) {
     if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {
       rect = UnionRects(rect, *tree_menu_rect);
     }
@@ -635,7 +635,7 @@ void WorkspaceShell::ResetCaretBlink() {
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
   if (surface_.command_mode || prompts_.dirty_visible || prompts_.surface_visible ||
-      surface_.overlay_visible || surface_.menu_bar_open || surface_.tree_context_menu.open) {
+      surface_.overlay_visible || menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     return false;
   }
 

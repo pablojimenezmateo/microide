@@ -24,14 +24,14 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
     }
     return handled;
   }
-  if (shell_.surface_.tree_context_menu.open) {
+  if (shell_.menu_state_.tree_context_menu.open) {
     const bool handled = HandleTreeContextMenuKeyDown(event);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestChromeRedraw(); });
     }
     return handled;
   }
-  if (shell_.surface_.menu_bar_open) {
+  if (shell_.menu_state_.menu_bar_open) {
     const bool handled = HandleMenuBarKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestChromeRedraw(); });

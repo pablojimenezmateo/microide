@@ -56,18 +56,20 @@ bool WorkspaceShell::KeyInputCoordinator::HandleTreeContextMenuKeyDown(
       menu.CloseTreeContextMenu();
       return true;
     case SDLK_DOWN:
-      shell_.surface_.tree_context_menu.active_item_index = menu.NextEnabledTreeContextMenuItemIndex(
-          shell_.surface_.tree_context_menu.active_item_index, 1);
+      shell_.menu_state_.tree_context_menu.active_item_index =
+          menu.NextEnabledTreeContextMenuItemIndex(
+              shell_.menu_state_.tree_context_menu.active_item_index, 1);
       return true;
     case SDLK_UP:
-      shell_.surface_.tree_context_menu.active_item_index = menu.NextEnabledTreeContextMenuItemIndex(
-          shell_.surface_.tree_context_menu.active_item_index, -1);
+      shell_.menu_state_.tree_context_menu.active_item_index =
+          menu.NextEnabledTreeContextMenuItemIndex(
+              shell_.menu_state_.tree_context_menu.active_item_index, -1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      if (shell_.surface_.tree_context_menu.active_item_index >= 0) {
+      if (shell_.menu_state_.tree_context_menu.active_item_index >= 0) {
         return menu.ExecuteTreeContextMenuItem(
-            static_cast<std::size_t>(shell_.surface_.tree_context_menu.active_item_index));
+            static_cast<std::size_t>(shell_.menu_state_.tree_context_menu.active_item_index));
       }
       return true;
     default:
@@ -94,9 +96,10 @@ bool WorkspaceShell::KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_Keyboar
       return menu.MoveActiveMenuItem(-1);
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      if (shell_.surface_.active_menu_item_index >= 0) {
-        return menu.ExecuteMenuItem(shell_.surface_.active_menu_id,
-                                    static_cast<std::size_t>(shell_.surface_.active_menu_item_index));
+      if (shell_.menu_state_.active_menu_item_index >= 0) {
+        return menu.ExecuteMenuItem(
+            shell_.menu_state_.active_menu_id,
+            static_cast<std::size_t>(shell_.menu_state_.active_menu_item_index));
       }
       return true;
     default:

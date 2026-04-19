@@ -266,8 +266,8 @@ std::filesystem::path WorkspaceShell::TreeMutationBasePath(ActionSource source) 
   if (project_root_.empty()) {
     return {};
   }
-  if (source == ActionSource::ContextMenu && surface_.tree_context_menu.open &&
-      surface_.tree_context_menu.target == TreeContextTargetKind::Background) {
+  if (source == ActionSource::ContextMenu && menu_state_.tree_context_menu.open &&
+      menu_state_.tree_context_menu.target == TreeContextTargetKind::Background) {
     return project_root_;
   }
 

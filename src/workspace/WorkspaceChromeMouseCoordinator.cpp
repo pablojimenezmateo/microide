@@ -19,16 +19,16 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleButtonDown(
     return true;
   }
 
-  if (shell_.surface_.menu_bar_open && event.button.button != SDL_BUTTON_LEFT) {
+  if (shell_.menu_state_.menu_bar_open && event.button.button != SDL_BUTTON_LEFT) {
     MenuCoordinator(shell_).CloseMenuBar();
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && shell_.surface_.sidebar_visible) {
     const SDL_FRect sidebar_mode_rect = shell_.SidebarModeControlRect(layout.sidebar);
     if (Contains(sidebar_mode_rect, event.button.x, event.button.y)) {
-      if (shell_.surface_.menu_bar_open &&
-          shell_.surface_.active_menu_id == MenuId::SidebarMode &&
-          shell_.surface_.active_menu_anchor_rect.has_value()) {
+      if (shell_.menu_state_.menu_bar_open &&
+          shell_.menu_state_.active_menu_id == MenuId::SidebarMode &&
+          shell_.menu_state_.active_menu_anchor_rect.has_value()) {
         MenuCoordinator(shell_).CloseMenuBar();
       } else {
         MenuCoordinator(shell_).OpenAnchoredMenu(MenuId::SidebarMode, sidebar_mode_rect);
@@ -116,12 +116,12 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
     return true;
   }
 
-  if (shell_.surface_.menu_bar_open) {
+  if (shell_.menu_state_.menu_bar_open) {
     for (const VisibleMenuBarItem& item : menu_bar_items) {
       if (!Contains(item.rect, event.button.x, event.button.y)) {
         continue;
       }
-      if (item.id == shell_.surface_.active_menu_id) {
+      if (item.id == shell_.menu_state_.active_menu_id) {
         MenuCoordinator(shell_).CloseMenuBar();
       } else {
         MenuCoordinator(shell_).OpenMenuBarMenu(item.id);
@@ -134,15 +134,16 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
         submenu_rect.has_value() &&
         Contains(*submenu_rect, event.button.x, event.button.y)) {
       for (const VisiblePopupMenuItem& item :
-           shell_.ComputeVisiblePopupMenuItems(shell_.surface_.active_submenu_id,
+           shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_submenu_id,
                                               *submenu_rect)) {
         if (!Contains(item.rect, event.button.x, event.button.y)) {
           continue;
         }
-        shell_.surface_.active_submenu_item_index =
+        shell_.menu_state_.active_submenu_item_index =
             item.enabled ? static_cast<int>(item.index) : -1;
         if (!item.separator && item.enabled) {
-          MenuCoordinator(shell_).ExecuteMenuItem(shell_.surface_.active_submenu_id, item.index);
+          MenuCoordinator(shell_).ExecuteMenuItem(shell_.menu_state_.active_submenu_id,
+                                                  item.index);
         }
         shell_.RequestChromeRedraw();
         return true;
@@ -152,18 +153,18 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
     }
 
     if (const auto popup_rect =
-            shell_.ComputePopupMenuRect(layout.menu_bar, shell_.surface_.active_menu_id);
+            shell_.ComputePopupMenuRect(layout.menu_bar, shell_.menu_state_.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
       for (const VisiblePopupMenuItem& item :
-           shell_.ComputeVisiblePopupMenuItems(shell_.surface_.active_menu_id,
+           shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_menu_id,
                                               *popup_rect)) {
         if (!Contains(item.rect, event.button.x, event.button.y)) {
           continue;
         }
-        shell_.surface_.active_menu_item_index =
+        shell_.menu_state_.active_menu_item_index =
             item.enabled ? static_cast<int>(item.index) : -1;
         if (!item.separator && item.enabled) {
-          MenuCoordinator(shell_).ExecuteMenuItem(shell_.surface_.active_menu_id, item.index);
+          MenuCoordinator(shell_).ExecuteMenuItem(shell_.menu_state_.active_menu_id, item.index);
         }
         shell_.RequestChromeRedraw();
         return true;
@@ -198,7 +199,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
 bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
     const SDL_Event& event,
     const WorkspaceLayout& layout) {
-  if (!shell_.surface_.menu_bar_open) {
+  if (!shell_.menu_state_.menu_bar_open) {
     return false;
   }
 
@@ -207,7 +208,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
     if (!Contains(item.rect, event.motion.x, event.motion.y)) {
       continue;
     }
-    if (item.id != shell_.surface_.active_menu_id) {
+    if (item.id != shell_.menu_state_.active_menu_id) {
       MenuCoordinator(shell_).OpenMenuBarMenu(item.id);
     }
     shell_.RequestChromeRedraw();
@@ -216,12 +217,12 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
 
   if (const auto submenu_rect = shell_.ActiveSubmenuRect(layout.menu_bar);
       submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
-    shell_.surface_.active_submenu_item_index = -1;
+    shell_.menu_state_.active_submenu_item_index = -1;
     for (const VisiblePopupMenuItem& item :
-         shell_.ComputeVisiblePopupMenuItems(shell_.surface_.active_submenu_id,
+         shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_submenu_id,
                                             *submenu_rect)) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
-        shell_.surface_.active_submenu_item_index =
+        shell_.menu_state_.active_submenu_item_index =
             item.enabled ? static_cast<int>(item.index) : -1;
         break;
       }
@@ -231,17 +232,17 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
   }
 
   if (const auto popup_rect =
-          shell_.ComputePopupMenuRect(layout.menu_bar, shell_.surface_.active_menu_id);
+          shell_.ComputePopupMenuRect(layout.menu_bar, shell_.menu_state_.active_menu_id);
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
-    shell_.surface_.active_menu_item_index = -1;
+    shell_.menu_state_.active_menu_item_index = -1;
     for (const VisiblePopupMenuItem& item :
-         shell_.ComputeVisiblePopupMenuItems(shell_.surface_.active_menu_id, *popup_rect)) {
+         shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_menu_id, *popup_rect)) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
-        shell_.surface_.active_menu_item_index =
+        shell_.menu_state_.active_menu_item_index =
             item.enabled ? static_cast<int>(item.index) : -1;
-        const MenuSpec* menu = shell_.FindMenuSpec(shell_.surface_.active_menu_id);
+        const MenuSpec* menu = shell_.FindMenuSpec(shell_.menu_state_.active_menu_id);
         if (menu != nullptr && item.enabled) {
-          const auto items = shell_.MenuItems(shell_.surface_.active_menu_id);
+          const auto items = shell_.MenuItems(shell_.menu_state_.active_menu_id);
           const MenuItemSpec& spec = items[item.index];
           if (spec.submenu != MenuId::None) {
             MenuCoordinator(shell_).OpenSubmenu(spec.submenu, item.rect);
@@ -258,7 +259,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
     return true;
   }
 
-  shell_.surface_.active_menu_item_index = -1;
+  shell_.menu_state_.active_menu_item_index = -1;
   shell_.RequestChromeRedraw();
   return true;
 }
@@ -313,7 +314,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
 
 bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
     const SDL_Event& event) {
-  if (!shell_.surface_.tree_context_menu.open) {
+  if (!shell_.menu_state_.tree_context_menu.open) {
     return false;
   }
 
@@ -321,12 +322,12 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
       popup_rect.has_value() &&
       Contains(*popup_rect, event.button.x, event.button.y)) {
     for (const VisiblePopupMenuItem& item : shell_.ComputeVisiblePopupMenuItems(
-             TreeContextMenuItems(shell_.surface_.tree_context_menu.target),
-             shell_.surface_.tree_context_menu.active_item_index, *popup_rect)) {
+             TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target),
+             shell_.menu_state_.tree_context_menu.active_item_index, *popup_rect)) {
       if (!Contains(item.rect, event.button.x, event.button.y)) {
         continue;
       }
-      shell_.surface_.tree_context_menu.active_item_index =
+      shell_.menu_state_.tree_context_menu.active_item_index =
           item.enabled ? static_cast<int>(item.index) : -1;
       if (event.button.button == SDL_BUTTON_LEFT && !item.separator && item.enabled) {
         MenuCoordinator(shell_).ExecuteTreeContextMenuItem(item.index);
@@ -345,19 +346,19 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
 
 bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuMotion(
     const SDL_Event& event) {
-  if (!shell_.surface_.tree_context_menu.open) {
+  if (!shell_.menu_state_.tree_context_menu.open) {
     return false;
   }
 
   if (const auto popup_rect = shell_.ComputeTreeContextMenuRect();
       popup_rect.has_value() &&
       Contains(*popup_rect, event.motion.x, event.motion.y)) {
-    shell_.surface_.tree_context_menu.active_item_index = -1;
+    shell_.menu_state_.tree_context_menu.active_item_index = -1;
     for (const VisiblePopupMenuItem& item : shell_.ComputeVisiblePopupMenuItems(
-             TreeContextMenuItems(shell_.surface_.tree_context_menu.target),
-             shell_.surface_.tree_context_menu.active_item_index, *popup_rect)) {
+             TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target),
+             shell_.menu_state_.tree_context_menu.active_item_index, *popup_rect)) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
-        shell_.surface_.tree_context_menu.active_item_index =
+        shell_.menu_state_.tree_context_menu.active_item_index =
             item.enabled ? static_cast<int>(item.index) : -1;
         break;
       }
@@ -366,7 +367,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuMotion(
     return true;
   }
 
-  shell_.surface_.tree_context_menu.active_item_index = -1;
+  shell_.menu_state_.tree_context_menu.active_item_index = -1;
   shell_.RequestChromeRedraw();
   return true;
 }

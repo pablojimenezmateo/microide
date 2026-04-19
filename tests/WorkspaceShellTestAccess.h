@@ -1059,28 +1059,30 @@ struct WorkspaceShellTestAccess {
   static bool FocusIsOverlay(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Overlay;
   }
-  static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.surface_.menu_bar_open; }
+  static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.menu_state_.menu_bar_open; }
   static bool EditMenuOpen(const WorkspaceShell& shell) {
-    return shell.surface_.menu_bar_open && shell.surface_.active_menu_id == WorkspaceShell::MenuId::Edit;
+    return shell.menu_state_.menu_bar_open &&
+           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::Edit;
   }
   static bool FileMenuOpen(const WorkspaceShell& shell) {
-    return shell.surface_.menu_bar_open && shell.surface_.active_menu_id == WorkspaceShell::MenuId::File;
+    return shell.menu_state_.menu_bar_open &&
+           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::File;
   }
   static bool EditorTabContextMenuOpen(const WorkspaceShell& shell) {
-    return shell.surface_.menu_bar_open &&
-           shell.surface_.active_menu_id == WorkspaceShell::MenuId::EditorTabContext;
+    return shell.menu_state_.menu_bar_open &&
+           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::EditorTabContext;
   }
   static bool SidebarModeMenuOpen(const WorkspaceShell& shell) {
-    return shell.surface_.menu_bar_open &&
-           shell.surface_.active_menu_id == WorkspaceShell::MenuId::SidebarMode;
+    return shell.menu_state_.menu_bar_open &&
+           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::SidebarMode;
   }
   static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
-    return shell.surface_.menu_bar_open &&
-           shell.surface_.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
+    return shell.menu_state_.menu_bar_open &&
+           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
   }
   static bool TerminalContextMenuOpen(const WorkspaceShell& shell) {
-    return shell.surface_.menu_bar_open &&
-           shell.surface_.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
+    return shell.menu_state_.menu_bar_open &&
+           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
   }
 };
 

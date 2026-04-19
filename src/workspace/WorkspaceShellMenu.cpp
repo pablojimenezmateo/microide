@@ -34,7 +34,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
     items.push_back(VisibleMenuBarItem{
         .id = spec.id,
         .rect = MakeRect(x, y, width, height),
-        .active = surface_.menu_bar_open && spec.id == surface_.active_menu_id,
+        .active = menu_state_.menu_bar_open && spec.id == menu_state_.active_menu_id,
     });
     x += width + 4.0f;
   }
@@ -117,8 +117,8 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
 
   const SDL_FRect bounds = CurrentWindowRect().value_or(
       MakeRect(0.0f, 0.0f, menu_bar.w, std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h)));
-  if (surface_.active_menu_anchor_rect.has_value() && id == surface_.active_menu_id) {
-    return ComputePopupMenuRect(*surface_.active_menu_anchor_rect, items, bounds);
+  if (menu_state_.active_menu_anchor_rect.has_value() && id == menu_state_.active_menu_id) {
+    return ComputePopupMenuRect(*menu_state_.active_menu_anchor_rect, items, bounds);
   }
 
   const auto menu_bar_items = ComputeVisibleMenuBarItems(menu_bar);
@@ -161,7 +161,7 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
     const SDL_FRect& popup_rect) const {
   const auto items = MenuItems(id);
   return items.empty() ? std::vector<VisiblePopupMenuItem>{}
-                       : ComputeVisiblePopupMenuItems(items, surface_.active_menu_item_index,
+                       : ComputeVisiblePopupMenuItems(items, menu_state_.active_menu_item_index,
                                                       popup_rect);
 }
 
@@ -244,17 +244,18 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu_bar) const {
-  if (surface_.active_submenu_id == MenuId::None || !surface_.active_submenu_anchor_rect.has_value()) {
+  if (menu_state_.active_submenu_id == MenuId::None ||
+      !menu_state_.active_submenu_anchor_rect.has_value()) {
     return std::nullopt;
   }
-  const MenuSpec* submenu = FindMenuSpec(surface_.active_submenu_id);
+  const MenuSpec* submenu = FindMenuSpec(menu_state_.active_submenu_id);
   if (submenu == nullptr) {
     return std::nullopt;
   }
-  const auto submenu_items = MenuItems(surface_.active_submenu_id);
+  const auto submenu_items = MenuItems(menu_state_.active_submenu_id);
   const SDL_FRect bounds = CurrentWindowRect().value_or(
       MakeRect(0.0f, 0.0f, menu_bar.w, std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h)));
-  SDL_FRect anchor = *surface_.active_submenu_anchor_rect;
+  SDL_FRect anchor = *menu_state_.active_submenu_anchor_rect;
   anchor.x += anchor.w - 1.0f;
   return ComputePopupMenuRect(anchor, submenu_items, bounds);
 }
@@ -265,20 +266,21 @@ std::filesystem::path WorkspaceShell::SelectedTreePath() const {
 }
 
 std::filesystem::path WorkspaceShell::ResolveTreeActionPath(ActionSource source) const {
-  if (source == ActionSource::ContextMenu && surface_.tree_context_menu.open &&
-      !surface_.tree_context_menu.path.empty()) {
-    return surface_.tree_context_menu.path.lexically_normal();
+  if (source == ActionSource::ContextMenu && menu_state_.tree_context_menu.open &&
+      !menu_state_.tree_context_menu.path.empty()) {
+    return menu_state_.tree_context_menu.path.lexically_normal();
   }
   return SelectedTreePath();
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
   const auto window_rect = CurrentWindowRect();
-  if (!surface_.tree_context_menu.open || !window_rect.has_value()) {
+  if (!menu_state_.tree_context_menu.open || !window_rect.has_value()) {
     return std::nullopt;
   }
-  return ComputePopupMenuRect(surface_.tree_context_menu.anchor_rect,
-                              TreeContextMenuItems(surface_.tree_context_menu.target), *window_rect);
+  return ComputePopupMenuRect(menu_state_.tree_context_menu.anchor_rect,
+                              TreeContextMenuItems(menu_state_.tree_context_menu.target),
+                              *window_rect);
 }
 
 }  // namespace microide::workspace

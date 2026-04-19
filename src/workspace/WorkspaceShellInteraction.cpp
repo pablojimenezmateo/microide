@@ -30,7 +30,7 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
                : TextInputSurface::None;
   }
 
-  if (surface_.menu_bar_open || surface_.tree_context_menu.open) {
+  if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     return TextInputSurface::None;
   }
 

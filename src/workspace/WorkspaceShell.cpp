@@ -55,7 +55,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
       return !project_root_.empty() &&
-             (surface_.tree_context_menu.open ? surface_.tree_context_menu.target : SelectedTreeTargetKind()) ==
+             (menu_state_.tree_context_menu.open ? menu_state_.tree_context_menu.target
+                                                 : SelectedTreeTargetKind()) ==
                  TreeContextTargetKind::File;
     case ActionId::CreateDirectory:
     case ActionId::CreateFile: {
@@ -63,7 +64,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
         return false;
       }
       const TreeContextTargetKind target =
-          surface_.tree_context_menu.open ? surface_.tree_context_menu.target : SelectedTreeTargetKind();
+          menu_state_.tree_context_menu.open ? menu_state_.tree_context_menu.target
+                                             : SelectedTreeTargetKind();
       return target == TreeContextTargetKind::Directory || target == TreeContextTargetKind::Root ||
              target == TreeContextTargetKind::Background;
     }
@@ -73,7 +75,8 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
         return false;
       }
       const TreeContextTargetKind target =
-          surface_.tree_context_menu.open ? surface_.tree_context_menu.target : SelectedTreeTargetKind();
+          menu_state_.tree_context_menu.open ? menu_state_.tree_context_menu.target
+                                             : SelectedTreeTargetKind();
       return target == TreeContextTargetKind::File || target == TreeContextTargetKind::Directory;
     }
     case ActionId::Compare:

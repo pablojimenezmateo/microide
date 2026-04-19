@@ -84,7 +84,7 @@ void WorkspaceShell::TextInputCoordinator::RequestCompositionRedraw(TextInputSur
 }
 
 bool WorkspaceShell::TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) {
-  if (shell_.surface_.menu_bar_open || shell_.surface_.tree_context_menu.open) {
+  if (shell_.menu_state_.menu_bar_open || shell_.menu_state_.tree_context_menu.open) {
     if (!shell_.text_composition_.text.empty()) {
       shell_.RequestWindowRedraw();
     }
@@ -119,7 +119,7 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextEditing(const SDL_TextEditi
 }
 
 bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
-  if (shell_.surface_.menu_bar_open || shell_.surface_.tree_context_menu.open) {
+  if (shell_.menu_state_.menu_bar_open || shell_.menu_state_.tree_context_menu.open) {
     return true;
   }
   if (event.text == nullptr || event.text[0] == '\0' || shell_.prompts_.dirty_visible) {

@@ -60,8 +60,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   const bool sidebar_mode_hovered =
       last_mouse_position_valid_ && Contains(sidebar_mode_rect, last_mouse_x_, last_mouse_y_);
   const bool sidebar_mode_open =
-      surface_.menu_bar_open && surface_.active_menu_id == MenuId::SidebarMode &&
-      surface_.active_menu_anchor_rect.has_value();
+      menu_state_.menu_bar_open && menu_state_.active_menu_id == MenuId::SidebarMode &&
+      menu_state_.active_menu_anchor_rect.has_value();
   DrawFilledRect(renderer, sidebar_mode_rect,
                  sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
                                                           : theme_.surface_raised);

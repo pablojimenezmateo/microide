@@ -597,6 +597,9 @@ Status:
 - follow-up cleanup on 2026-04-19 also keeps the active shell surface on the same
   `ProjectSurfaceState` shape used by persisted project state, removing duplicated sidebar,
   overlay, command-mode, focus, width, and scroll bookkeeping
+- follow-up cleanup on 2026-04-19 also moves menu-bar, anchored-menu, and tree-context popup
+  state behind a dedicated `MenuSurfaceState` on the shell instead of flattening that popup state
+  into the generic `SurfaceState`
 - the next active phase is Phase 2
 
 Deliverables:
