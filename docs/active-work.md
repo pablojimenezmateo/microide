@@ -129,6 +129,9 @@ Current state:
 - project state capture or restore, project-root initialization, and native project-picker flow
   now live across `WorkspaceShellProjects.cpp`, `WorkspaceProjectStateCoordinator.cpp`, and
   `WorkspaceProjectDialogCoordinator.cpp` instead of one catch-all project translation unit
+- editor blame, diagnostic, or plugin hover targeting now lives apart from popup layout or hover
+  lifetime across `WorkspaceShellHoverTargets.cpp` and `WorkspaceShellHoverPopup.cpp` instead of
+  one catch-all hover translation unit
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

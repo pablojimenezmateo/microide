@@ -581,6 +581,7 @@ Deliverables:
   `WorkspaceShellEditor*`,
   `WorkspaceProjectCatalogCoordinator*`, `WorkspaceProjectStateCoordinator*`,
   `WorkspaceProjectDialogCoordinator*`,
+  `WorkspaceShellHover*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,
   `WorkspaceShellRenderSidebar*`, `WorkspaceShellRenderOverlay*`,

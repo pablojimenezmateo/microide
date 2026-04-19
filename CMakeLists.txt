@@ -195,7 +195,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRenderPrompts.cpp
   src/workspace/WorkspaceShellRenderChrome.cpp
   src/workspace/WorkspaceShellRenderTextInput.cpp
-  src/workspace/WorkspaceShellHover.cpp
+  src/workspace/WorkspaceShellHoverPopup.cpp
+  src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellProjects.cpp
