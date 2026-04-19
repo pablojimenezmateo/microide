@@ -138,6 +138,9 @@ Current state:
 - compare-tab rebuild, compare viewport sync, merge conflict tracking, and merge-tab rebuild now
   live across `WorkspaceShellCompare.cpp` and `WorkspaceShellMergeState.cpp` instead of one mixed
   compare-or-merge state translation unit
+- dirty-path detection or save resolution and rename-or-delete tab retargeting now live across
+  `WorkspacePathMutationCoordinator.cpp`, `WorkspacePathMutationCoordinatorDirty.cpp`, and
+  `WorkspacePathMutationCoordinatorTabs.cpp` instead of one catch-all path-mutation coordinator
 - top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
   sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
   `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,

@@ -205,6 +205,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
+  src/workspace/WorkspacePathMutationCoordinatorDirty.cpp
+  src/workspace/WorkspacePathMutationCoordinatorTabs.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp
   src/workspace/WorkspaceOutputChannels.cpp

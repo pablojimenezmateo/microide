@@ -43,6 +43,9 @@ Evidence:
 - Compare-tab rebuild or viewport sync, merge conflict tracking, and merge-tab rebuild now live
   across `WorkspaceShellCompare.cpp` and `WorkspaceShellMergeState.cpp` instead of one mixed
   compare-or-merge state translation unit.
+- Dirty-path detection or save resolution and rename-or-delete tab retargeting now live across
+  `WorkspacePathMutationCoordinator.cpp`, `WorkspacePathMutationCoordinatorDirty.cpp`, and
+  `WorkspacePathMutationCoordinatorTabs.cpp` instead of one catch-all path-mutation coordinator.
 - Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
   handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
   monolithic coordinator file.

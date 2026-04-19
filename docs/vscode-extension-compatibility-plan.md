@@ -583,6 +583,7 @@ Deliverables:
   `WorkspaceProjectDialogCoordinator*`,
   `WorkspaceShellHover*`,
   `WorkspaceShellMergeState*`,
+  `WorkspacePathMutationCoordinator*`,
   `WorkspaceShellTerminal*`,
   `WorkspaceShellPresentation*`,
   `WorkspaceLayout*`, `WorkspaceShellRenderFrame*`, `WorkspaceShellRenderChrome*`,
