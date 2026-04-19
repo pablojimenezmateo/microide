@@ -995,6 +995,9 @@ struct WorkspaceShellTestAccess {
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
     return WorkspaceShell::CommandPromptCoordinator::PromptStatusText(shell);
   }
+  static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
+    return shell.overlay_workflow_.project_search.query;
+  }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.surface_.overlay_visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
     return shell.surface_.overlay_mode == WorkspaceShell::OverlayMode::FileFinder;

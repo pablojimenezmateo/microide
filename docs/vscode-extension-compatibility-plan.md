@@ -594,6 +594,9 @@ Status:
   `ProjectWorkspaceState` container shape used by project-catalog entries, removing duplicated
   project-switch and persistence bookkeeping for tabs, search state, terminals, diagnostics,
   command history, colorscheme, and editor preferences
+- follow-up cleanup on 2026-04-19 also keeps the active shell surface on the same
+  `ProjectSurfaceState` shape used by persisted project state, removing duplicated sidebar,
+  overlay, command-mode, focus, width, and scroll bookkeeping
 - the next active phase is Phase 2
 
 Deliverables:

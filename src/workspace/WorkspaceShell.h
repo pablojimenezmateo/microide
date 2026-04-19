@@ -644,38 +644,6 @@ class WorkspaceShell {
     int active_item_index = -1;
   };
 
-  struct SurfaceState {
-    bool sidebar_visible = true;
-    SidebarMode sidebar_mode = SidebarMode::Tree;
-    SidebarMode sidebar_prev_mode = SidebarMode::None;
-    std::string sidebar_view_id = "tree";
-    std::string sidebar_prev_view_id;
-    bool sidebar_temporary = false;
-    bool overlay_visible = false;
-    OverlayMode overlay_mode = OverlayMode::FileFinder;
-    bool menu_bar_open = false;
-    MenuId active_menu_id = MenuId::None;
-    int active_menu_item_index = -1;
-    MenuId active_submenu_id = MenuId::None;
-    int active_submenu_item_index = -1;
-    std::optional<SDL_FRect> active_menu_anchor_rect;
-    std::optional<SDL_FRect> active_submenu_anchor_rect;
-    TreeContextMenuState tree_context_menu;
-    BufferSearchField buffer_search_field = BufferSearchField::Search;
-    bool command_mode = false;
-    bool mouse_selecting = false;
-    DragTarget drag_target = DragTarget::None;
-    float drag_scrollbar_offset = 0.0f;
-    std::vector<std::size_t> drag_editor_split_path;
-    std::size_t drag_editor_split_divider_index = 0;
-    FocusTarget focus = FocusTarget::Sidebar;
-    float sidebar_width = 288.0f;
-    float bottom_panel_height = 184.0f;
-    bool window_has_input_focus = true;
-    int sidebar_scroll_row = 0;
-    int overlay_scroll_row = 0;
-  };
-
   struct ProjectSurfaceState {
     bool sidebar_visible = true;
     SidebarMode sidebar_mode = SidebarMode::Tree;
@@ -692,6 +660,23 @@ class WorkspaceShell {
     float bottom_panel_height = 184.0f;
     int sidebar_scroll_row = 0;
     int overlay_scroll_row = 0;
+  };
+
+  struct SurfaceState : ProjectSurfaceState {
+    bool window_has_input_focus = true;
+    bool menu_bar_open = false;
+    MenuId active_menu_id = MenuId::None;
+    int active_menu_item_index = -1;
+    MenuId active_submenu_id = MenuId::None;
+    int active_submenu_item_index = -1;
+    std::optional<SDL_FRect> active_menu_anchor_rect;
+    std::optional<SDL_FRect> active_submenu_anchor_rect;
+    TreeContextMenuState tree_context_menu;
+    bool mouse_selecting = false;
+    DragTarget drag_target = DragTarget::None;
+    float drag_scrollbar_offset = 0.0f;
+    std::vector<std::size_t> drag_editor_split_path;
+    std::size_t drag_editor_split_divider_index = 0;
   };
 
   struct CommandState {

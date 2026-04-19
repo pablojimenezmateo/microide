@@ -42,41 +42,11 @@ void WorkspaceShell::ResetCurrentProjectStateStorage() {
 
 WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
     const SurfaceState& state) {
-  return ProjectSurfaceState{
-      .sidebar_visible = state.sidebar_visible,
-      .sidebar_mode = state.sidebar_mode,
-      .sidebar_prev_mode = state.sidebar_prev_mode,
-      .sidebar_view_id = state.sidebar_view_id,
-      .sidebar_prev_view_id = state.sidebar_prev_view_id,
-      .sidebar_temporary = state.sidebar_temporary,
-      .overlay_visible = state.overlay_visible,
-      .overlay_mode = state.overlay_mode,
-      .buffer_search_field = state.buffer_search_field,
-      .command_mode = state.command_mode,
-      .focus = state.focus,
-      .sidebar_width = state.sidebar_width,
-      .bottom_panel_height = state.bottom_panel_height,
-      .sidebar_scroll_row = state.sidebar_scroll_row,
-      .overlay_scroll_row = state.overlay_scroll_row,
-  };
+  return static_cast<const ProjectSurfaceState&>(state);
 }
 
 void WorkspaceShell::ApplyProjectSurfaceState(const ProjectSurfaceState& state) {
-  surface_.sidebar_visible = state.sidebar_visible;
-  surface_.sidebar_mode = state.sidebar_mode;
-  surface_.sidebar_prev_mode = state.sidebar_prev_mode;
-  surface_.sidebar_view_id = state.sidebar_view_id;
-  surface_.sidebar_prev_view_id = state.sidebar_prev_view_id;
-  surface_.sidebar_temporary = state.sidebar_temporary;
-  surface_.overlay_visible = state.overlay_visible;
-  surface_.overlay_mode = state.overlay_mode;
-  surface_.buffer_search_field = state.buffer_search_field;
-  surface_.command_mode = state.command_mode;
-  surface_.focus = state.focus;
-  surface_.sidebar_width = state.sidebar_width;
-  surface_.bottom_panel_height = state.bottom_panel_height;
-  surface_.sidebar_scroll_row = state.sidebar_scroll_row;
-  surface_.overlay_scroll_row = state.overlay_scroll_row;
+  static_cast<ProjectSurfaceState&>(surface_) = state;
 }
 
 std::filesystem::path WorkspaceShell::ResolveProjectRootInput(

@@ -250,6 +250,63 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
          "switching forward should restore the second project's command history");
 }
 
+void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  Expect(ExecuteCommand(shell, "sidebar-width 420"),
+         "first project should accept a sidebar width command");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha query", false);
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Search,
+         "first project should show the search sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "search",
+         "first project should keep the search sidebar view id");
+  Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 420.0f) < 0.001f,
+         "first project should keep its sidebar width");
+  Expect(WorkspaceShellTestAccess::ProjectSearchQuery(shell) == "alpha query",
+         "first project should keep its project-search query");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(ExecuteCommand(shell, "sidebar-width 320"),
+         "second project should accept its own sidebar width command");
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+         "second project should show its own sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "problems",
+         "second project should keep the problems sidebar view id");
+  Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 320.0f) < 0.001f,
+         "second project should keep its sidebar width");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "switching back to the first project should succeed");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Search,
+         "switching back should restore the first project's search sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "search",
+         "switching back should restore the first project's sidebar view id");
+  Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 420.0f) < 0.001f,
+         "switching back should restore the first project's sidebar width");
+  Expect(WorkspaceShellTestAccess::ProjectSearchQuery(shell) == "alpha query",
+         "switching back should restore the first project's search query");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
+         "switching forward to the second project should succeed");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+         "switching forward should restore the second project's sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "problems",
+         "switching forward should restore the second project's sidebar view id");
+  Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 320.0f) < 0.001f,
+         "switching forward should restore the second project's sidebar width");
+}
+
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1110,6 +1167,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects);
   AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesProjectScopedCommandState",
           TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesSearchSidebarSurfaceState",
+          TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
           TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
   AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",
