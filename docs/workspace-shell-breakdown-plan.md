@@ -33,8 +33,9 @@ still ownership.
 
 Evidence from the current codebase:
 
-- `src/workspace/WorkspaceShell.h` is still about 1.5k lines and still defines a large amount of
-  workspace state, UI state, render state, and interaction state.
+- `src/workspace/WorkspaceShell.h` is still about 1.3k lines even after moving project and tab
+  state model definitions into `WorkspaceTabState.h` and `WorkspaceProjectState.h`, and it still
+  defines a large amount of workspace state, UI state, render state, and interaction state.
 - `WorkspaceShell` still embeds `ProjectWorkspaceState current_project_state_` and then re-exposes
   it through alias members such as `project_root_`, `directory_tree_`, `open_tabs_`, `surface_`,
   `sidebar_state_`, `overlay_state_`, `panel_state_`, `terminal_tabs_`, `diagnostics_store_`,
@@ -53,6 +54,10 @@ Evidence from the current codebase:
   need shell internals to reach real behavior.
 
 The current shape is no longer a single translation-unit blob, but it is still a god object.
+
+The first suggested landing-order slice is now complete: project and tab workspace state models no
+longer live inline inside `WorkspaceShell.h`. The remaining work is the actual ownership rewrite,
+friend removal, controller migration, view extraction, and test migration.
 
 ## Decision
 
@@ -322,6 +327,7 @@ Acceptance criteria:
 This work should land in coherent slices rather than one giant branch:
 
 1. Move nested state types out of `WorkspaceShell.h` without changing behavior.
+   Status: complete on 2026-04-20 via `WorkspaceTabState.h` and `WorkspaceProjectState.h`.
 2. Add `WorkspaceContext` and make the shell delegate state ownership to it.
 3. Migrate the least UI-coupled controllers first: project catalog, persistence, lifecycle.
 4. Migrate action handling so new controllers stop needing shell reach-through.

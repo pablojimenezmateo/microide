@@ -98,16 +98,18 @@ LSP-backed diagnostics are also a separate phase, not an implicit requirement of
 The codebase is organized by responsibility:
 
 - `src/app`: SDL bootstrap, app lifetime, event loop, and startup tracing
-- `src/workspace`: shell state, actions, menus, prompts, persistence, and UI routing
+- `src/workspace`: shell facade, workspace state models, actions, menus, prompts, persistence,
+  and UI routing
 - `src/project`: file indexing, ignore handling, project search, git services, and file operations
 - `src/editor`: text viewport, layout, syntax state, and editor rendering support
 - `src/compare`: side-by-side diff and merge models
 - `src/terminal`: PTY session and terminal screen state
 - `src/render`: themes and text-renderer backends
 
-`WorkspaceShell` is still the main coordinator, but plugin runtime, project, terminal, compare,
-and rendering work should continue to move into narrower subsystems rather than accrete more
-logic in one file.
+`WorkspaceShell` is still the main coordinator, but project and tab state models now live in
+dedicated workspace headers instead of being defined inline on the shell, and plugin runtime,
+project, terminal, compare, and rendering work should continue to move into narrower subsystems
+rather than accrete more logic in one file.
 
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed
