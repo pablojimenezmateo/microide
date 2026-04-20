@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 
 #include <chrono>
 #include <filesystem>
@@ -11,7 +11,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 void WritePluginInit(const std::filesystem::path& root,
                      std::string_view directory_name,

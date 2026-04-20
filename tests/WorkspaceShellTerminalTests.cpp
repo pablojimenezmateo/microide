@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "TerminalSessionTestAccess.h"
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
@@ -18,7 +18,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 void EnsureDummySdlVideo() {
   static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");

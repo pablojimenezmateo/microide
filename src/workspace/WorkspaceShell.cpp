@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceShellBootstrapper.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
@@ -41,21 +42,7 @@ std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
 }
 
 ActionAvailability WorkspaceShell::MakeActionAvailability() const {
-  return ActionAvailability(
-      context_,
-      ActionAvailability::Operations{
-          .selected_tree_target_kind = [this]() { return SelectedTreeTargetKind(); },
-          .resolve_tree_action_path =
-              [this](ActionSource source) { return ResolveTreeActionPath(source); },
-          .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
-          .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
-          .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
-          .terminal_has_selection = [this]() { return TerminalHasSelection(); },
-          .active_tab_is_editor = [this]() { return ActiveTabIsEditor(); },
-          .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
-          .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },
-          .active_compare_tab = [this]() { return ActiveCompareTab(); },
-      });
+  return Bootstrapper(*const_cast<WorkspaceShell*>(this)).BuildActionAvailability();
 }
 
 std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {

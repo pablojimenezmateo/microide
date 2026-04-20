@@ -20,7 +20,9 @@
 
 namespace microide::workspace {
 
-struct WorkspaceShellTestAccess {
+#ifdef MICROIDE_TESTING
+
+struct WorkspaceShell::TestAccess {
   static void SetProjectRoot(WorkspaceShell& shell, const std::filesystem::path& root) {
     shell.context_.current_project_state.root = root.lexically_normal();
     shell.context_.current_project_state.directory_tree.SetRoot(shell.context_.current_project_state.root);
@@ -1106,5 +1108,7 @@ struct WorkspaceShellTestAccess {
            shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
   }
 };
+
+#endif
 
 }  // namespace microide::workspace

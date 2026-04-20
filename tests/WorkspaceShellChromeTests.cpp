@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "TerminalSessionTestAccess.h"
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&

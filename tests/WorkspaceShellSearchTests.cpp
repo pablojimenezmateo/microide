@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,7 +13,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 void WaitForProjectSearch(WorkspaceShell& shell) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);

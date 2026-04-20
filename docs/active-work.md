@@ -218,8 +218,9 @@ Current state:
   `WorkspaceTextInputCoordinator` that depend on project or prompt or menu or text-input state
   plus explicit callbacks for action dispatch, menu transitions, command prompt, compare or merge
   editing, terminal I/O, and redraw behavior instead of `WorkspaceShell&`
-- `WorkspaceShell` still needs more dissolution work around event orchestration and test seams; the
-  current state should be treated as an intermediate shell-facade cleanup, not the final endpoint
+- `WorkspaceShell` still acts as the app-facing facade, but the shell-breakdown plan is now
+  implemented: event routing, wake routing, action enablement, render composition, and test hooks
+  all live behind explicit seams instead of direct shell-owned monoliths
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
@@ -229,8 +230,10 @@ Current state:
   `WorkspaceEditorMouseCoordinator`, `WorkspaceCompareMouseCoordinator`,
   `WorkspaceMergeMouseCoordinator`, and `WorkspaceTabMouseCoordinator` with explicit state plus
   callback dependencies instead of `WorkspaceShell&`
-- production `WorkspaceShell` friend-class access is now gone; only the
-  `MICROIDE_TESTING`-guarded `WorkspaceShellTestAccess` friend remains for test fixtures
+- production `WorkspaceShell` friend-class access is now gone, and the old
+  `WorkspaceShellTestAccess` friend path is gone too; shell tests now use the public
+  `MICROIDE_TESTING`-gated `WorkspaceShell::TestAccess` API from
+  `workspace/WorkspaceShellTesting.h`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic
@@ -267,9 +270,12 @@ Current state:
 - top-level `ActionId` enablement now runs through a dedicated `WorkspaceActionAvailability`
   helper backed by `WorkspaceContext` and read-only editor or compare or terminal callbacks instead
   of `WorkspaceShell::IsActionEnabled`
-- `WorkspaceShell` render entry points now delegate the ordered frame composition path to a minimal
-  `WorkspaceRootView`, which is the first real host-owned view seam even though the broader
-  sidebar or editor-stack or overlay view tree and bootstrapper work are still open
+- top-level event routing now runs through `WorkspaceEventDispatcher`, scheduled wake handling now
+  runs through `WorkspaceWakeController`, and the shell's action, render, and event seams are
+  wired by a dedicated `WorkspaceShell::Bootstrapper` composition root
+- `WorkspaceShell` render entry points now delegate the ordered frame composition path to
+  `WorkspaceRootView`, which now composes dedicated active-surface, chrome, sidebar, overlay,
+  panel, menu, and prompt views instead of acting as a single minimal placeholder seam
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:

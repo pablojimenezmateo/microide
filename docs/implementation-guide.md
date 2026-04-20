@@ -113,12 +113,16 @@ longer keeps the old active-project reference-alias member block. Project catalo
 lifecycle, dirty-prompt, menu, command-prompt, diff-tab, compare-interaction, path-mutation,
 action-context, action dispatch, tab, key-input, text-input, and mouse coordination now bind
 through explicit context-or-state plus callback dependencies rather than taking `WorkspaceShell&`,
-and ordinary production friend-class access on the shell is gone. Top-level action enablement now
-runs through `WorkspaceActionAvailability`, and the shell's `Render` or `RenderPrepared` entry
-points now delegate the ordered frame composition path to a minimal `WorkspaceRootView`. That view
-split is only the first render seam, not the final view-tree endpoint. Plugin runtime, project,
-terminal, compare, and rendering work should continue to move into narrower subsystems rather than
-accrete more logic in one file.
+and both production and test-only friend access on the shell are gone. Top-level action
+enablement now runs through `WorkspaceActionAvailability`, top-level SDL event routing runs
+through `WorkspaceEventDispatcher`, scheduled wake handling runs through `WorkspaceWakeController`,
+and a dedicated `WorkspaceShell::Bootstrapper` owns the shell's action, render, and event
+composition. The shell's `Render` or `RenderPrepared` entry points now delegate the ordered frame
+composition path to `WorkspaceRootView`, which composes dedicated active-surface, chrome, sidebar,
+overlay, panel, menu, and prompt views. Shell tests now use the `MICROIDE_TESTING`-gated public
+`WorkspaceShell::TestAccess` API from `workspace/WorkspaceShellTesting.h`. Plugin runtime,
+project, terminal, compare, and rendering work should continue to move into narrower subsystems
+rather than accrete more logic in one file.
 
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed

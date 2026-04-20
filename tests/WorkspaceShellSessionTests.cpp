@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 #include "project/GitCompareService.h"
 
 #include <algorithm>
@@ -14,7 +14,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 using microide::compare::MergeChoice;
 
 bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {

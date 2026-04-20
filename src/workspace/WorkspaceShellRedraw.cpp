@@ -7,6 +7,8 @@
 #include <optional>
 #include <vector>
 
+#include "workspace/WorkspaceShellBootstrapper.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -590,37 +592,7 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
-  if (ReloadPluginsIfPluginAssetsChanged(false)) {
-    return EventResult{
-        .handled = true,
-        .redraw = RenderInvalidation{
-            .full = true,
-            .rects = {},
-        },
-    };
-  }
-
-  if (!ShouldBlinkCaret()) {
-    return {};
-  }
-
-  if (const auto caret_rect = CurrentCaretDirtyRect(); caret_rect.has_value()) {
-    return EventResult{
-        .handled = true,
-        .redraw = RenderInvalidation{
-            .full = false,
-            .rects = {*caret_rect},
-        },
-    };
-  }
-
-  return EventResult{
-      .handled = true,
-      .redraw = RenderInvalidation{
-          .full = true,
-          .rects = {},
-      },
-  };
+  return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }
 
 bool WorkspaceShell::ConsumePostRenderFullRedrawRequest() {

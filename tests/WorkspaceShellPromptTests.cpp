@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/GitCompareService.h"
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 std::optional<std::filesystem::path> FirstRegularFileIn(const std::filesystem::path& directory) {
   std::error_code error;

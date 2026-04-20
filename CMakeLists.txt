@@ -158,6 +158,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditActionExecutor.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
+  src/workspace/WorkspaceEventOrchestrator.cpp
   src/workspace/WorkspaceGlobalActionExecutor.cpp
   src/workspace/WorkspaceKeyInputCoordinator.cpp
   src/workspace/WorkspaceKeyInputCoordinatorModal.cpp
@@ -234,6 +235,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectStateCoordinator.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
   src/workspace/WorkspaceRootView.cpp
+  src/workspace/WorkspaceShellBootstrapper.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellTerminal.cpp
@@ -241,6 +243,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
+  src/workspace/WorkspaceViewTree.cpp
   src/workspace/WorkspaceShell.cpp
 )
 

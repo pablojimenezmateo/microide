@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 
 #include <algorithm>
 #include <chrono>
@@ -15,7 +15,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
   return WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL) &&

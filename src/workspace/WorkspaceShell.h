@@ -31,6 +31,7 @@
 #include "workspace/WorkspaceActionAvailability.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceContext.h"
+#include "workspace/WorkspaceEventResult.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceMenuRegistry.h"
@@ -120,25 +121,8 @@ class WorkspaceShell {
     float scale_y = 1.0f;
     WindowChromeState chrome{};
   };
-
-  struct RenderInvalidation {
-    bool full = false;
-    std::vector<SDL_FRect> rects;
-
-    [[nodiscard]] bool HasAnyRedraw() const { return full || !rects.empty(); }
-
-    [[nodiscard]] std::optional<SDL_FRect> SingleRectIfOnlyOne() const {
-      if (rects.size() != 1) {
-        return std::nullopt;
-      }
-      return rects.front();
-    }
-  };
-
-  struct EventResult {
-    bool handled = false;
-    RenderInvalidation redraw{};
-  };
+  using RenderInvalidation = workspace::RenderInvalidation;
+  using EventResult = workspace::EventResult;
 
   WorkspaceShell();
 
@@ -175,7 +159,12 @@ class WorkspaceShell {
 
   WorkspaceActionContext MakeActionContext();
 
+#ifdef MICROIDE_TESTING
+  struct TestAccess;
+#endif
+
  private:
+  class Bootstrapper;
   using FocusTarget = workspace::FocusTarget;
   using OverlayMode = workspace::OverlayMode;
   using BufferSearchField = workspace::BufferSearchField;
@@ -1132,9 +1121,6 @@ class WorkspaceShell {
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;
 
-#ifdef MICROIDE_TESTING
-  friend struct WorkspaceShellTestAccess;
-#endif
 };
 
 }  // namespace microide::workspace

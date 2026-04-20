@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "WorkspaceShellTestAccess.h"
+#include "workspace/WorkspaceShellTesting.h"
 #include "render/Theme.h"
 
 #include <chrono>
@@ -15,7 +15,7 @@ namespace microide::tests {
 namespace {
 
 using microide::workspace::WorkspaceShell;
-using microide::workspace::WorkspaceShellTestAccess;
+using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 #if MICROIDE_HAS_SDL3_TTF
 
