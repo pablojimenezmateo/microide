@@ -7,13 +7,19 @@
 namespace microide::workspace {
 
 void WorkspaceShell::RefreshBufferSearch() {
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr) {
+    overlay_workflow_.buffer_search.matches.clear();
+    overlay_workflow_.buffer_search.selected_index = 0;
+    return;
+  }
   overlay_workflow_.buffer_search.matches =
-      FindLiteralSearchMatches(text_viewport_.lines(), overlay_workflow_.buffer_search.query);
+      FindLiteralSearchMatches(viewport->lines(), overlay_workflow_.buffer_search.query);
   overlay_workflow_.buffer_search.selected_index = 0;
 
   if (!overlay_workflow_.buffer_search.matches.empty()) {
     const auto& match = overlay_workflow_.buffer_search.matches.front();
-    text_viewport_.MoveCursorTo(match.start.line, match.start.column);
+    viewport->MoveCursorTo(match.start.line, match.start.column);
   }
   ResetOverlayScroll();
   RequestOverlayRedraw();
@@ -31,7 +37,9 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   const auto& match =
       overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
-  text_viewport_.MoveCursorTo(match.start.line, match.start.column);
+  if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+    viewport->MoveCursorTo(match.start.line, match.start.column);
+  }
   if (overlay_state_.visible) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
@@ -49,7 +57,9 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
 
   const auto match =
       overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
-  if (!text_viewport_.ReplaceRange(match, overlay_workflow_.buffer_search.replace_text)) {
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr ||
+      !viewport->ReplaceRange(match, overlay_workflow_.buffer_search.replace_text)) {
     return;
   }
 
@@ -60,7 +70,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
                  overlay_workflow_.buffer_search.matches.size() - 1);
     const auto& next_match =
         overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
-    text_viewport_.MoveCursorTo(next_match.start.line, next_match.start.column);
+    viewport->MoveCursorTo(next_match.start.line, next_match.start.column);
   }
   RequestEditorSurfaceRedraw();
 }
@@ -70,8 +80,10 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
     return;
   }
 
-  text_viewport_.ReplaceAll(overlay_workflow_.buffer_search.query,
-                            overlay_workflow_.buffer_search.replace_text);
+  if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+    viewport->ReplaceAll(overlay_workflow_.buffer_search.query,
+                         overlay_workflow_.buffer_search.replace_text);
+  }
   RefreshBufferSearch();
   RequestEditorSurfaceRedraw();
 }

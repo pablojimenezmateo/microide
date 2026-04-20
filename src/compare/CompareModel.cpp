@@ -21,17 +21,6 @@ constexpr std::size_t kMaxLineLcsMatrixCells = 250'000;
 constexpr std::size_t kMaxHunkAlignmentMatrixCells = 65'536;
 constexpr std::size_t kMaxIntralineLcsMatrixCells = 65'536;
 
-enum class DiffOpKind {
-  Equal,
-  Delete,
-  Insert,
-};
-
-struct DiffOp {
-  DiffOpKind kind = DiffOpKind::Equal;
-  std::string text;
-};
-
 enum class LineTokenKind {
   Word,
   Whitespace,
@@ -949,6 +938,59 @@ std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string>& lef
 
 }  // namespace
 
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
+                                     const std::vector<std::string>& right_lines,
+                                     LineDiffBuildStats* stats) {
+  std::size_t prefix = 0;
+  while (prefix < left_lines.size() && prefix < right_lines.size() &&
+         left_lines[prefix] == right_lines[prefix]) {
+    ++prefix;
+  }
+
+  std::size_t left_suffix = left_lines.size();
+  std::size_t right_suffix = right_lines.size();
+  while (left_suffix > prefix && right_suffix > prefix &&
+         left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
+    --left_suffix;
+    --right_suffix;
+  }
+
+  std::vector<DiffOp> ops;
+  ops.reserve(left_lines.size() + right_lines.size());
+  for (std::size_t index = 0; index < prefix; ++index) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index]});
+  }
+
+  const std::vector<std::string> left_middle(left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+                                             left_lines.begin() +
+                                                 static_cast<std::ptrdiff_t>(left_suffix));
+  const std::vector<std::string> right_middle(
+      right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+      right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
+  if (!left_middle.empty() || !right_middle.empty()) {
+    const std::size_t left_count = left_middle.size();
+    const std::size_t right_count = right_middle.size();
+    std::vector<DiffOp> middle_ops;
+    if (ProductExceeds(left_count + 1, right_count + 1, kMaxLineLcsMatrixCells)) {
+      if (stats != nullptr) {
+        ++stats->anchored_alignment_calls;
+      }
+      middle_ops = BuildAnchoredFallbackOps(left_middle, right_middle);
+    } else {
+      if (stats != nullptr) {
+        ++stats->exact_alignment_calls;
+      }
+      middle_ops = BuildExactLineOps(left_middle, right_middle);
+    }
+    ops.insert(ops.end(), middle_ops.begin(), middle_ops.end());
+  }
+
+  for (std::size_t index = left_suffix; index < left_lines.size(); ++index) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index]});
+  }
+  return ops;
+}
+
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right) {
   CompareBuildResult result;
   CompareModel& model = result.model;
@@ -990,7 +1032,6 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
          left_lines[prefix] == right_lines[prefix]) {
     ++prefix;
   }
-
   std::size_t left_suffix = left_lines.size();
   std::size_t right_suffix = right_lines.size();
   while (left_suffix > prefix && right_suffix > prefix &&
@@ -1006,16 +1047,10 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
       right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
       right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
 
-  const std::size_t left_count = left_middle.size();
-  const std::size_t right_count = right_middle.size();
-  std::vector<DiffOp> ops;
-  if (ProductExceeds(left_count + 1, right_count + 1, kMaxLineLcsMatrixCells)) {
-    ++profile.anchored_line_alignment_calls;
-    ops = BuildAnchoredFallbackOps(left_middle, right_middle);
-  } else {
-    ++profile.exact_line_alignment_calls;
-    ops = BuildExactLineOps(left_middle, right_middle);
-  }
+  LineDiffBuildStats line_diff_stats;
+  const std::vector<DiffOp> ops = BuildLineDiffOps(left_middle, right_middle, &line_diff_stats);
+  profile.exact_line_alignment_calls += line_diff_stats.exact_alignment_calls;
+  profile.anchored_line_alignment_calls += line_diff_stats.anchored_alignment_calls;
   profile.line_alignment_ns = DurationNs(line_alignment_start, Clock::now());
 
   model.rows.reserve(left_lines.size() + right_lines.size());

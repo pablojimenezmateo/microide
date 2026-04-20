@@ -17,35 +17,41 @@ bool FileIndex::SetRoot(const std::filesystem::path& root) {
   }
 
   root_ = absolute_root;
-  files_.clear();
-  needs_refresh_ = true;
+  exclude_hidden_cache_ = {};
+  include_hidden_cache_ = {};
   return true;
 }
 
 void FileIndex::Refresh() {
-  needs_refresh_ = true;
-  EnsureFresh();
+  exclude_hidden_cache_.needs_refresh = true;
+  include_hidden_cache_.needs_refresh = true;
+  EnsureFresh(ProjectFileScanMode::ExcludeHidden);
 }
 
-const std::vector<std::filesystem::path>& FileIndex::files() const {
-  EnsureFresh();
-  return files_;
+const std::vector<std::filesystem::path>& FileIndex::files(ProjectFileScanMode mode) const {
+  EnsureFresh(mode);
+  return CacheIndex(mode) == 0 ? exclude_hidden_cache_.files : include_hidden_cache_.files;
 }
 
-void FileIndex::EnsureFresh() const {
+std::size_t FileIndex::CacheIndex(ProjectFileScanMode mode) {
+  return mode == ProjectFileScanMode::ExcludeHidden ? 0u : 1u;
+}
+
+void FileIndex::EnsureFresh(ProjectFileScanMode mode) const {
   util::StartupTrace::Scope trace_scope("FileIndex::Refresh");
-  if (!needs_refresh_) {
+  CacheBucket& cache = CacheIndex(mode) == 0 ? exclude_hidden_cache_ : include_hidden_cache_;
+  if (!cache.needs_refresh) {
     return;
   }
 
-  files_.clear();
+  cache.files.clear();
   if (root_.empty()) {
-    needs_refresh_ = false;
+    cache.needs_refresh = false;
     return;
   }
 
-  files_ = CollectProjectFiles(root_, ProjectFileScanMode::ExcludeHidden);
-  needs_refresh_ = false;
+  cache.files = CollectProjectFiles(root_, mode);
+  cache.needs_refresh = false;
 }
 
 }  // namespace microide::project

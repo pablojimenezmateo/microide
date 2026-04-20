@@ -32,8 +32,12 @@ void WorkspaceShell::RefreshProjectSearch() {
   }
 
   overlay_workflow_.project_search.running = true;
+  const project::ProjectFileScanMode scan_mode =
+      overlay_workflow_.project_search.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+                                                           : project::ProjectFileScanMode::ExcludeHidden;
   project_search_runtime_.Start(project_root_, overlay_workflow_.project_search.query,
-                                overlay_workflow_.project_search.options);
+                                overlay_workflow_.project_search.options,
+                                file_index_.files(scan_mode));
   ResetOverlayScroll();
   RequestSidebarRedraw();
 }
@@ -314,7 +318,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
             i == active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id &&
             !view.needs_restore;
         const std::filesystem::path current_path =
-            active_view ? text_viewport_.path().lexically_normal() : EditorViewPath(view);
+            active_view ? ActiveEditorViewport()->path().lexically_normal() : EditorViewPath(view);
         if (current_path != change.absolute_path) {
           continue;
         }

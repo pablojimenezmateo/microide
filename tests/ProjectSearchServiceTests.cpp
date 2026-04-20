@@ -26,9 +26,11 @@ struct SearchRunResult {
 
 SearchRunResult RunProjectSearch(const std::filesystem::path& root,
                                  std::string query,
-                                 ProjectSearchOptions options = {}) {
+                                 ProjectSearchOptions options = {},
+                                 std::vector<std::filesystem::path> indexed_files = {}) {
   ProjectSearchService service;
-  const std::uint64_t run_id = service.Start(root, std::move(query), options);
+  const std::uint64_t run_id = service.Start(root, std::move(query), options,
+                                             std::move(indexed_files));
 
   SearchRunResult result;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -266,6 +268,22 @@ void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
          "restarted project search should keep the latest query match");
 }
 
+void TestProjectSearchServiceUsesIndexedFileSnapshotWhenProvided() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "tracked.txt", "needle\n");
+  WriteFile(root / "untracked.txt", "needle\n");
+
+  const auto result = RunProjectSearch(root, "needle", {},
+                                       {std::filesystem::path("tracked.txt")});
+  Expect(result.finished, "indexed project search should finish");
+  Expect(result.error.empty(), "indexed project search should not error");
+  Expect(result.results.size() == 1,
+         "indexed project search should restrict matching to the supplied snapshot");
+  Expect(result.results.front().relative_path == std::filesystem::path("tracked.txt"),
+         "indexed project search should respect the supplied relative paths");
+}
+
 void TestProjectSearchServiceStopDiscardsLateUpdates() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -308,6 +326,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceRestartPublishesOnlyLatestRun);
   AddTest(tests, "ProjectSearchService/StopDiscardsLateUpdates",
           TestProjectSearchServiceStopDiscardsLateUpdates);
+  AddTest(tests, "ProjectSearchService/UsesIndexedFileSnapshotWhenProvided",
+          TestProjectSearchServiceUsesIndexedFileSnapshotWhenProvided);
 }
 
 }  // namespace microide::tests

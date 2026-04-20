@@ -212,6 +212,11 @@ class TextViewport {
                      std::size_t end_line,
                      const std::vector<std::string>& replacement,
                      bool record_undo);
+  void InvalidateDerivedCaches();
+  void InvalidateVisualColumnCache();
+  void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
+                                        std::size_t removed_count,
+                                        const std::vector<std::string>& inserted_lines);
   std::size_t MaxVisualColumns() const;
   void EnsureDocument();
   static DecodedDocument DecodeDocument(std::string_view content);
@@ -236,6 +241,8 @@ class TextViewport {
   std::size_t indent_width_ = 4;
   bool soft_tabs_ = false;
   mutable std::optional<std::size_t> cached_max_visual_columns_;
+  mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
+  mutable std::vector<std::size_t> cached_visual_line_columns_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::size_t cached_max_visual_columns_revision_ = 0;
   mutable std::vector<VisibleLineCacheEntry> visible_line_cache_;

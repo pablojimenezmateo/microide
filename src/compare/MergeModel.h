@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "compare/CompareModel.h"
@@ -57,9 +58,10 @@ MergeModel BuildMergeModel(const std::string& base,
 MergeChoice BootstrapMergeChoice(const MergeHunk& hunk);
 std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice);
 std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model);
-std::string BootstrapMergeResultText(const MergeModel& model);
+std::string BootstrapMergeResultText(const MergeModel& model,
+                                     std::string_view separator = "\n");
 std::vector<std::string> MergeResultLines(const MergeModel& model);
-std::string MergeResultText(const MergeModel& model);
+std::string MergeResultText(const MergeModel& model, std::string_view separator = "\n");
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model);
 const char* MergeChoiceLabel(MergeChoice choice);
 

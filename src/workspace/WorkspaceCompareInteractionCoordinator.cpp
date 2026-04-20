@@ -148,7 +148,9 @@ void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
 
   shell_.OpenFile(compare_tab->path);
   if (target_line > 0) {
-    shell_.text_viewport_.MoveCursorTo(static_cast<std::size_t>(target_line - 1), 0);
+    if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+      viewport->MoveCursorTo(static_cast<std::size_t>(target_line - 1), 0);
+    }
   }
 }
 

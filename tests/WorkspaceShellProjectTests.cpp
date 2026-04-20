@@ -440,6 +440,44 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
          "jump should move the cursor relative to the current line");
 }
 
+void TestWorkspaceShellGotoTargetsActiveSplitViewport() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path left = root / "left.cpp";
+  const std::filesystem::path right = root / "right.cpp";
+  WriteFile(left, "left-1\nleft-2\nleft-3\n");
+  WriteFile(right, "right-1\nright-2\nright-3\nright-4\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, left);
+  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
+         "split-editor goto fixture should create the second pane");
+  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
+         "split-editor goto fixture should replace the active pane");
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "split-editor goto fixture should revisit the left pane");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
+         "split-editor goto fixture should reactivate the right pane");
+
+  Expect(ExecuteCommand(shell, "goto 4:1"),
+         "goto should execute against the active split viewport");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
+         "goto should keep the right split active");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
+         "goto should move the active split cursor instead of a stale editor copy");
+
+  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
+         "split-editor goto fixture should allow verifying the inactive pane");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
+         "the left split should still reference the original file");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
+         "goto should not mutate the inactive split viewport");
+}
+
 void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1210,6 +1248,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
+  AddTest(tests, "WorkspaceShell/GotoTargetsActiveSplitViewport",
+          TestWorkspaceShellGotoTargetsActiveSplitViewport);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
   AddTest(tests, "WorkspaceShell/CommandPromptCompletionAndHistory",

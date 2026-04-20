@@ -173,6 +173,22 @@ void TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock() {
          "undo should remove the appended replacement block");
 }
 
+void TestTextViewportMaxVisualColumnsUpdatesIncrementally() {
+  TextViewport viewport;
+  viewport.LoadContent("short\nvery very long line\nmid\n", "/tmp/max-columns.txt");
+  const std::size_t initial_max = viewport.max_visual_columns();
+
+  viewport.MoveCursorTo(0, viewport.lines()[0].size());
+  viewport.InsertText("!");
+  Expect(viewport.max_visual_columns() == initial_max,
+         "editing a non-maximum line should keep the cached maximum width");
+
+  viewport.MoveCursorTo(1, 0);
+  viewport.ReplaceRange({{1, 0}, {1, viewport.lines()[1].size()}}, "tiny");
+  Expect(viewport.max_visual_columns() == 6,
+         "shrinking the former widest line should recompute the new maximum width");
+}
+
 void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -245,6 +261,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportUndoRedoPreservesLatestViewState);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
+  AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",
+          TestTextViewportMaxVisualColumnsUpdatesIncrementally);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
 }

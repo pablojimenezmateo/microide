@@ -45,6 +45,31 @@ std::string ToLowerAscii(std::string_view text) {
   return lowered;
 }
 
+char LowerAsciiChar(char value) {
+  return static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+}
+
+std::size_t FindCaseInsensitiveAscii(std::string_view haystack,
+                                     std::string_view needle,
+                                     std::size_t offset) {
+  if (needle.empty() || offset > haystack.size() || needle.size() > haystack.size() - offset) {
+    return std::string_view::npos;
+  }
+
+  const std::size_t limit = haystack.size() - needle.size();
+  for (std::size_t start = offset; start <= limit; ++start) {
+    std::size_t index = 0;
+    while (index < needle.size() &&
+           LowerAsciiChar(haystack[start + index]) == LowerAsciiChar(needle[index])) {
+      ++index;
+    }
+    if (index == needle.size()) {
+      return start;
+    }
+  }
+  return std::string_view::npos;
+}
+
 bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::string_view line,
                         std::size_t* search_from,
@@ -117,8 +142,7 @@ class PreparedLiteralQuery {
       return true;
     }
 
-    const std::string lowered_line = ToLowerAscii(line);
-    const std::size_t position = lowered_line.find(lowered_query_, *search_from);
+    const std::size_t position = FindCaseInsensitiveAscii(line, lowered_query_, *search_from);
     if (position == std::string_view::npos) {
       return false;
     }
@@ -148,7 +172,8 @@ void ProjectSearchService::SetWakeEventType(Uint32 event_type) {
 
 std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
                                           std::string query,
-                                          ProjectSearchOptions options) {
+                                          ProjectSearchOptions options,
+                                          std::vector<std::filesystem::path> indexed_files) {
   Stop();
 
   std::uint64_t run_id = 0;
@@ -159,8 +184,9 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
   }
 
   task_executor_.Submit(
-      [this, root, query = std::move(query), options, run_id](const util::CancellationToken& token) {
-        WorkerMain(root, query, options, run_id, token);
+      [this, root, query = std::move(query), options, indexed_files = std::move(indexed_files),
+       run_id](const util::CancellationToken& token) {
+        WorkerMain(root, query, options, std::move(indexed_files), run_id, token);
       });
   return run_id;
 }
@@ -186,6 +212,7 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
 void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::string query,
                                       ProjectSearchOptions options,
+                                      std::vector<std::filesystem::path> indexed_files,
                                       std::uint64_t run_id,
                                       const util::CancellationToken& token) {
   if (token.IsCancellationRequested()) {
@@ -196,7 +223,8 @@ void ProjectSearchService::WorkerMain(std::filesystem::path root,
     return;
   }
 
-  const SearchCompletion completion = RunSearch(root, query, options, run_id, token);
+  const SearchCompletion completion =
+      RunSearch(root, query, options, indexed_files, run_id, token);
   if (!token.IsCancellationRequested()) {
     PublishFinished(run_id, completion);
   }
@@ -206,6 +234,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     const std::filesystem::path& root,
     const std::string& query,
     const ProjectSearchOptions& options,
+    const std::vector<std::filesystem::path>& indexed_files,
     std::uint64_t run_id,
     const util::CancellationToken& token) {
   std::error_code error;
@@ -242,14 +271,19 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   }
 
-  const std::vector<std::filesystem::path> files = CollectProjectFiles(
-      absolute_root, options.show_hidden ? ProjectFileScanMode::IncludeHidden
-                                         : ProjectFileScanMode::ExcludeHidden);
+  const std::vector<std::filesystem::path>& files = indexed_files;
+  const std::vector<std::filesystem::path> scanned_files =
+      files.empty()
+          ? CollectProjectFiles(absolute_root, options.show_hidden ? ProjectFileScanMode::IncludeHidden
+                                                                   : ProjectFileScanMode::ExcludeHidden)
+          : std::vector<std::filesystem::path>{};
+  const std::vector<std::filesystem::path>& candidate_files =
+      files.empty() ? scanned_files : files;
   std::vector<ProjectSearchResult> batch;
   std::size_t total_results = 0;
   std::array<char, 4096> probe{};
 
-  for (const auto& relative_path : files) {
+  for (const auto& relative_path : candidate_files) {
     if (token.IsCancellationRequested()) {
       return {};
     }

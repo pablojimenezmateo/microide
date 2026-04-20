@@ -23,8 +23,10 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
     return BuildMergeBreadcrumbLabel(project_root_, merge_tab->output_path,
                                      merge_tab->incoming_label, merge_tab->current_label);
   }
-  return BuildEditorBreadcrumbLabel(project_root_, text_viewport_.path(),
-                                    text_viewport_.is_placeholder());
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  return BuildEditorBreadcrumbLabel(project_root_, viewport != nullptr ? viewport->path()
+                                                                       : std::filesystem::path{},
+                                    viewport != nullptr && viewport->is_placeholder());
 }
 
 std::string WorkspaceShell::ProjectLabel() const {

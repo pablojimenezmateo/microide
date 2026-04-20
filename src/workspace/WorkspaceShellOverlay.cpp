@@ -128,7 +128,9 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
       overlay_workflow_.buffer_search.selected_index = clamped_index;
       if (!overlay_workflow_.buffer_search.matches.empty()) {
         const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
-        text_viewport_.MoveCursorTo(match.start.line, match.start.column);
+        if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+          viewport->MoveCursorTo(match.start.line, match.start.column);
+        }
       }
       break;
     case OverlayMode::ProjectSearch:
@@ -172,7 +174,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
     case OverlayMode::BufferSearch:
       if (!overlay_workflow_.buffer_search.matches.empty()) {
         const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
-        text_viewport_.MoveCursorTo(match.start.line, match.start.column);
+        if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+          viewport->MoveCursorTo(match.start.line, match.start.column);
+        }
       }
       DismissOverlay(true);
       return true;
@@ -186,7 +190,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
         const auto& result =
             overlay_workflow_.project_search.results[overlay_workflow_.project_search.selected_index];
         OpenFile(project_root_ / result.relative_path);
-        text_viewport_.MoveCursorTo(result.line, result.column);
+        if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+          viewport->MoveCursorTo(result.line, result.column);
+        }
         DismissOverlay(true);
       }
       return true;

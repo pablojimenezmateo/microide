@@ -82,8 +82,10 @@ bool SidebarCoordinator::OpenProblemItem() {
     return false;
   }
   shell_.OpenFile(entry.diagnostic.path);
-  shell_.text_viewport_.MoveCursorTo(entry.diagnostic.range.start.line,
-                                     entry.diagnostic.range.start.column);
+  if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+    viewport->MoveCursorTo(entry.diagnostic.range.start.line,
+                           entry.diagnostic.range.start.column);
+  }
   if (shell_.sidebar_state_.temporary) {
     shell_.RestorePreviousSidebar();
   }

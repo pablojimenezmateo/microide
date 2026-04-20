@@ -448,7 +448,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const 
   if (editor_tab == nullptr) {
     return layout->editor_surface;
   }
-  const_cast<WorkspaceShell*>(this)->SyncActiveEditorTab();
   const_cast<WorkspaceShell*>(this)->NormalizeEditorSplitTree(*editor_tab);
   const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
   const auto active_pane =
@@ -470,7 +469,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
 
   auto* editor_tab = const_cast<WorkspaceShell*>(this)->ActiveEditorTab();
   if (editor_tab != nullptr) {
-    const_cast<WorkspaceShell*>(this)->SyncActiveEditorTab();
     const_cast<WorkspaceShell*>(this)->NormalizeEditorSplitTree(*editor_tab);
   }
   const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
@@ -478,12 +476,16 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
       std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
   const SDL_FRect pane_rect =
       active_pane != panes.end() ? active_pane->rect : layout->editor_surface;
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return std::nullopt;
+  }
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, pane_rect);
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_rect);
   const VisibleLineRangeLayout line_layout = {
       .first_line_y = metrics.first_line_y,
       .line_height = metrics.line_height,
-      .scroll_line = text_viewport_.scroll_line(),
+      .scroll_line = viewport->scroll_line(),
       .visible_rows = metrics.visible_rows,
   };
   return ComputeVisibleLineRangeRect(pane_rect, line_layout, start_line, end_line);
@@ -767,7 +769,7 @@ editor::TextViewport* WorkspaceShell::ActiveEditableViewport() {
   if (!ActiveTabIsEditor() || ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &text_viewport_;
+  return ActiveEditorViewport();
 }
 
 const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
@@ -784,7 +786,7 @@ const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
   if (!ActiveTabIsEditor() || ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &text_viewport_;
+  return ActiveEditorViewport();
 }
 
 }  // namespace microide::workspace

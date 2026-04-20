@@ -36,16 +36,19 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       if (!active_editor_pane_rect.has_value()) {
         return std::nullopt;
       }
+      const editor::TextViewport* viewport = ActiveEditorViewport();
+      if (viewport == nullptr) {
+        return std::nullopt;
+      }
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          text_renderer_, text_viewport_, *active_editor_pane_rect);
+          text_renderer_, *viewport, *active_editor_pane_rect);
       const float cursor_x =
           metrics.text_x +
-          static_cast<float>(text_viewport_.cursor_visual_column() -
-                             text_viewport_.horizontal_scroll()) *
+          static_cast<float>(viewport->cursor_visual_column() - viewport->horizontal_scroll()) *
               char_width;
       const float cursor_y =
           metrics.first_line_y +
-          static_cast<float>(text_viewport_.cursor_line() - text_viewport_.scroll_line()) *
+          static_cast<float>(viewport->cursor_line() - viewport->scroll_line()) *
               metrics.line_height;
       return TextInputVisual{
           .surface = surface,

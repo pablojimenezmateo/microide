@@ -39,14 +39,16 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     shell_.SetActiveEditorSplit(pane_it->leaf_id);
   }
   const SDL_FRect editor_rect = pane_it->rect;
+  editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return false;
+  }
 
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(shell_.text_renderer_,
-                                                 shell_.text_viewport_, editor_rect);
-  shell_.text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      editor::EditorViewRenderer::ComputeMetrics(shell_.text_renderer_, *viewport, editor_rect);
+  viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
-  const auto scroll_layout =
-      shell_.ComputeEditorScrollLayout(editor_rect, shell_.text_viewport_, metrics);
+  const auto scroll_layout = shell_.ComputeEditorScrollLayout(editor_rect, *viewport, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
     shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::EditorVerticalScrollbar;
@@ -55,7 +57,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             ? static_cast<float>(event.button.y) -
                   scroll_layout.vertical_scrollbar->thumb.y
             : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
-    shell_.text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
+    viewport->SetScrollLine(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
                                               static_cast<float>(event.button.y),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
@@ -70,7 +72,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             ? static_cast<float>(event.button.x) -
                   scroll_layout.horizontal_scrollbar->thumb.x
             : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
-    shell_.text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
+    viewport->SetHorizontalScroll(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
@@ -80,34 +82,30 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
-  const std::size_t line =
-      std::min(shell_.text_viewport_.scroll_line() + row,
-               shell_.text_viewport_.line_count() == 0
-                   ? 0
-                   : shell_.text_viewport_.line_count() - 1);
+  const std::size_t line = std::min(viewport->scroll_line() + row,
+                                    viewport->line_count() == 0 ? 0 : viewport->line_count() - 1);
   const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
-  const std::size_t visual_column =
-      shell_.text_viewport_.horizontal_scroll() +
+  const std::size_t visual_column = viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(
           0L, std::lround(text_offset_x /
                           std::max(1.0f, shell_.text_renderer_.CharWidth()))));
 
-  shell_.text_viewport_.MoveCursorToVisualColumn(
-      line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+  viewport->MoveCursorToVisualColumn(line, visual_column,
+                                     (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
   shell_.ResetCaretBlink();
   shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   if (event.button.button == SDL_BUTTON_MIDDLE) {
     if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
         text.has_value()) {
-      const bool was_dirty = shell_.text_viewport_.dirty();
-      const std::size_t cursor_before_line = shell_.text_viewport_.cursor_line();
-      const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
-      shell_.text_viewport_.InsertText(*text);
+      const bool was_dirty = viewport->dirty();
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      const std::vector<std::string> before_lines = viewport->lines();
+      viewport->InsertText(*text);
       shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
-      if (shell_.text_viewport_.dirty() != was_dirty) {
+      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      if (viewport->dirty() != was_dirty) {
         shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            shell_.text_viewport_.cursor_line());
+                                                            viewport->cursor_line());
         shell_.RequestTabStripRedraw();
       }
     }
@@ -207,12 +205,14 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
       [](const WorkspaceShell::EditorPaneLayout& pane) { return pane.active; });
   const SDL_FRect editor_rect =
       active_pane != panes.end() ? active_pane->rect : layout.editor_surface;
+  editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return false;
+  }
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(shell_.text_renderer_,
-                                                 shell_.text_viewport_, editor_rect);
-  shell_.text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-  const auto scroll_layout =
-      shell_.ComputeEditorScrollLayout(editor_rect, shell_.text_viewport_, metrics);
+      editor::EditorViewRenderer::ComputeMetrics(shell_.text_renderer_, *viewport, editor_rect);
+  viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const auto scroll_layout = shell_.ComputeEditorScrollLayout(editor_rect, *viewport, metrics);
 
   if (shell_.interaction_state_.drag_target ==
       WorkspaceShell::DragTarget::EditorVerticalScrollbar) {
@@ -220,7 +220,7 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
       shell_.ClearDragState();
       return false;
     }
-    shell_.text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
+    viewport->SetScrollLine(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
                                               static_cast<float>(event.motion.y),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
@@ -229,7 +229,7 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
       shell_.ClearDragState();
       return false;
     }
-    shell_.text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
+    viewport->SetHorizontalScroll(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.motion.x),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
@@ -249,27 +249,26 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   if (!Contains(editor_rect, event.motion.x, event.motion.y)) {
     return false;
   }
+  editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return false;
+  }
 
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(shell_.text_renderer_,
-                                                 shell_.text_viewport_, editor_rect);
-  shell_.text_viewport_.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      editor::EditorViewRenderer::ComputeMetrics(shell_.text_renderer_, *viewport, editor_rect);
+  viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
   const float local_y = std::max(0.0f, event.motion.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
-  const std::size_t line =
-      std::min(shell_.text_viewport_.scroll_line() + row,
-               shell_.text_viewport_.line_count() == 0
-                   ? 0
-                   : shell_.text_viewport_.line_count() - 1);
+  const std::size_t line = std::min(viewport->scroll_line() + row,
+                                    viewport->line_count() == 0 ? 0 : viewport->line_count() - 1);
   const float text_offset_x = std::max(0.0f, event.motion.x - metrics.text_x);
-  const std::size_t visual_column =
-      shell_.text_viewport_.horizontal_scroll() +
+  const std::size_t visual_column = viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(
           0L, std::lround(text_offset_x /
                           std::max(1.0f, shell_.text_renderer_.CharWidth()))));
 
-  shell_.text_viewport_.MoveCursorToVisualColumn(line, visual_column, true);
+  viewport->MoveCursorToVisualColumn(line, visual_column, true);
   shell_.ResetCaretBlink();
   shell_.RequestFocusedEditorRedraw();
   shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
@@ -292,7 +291,9 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
   if (hovered_pane != panes.end() && !hovered_pane->active) {
     shell_.SetActiveEditorSplit(hovered_pane->leaf_id);
   }
-  shell_.text_viewport_.ScrollVertical(-vertical_ticks * 3);
+  if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+    viewport->ScrollVertical(-vertical_ticks * 3);
+  }
   shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }

@@ -242,12 +242,13 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
 
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
   const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
-  if (panes.empty() && !text_viewport_.is_placeholder()) {
-    const auto* diagnostics = diagnostics_store_.FindByPath(text_viewport_.path());
+  const editor::TextViewport* active_viewport = ActiveEditorViewport();
+  if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
+    const auto* diagnostics = diagnostics_store_.FindByPath(active_viewport->path());
     return diagnostics != nullptr
                ? DiagnosticHoverTargetForViewport(
-                     text_viewport_,
-                     BuildEditorInteractionLayout(text_renderer_, text_viewport_,
+                     *active_viewport,
+                     BuildEditorInteractionLayout(text_renderer_, *active_viewport,
                                                   layout.editor_surface),
                      std::span<const editor::PublishedDiagnostic>(*diagnostics), x, y)
                : std::nullopt;
@@ -255,7 +256,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
 
   for (const EditorPaneLayout& pane : panes) {
     const editor::TextViewport* viewport =
-        pane.active ? &text_viewport_
+        pane.active ? ActiveEditorViewport()
                     : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
@@ -344,15 +345,16 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
   const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
-  if (panes.empty() && !text_viewport_.is_placeholder()) {
+  const editor::TextViewport* active_viewport = ActiveEditorViewport();
+  if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return PluginHoverTargetForViewport(
-        text_viewport_,
-        BuildEditorInteractionLayout(text_renderer_, text_viewport_, layout.editor_surface), x, y);
+        *active_viewport,
+        BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface), x, y);
   }
 
   for (const EditorPaneLayout& pane : panes) {
     const editor::TextViewport* viewport =
-        pane.active ? &text_viewport_
+        pane.active ? ActiveEditorViewport()
                     : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;

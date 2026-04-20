@@ -108,12 +108,11 @@ void WorkspaceShell::SyncActiveEditorTab() {
       tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
       return;
     }
-    active_view->viewport = text_viewport_;
-    active_view->restored_path = text_viewport_.path().lexically_normal();
-    active_view->restored_cursor_line = text_viewport_.cursor_line();
-    active_view->restored_cursor_column = text_viewport_.cursor_column();
-    active_view->restored_scroll_line = text_viewport_.scroll_line();
-    active_view->restored_horizontal_scroll = text_viewport_.horizontal_scroll();
+    active_view->restored_path = active_view->viewport.path().lexically_normal();
+    active_view->restored_cursor_line = active_view->viewport.cursor_line();
+    active_view->restored_cursor_column = active_view->viewport.cursor_column();
+    active_view->restored_scroll_line = active_view->viewport.scroll_line();
+    active_view->restored_horizontal_scroll = active_view->viewport.horizontal_scroll();
     active_view->needs_restore = false;
   }
   if (active_tab_index_ < open_tabs_.size() && &tab == &open_tabs_[active_tab_index_]) {
@@ -179,10 +178,12 @@ void WorkspaceShell::SyncActiveEditorTabMetadata() {
     return;
   }
 
-  const std::filesystem::path active_path = text_viewport_.path().lexically_normal();
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  const std::filesystem::path active_path =
+      viewport != nullptr ? viewport->path().lexically_normal() : std::filesystem::path{};
   const bool path_changed = tab.path != active_path;
   tab.path = active_path;
-  tab.title = EditorTabLabel(text_viewport_);
+  tab.title = viewport != nullptr ? EditorTabLabel(*viewport) : "untitled";
   if (path_changed && !active_path.empty()) {
     directory_tree_.SelectPath(active_path);
     RevealSelectedTreeSidebarLine();
@@ -327,6 +328,55 @@ const editor::TextViewport* WorkspaceShell::FindEditorView(
     return &view->viewport;
   }
   return nullptr;
+}
+
+editor::TextViewport* WorkspaceShell::ActiveEditorViewport() {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.empty()) {
+    return &text_viewport_;
+  }
+  if (auto* viewport = FindEditorView(*editor_tab, editor_tab->active_leaf_id); viewport != nullptr) {
+    return viewport;
+  }
+  return &editor_tab->views.front().viewport;
+}
+
+const editor::TextViewport* WorkspaceShell::ActiveEditorViewport() const {
+  const auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.empty()) {
+    return &text_viewport_;
+  }
+  if (const auto* viewport = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
+      viewport != nullptr) {
+    return viewport;
+  }
+  return &editor_tab->views.front().viewport;
+}
+
+editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() {
+  if (ActiveTabIsCompare()) {
+    auto* compare_tab = ActiveCompareTab();
+    return compare_tab != nullptr && compare_tab->right_editable ? &compare_tab->right_viewport
+                                                                 : nullptr;
+  }
+  if (ActiveTabIsMerge()) {
+    auto* merge_tab = ActiveMergeTab();
+    return merge_tab != nullptr ? &merge_tab->result_viewport : nullptr;
+  }
+  return ActiveEditorViewport();
+}
+
+const editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() const {
+  if (ActiveTabIsCompare()) {
+    const auto* compare_tab = ActiveCompareTab();
+    return compare_tab != nullptr && compare_tab->right_editable ? &compare_tab->right_viewport
+                                                                 : nullptr;
+  }
+  if (ActiveTabIsMerge()) {
+    const auto* merge_tab = ActiveMergeTab();
+    return merge_tab != nullptr ? &merge_tab->result_viewport : nullptr;
+  }
+  return ActiveEditorViewport();
 }
 
 void WorkspaceShell::RequestCloseTab(std::size_t index) {

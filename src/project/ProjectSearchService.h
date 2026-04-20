@@ -51,7 +51,8 @@ class ProjectSearchService {
   void SetWakeEventType(Uint32 event_type);
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
-                      ProjectSearchOptions options = {});
+                      ProjectSearchOptions options = {},
+                      std::vector<std::filesystem::path> indexed_files = {});
   void Stop();
   ProjectSearchUpdate TakePendingUpdate();
 
@@ -64,11 +65,13 @@ class ProjectSearchService {
   void WorkerMain(std::filesystem::path root,
                   std::string query,
                   ProjectSearchOptions options,
+                  std::vector<std::filesystem::path> indexed_files,
                   std::uint64_t run_id,
                   const util::CancellationToken& token);
   SearchCompletion RunSearch(const std::filesystem::path& root,
                              const std::string& query,
                              const ProjectSearchOptions& options,
+                             const std::vector<std::filesystem::path>& indexed_files,
                              std::uint64_t run_id,
                              const util::CancellationToken& token);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);

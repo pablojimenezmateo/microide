@@ -21,7 +21,9 @@ WorkspaceShell::WorkspaceShell() {
             if (request.line > 0) {
               const std::size_t target_line = request.line - 1;
               const std::size_t target_column = request.column > 0 ? request.column - 1 : 0;
-              text_viewport_.MoveCursorTo(target_line, target_column);
+              if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+                viewport->MoveCursorTo(target_line, target_column);
+              }
             }
             return true;
           },
@@ -98,7 +100,9 @@ bool WorkspaceShell::ReloadPluginsIfPluginAssetsChanged(bool force_check) {
 }
 
 void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches() {
-  text_viewport_.InvalidateSyntaxHighlighting();
+  if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+    viewport->InvalidateSyntaxHighlighting();
+  }
 
   for (auto& tab : open_tabs_) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {

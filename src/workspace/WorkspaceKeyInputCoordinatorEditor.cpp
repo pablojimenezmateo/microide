@@ -308,60 +308,65 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
                                                      SDL_Keymod modifiers) {
+  editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return false;
+  }
+
   switch (event.key) {
     case SDLK_TAB: {
-      const bool was_dirty = shell_.text_viewport_.dirty();
-      const std::size_t cursor_before_line = shell_.text_viewport_.cursor_line();
-      const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
-      shell_.text_viewport_.InsertTab();
+      const bool was_dirty = viewport->dirty();
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      const std::vector<std::string> before_lines = viewport->lines();
+      viewport->InsertTab();
       shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
-      if (shell_.text_viewport_.dirty() != was_dirty) {
+      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      if (viewport->dirty() != was_dirty) {
         shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            shell_.text_viewport_.cursor_line());
+                                                            viewport->cursor_line());
         shell_.RequestTabStripRedraw();
       }
       return true;
     }
     case SDLK_RETURN:
     case SDLK_KP_ENTER: {
-      const bool was_dirty = shell_.text_viewport_.dirty();
-      const std::size_t cursor_before_line = shell_.text_viewport_.cursor_line();
-      const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
-      shell_.text_viewport_.InsertNewline();
+      const bool was_dirty = viewport->dirty();
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      const std::vector<std::string> before_lines = viewport->lines();
+      viewport->InsertNewline();
       shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
-      if (shell_.text_viewport_.dirty() != was_dirty) {
+      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      if (viewport->dirty() != was_dirty) {
         shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            shell_.text_viewport_.cursor_line());
+                                                            viewport->cursor_line());
         shell_.RequestTabStripRedraw();
       }
       return true;
     }
     case SDLK_BACKSPACE: {
-      const bool was_dirty = shell_.text_viewport_.dirty();
-      const std::size_t cursor_before_line = shell_.text_viewport_.cursor_line();
-      const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
-      shell_.text_viewport_.Backspace();
+      const bool was_dirty = viewport->dirty();
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      const std::vector<std::string> before_lines = viewport->lines();
+      viewport->Backspace();
       shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
-      if (shell_.text_viewport_.dirty() != was_dirty) {
+      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      if (viewport->dirty() != was_dirty) {
         shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            shell_.text_viewport_.cursor_line());
+                                                            viewport->cursor_line());
         shell_.RequestTabStripRedraw();
       }
       return true;
     }
     case SDLK_DELETE: {
-      const bool was_dirty = shell_.text_viewport_.dirty();
-      const std::size_t cursor_before_line = shell_.text_viewport_.cursor_line();
-      const std::vector<std::string> before_lines = shell_.text_viewport_.lines();
-      shell_.text_viewport_.DeleteForward();
+      const bool was_dirty = viewport->dirty();
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      const std::vector<std::string> before_lines = viewport->lines();
+      viewport->DeleteForward();
       shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, shell_.text_viewport_.lines());
-      if (shell_.text_viewport_.dirty() != was_dirty) {
+      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      if (viewport->dirty() != was_dirty) {
         shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            shell_.text_viewport_.cursor_line());
+                                                            viewport->cursor_line());
         shell_.RequestTabStripRedraw();
       }
       return true;
@@ -372,45 +377,44 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
 
   switch (event.key) {
     case SDLK_UP:
-      shell_.text_viewport_.MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      viewport->MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
       shell_.ResetCaretBlink();
       return true;
     case SDLK_DOWN:
-      shell_.text_viewport_.MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      viewport->MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       shell_.ResetCaretBlink();
       return true;
     case SDLK_LEFT:
-      shell_.text_viewport_.MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      viewport->MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
       shell_.ResetCaretBlink();
       return true;
     case SDLK_RIGHT:
-      shell_.text_viewport_.MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      viewport->MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       shell_.ResetCaretBlink();
       return true;
     case SDLK_PAGEUP:
-      shell_.text_viewport_.Page(-1);
+      viewport->Page(-1);
       shell_.ResetCaretBlink();
       return true;
     case SDLK_PAGEDOWN:
-      shell_.text_viewport_.Page(1);
+      viewport->Page(1);
       shell_.ResetCaretBlink();
       return true;
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
-        shell_.text_viewport_.MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
+        viewport->MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
-        shell_.text_viewport_.MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
+        viewport->MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
       }
       shell_.ResetCaretBlink();
       return true;
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
-        const std::size_t last_line =
-            shell_.text_viewport_.line_count() == 0 ? 0 : shell_.text_viewport_.line_count() - 1;
-        shell_.text_viewport_.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
-                                           (modifiers & SDL_KMOD_SHIFT) != 0);
+        const std::size_t last_line = viewport->line_count() == 0 ? 0 : viewport->line_count() - 1;
+        viewport->MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
+                               (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
-        shell_.text_viewport_.MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
+        viewport->MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
       }
       shell_.ResetCaretBlink();
       return true;

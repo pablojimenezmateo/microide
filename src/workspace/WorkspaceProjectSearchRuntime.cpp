@@ -23,8 +23,9 @@ bool WorkspaceProjectSearchRuntime::HandlesEvent(Uint32 type) const {
 
 std::uint64_t WorkspaceProjectSearchRuntime::Start(const std::filesystem::path& root,
                                                    std::string query,
-                                                   project::ProjectSearchOptions options) {
-  active_run_id_ = service_.Start(root, std::move(query), options);
+                                                   project::ProjectSearchOptions options,
+                                                   std::vector<std::filesystem::path> indexed_files) {
+  active_run_id_ = service_.Start(root, std::move(query), options, std::move(indexed_files));
   return active_run_id_;
 }
 

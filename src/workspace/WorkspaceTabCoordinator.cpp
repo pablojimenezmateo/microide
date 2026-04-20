@@ -78,18 +78,10 @@ bool TabCoordinator::Save(std::size_t index) {
     return false;
   }
 
-  if (index == shell_.active_tab_index_) {
-    shell_.SyncActiveEditorTab();
-  }
-
   bool attempted_save = false;
   std::vector<std::filesystem::path> saved_paths;
   for (auto& view : editor_state->views) {
     editor::TextViewport* candidate = &view.viewport;
-    if (index == shell_.active_tab_index_ && view.leaf_id == editor_state->active_leaf_id) {
-      candidate = &shell_.text_viewport_;
-    }
-
     if (candidate->path().empty()) {
       if (candidate->dirty()) {
         return false;
@@ -106,14 +98,6 @@ bool TabCoordinator::Save(std::size_t index) {
     }
     attempted_save = true;
     saved_paths.push_back(candidate->path().lexically_normal());
-
-    if (index == shell_.active_tab_index_ && candidate == &shell_.text_viewport_) {
-      view.viewport = shell_.text_viewport_;
-    }
-  }
-
-  if (index == shell_.active_tab_index_) {
-    shell_.SyncActiveEditorTab();
   }
   if (attempted_save) {
     for (const auto& path : saved_paths) {
@@ -151,12 +135,6 @@ bool TabCoordinator::IsDirty(std::size_t index) const {
   }
 
   for (const auto& view : editor_state->views) {
-    if (index == shell_.active_tab_index_ && view.leaf_id == editor_state->active_leaf_id) {
-      if (shell_.text_viewport_.dirty()) {
-        return true;
-      }
-      continue;
-    }
     if (view.viewport.dirty()) {
       return true;
     }
@@ -203,16 +181,12 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
     shell_.ApplyEditorPreferences(reopened_view);
 
     bool reloaded_any = false;
-    for (auto& view : tab.editor_state->views) {
-      const bool active_view =
-          i == shell_.active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id &&
-          !view.needs_restore;
-      const std::filesystem::path current_path =
-          active_view ? shell_.text_viewport_.path().lexically_normal() : shell_.EditorViewPath(view);
+      for (auto& view : tab.editor_state->views) {
+      const std::filesystem::path current_path = shell_.EditorViewPath(view);
       if (current_path != path.lexically_normal()) {
         continue;
       }
-      const editor::TextViewport* current_view = active_view ? &shell_.text_viewport_ : &view.viewport;
+      const editor::TextViewport* current_view = &view.viewport;
       editor::TextViewport restored_view = reopened_view;
       restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
       restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
@@ -225,9 +199,6 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
       view.restored_scroll_line = restored_view.scroll_line();
       view.restored_horizontal_scroll = restored_view.horizontal_scroll();
       view.needs_restore = false;
-      if (active_view) {
-        shell_.text_viewport_ = restored_view;
-      }
       reloaded_any = true;
     }
     if (reloaded_any && i == shell_.active_tab_index_) {

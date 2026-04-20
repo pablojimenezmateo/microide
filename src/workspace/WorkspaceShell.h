@@ -897,6 +897,10 @@ class WorkspaceShell {
   editor::TextViewport* FindEditorView(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
   const editor::TextViewport* FindEditorView(const TabEntry::EditorTabState& editor_tab,
                                              std::size_t leaf_id) const;
+  editor::TextViewport* ActiveEditorViewport();
+  const editor::TextViewport* ActiveEditorViewport() const;
+  editor::TextViewport* ActiveNavigableViewport();
+  const editor::TextViewport* ActiveNavigableViewport() const;
   EditorSplitSlot FindEditorLeafSlot(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
   TabEntry::EditorTabState::EditorSplitNode* FindEditorSplitNode(
       TabEntry::EditorTabState::EditorSplitNode* node,

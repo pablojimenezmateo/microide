@@ -12,6 +12,7 @@ using microide::compare::BootstrapMergeResultText;
 using microide::compare::MergeChoice;
 using microide::compare::MergeChoiceLines;
 using microide::compare::MergeResultLines;
+using microide::compare::MergeResultText;
 
 void TestMergeSingleSidedChange() {
   auto model = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\nbeta-incoming\ngamma\n",
@@ -100,6 +101,33 @@ void TestBootstrapMergeResultTextUsesOneTimeChoices() {
          "bootstrap merge result should apply only the initial per-hunk choices");
 }
 
+void TestMergeResultTextHonorsRequestedLineEnding() {
+  auto model = BuildMergeModel("alpha\r\nbeta\r\n", "alpha\r\nbeta-incoming\r\n",
+                               "alpha\r\nbeta\r\n");
+  model.hunks.front().choice = MergeChoice::Incoming;
+  Expect(MergeResultText(model, "\r\n") == "alpha\r\nbeta-incoming\r\n",
+         "merge result text should preserve the caller-selected line ending");
+}
+
+void TestMergeLargeInputsUseSharedFallbackDiff() {
+  std::string base;
+  std::string incoming;
+  std::string current;
+  for (int line = 0; line < 900; ++line) {
+    const std::string text = "line " + std::to_string(line) + "\n";
+    base += text;
+    incoming += line == 450 ? "line 450 incoming\n" : text;
+    current += line == 451 ? "line 451 current\n" : text;
+  }
+
+  const auto model = BuildMergeModel(base, incoming, current);
+  Expect(model.hunks.size() == 2,
+         "large merge inputs should still produce independent hunks without exhausting memory");
+  const auto result = MergeResultLines(model);
+  Expect(result[450] == "line 450 incoming" && result[451] == "line 451 current",
+         "large merge inputs should keep both sides' independent edits");
+}
+
 }  // namespace
 
 void RegisterMergeModelTests(std::vector<TestCase>& tests) {
@@ -112,6 +140,10 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Merge/ChoiceLabels", TestMergeChoiceLabels);
   AddTest(tests, "Merge/BootstrapMergeResultTextUsesOneTimeChoices",
           TestBootstrapMergeResultTextUsesOneTimeChoices);
+  AddTest(tests, "Merge/ResultTextHonorsRequestedLineEnding",
+          TestMergeResultTextHonorsRequestedLineEnding);
+  AddTest(tests, "Merge/LargeInputsUseSharedFallbackDiff",
+          TestMergeLargeInputsUseSharedFallbackDiff);
 }
 
 }  // namespace microide::tests

@@ -104,7 +104,9 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
     const auto& result = shell_.overlay_workflow_.project_search
                              .results[shell_.overlay_workflow_.project_search.selected_index];
     shell_.OpenFile(shell_.project_root_ / result.relative_path);
-    shell_.text_viewport_.MoveCursorTo(result.line, result.column);
+    if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+      viewport->MoveCursorTo(result.line, result.column);
+    }
     if (shell_.sidebar_state_.temporary) {
       shell_.RestorePreviousSidebar();
     }

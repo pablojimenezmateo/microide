@@ -61,7 +61,26 @@ struct CompareBuildResult {
   CompareBuildProfile profile;
 };
 
+enum class DiffOpKind {
+  Equal,
+  Delete,
+  Insert,
+};
+
+struct DiffOp {
+  DiffOpKind kind = DiffOpKind::Equal;
+  std::string text;
+};
+
+struct LineDiffBuildStats {
+  std::size_t exact_alignment_calls = 0;
+  std::size_t anchored_alignment_calls = 0;
+};
+
 CompareModel BuildCompareModel(const std::string& left, const std::string& right);
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right);
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
+                                     const std::vector<std::string>& right_lines,
+                                     LineDiffBuildStats* stats = nullptr);
 
 }  // namespace microide::compare

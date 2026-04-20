@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "project/ProjectSearchService.h"
 
@@ -22,7 +23,8 @@ class WorkspaceProjectSearchRuntime {
 
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
-                      project::ProjectSearchOptions options = {});
+                      project::ProjectSearchOptions options = {},
+                      std::vector<std::filesystem::path> indexed_files = {});
   void Stop();
   std::optional<project::ProjectSearchUpdate> ConsumeActiveUpdate();
 

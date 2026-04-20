@@ -374,6 +374,7 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
                                                                const SDL_Color* background) {
   const std::string key = BuildCacheKey(text, color, background);
   if (auto it = cache_.find(key); it != cache_.end()) {
+    cache_order_.splice(cache_order_.end(), cache_order_, it->second.order);
     return &it->second;
   }
 
@@ -399,10 +400,10 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   SDL_DestroySurface(surface);
 
   cache_order_.push_back(key);
+  entry.order = std::prev(cache_order_.end());
   cache_.insert_or_assign(key, entry);
   while (cache_order_.size() > kMaxCacheEntries) {
     const std::string old_key = cache_order_.front();
-    cache_order_.pop_front();
     auto it = cache_.find(old_key);
     if (it != cache_.end()) {
       if (it->second.texture != nullptr) {
@@ -410,6 +411,7 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
       }
       cache_.erase(it);
     }
+    cache_order_.pop_front();
   }
 
   auto it = cache_.find(key);

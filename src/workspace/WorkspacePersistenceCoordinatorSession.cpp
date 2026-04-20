@@ -399,7 +399,7 @@ PersistenceCoordinator::BuildPersistedMergeTabState(
 }
 
 std::optional<PersistedEditorTabState>
-PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t tab_index,
+PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
                                                      WorkspaceShell::TabEntry& tab) {
   if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
       tab.editor_state->views.empty()) {
@@ -413,11 +413,7 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t tab_index,
   persisted_tab.kind = "editor";
   persisted_tab.active_leaf_id = editor_state.active_leaf_id;
   for (const auto& view : editor_state.views) {
-    const bool active_live_view =
-        tab_index == shell_.active_tab_index_ && view.leaf_id == editor_state.active_leaf_id &&
-        !view.needs_restore;
-    const editor::TextViewport* persisted_viewport =
-        active_live_view ? &shell_.text_viewport_ : &view.viewport;
+    const editor::TextViewport* persisted_viewport = &view.viewport;
     const std::filesystem::path normalized_path =
         view.needs_restore ? view.restored_path.lexically_normal()
                            : persisted_viewport->path().lexically_normal();

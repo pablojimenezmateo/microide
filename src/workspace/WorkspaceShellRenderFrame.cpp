@@ -108,7 +108,6 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   TextInputCoordinator(*this).SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
-    SyncActiveEditorTab();
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
       NormalizeEditorSplitTree(*editor_tab);
     }
@@ -210,18 +209,19 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-    if (panes.empty() && text_viewport_.is_placeholder()) {
+    editor::TextViewport* active_viewport = ActiveEditorViewport();
+    if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
       if (active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = layout.editor_surface;
       }
-      editor_view_renderer_.Render(renderer, text_renderer_, theme_, text_viewport_,
+      editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
                                    std::nullopt, {});
     }
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
       editor::TextViewport* viewport =
-          pane.active ? &text_viewport_
+          pane.active ? ActiveEditorViewport()
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
                                                : nullptr);
       if (viewport == nullptr) {
@@ -256,7 +256,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
       editor::TextViewport* viewport =
-          pane.active ? &text_viewport_
+          pane.active ? ActiveEditorViewport()
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
                                                : nullptr);
       if (viewport == nullptr || viewport->is_placeholder()) {

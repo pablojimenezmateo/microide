@@ -12,17 +12,6 @@ namespace microide::compare {
 
 namespace {
 
-enum class DiffOpKind {
-  Equal,
-  Delete,
-  Insert,
-};
-
-struct DiffOp {
-  DiffOpKind kind = DiffOpKind::Equal;
-  std::string text;
-};
-
 struct SideChange {
   int base_start = 0;
   int base_end = 0;
@@ -39,53 +28,9 @@ struct TaggedChange {
   SideChange change;
 };
 
-std::vector<DiffOp> BuildDiffOps(const std::vector<std::string>& base_lines,
-                                 const std::vector<std::string>& variant_lines) {
-  const std::size_t base_count = base_lines.size();
-  const std::size_t variant_count = variant_lines.size();
-  std::vector<int> dp((base_count + 1) * (variant_count + 1), 0);
-  const auto at = [&](std::size_t i, std::size_t j) -> int& {
-    return dp[i * (variant_count + 1) + j];
-  };
-
-  for (std::size_t i = base_count; i-- > 0;) {
-    for (std::size_t j = variant_count; j-- > 0;) {
-      if (base_lines[i] == variant_lines[j]) {
-        at(i, j) = at(i + 1, j + 1) + 1;
-      } else {
-        at(i, j) = std::max(at(i + 1, j), at(i, j + 1));
-      }
-    }
-  }
-
-  std::vector<DiffOp> ops;
-  std::size_t i = 0;
-  std::size_t j = 0;
-  while (i < base_count && j < variant_count) {
-    if (base_lines[i] == variant_lines[j]) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, base_lines[i]});
-      ++i;
-      ++j;
-    } else if (at(i + 1, j) >= at(i, j + 1)) {
-      ops.push_back(DiffOp{DiffOpKind::Delete, base_lines[i]});
-      ++i;
-    } else {
-      ops.push_back(DiffOp{DiffOpKind::Insert, variant_lines[j]});
-      ++j;
-    }
-  }
-  while (i < base_count) {
-    ops.push_back(DiffOp{DiffOpKind::Delete, base_lines[i++]});
-  }
-  while (j < variant_count) {
-    ops.push_back(DiffOp{DiffOpKind::Insert, variant_lines[j++]});
-  }
-  return ops;
-}
-
 std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_lines,
                                          const std::vector<std::string>& variant_lines) {
-  const std::vector<DiffOp> ops = BuildDiffOps(base_lines, variant_lines);
+  const std::vector<DiffOp> ops = BuildLineDiffOps(base_lines, variant_lines);
   std::vector<SideChange> changes;
   int base_line = 0;
   for (std::size_t op_index = 0; op_index < ops.size(); ++op_index) {
@@ -332,8 +277,8 @@ std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model) {
   return lines;
 }
 
-std::string BootstrapMergeResultText(const MergeModel& model) {
-  return util::JoinLines(BootstrapMergeResultLines(model), "\n");
+std::string BootstrapMergeResultText(const MergeModel& model, std::string_view separator) {
+  return util::JoinLines(BootstrapMergeResultLines(model), separator);
 }
 
 std::vector<std::string> MergeResultLines(const MergeModel& model) {
@@ -356,8 +301,8 @@ std::vector<std::string> MergeResultLines(const MergeModel& model) {
   return lines;
 }
 
-std::string MergeResultText(const MergeModel& model) {
-  return util::JoinLines(MergeResultLines(model), "\n");
+std::string MergeResultText(const MergeModel& model, std::string_view separator) {
+  return util::JoinLines(MergeResultLines(model), separator);
 }
 
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {

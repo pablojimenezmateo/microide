@@ -50,12 +50,15 @@ struct WorkspaceShellTestAccess {
     shell.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   }
 
-  static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) { return shell.text_viewport_; }
+  static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) {
+    return *shell.ActiveEditorViewport();
+  }
   static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
-    return shell.text_viewport_.selection_range().has_value();
+    const editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    return viewport != nullptr && viewport->selection_range().has_value();
   }
   static std::string ActiveEditorSelectedText(WorkspaceShell& shell) {
-    return shell.text_viewport_.SelectedText();
+    return shell.ActiveEditorViewport()->SelectedText();
   }
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.open_tabs_[shell.active_tab_index_].compare.value();
@@ -693,7 +696,8 @@ struct WorkspaceShellTestAccess {
   static microide::editor::EditorViewMetrics ActiveEditorMetrics(WorkspaceShell& shell) {
     const SDL_FRect pane = ActiveEditorPaneRect(shell);
     return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,
-                                                                shell.text_viewport_, pane);
+                                                                *shell.ActiveEditorViewport(),
+                                                                pane);
   }
   static std::optional<SDL_FRect> ActiveEditorLineRangeRect(WorkspaceShell& shell,
                                                             std::size_t start_line,
@@ -735,20 +739,23 @@ struct WorkspaceShellTestAccess {
     if (!shell.ActiveTabIsEditor()) {
       return std::nullopt;
     }
-    shell.SyncActiveEditorTab();
     auto* editor_tab = shell.ActiveEditorTab();
     if (editor_tab == nullptr) {
       return std::nullopt;
     }
     shell.NormalizeEditorSplitTree(*editor_tab);
+    microide::editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    if (viewport == nullptr) {
+      return std::nullopt;
+    }
     const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
     for (const auto& pane : panes) {
       if (pane.active) {
-        return shell.BuildEditorBlameOverlay(shell.text_viewport_, pane.rect);
+        return shell.BuildEditorBlameOverlay(*viewport, pane.rect);
       }
     }
-    return shell.text_viewport_.is_placeholder()
-               ? shell.BuildEditorBlameOverlay(shell.text_viewport_, layout.editor_surface)
+    return viewport->is_placeholder()
+               ? shell.BuildEditorBlameOverlay(*viewport, layout.editor_surface)
                : std::nullopt;
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveCompareBlameOverlay(

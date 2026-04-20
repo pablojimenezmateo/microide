@@ -267,8 +267,9 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
   if (source == ActionSource::ContextMenu) {
     return shell_.ResolveTreeActionPath(source);
   }
-  if (!shell_.text_viewport_.path().empty()) {
-    return shell_.text_viewport_.path().lexically_normal();
+  if (const editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+      viewport != nullptr && !viewport->path().empty()) {
+    return viewport->path().lexically_normal();
   }
   if (shell_.sidebar_state_.visible && shell_.ActiveSidebarMode() == SidebarMode::Tree) {
     const auto& entries = shell_.directory_tree_.entries();
@@ -429,10 +430,15 @@ void WorkspaceActionContext::CloseAllTabs() {
 
 bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& request,
                                                    bool relative) {
-  const std::size_t line_count = std::max<std::size_t>(1, shell_.text_viewport_.line_count());
+  editor::TextViewport* viewport = shell_.ActiveNavigableViewport();
+  if (viewport == nullptr) {
+    return false;
+  }
+
+  const std::size_t line_count = std::max<std::size_t>(1, viewport->line_count());
   std::size_t line = 0;
   if (relative) {
-    const long long current_line = static_cast<long long>(shell_.text_viewport_.cursor_line()) + 1;
+    const long long current_line = static_cast<long long>(viewport->cursor_line()) + 1;
     const long long target_line = current_line + request.requested_line;
     line = static_cast<std::size_t>(
         std::clamp(target_line - 1, 0LL, static_cast<long long>(line_count - 1)));
@@ -443,7 +449,7 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
     line = from_end >= line_count ? 0 : line_count - from_end;
   }
 
-  shell_.text_viewport_.MoveCursorTo(line, request.column > 0 ? request.column - 1 : 0);
+  viewport->MoveCursorTo(line, request.column > 0 ? request.column - 1 : 0);
   shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   shell_.RequestFocusedEditorRedraw();
   return true;

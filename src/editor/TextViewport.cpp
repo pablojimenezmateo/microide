@@ -664,7 +664,8 @@ void TextViewport::ResetState(std::vector<std::string> lines,
   document_->redo_stack.clear();
   document_->placeholder = placeholder;
   document_->dirty = dirty;
-  InvalidateLayoutCaches();
+  InvalidateVisualColumnCache();
+  InvalidateDerivedCaches();
   EnsureCursorVisible();
 }
 
@@ -711,18 +712,28 @@ void TextViewport::EnsureHighlightStatesThrough(std::size_t line_index) const {
   highlight_state_computed_through_ = target_line;
 }
 
-void TextViewport::InvalidateLayoutCaches() {
+void TextViewport::InvalidateDerivedCaches() {
   EnsureDocument();
   ++document_->layout_revision;
-  cached_max_visual_columns_.reset();
-  cached_max_visual_columns_tab_size_ = 0;
-  cached_max_visual_columns_revision_ = 0;
   visible_line_cache_.clear();
   highlight_cache_.clear();
   initial_highlight_state_.reset();
   line_highlight_states_.clear();
   highlight_state_computed_through_.reset();
   highlight_state_revision_ = document_->layout_revision;
+}
+
+void TextViewport::InvalidateVisualColumnCache() {
+  cached_max_visual_columns_.reset();
+  cached_max_visual_columns_line_index_.reset();
+  cached_visual_line_columns_.clear();
+  cached_max_visual_columns_tab_size_ = 0;
+  cached_max_visual_columns_revision_ = 0;
+}
+
+void TextViewport::InvalidateLayoutCaches() {
+  InvalidateVisualColumnCache();
+  InvalidateDerivedCaches();
 }
 
 void TextViewport::InvalidateSyntaxHighlighting() {
@@ -785,11 +796,11 @@ void TextViewport::PushHistoryEntry(HistoryEntry entry) {
 
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
-  const std::size_t remove_count = forward ? entry.before_lines.size() : entry.after_lines.size();
+  const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto erase_begin =
       document_->lines.begin() + static_cast<std::ptrdiff_t>(start_line);
   const auto erase_end =
-      erase_begin + static_cast<std::ptrdiff_t>(std::min(remove_count, document_->lines.size() - start_line));
+      erase_begin + static_cast<std::ptrdiff_t>(std::min(removed_count, document_->lines.size() - start_line));
   document_->lines.erase(erase_begin, erase_end);
 
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
@@ -801,7 +812,8 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   RefreshEncoding();
-  InvalidateLayoutCaches();
+  InvalidateDerivedCaches();
+  UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);
   EnsureCursorVisible();
 }
 
@@ -974,6 +986,52 @@ std::size_t TextViewport::CurrentLineLength() const {
   return document_->lines[cursor_line_].size();
 }
 
+void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
+                                                    std::size_t removed_count,
+                                                    const std::vector<std::string>& inserted_lines) {
+  if (cached_max_visual_columns_tab_size_ != tab_size_ ||
+      cached_visual_line_columns_.size() != document_->lines.size() - inserted_lines.size() +
+                                               removed_count) {
+    InvalidateVisualColumnCache();
+    return;
+  }
+
+  std::vector<std::size_t> inserted_columns;
+  inserted_columns.reserve(inserted_lines.size());
+  for (const std::string& line : inserted_lines) {
+    inserted_columns.push_back(TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size_));
+  }
+
+  const std::size_t clamped_start = std::min(start_line, cached_visual_line_columns_.size());
+  const std::size_t erase_end = std::min(clamped_start + removed_count, cached_visual_line_columns_.size());
+  cached_visual_line_columns_.erase(
+      cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
+      cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(erase_end));
+  cached_visual_line_columns_.insert(
+      cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
+      inserted_columns.begin(), inserted_columns.end());
+
+  const bool max_line_erased =
+      cached_max_visual_columns_line_index_.has_value() &&
+      *cached_max_visual_columns_line_index_ >= clamped_start &&
+      *cached_max_visual_columns_line_index_ < clamped_start + removed_count;
+  const bool candidate_expands_max =
+      std::any_of(inserted_columns.begin(), inserted_columns.end(), [&](std::size_t width) {
+        return !cached_max_visual_columns_.has_value() || width >= *cached_max_visual_columns_;
+      });
+  if (max_line_erased || candidate_expands_max || !cached_max_visual_columns_.has_value()) {
+    cached_max_visual_columns_.reset();
+    cached_max_visual_columns_line_index_.reset();
+  } else if (cached_max_visual_columns_line_index_.has_value() &&
+             *cached_max_visual_columns_line_index_ >= clamped_start) {
+    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(inserted_columns.size()) -
+                                 static_cast<std::ptrdiff_t>(removed_count);
+    *cached_max_visual_columns_line_index_ = static_cast<std::size_t>(
+        static_cast<std::ptrdiff_t>(*cached_max_visual_columns_line_index_) + delta);
+  }
+  cached_max_visual_columns_revision_ = document_->layout_revision;
+}
+
 void TextViewport::ClampCursorColumn() {
   if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
     cursor_column_ = 0;
@@ -1035,12 +1093,26 @@ std::size_t TextViewport::MaxVisualColumns() const {
     return *cached_max_visual_columns_;
   }
 
+  if (cached_max_visual_columns_tab_size_ != tab_size_ ||
+      cached_visual_line_columns_.size() != document_->lines.size()) {
+    cached_visual_line_columns_.assign(document_->lines.size(), 0);
+    for (std::size_t index = 0; index < document_->lines.size(); ++index) {
+      cached_visual_line_columns_[index] =
+          TextLayout::VisualColumnForTextColumn(document_->lines[index],
+                                                document_->lines[index].size(), tab_size_);
+    }
+  }
+
   std::size_t max_columns = 0;
-  for (const std::string& line : document_->lines) {
-    max_columns =
-        std::max(max_columns, TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size_));
+  std::size_t max_line = 0;
+  for (std::size_t index = 0; index < cached_visual_line_columns_.size(); ++index) {
+    if (cached_visual_line_columns_[index] >= max_columns) {
+      max_columns = cached_visual_line_columns_[index];
+      max_line = index;
+    }
   }
   cached_max_visual_columns_ = max_columns;
+  cached_max_visual_columns_line_index_ = max_line;
   cached_max_visual_columns_tab_size_ = tab_size_;
   cached_max_visual_columns_revision_ = document_->layout_revision;
   return *cached_max_visual_columns_;

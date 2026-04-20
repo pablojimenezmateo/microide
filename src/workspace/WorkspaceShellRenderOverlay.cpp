@@ -48,6 +48,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                         selected ? theme_.row_highlight : theme_.surface_raised,
                         TruncateLabel(label, row.w - 12.0f));
   };
+  const editor::TextViewport* active_viewport = ActiveEditorViewport();
 
   if (overlay_state_.mode == OverlayMode::BufferSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
@@ -71,7 +72,9 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
           overlay_workflow_.buffer_search.matches[static_cast<std::size_t>(item_index)];
       const std::string label = "Ln " + std::to_string(match.start.line + 1) + ", Col " +
                                 std::to_string(match.start.column + 1) + "  " +
-                                TruncateLabel(text_viewport_.lines()[match.start.line],
+                                TruncateLabel(active_viewport != nullptr
+                                                  ? active_viewport->lines()[match.start.line]
+                                                  : std::string_view{},
                                               overlay.w - 150.0f);
       draw_overlay_row(row,
                        static_cast<int>(overlay_workflow_.buffer_search.selected_index) -
@@ -109,7 +112,9 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
           overlay_workflow_.buffer_search.matches[static_cast<std::size_t>(item_index)];
       const std::string label = "Ln " + std::to_string(match.start.line + 1) + ", Col " +
                                 std::to_string(match.start.column + 1) + "  " +
-                                TruncateLabel(text_viewport_.lines()[match.start.line],
+                                TruncateLabel(active_viewport != nullptr
+                                                  ? active_viewport->lines()[match.start.line]
+                                                  : std::string_view{},
                                               overlay.w - 150.0f);
       draw_overlay_row(row,
                        static_cast<int>(overlay_workflow_.buffer_search.selected_index) -

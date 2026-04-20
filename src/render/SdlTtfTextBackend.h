@@ -7,8 +7,8 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <array>
-#include <deque>
 #include <filesystem>
+#include <list>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -44,6 +44,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     SDL_Texture* texture = nullptr;
     int width = 0;
     int height = 0;
+    std::list<std::string>::iterator order;
   };
 
   SdlTtfTextBackend() = default;
@@ -75,7 +76,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
   std::unordered_map<std::string, CacheEntry> cache_;
-  std::deque<std::string> cache_order_;
+  std::list<std::string> cache_order_;
 };
 
 }  // namespace microide::render
