@@ -83,7 +83,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 }
 
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
-  PersistenceCoordinator persistence(*this);
+  auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
   MenuCoordinator(*this).CloseTreeContextMenu();
   ClearEditorBlame();
@@ -105,7 +105,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
                                               bool log_feedback,
                                               bool activate_restored_tab) {
   (void) log_feedback;
-  PersistenceCoordinator persistence(*this);
+  auto persistence = MakePersistenceCoordinator();
   util::StartupTrace::Scope trace_scope("WorkspaceShell::InitializeCurrentProject");
   ResetProjectScopedState(false);
   {
@@ -210,7 +210,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 }
 
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
-  PersistenceCoordinator persistence(*this);
+  auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
   MenuCoordinator(*this).CloseTreeContextMenu();
   ClearEditorBlame();

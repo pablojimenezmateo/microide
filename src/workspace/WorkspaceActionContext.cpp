@@ -613,23 +613,23 @@ void WorkspaceActionContext::PasteClipboard() {
 }
 
 void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
-  PersistenceCoordinator(shell_).RefreshAvailableColorschemeNames();
+  shell_.MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
 }
 
 void WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
-  PersistenceCoordinator(shell_).ApplyColorscheme(name, true, true);
+  shell_.MakePersistenceCoordinator().ApplyColorscheme(name, true, true);
 }
 
 void WorkspaceActionContext::SetTabSize(std::size_t value) {
   shell_.editor_preferences_.tab_size = value;
   shell_.ApplyEditorPreferencesToAllTabs();
-  PersistenceCoordinator(shell_).SaveConfigState();
+  shell_.MakePersistenceCoordinator().SaveConfigState();
 }
 
 void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
   shell_.editor_preferences_.indent_width = value;
   shell_.ApplyEditorPreferencesToAllTabs();
-  PersistenceCoordinator(shell_).SaveConfigState();
+  shell_.MakePersistenceCoordinator().SaveConfigState();
 }
 
 float WorkspaceActionContext::UiScale() const {
@@ -637,13 +637,13 @@ float WorkspaceActionContext::UiScale() const {
 }
 
 void WorkspaceActionContext::ApplyUiScale(float scale) {
-  PersistenceCoordinator(shell_).ApplyUiScale(scale, true, true);
+  shell_.MakePersistenceCoordinator().ApplyUiScale(scale, true, true);
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {
   shell_.editor_preferences_.soft_tabs = enabled;
   shell_.ApplyEditorPreferencesToAllTabs();
-  PersistenceCoordinator(shell_).SaveConfigState();
+  shell_.MakePersistenceCoordinator().SaveConfigState();
 }
 
 bool WorkspaceActionContext::Focus(FocusRequestTarget target) {

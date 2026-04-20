@@ -148,14 +148,14 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .reset_startup_state = [this]() { ResetLifecycleStartupState(); },
           .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
           .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
-          .restore_user_config = [this]() { PersistenceCoordinator(*this).RestoreUserConfig(); },
+          .restore_user_config = [this]() { MakePersistenceCoordinator().RestoreUserConfig(); },
           .refresh_available_colorscheme_names =
-              [this]() { PersistenceCoordinator(*this).RefreshAvailableColorschemeNames(); },
+              [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .reset_project_scoped_state = [this](bool show_welcome) {
             ResetProjectScopedState(show_welcome);
           },
           .restore_workspace_session =
-              [this]() { return PersistenceCoordinator(*this).RestoreWorkspaceSession(); },
+              [this]() { return MakePersistenceCoordinator().RestoreWorkspaceSession(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .open_project_tab =
               [this](const std::filesystem::path& project_root,
@@ -164,7 +164,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
                 return OpenProjectTab(project_root, restore_persistence, log_feedback);
               },
           .shutdown_plugin_runtime = [this]() { plugin_runtime_.Shutdown(); },
-          .save_user_config = [this]() { PersistenceCoordinator(*this).SaveUserConfig(); },
+          .save_user_config = [this]() { MakePersistenceCoordinator().SaveUserConfig(); },
           .stop_git_blame_service = [this]() { git_blame_service_.Stop(); },
           .persist_active_project =
               [this]() {
@@ -175,7 +175,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .persist_inactive_projects_for_shutdown =
               [this]() { MakeProjectCatalogCoordinator().PersistInactiveEntriesForShutdown(); },
           .save_workspace_session =
-              [this]() { PersistenceCoordinator(*this).SaveWorkspaceSession(); },
+              [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .clear_terminal_tabs = [this]() { terminal_tabs_.clear(); },
           .destroy_cursors = [this]() { DestroyLifecycleCursors(); },

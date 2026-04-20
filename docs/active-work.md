@@ -183,6 +183,10 @@ Current state:
 - lifecycle init, shutdown, quit-request handling, wake-event registration, and cursor teardown now
   run through a `WorkspaceLifecycleCoordinator` that depends on `WorkspaceContext`, a quit flag,
   and explicit lifecycle callbacks instead of `WorkspaceShell&`
+- project-local config, session, and workspace-session persistence now run through a
+  `WorkspacePersistenceCoordinator` that depends on `WorkspaceContext`, theme or ui-scale state,
+  and explicit callbacks for editor preference application, compare or merge tab reconstruction,
+  project-root resolution, and project-catalog restoration instead of `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

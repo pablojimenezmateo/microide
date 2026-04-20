@@ -6,8 +6,6 @@
 #include "util/StartupTrace.h"
 #include "util/TextFileIO.h"
 #include "workspace/WorkspacePersistenceFormat.h"
-#include "workspace/WorkspaceProjectCatalogCoordinator.h"
-
 namespace microide::workspace {
 
 std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const {
@@ -32,40 +30,40 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
     return false;
   }
 
-  shell_.project_catalog_.entries.clear();
-  shell_.project_catalog_.active_index = 0;
-  shell_.project_catalog_.tab_scroll_index = 0;
+  context_.project_catalog.entries.clear();
+  context_.project_catalog.active_index = 0;
+  context_.project_catalog.tab_scroll_index = 0;
 
   if (persisted_session.project_roots.empty()) {
-    shell_.ResetProjectCatalogToWelcomeState();
+    operations_.reset_project_catalog_to_welcome_state();
     return true;
   }
 
   for (const auto& root : persisted_session.project_roots) {
-    const std::filesystem::path normalized_root = shell_.ResolveProjectRootInput(root);
+    const std::filesystem::path normalized_root = operations_.resolve_project_root_input(root);
     std::error_code error;
     if (normalized_root.empty() || !std::filesystem::exists(normalized_root, error) || error ||
         !std::filesystem::is_directory(normalized_root, error)) {
       continue;
     }
-    auto project_state = std::make_unique<WorkspaceShell::ProjectWorkspaceState>();
+    auto project_state = std::make_unique<ProjectWorkspaceState>();
     project_state->root = normalized_root;
     project_state->restore_persistence_on_activate = true;
-    shell_.project_catalog_.entries.push_back(std::move(project_state));
+    context_.project_catalog.entries.push_back(std::move(project_state));
   }
 
-  if (shell_.project_catalog_.entries.empty()) {
-    shell_.ResetProjectCatalogToWelcomeState();
+  if (context_.project_catalog.entries.empty()) {
+    operations_.reset_project_catalog_to_welcome_state();
     return true;
   }
 
-  if (!shell_.MakeProjectCatalogCoordinator().RestoreAfterRemoval(
+  if (!operations_.restore_project_catalog_after_removal(
           std::min(persisted_session.active_project_index,
-                   shell_.project_catalog_.entries.size() - 1),
+                   context_.project_catalog.entries.size() - 1),
           true)) {
     return true;
   }
-  shell_.EnsureActiveProjectVisible();
+  operations_.ensure_active_project_visible();
   return true;
 }
 
@@ -77,15 +75,15 @@ void PersistenceCoordinator::SaveWorkspaceSession() const {
 
   PersistedWorkspaceSessionState persisted_session;
   persisted_session.active_project_index =
-      shell_.project_catalog_.entries.empty()
+      context_.project_catalog.entries.empty()
           ? 0
-          : std::min(shell_.project_catalog_.active_index,
-                     shell_.project_catalog_.entries.size() - 1);
-  persisted_session.project_roots.reserve(shell_.project_catalog_.entries.size());
-  for (std::size_t i = 0; i < shell_.project_catalog_.entries.size(); ++i) {
-    const auto* entry = shell_.ProjectCatalogEntry(i);
-    const std::filesystem::path project_root =
-        entry != nullptr ? entry->root : shell_.ProjectCatalogRoot(i);
+          : std::min(context_.project_catalog.active_index,
+                     context_.project_catalog.entries.size() - 1);
+  persisted_session.project_roots.reserve(context_.project_catalog.entries.size());
+  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
+    const auto* entry = context_.ProjectCatalogEntry(i);
+    const std::filesystem::path project_root = entry != nullptr ? entry->root
+                                                                : context_.ProjectCatalogRoot(i);
     if (project_root.empty()) {
       continue;
     }

@@ -828,16 +828,16 @@ struct WorkspaceShellTestAccess {
     return {};
   }
   static bool RestoreSessionState(WorkspaceShell& shell) {
-    return PersistenceCoordinator(shell).RestoreSessionState();
+    return shell.MakePersistenceCoordinator().RestoreSessionState();
   }
   static void SaveSessionState(WorkspaceShell& shell) {
-    PersistenceCoordinator(shell).SaveSessionState();
+    shell.MakePersistenceCoordinator().SaveSessionState();
   }
   static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
-    return PersistenceCoordinator(shell).RestoreWorkspaceSession();
+    return shell.MakePersistenceCoordinator().RestoreWorkspaceSession();
   }
   static void SaveWorkspaceSession(WorkspaceShell& shell) {
-    PersistenceCoordinator(shell).SaveWorkspaceSession();
+    shell.MakePersistenceCoordinator().SaveWorkspaceSession();
   }
   static void RequestQuit(WorkspaceShell& shell) { shell.RequestQuit(); }
   static bool ConsumeQuitRequested(WorkspaceShell& shell) { return shell.ConsumeQuitRequested(); }

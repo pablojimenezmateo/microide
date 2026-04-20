@@ -297,9 +297,9 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
 
 void TabMouseCoordinator::PersistReorderedTabs(WorkspaceShell::TabDragKind kind) {
   if (kind == WorkspaceShell::TabDragKind::Project) {
-    PersistenceCoordinator(shell_).SaveWorkspaceSession();
+    shell_.MakePersistenceCoordinator().SaveWorkspaceSession();
   } else {
-    PersistenceCoordinator(shell_).SaveSessionState();
+    shell_.MakePersistenceCoordinator().SaveSessionState();
   }
 }
 

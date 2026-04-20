@@ -411,7 +411,6 @@ class WorkspaceShell {
   };
 
   friend class WorkspaceActionContext;
-  friend class PersistenceCoordinator;
   friend class CommandPromptCoordinator;
   friend class MenuCoordinator;
   friend class KeyInputCoordinator;
@@ -480,6 +479,7 @@ class WorkspaceShell {
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
   ProjectCatalogCoordinator MakeProjectCatalogCoordinator();
+  PersistenceCoordinator MakePersistenceCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();

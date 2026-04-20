@@ -11,7 +11,7 @@
 namespace microide::workspace {
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
-  shell_.available_colorscheme_names_ = render::ListAvailableThemeNames();
+  available_colorscheme_names_ = render::ListAvailableThemeNames();
 }
 
 bool PersistenceCoordinator::ApplyColorscheme(std::string_view name,
@@ -26,20 +26,20 @@ bool PersistenceCoordinator::ApplyColorscheme(std::string_view name,
     return false;
   }
 
-  shell_.theme_ = loaded_theme;
-  shell_.active_colorscheme_name_ = resolved_name.empty() ? requested_name : resolved_name;
-  if (!shell_.project_base_color_.has_value() && !shell_.project_root_.empty()) {
-    shell_.project_base_color_ = DefaultProjectBaseColor(shell_.project_root_);
+  auto& state = CurrentProjectState();
+  theme_ = loaded_theme;
+  state.active_colorscheme_name = resolved_name.empty() ? requested_name : resolved_name;
+  if (!state.project_base_color.has_value() && !state.root.empty()) {
+    state.project_base_color = DefaultProjectBaseColor(state.root);
   }
-  if (shell_.project_base_color_.has_value()) {
-    ApplyProjectAccent(shell_.theme_, *shell_.project_base_color_);
+  if (state.project_base_color.has_value()) {
+    ApplyProjectAccent(theme_, *state.project_base_color);
   }
-  if (std::find(shell_.available_colorscheme_names_.begin(),
-                shell_.available_colorscheme_names_.end(),
-                shell_.active_colorscheme_name_) == shell_.available_colorscheme_names_.end()) {
-    shell_.available_colorscheme_names_.push_back(shell_.active_colorscheme_name_);
-    std::sort(shell_.available_colorscheme_names_.begin(),
-              shell_.available_colorscheme_names_.end());
+  if (std::find(available_colorscheme_names_.begin(),
+                available_colorscheme_names_.end(),
+                state.active_colorscheme_name) == available_colorscheme_names_.end()) {
+    available_colorscheme_names_.push_back(state.active_colorscheme_name);
+    std::sort(available_colorscheme_names_.begin(), available_colorscheme_names_.end());
   }
 
   if (persist) {
@@ -56,7 +56,7 @@ bool PersistenceCoordinator::ApplyUiScale(float scale,
     return false;
   }
 
-  shell_.ui_scale_ = std::clamp(scale, kMinUiScale, kMaxUiScale);
+  ui_scale_ = std::clamp(scale, kMinUiScale, kMaxUiScale);
   if (persist) {
     SaveUserConfig();
   }
@@ -64,7 +64,7 @@ bool PersistenceCoordinator::ApplyUiScale(float scale,
 }
 
 bool PersistenceCoordinator::RestoreUserConfig() {
-  const std::filesystem::path config_path = shell_.UserConfigPath();
+  const std::filesystem::path config_path = operations_.user_config_path();
   if (config_path.empty()) {
     return false;
   }
@@ -74,7 +74,7 @@ bool PersistenceCoordinator::RestoreUserConfig() {
     return false;
   }
 
-  PersistedUserConfigState state{.ui_scale = shell_.ui_scale_};
+  PersistedUserConfigState state{.ui_scale = ui_scale_};
   if (!ParseUserConfigText(*text, &state)) {
     return false;
   }
@@ -83,17 +83,17 @@ bool PersistenceCoordinator::RestoreUserConfig() {
 }
 
 void PersistenceCoordinator::SaveUserConfig() const {
-  const std::filesystem::path config_path = shell_.UserConfigPath();
+  const std::filesystem::path config_path = operations_.user_config_path();
   if (config_path.empty()) {
     return;
   }
 
   util::WriteTextFileAtomically(
-      config_path, SerializeUserConfig(PersistedUserConfigState{.ui_scale = shell_.ui_scale_}));
+      config_path, SerializeUserConfig(PersistedUserConfigState{.ui_scale = ui_scale_}));
 }
 
 bool PersistenceCoordinator::RestoreConfigState() {
-  const std::filesystem::path config_path = shell_.ConfigStatePath();
+  const std::filesystem::path config_path = operations_.config_state_path();
   if (config_path.empty()) {
     return false;
   }
@@ -102,44 +102,46 @@ bool PersistenceCoordinator::RestoreConfigState() {
     return false;
   }
 
-  PersistedProjectConfigState state{
-      .editor_tab_size = shell_.editor_preferences_.tab_size,
-      .editor_indent_width = shell_.editor_preferences_.indent_width,
-      .editor_soft_tabs = shell_.editor_preferences_.soft_tabs,
-      .colorscheme_name = shell_.active_colorscheme_name_,
-      .project_base_color = shell_.project_base_color_,
+  const auto& current = CurrentProjectState();
+  PersistedProjectConfigState persisted_state{
+      .editor_tab_size = current.editor_preferences.tab_size,
+      .editor_indent_width = current.editor_preferences.indent_width,
+      .editor_soft_tabs = current.editor_preferences.soft_tabs,
+      .colorscheme_name = current.active_colorscheme_name,
+      .project_base_color = current.project_base_color,
   };
-  if (!ParseProjectConfigText(*text, &state)) {
+  if (!ParseProjectConfigText(*text, &persisted_state)) {
     return false;
   }
 
-  shell_.editor_preferences_.tab_size = state.editor_tab_size;
-  shell_.editor_preferences_.indent_width = state.editor_indent_width;
-  shell_.editor_preferences_.soft_tabs = state.editor_soft_tabs;
-  shell_.project_base_color_ = state.project_base_color;
-  shell_.ApplyEditorPreferencesToAllTabs();
-  ApplyColorscheme(state.colorscheme_name, false, false);
+  auto& mutable_current = CurrentProjectState();
+  mutable_current.editor_preferences.tab_size = persisted_state.editor_tab_size;
+  mutable_current.editor_preferences.indent_width = persisted_state.editor_indent_width;
+  mutable_current.editor_preferences.soft_tabs = persisted_state.editor_soft_tabs;
+  mutable_current.project_base_color = persisted_state.project_base_color;
+  operations_.apply_editor_preferences_to_all_tabs();
+  ApplyColorscheme(persisted_state.colorscheme_name, false, false);
   return true;
 }
 
 void PersistenceCoordinator::SaveConfigState() const {
-  if (shell_.project_root_.empty()) {
+  const auto& state = CurrentProjectState();
+  if (state.root.empty()) {
     return;
   }
 
-  const std::filesystem::path config_path = shell_.ConfigStatePath();
+  const std::filesystem::path config_path = operations_.config_state_path();
   if (config_path.empty()) {
     return;
   }
   util::WriteTextFileAtomically(
       config_path,
       SerializeProjectConfig(PersistedProjectConfigState{
-          .editor_tab_size = shell_.editor_preferences_.tab_size,
-          .editor_indent_width = shell_.editor_preferences_.indent_width,
-          .editor_soft_tabs = shell_.editor_preferences_.soft_tabs,
-          .colorscheme_name = shell_.active_colorscheme_name_,
-          .project_base_color =
-              shell_.project_base_color_.value_or(DefaultProjectBaseColor(shell_.project_root_)),
+          .editor_tab_size = state.editor_preferences.tab_size,
+          .editor_indent_width = state.editor_preferences.indent_width,
+          .editor_soft_tabs = state.editor_preferences.soft_tabs,
+          .colorscheme_name = state.active_colorscheme_name,
+          .project_base_color = state.project_base_color.value_or(DefaultProjectBaseColor(state.root)),
       }));
 }
 

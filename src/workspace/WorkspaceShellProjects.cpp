@@ -25,10 +25,10 @@ ProjectCatalogCoordinator WorkspaceShell::MakeProjectCatalogCoordinator() {
           .store_current_project_state =
               [this](ProjectWorkspaceState& state) { StoreCurrentProjectState(state); },
           .load_project_state = [this](ProjectWorkspaceState& state) { LoadProjectState(state); },
-          .save_config_state = [this]() { PersistenceCoordinator(*this).SaveConfigState(); },
-          .save_session_state = [this]() { PersistenceCoordinator(*this).SaveSessionState(); },
+          .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
+          .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .save_workspace_session =
-              [this]() { PersistenceCoordinator(*this).SaveWorkspaceSession(); },
+              [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_plugin_host = [this]() { plugin_runtime_.ShutdownHost(); },
           .reset_project_catalog_to_welcome_state =
               [this]() { ResetProjectCatalogToWelcomeState(); },
