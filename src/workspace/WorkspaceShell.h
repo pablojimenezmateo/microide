@@ -417,7 +417,6 @@ class WorkspaceShell {
   friend class TextInputCoordinator;
   friend class TabCoordinator;
   friend class PathMutationCoordinator;
-  friend class DirtyPromptCoordinator;
   friend class CompareInteractionCoordinator;
   friend class DiffTabCoordinator;
   friend class SidebarCoordinator;
@@ -480,6 +479,7 @@ class WorkspaceShell {
                                     const std::filesystem::path& project_root);
   ProjectCatalogCoordinator MakeProjectCatalogCoordinator();
   PersistenceCoordinator MakePersistenceCoordinator();
+  DirtyPromptCoordinator MakeDirtyPromptCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();

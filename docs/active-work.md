@@ -187,6 +187,9 @@ Current state:
   `WorkspacePersistenceCoordinator` that depends on `WorkspaceContext`, theme or ui-scale state,
   and explicit callbacks for editor preference application, compare or merge tab reconstruction,
   project-root resolution, and project-catalog restoration instead of `WorkspaceShell&`
+- dirty-save confirmation now runs through a `WorkspaceDirtyPromptCoordinator` that depends on
+  `WorkspaceContext`, the quit-request flag, and explicit callbacks for path-mutation resolution,
+  tab saves, project switching, and tab or project closure instead of `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

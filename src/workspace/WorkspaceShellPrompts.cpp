@@ -103,7 +103,7 @@ void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
 }
 
 void WorkspaceShell::ConfirmDirtyPrompt() {
-  DirtyPromptCoordinator(*this).Confirm();
+  MakeDirtyPromptCoordinator().Confirm();
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
