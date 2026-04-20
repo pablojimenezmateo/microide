@@ -29,12 +29,15 @@
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceInteractionState.h"
+#include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/WorkspaceProjectDialogState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
+#include "workspace/WorkspacePromptState.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -180,6 +183,15 @@ class WorkspaceShell {
   using PanelState = workspace::PanelState;
   using ProjectWorkspaceState = workspace::ProjectWorkspaceState;
   using ProjectCatalogState = workspace::ProjectCatalogState;
+  using DragTarget = workspace::DragTarget;
+  using TabDragKind = workspace::TabDragKind;
+  using InteractionState = workspace::InteractionState;
+  using TabDragState = workspace::TabDragState;
+  using TreeContextMenuState = workspace::TreeContextMenuState;
+  using MenuSurfaceState = workspace::MenuSurfaceState;
+  using DirtyPromptState = workspace::DirtyPromptState;
+  using PromptSurfaceState = workspace::PromptSurfaceState;
+  using PromptState = workspace::PromptState;
 
   enum class TextInputSurface {
     None,
@@ -194,30 +206,6 @@ class WorkspaceShell {
     CommitPicker,
     SidebarSearchQuery,
     SidebarSearchReplace,
-    Terminal,
-  };
-
-  enum class DragTarget {
-    None,
-    SidebarDivider,
-    BottomPanelDivider,
-    CompareDivider,
-    MergeLeftDivider,
-    MergeRightDivider,
-    SidebarScrollbar,
-    BottomPanelScrollbar,
-    OverlayScrollbar,
-    EditorVerticalScrollbar,
-    EditorHorizontalScrollbar,
-    EditorSplitDivider,
-    CompareVerticalScrollbar,
-    CompareHorizontalScrollbar,
-  };
-
-  enum class TabDragKind {
-    None,
-    Project,
-    Editor,
     Terminal,
   };
 
@@ -354,14 +342,6 @@ class WorkspaceShell {
     std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot = nullptr;
   };
 
-  struct TabDragState {
-    TabDragKind kind = TabDragKind::None;
-    float press_x = 0.0f;
-    float press_y = 0.0f;
-    bool dragging = false;
-    bool reordered = false;
-  };
-
   struct EditorBlamePopupLayout {
     std::size_t line_index = 0;
     SDL_FRect rect{};
@@ -400,48 +380,6 @@ class WorkspaceShell {
     std::optional<SDL_FRect> primary_action_rect;
   };
 
-  struct DirtyPromptState {
-    enum class Kind {
-      CloseTab,
-      CloseTabs,
-      CloseProject,
-      Quit,
-      RenamePath,
-      DeletePath,
-    };
-
-    Kind kind = Kind::CloseTab;
-    std::size_t tab_index = 0;
-    std::size_t project_index = 0;
-    std::vector<std::size_t> target_tabs;
-    std::vector<std::size_t> dirty_tabs;
-    std::size_t dirty_count = 0;
-    std::filesystem::path path;
-    int selected_action = 0;
-  };
-
-  struct PromptSurfaceState {
-    enum class Kind {
-      None,
-      TextInput,
-      Confirm,
-    };
-
-    enum class Action {
-      CreateFile,
-      CreateDirectory,
-      RenamePath,
-      DeletePath,
-      DiscardGitChanges,
-    };
-
-    Kind kind = Kind::None;
-    Action action = Action::CreateFile;
-    std::filesystem::path path;
-    std::string input;
-    int selected_button = 0;
-  };
-
   enum class DirtyPathResolution {
     RequirePrompt,
     Save,
@@ -468,43 +406,6 @@ class WorkspaceShell {
     bool checked = false;
     bool hovered = false;
     bool separator = false;
-  };
-
-  struct TreeContextMenuState {
-    bool open = false;
-    TreeContextTargetKind target = TreeContextTargetKind::None;
-    std::filesystem::path path;
-    SDL_FRect anchor_rect{};
-    int active_item_index = -1;
-  };
-
-  struct MenuSurfaceState {
-    bool menu_bar_open = false;
-    MenuId active_menu_id = MenuId::None;
-    int active_menu_item_index = -1;
-    MenuId active_submenu_id = MenuId::None;
-    int active_submenu_item_index = -1;
-    std::optional<SDL_FRect> active_menu_anchor_rect;
-    std::optional<SDL_FRect> active_submenu_anchor_rect;
-    TreeContextMenuState tree_context_menu;
-  };
-
-  struct InteractionState {
-    bool window_has_input_focus = true;
-    bool mouse_selecting = false;
-    DragTarget drag_target = DragTarget::None;
-    float drag_scrollbar_offset = 0.0f;
-    std::vector<std::size_t> drag_editor_split_path;
-    std::size_t drag_editor_split_divider_index = 0;
-  };
-
-  struct PromptState {
-    bool dirty_visible = false;
-    FocusTarget dirty_previous_focus = FocusTarget::Editor;
-    DirtyPromptState dirty;
-    bool surface_visible = false;
-    FocusTarget surface_previous_focus = FocusTarget::Editor;
-    PromptSurfaceState surface;
   };
 
   friend class WorkspaceActionContext;

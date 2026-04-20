@@ -169,10 +169,10 @@ Current state:
   catalog entries, so project switching and persistence no longer hand-maintain duplicated move or
   reset lists for tabs, tree or index state, terminals, overlays, diagnostics, command history,
   colorscheme, or editor preferences
-- project-tab, compare-or-merge-tab, terminal-tab, and project-workspace state models now live in
-  dedicated `WorkspaceTabState.h` and `WorkspaceProjectState.h` headers instead of staying nested
-  inside `WorkspaceShell.h`; ownership migration is still incomplete, but the shell no longer
-  defines those models inline
+- project-tab, compare-or-merge-tab, terminal-tab, project-workspace, prompt, menu, and
+  interaction state models now live in dedicated `Workspace*State.h` headers instead of staying
+  nested inside `WorkspaceShell.h`; ownership migration is still incomplete, but the shell no
+  longer defines those models inline
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

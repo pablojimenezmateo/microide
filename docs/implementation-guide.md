@@ -106,10 +106,10 @@ The codebase is organized by responsibility:
 - `src/terminal`: PTY session and terminal screen state
 - `src/render`: themes and text-renderer backends
 
-`WorkspaceShell` is still the main coordinator, but project and tab state models now live in
-dedicated workspace headers instead of being defined inline on the shell, and plugin runtime,
-project, terminal, compare, and rendering work should continue to move into narrower subsystems
-rather than accrete more logic in one file.
+`WorkspaceShell` is still the main coordinator, but project, tab, prompt, menu, and interaction
+state models now live in dedicated workspace headers instead of being defined inline on the shell,
+and plugin runtime, project, terminal, compare, and rendering work should continue to move into
+narrower subsystems rather than accrete more logic in one file.
 
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed
