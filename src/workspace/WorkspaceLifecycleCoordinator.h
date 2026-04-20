@@ -7,7 +7,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::LifecycleCoordinator {
+class LifecycleCoordinator {
  public:
   explicit LifecycleCoordinator(WorkspaceShell& shell);
 

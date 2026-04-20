@@ -8,7 +8,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::SidebarCoordinator {
+class SidebarCoordinator {
  public:
   explicit SidebarCoordinator(WorkspaceShell& shell);
 

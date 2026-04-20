@@ -8,20 +8,20 @@
 #include <vector>
 
 #include "workspace/WorkspaceMenuRegistry.h"
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceSidebarState.h"
 
 namespace microide::workspace {
 
 struct SidebarViewSpec {
   std::string_view id;
   std::string_view label;
-  WorkspaceShell::SidebarMode mode = WorkspaceShell::SidebarMode::None;
+  SidebarMode mode = SidebarMode::None;
 };
 
 struct SidebarViewInfo {
   std::string_view id;
   std::string_view label;
-  WorkspaceShell::SidebarMode mode = WorkspaceShell::SidebarMode::None;
+  SidebarMode mode = SidebarMode::None;
 };
 
 struct SidebarViewRequest {
@@ -32,7 +32,7 @@ struct SidebarViewRequest {
 
 std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs();
 const SidebarViewSpec* FindBuiltinSidebarView(std::string_view id);
-const SidebarViewSpec* FindBuiltinSidebarView(WorkspaceShell::SidebarMode mode);
+const SidebarViewSpec* FindBuiltinSidebarView(SidebarMode mode);
 std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host);
 std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
                                                const plugin::PluginHost& plugin_host);

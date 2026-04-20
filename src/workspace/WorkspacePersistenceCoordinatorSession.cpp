@@ -10,12 +10,12 @@
 
 namespace microide::workspace {
 
-std::filesystem::path WorkspaceShell::PersistenceCoordinator::SessionStatePath() const {
+std::filesystem::path PersistenceCoordinator::SessionStatePath() const {
   return shell_.project_root_.empty() ? std::filesystem::path{}
                                       : shell_.ProjectStateDirectory() / "session";
 }
 
-bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
+bool PersistenceCoordinator::RestoreSessionState() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreSessionState");
   const std::filesystem::path session_path = SessionStatePath();
   if (session_path.empty()) {
@@ -61,7 +61,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
           .short_hash = persisted_tab.compare_commit_short_hash,
           .subject = {},
       };
-      std::optional<TabEntry> compare_tab;
+      std::optional<WorkspaceShell::TabEntry> compare_tab;
       if (!persisted_tab.compare_right_ref.empty()) {
         auto resolve_path = [&](std::filesystem::path path, const std::filesystem::path& fallback) {
           if (path.empty()) {
@@ -72,7 +72,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
           }
           return path.lexically_normal();
         };
-        CompareTabState compare_state;
+        WorkspaceShell::CompareTabState compare_state;
         compare_state.path = compare_path;
         compare_state.left_path = resolve_path(persisted_tab.compare_left_path, compare_path);
         compare_state.right_path = resolve_path(persisted_tab.compare_right_path, compare_path);
@@ -171,7 +171,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
       continue;
     }
 
-    TabEntry::EditorTabState editor_state;
+    WorkspaceShell::TabEntry::EditorTabState editor_state;
     editor_state.active_leaf_id = persisted_tab.active_leaf_id;
 
     for (const PersistedEditorViewState& persisted_view : persisted_tab.views) {
@@ -191,7 +191,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
         restored_view.SetHorizontalScroll(persisted_view.horizontal_scroll);
         restored_view.SetDirty(true);
         shell_.ApplyEditorPreferences(restored_view);
-        editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
+        editor_state.views.push_back(WorkspaceShell::TabEntry::EditorTabState::EditorViewState{
             .leaf_id = persisted_view.leaf_id,
             .viewport = std::move(restored_view),
             .restored_path = view_path,
@@ -207,7 +207,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
       if (view_path.empty() || !std::filesystem::exists(view_path)) {
         continue;
       }
-      editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
+      editor_state.views.push_back(WorkspaceShell::TabEntry::EditorTabState::EditorViewState{
           .leaf_id = persisted_view.leaf_id,
           .viewport = editor::TextViewport{},
           .restored_path = view_path,
@@ -234,15 +234,16 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
 
       for (const PersistedSplitNodeState& node_state : split_nodes) {
         auto make_node = [&]() {
-          auto node = std::make_unique<TabEntry::EditorTabState::EditorSplitNode>();
+          auto node =
+              std::make_unique<WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode>();
           node->leaf_id = node_state.leaf_id;
           node->size_fraction = std::max(0.0f, node_state.size_fraction);
           if (node_state.orientation == "vertical") {
-            node->orientation = EditorSplitOrientation::Vertical;
+            node->orientation = WorkspaceShell::EditorSplitOrientation::Vertical;
           } else if (node_state.orientation == "horizontal") {
-            node->orientation = EditorSplitOrientation::Horizontal;
+            node->orientation = WorkspaceShell::EditorSplitOrientation::Horizontal;
           } else {
-            node->orientation = EditorSplitOrientation::None;
+            node->orientation = WorkspaceShell::EditorSplitOrientation::None;
           }
           return node;
         };
@@ -266,7 +267,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
     }
 
     shell_.NormalizeEditorSplitTree(editor_state);
-    const TabEntry::EditorTabState::EditorViewState* active_view =
+    const WorkspaceShell::TabEntry::EditorTabState::EditorViewState* active_view =
         shell_.FindEditorViewState(editor_state, editor_state.active_leaf_id);
     if (active_view == nullptr) {
       active_view = &editor_state.views.front();
@@ -274,8 +275,8 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
     }
 
     const std::filesystem::path tab_path = shell_.EditorViewPath(*active_view);
-    shell_.open_tabs_.push_back(TabEntry{
-        .kind = TabEntry::Kind::Editor,
+    shell_.open_tabs_.push_back(WorkspaceShell::TabEntry{
+        .kind = WorkspaceShell::TabEntry::Kind::Editor,
         .path = tab_path,
         .title = tab_path.empty() ? "untitled" : tab_path.filename().string(),
         .editor_state = std::move(editor_state),
@@ -294,7 +295,8 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
     shell_.surface_.focus =
-        shell_.sidebar_state_.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+        shell_.sidebar_state_.visible ? WorkspaceShell::FocusTarget::Sidebar
+                                      : WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
@@ -302,11 +304,12 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
       std::min(persisted_session.active_tab_index, shell_.open_tabs_.size() - 1);
   shell_.active_tab_index_ = active_index;
   shell_.surface_.focus =
-      shell_.sidebar_state_.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+      shell_.sidebar_state_.visible ? WorkspaceShell::FocusTarget::Sidebar
+                                    : WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-void WorkspaceShell::PersistenceCoordinator::SaveSessionState() {
+void PersistenceCoordinator::SaveSessionState() {
   if (shell_.project_root_.empty()) {
     return;
   }
@@ -327,9 +330,9 @@ void WorkspaceShell::PersistenceCoordinator::SaveSessionState() {
   for (std::size_t tab_index = 0; tab_index < shell_.open_tabs_.size(); ++tab_index) {
     auto& tab = shell_.open_tabs_[tab_index];
     std::optional<PersistedEditorTabState> persisted_tab;
-    if (tab.kind == TabEntry::Kind::Compare) {
+    if (tab.kind == WorkspaceShell::TabEntry::Kind::Compare) {
       persisted_tab = BuildPersistedCompareTabState(tab);
-    } else if (tab.kind == TabEntry::Kind::Merge) {
+    } else if (tab.kind == WorkspaceShell::TabEntry::Kind::Merge) {
       persisted_tab = BuildPersistedMergeTabState(tab);
     } else {
       persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
@@ -347,8 +350,10 @@ void WorkspaceShell::PersistenceCoordinator::SaveSessionState() {
 }
 
 std::optional<PersistedEditorTabState>
-WorkspaceShell::PersistenceCoordinator::BuildPersistedCompareTabState(const TabEntry& tab) const {
-  if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() || !tab.compare->persistable) {
+PersistenceCoordinator::BuildPersistedCompareTabState(
+    const WorkspaceShell::TabEntry& tab) const {
+  if (tab.kind != WorkspaceShell::TabEntry::Kind::Compare || !tab.compare.has_value() ||
+      !tab.compare->persistable) {
     return std::nullopt;
   }
 
@@ -368,8 +373,10 @@ WorkspaceShell::PersistenceCoordinator::BuildPersistedCompareTabState(const TabE
 }
 
 std::optional<PersistedEditorTabState>
-WorkspaceShell::PersistenceCoordinator::BuildPersistedMergeTabState(const TabEntry& tab) const {
-  if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value() || !tab.merge->persistable) {
+PersistenceCoordinator::BuildPersistedMergeTabState(
+    const WorkspaceShell::TabEntry& tab) const {
+  if (tab.kind != WorkspaceShell::TabEntry::Kind::Merge || !tab.merge.has_value() ||
+      !tab.merge->persistable) {
     return std::nullopt;
   }
 
@@ -392,9 +399,9 @@ WorkspaceShell::PersistenceCoordinator::BuildPersistedMergeTabState(const TabEnt
 }
 
 std::optional<PersistedEditorTabState>
-WorkspaceShell::PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t tab_index,
-                                                                     TabEntry& tab) {
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t tab_index,
+                                                     WorkspaceShell::TabEntry& tab) {
+  if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
       tab.editor_state->views.empty()) {
     return std::nullopt;
   }
@@ -446,15 +453,17 @@ WorkspaceShell::PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t
 
   std::vector<std::size_t> node_path;
   const auto collect_split_node =
-      [&](auto&& self, const TabEntry::EditorTabState::EditorSplitNode* node) -> void {
+      [&](auto&& self,
+          const WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode* node) -> void {
     if (node == nullptr) {
       return;
     }
 
     std::string orientation = "leaf";
     if (!node->IsLeaf()) {
-      orientation = node->orientation == EditorSplitOrientation::Horizontal ? "horizontal"
-                                                                            : "vertical";
+      orientation =
+          node->orientation == WorkspaceShell::EditorSplitOrientation::Horizontal ? "horizontal"
+                                                                                  : "vertical";
     }
     persisted_tab.split_nodes.push_back(PersistedSplitNodeState{
         .path = node_path,

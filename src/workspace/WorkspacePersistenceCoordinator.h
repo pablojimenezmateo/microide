@@ -8,7 +8,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::PersistenceCoordinator {
+class PersistenceCoordinator {
  public:
   explicit PersistenceCoordinator(WorkspaceShell& shell);
 
@@ -29,12 +29,12 @@ class WorkspaceShell::PersistenceCoordinator {
   std::filesystem::path WorkspaceSessionStatePath() const;
 
   std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
-      const TabEntry& tab) const;
+      const WorkspaceShell::TabEntry& tab) const;
   std::optional<PersistedEditorTabState> BuildPersistedMergeTabState(
-      const TabEntry& tab) const;
+      const WorkspaceShell::TabEntry& tab) const;
   std::optional<PersistedEditorTabState> BuildPersistedEditorTabState(
       std::size_t tab_index,
-      TabEntry& tab);
+      WorkspaceShell::TabEntry& tab);
 
   WorkspaceShell& shell_;
 };

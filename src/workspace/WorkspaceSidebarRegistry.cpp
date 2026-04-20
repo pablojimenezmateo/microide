@@ -9,10 +9,10 @@ namespace microide::workspace {
 
 std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
   static const auto kSpecs = std::to_array<SidebarViewSpec>({
-      SidebarViewSpec{"tree", "Project", WorkspaceShell::SidebarMode::Tree},
-      SidebarViewSpec{"search", "Search", WorkspaceShell::SidebarMode::Search},
-      SidebarViewSpec{"problems", "Problems", WorkspaceShell::SidebarMode::Problems},
-      SidebarViewSpec{"git", "Source Control", WorkspaceShell::SidebarMode::Git},
+      SidebarViewSpec{"tree", "Project", SidebarMode::Tree},
+      SidebarViewSpec{"search", "Search", SidebarMode::Search},
+      SidebarViewSpec{"problems", "Problems", SidebarMode::Problems},
+      SidebarViewSpec{"git", "Source Control", SidebarMode::Git},
   });
   return kSpecs;
 }
@@ -26,7 +26,7 @@ const SidebarViewSpec* FindBuiltinSidebarView(std::string_view id) {
   return it == specs.end() ? nullptr : &(*it);
 }
 
-const SidebarViewSpec* FindBuiltinSidebarView(WorkspaceShell::SidebarMode mode) {
+const SidebarViewSpec* FindBuiltinSidebarView(SidebarMode mode) {
   const auto specs = BuiltinSidebarViewSpecs();
   const auto it = std::find_if(specs.begin(), specs.end(),
                                [mode](const SidebarViewSpec& spec) {
@@ -51,7 +51,7 @@ std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host)
     views.push_back(SidebarViewInfo{
         .id = provider.id,
         .label = provider.label,
-        .mode = WorkspaceShell::SidebarMode::Plugin,
+        .mode = SidebarMode::Plugin,
     });
   }
   return views;
@@ -71,7 +71,7 @@ std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
     return SidebarViewInfo{
         .id = plugin_view->id,
         .label = plugin_view->label,
-        .mode = WorkspaceShell::SidebarMode::Plugin,
+        .mode = SidebarMode::Plugin,
     };
   }
 
@@ -103,17 +103,17 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
   }
 
   switch (request.view->mode) {
-    case WorkspaceShell::SidebarMode::Tree:
+    case SidebarMode::Tree:
       request.root =
           args.size() > 1 ? std::filesystem::path(args[1]) : std::filesystem::path{};
       break;
-    case WorkspaceShell::SidebarMode::Search:
+    case SidebarMode::Search:
       request.query = JoinCommandArguments(args, 1);
       break;
-    case WorkspaceShell::SidebarMode::Problems:
-    case WorkspaceShell::SidebarMode::Git:
-    case WorkspaceShell::SidebarMode::None:
-    case WorkspaceShell::SidebarMode::Plugin:
+    case SidebarMode::Problems:
+    case SidebarMode::Git:
+    case SidebarMode::None:
+    case SidebarMode::Plugin:
       break;
   }
 

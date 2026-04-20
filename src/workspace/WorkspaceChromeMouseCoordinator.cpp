@@ -9,12 +9,10 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::ChromeMouseCoordinator::ChromeMouseCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+ChromeMouseCoordinator::ChromeMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
+                                              const WorkspaceLayout& layout) {
   if (HandleTreeContextMenuButtonDown(event)) {
     return true;
   }
@@ -33,7 +31,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleButtonDown(
       } else {
         MenuCoordinator(shell_).OpenAnchoredMenu(MenuId::SidebarMode, sidebar_mode_rect);
       }
-      shell_.surface_.focus = FocusTarget::Sidebar;
+      shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
       shell_.RequestChromeRedraw();
       return true;
     }
@@ -50,9 +48,8 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleButtonDown(
   return false;
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleMotion(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event,
+                                          const WorkspaceLayout& layout) {
   if (HandleTreeContextMenuMotion(event)) {
     return true;
   }
@@ -60,10 +57,10 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMotion(
   return HandleMenuMotion(event, layout);
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                                         const WorkspaceLayout& layout,
-                                                         int vertical_ticks,
-                                                         int horizontal_ticks) {
+bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
+                                         const WorkspaceLayout& layout,
+                                         int vertical_ticks,
+                                         int horizontal_ticks) {
   (void)event;
   (void)layout;
 
@@ -72,12 +69,12 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   const int overlay_ticks = vertical_ticks != 0 ? vertical_ticks : horizontal_ticks;
-  if (shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
     shell_.MoveComparePickerSelection(-overlay_ticks);
-  } else if (shell_.overlay_state_.mode == OverlayMode::BufferSearch ||
-             shell_.overlay_state_.mode == OverlayMode::BufferReplace) {
+  } else if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::BufferSearch ||
+             shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::BufferReplace) {
     shell_.MoveBufferSearchSelection(-overlay_ticks);
-  } else if (shell_.overlay_state_.mode == OverlayMode::ProjectSearch) {
+  } else if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::ProjectSearch) {
     shell_.MoveProjectSearchSelection(-overlay_ticks);
   } else {
     shell_.MoveFileFinderSelection(-overlay_ticks);
@@ -86,9 +83,8 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   return true;
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
+                                                  const WorkspaceLayout& layout) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
@@ -96,19 +92,19 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
   const auto menu_bar_items = shell_.ComputeVisibleMenuBarItems(layout.menu_bar);
   const auto window_buttons =
       shell_.ComputeVisibleWindowControlButtons(layout.menu_bar);
-  for (const VisibleWindowControlButton& button : window_buttons) {
+  for (const WorkspaceShell::VisibleWindowControlButton& button : window_buttons) {
     if (!Contains(button.rect, event.button.x, event.button.y)) {
       continue;
     }
     MenuCoordinator(shell_).CloseMenuBar();
     switch (button.id) {
-      case WindowControlButtonId::Minimize:
-        shell_.pending_window_action_ = WindowAction::Minimize;
+      case WorkspaceShell::WindowControlButtonId::Minimize:
+        shell_.pending_window_action_ = WorkspaceShell::WindowAction::Minimize;
         break;
-      case WindowControlButtonId::Maximize:
-        shell_.pending_window_action_ = WindowAction::ToggleMaximize;
+      case WorkspaceShell::WindowControlButtonId::Maximize:
+        shell_.pending_window_action_ = WorkspaceShell::WindowAction::ToggleMaximize;
         break;
-      case WindowControlButtonId::Close:
+      case WorkspaceShell::WindowControlButtonId::Close:
         shell_.RequestQuit();
         break;
     }
@@ -117,7 +113,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
   }
 
   if (shell_.menu_state_.menu_bar_open) {
-    for (const VisibleMenuBarItem& item : menu_bar_items) {
+    for (const WorkspaceShell::VisibleMenuBarItem& item : menu_bar_items) {
       if (!Contains(item.rect, event.button.x, event.button.y)) {
         continue;
       }
@@ -133,7 +129,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
     if (const auto submenu_rect = shell_.ActiveSubmenuRect(layout.menu_bar);
         submenu_rect.has_value() &&
         Contains(*submenu_rect, event.button.x, event.button.y)) {
-      for (const VisiblePopupMenuItem& item :
+      for (const WorkspaceShell::VisiblePopupMenuItem& item :
            shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_submenu_id,
                                               *submenu_rect)) {
         if (!Contains(item.rect, event.button.x, event.button.y)) {
@@ -155,7 +151,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
     if (const auto popup_rect =
             shell_.ComputePopupMenuRect(layout.menu_bar, shell_.menu_state_.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
-      for (const VisiblePopupMenuItem& item :
+      for (const WorkspaceShell::VisiblePopupMenuItem& item :
            shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_menu_id,
                                               *popup_rect)) {
         if (!Contains(item.rect, event.button.x, event.button.y)) {
@@ -182,7 +178,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
     return false;
   }
 
-  for (const VisibleMenuBarItem& item : menu_bar_items) {
+  for (const WorkspaceShell::VisibleMenuBarItem& item : menu_bar_items) {
     if (Contains(item.rect, event.button.x, event.button.y)) {
       MenuCoordinator(shell_).OpenMenuBarMenu(item.id);
       shell_.RequestChromeRedraw();
@@ -190,20 +186,19 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuButtonDown(
     }
   }
   if (event.button.clicks >= 2) {
-    shell_.pending_window_action_ = WindowAction::ToggleMaximize;
+    shell_.pending_window_action_ = WorkspaceShell::WindowAction::ToggleMaximize;
   }
   shell_.RequestChromeRedraw();
   return true;
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
+                                              const WorkspaceLayout& layout) {
   if (!shell_.menu_state_.menu_bar_open) {
     return false;
   }
 
-  for (const VisibleMenuBarItem& item :
+  for (const WorkspaceShell::VisibleMenuBarItem& item :
        shell_.ComputeVisibleMenuBarItems(layout.menu_bar)) {
     if (!Contains(item.rect, event.motion.x, event.motion.y)) {
       continue;
@@ -218,7 +213,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
   if (const auto submenu_rect = shell_.ActiveSubmenuRect(layout.menu_bar);
       submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
     shell_.menu_state_.active_submenu_item_index = -1;
-    for (const VisiblePopupMenuItem& item :
+    for (const WorkspaceShell::VisiblePopupMenuItem& item :
          shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_submenu_id,
                                             *submenu_rect)) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
@@ -235,7 +230,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
           shell_.ComputePopupMenuRect(layout.menu_bar, shell_.menu_state_.active_menu_id);
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
     shell_.menu_state_.active_menu_item_index = -1;
-    for (const VisiblePopupMenuItem& item :
+    for (const WorkspaceShell::VisiblePopupMenuItem& item :
          shell_.ComputeVisiblePopupMenuItems(shell_.menu_state_.active_menu_id, *popup_rect)) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
         shell_.menu_state_.active_menu_item_index =
@@ -264,9 +259,8 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
   return true;
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
+                                                     const WorkspaceLayout& layout) {
   if (!shell_.overlay_state_.visible || event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
@@ -282,7 +276,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
   const auto list_layout = shell_.ComputeOverlayListLayout(overlay);
   if (list_layout.scrollbar.has_value() &&
       Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::OverlayScrollbar;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::OverlayScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
@@ -292,7 +286,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
             *list_layout.scrollbar, static_cast<float>(event.button.y),
             shell_.interaction_state_.drag_scrollbar_offset))),
         0, list_layout.max_scroll);
-    shell_.surface_.focus = FocusTarget::Overlay;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Overlay;
     shell_.RequestOverlayRedraw();
     return true;
   }
@@ -303,17 +297,16 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
       *item_index < static_cast<int>(shell_.OverlayItemCount())) {
     shell_.SetOverlaySelectedIndex(static_cast<std::size_t>(*item_index));
     shell_.RevealOverlaySelection(overlay);
-    if (shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+    if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
       shell_.ActivateOverlaySelection();
     }
   }
-  shell_.surface_.focus = FocusTarget::Overlay;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Overlay;
   shell_.RequestOverlayRedraw();
   return true;
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
-    const SDL_Event& event) {
+bool ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(const SDL_Event& event) {
   if (!shell_.menu_state_.tree_context_menu.open) {
     return false;
   }
@@ -321,8 +314,8 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
   if (const auto popup_rect = shell_.ComputeTreeContextMenuRect();
       popup_rect.has_value() &&
       Contains(*popup_rect, event.button.x, event.button.y)) {
-    for (const VisiblePopupMenuItem& item : shell_.ComputeVisiblePopupMenuItems(
-             TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target),
+    for (const WorkspaceShell::VisiblePopupMenuItem& item : shell_.ComputeVisiblePopupMenuItems(
+             WorkspaceShell::TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target),
              shell_.menu_state_.tree_context_menu.active_item_index, *popup_rect)) {
       if (!Contains(item.rect, event.button.x, event.button.y)) {
         continue;
@@ -344,8 +337,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(
   return false;
 }
 
-bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuMotion(
-    const SDL_Event& event) {
+bool ChromeMouseCoordinator::HandleTreeContextMenuMotion(const SDL_Event& event) {
   if (!shell_.menu_state_.tree_context_menu.open) {
     return false;
   }
@@ -354,8 +346,8 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleTreeContextMenuMotion(
       popup_rect.has_value() &&
       Contains(*popup_rect, event.motion.x, event.motion.y)) {
     shell_.menu_state_.tree_context_menu.active_item_index = -1;
-    for (const VisiblePopupMenuItem& item : shell_.ComputeVisiblePopupMenuItems(
-             TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target),
+    for (const WorkspaceShell::VisiblePopupMenuItem& item : shell_.ComputeVisiblePopupMenuItems(
+             WorkspaceShell::TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target),
              shell_.menu_state_.tree_context_menu.active_item_index, *popup_rect)) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
         shell_.menu_state_.tree_context_menu.active_item_index =

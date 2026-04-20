@@ -6,7 +6,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::ProjectCatalogCoordinator {
+class ProjectCatalogCoordinator {
  public:
   explicit ProjectCatalogCoordinator(WorkspaceShell& shell);
 

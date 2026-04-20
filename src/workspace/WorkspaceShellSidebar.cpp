@@ -146,7 +146,7 @@ std::string WorkspaceShell::SidebarModeControlLabel() const {
       view.has_value()) {
     return std::string(view->label);
   }
-  if (const SidebarViewSpec* view = FindBuiltinSidebarView(sidebar_state_.mode);
+  if (const SidebarViewSpec* view = FindBuiltinSidebarView(ActiveSidebarMode());
       view != nullptr) {
     return std::string(view->label);
   }
@@ -165,7 +165,8 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 }
 
 std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {
-  if (!last_mouse_position_valid_ || !sidebar_state_.visible || sidebar_state_.mode != SidebarMode::Git ||
+  if (!last_mouse_position_valid_ || !sidebar_state_.visible ||
+      ActiveSidebarMode() != SidebarMode::Git ||
       !Contains(sidebar_rect, last_mouse_x_, last_mouse_y_)) {
     return {};
   }

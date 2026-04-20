@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::KeyInputCoordinator {
+class KeyInputCoordinator {
  public:
   explicit KeyInputCoordinator(WorkspaceShell& shell);
 

@@ -150,6 +150,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
   src/workspace/WorkspaceActionCoordinator.cpp
+  src/workspace/WorkspaceActionContext.cpp
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/WorkspaceCommandRegistry.cpp

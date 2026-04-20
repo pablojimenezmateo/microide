@@ -7,8 +7,8 @@
 
 namespace microide::workspace {
 
-bool WorkspaceShell::KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& event,
-                                                                   SDL_Keymod modifiers) {
+bool KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& event,
+                                                   SDL_Keymod modifiers) {
   (void)modifiers;
   switch (event.key) {
     case SDLK_ESCAPE:
@@ -48,8 +48,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_Key
   }
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleTreeContextMenuKeyDown(
-    const SDL_KeyboardEvent& event) {
+bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event) {
   MenuCoordinator menu(shell_);
   switch (event.key) {
     case SDLK_ESCAPE:
@@ -77,8 +76,8 @@ bool WorkspaceShell::KeyInputCoordinator::HandleTreeContextMenuKeyDown(
   }
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
-                                                               SDL_Keymod modifiers) {
+bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
+                                               SDL_Keymod modifiers) {
   MenuCoordinator menu(shell_);
   switch (event.key) {
     case SDLK_ESCAPE:
@@ -107,8 +106,8 @@ bool WorkspaceShell::KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_Keyboar
   }
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
-  if (shell_.prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
+bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
+  if (shell_.prompts_.surface.kind == WorkspaceShell::PromptSurfaceState::Kind::TextInput) {
     switch (event.key) {
       case SDLK_ESCAPE:
         shell_.DismissPromptSurface(true);

@@ -3,11 +3,11 @@
 #include <string>
 #include <vector>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceActionContext.h"
 
 namespace microide::workspace {
 
-class WorkspaceShell::ActionCoordinator {
+class ActionCoordinator {
  public:
   explicit ActionCoordinator(WorkspaceShell& shell);
 
@@ -45,7 +45,7 @@ class WorkspaceShell::ActionCoordinator {
                                ActionSource source,
                                std::string* rejection_feedback);
 
-  WorkspaceShell& shell_;
+  WorkspaceActionContext context_;
 };
 
 }  // namespace microide::workspace

@@ -6,7 +6,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::MenuCoordinator {
+class MenuCoordinator {
  public:
   explicit MenuCoordinator(WorkspaceShell& shell);
 

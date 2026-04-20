@@ -10,7 +10,7 @@
 
 namespace microide::workspace {
 
-void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
+void PathMutationCoordinator::RetargetOpenTabsForRename(
     const std::filesystem::path& old_path,
     const std::filesystem::path& new_path,
     bool preserve_unsaved_state) {
@@ -20,8 +20,8 @@ void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
 
   std::vector<std::size_t> special_tabs_to_close;
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    TabEntry& tab = shell_.open_tabs_[i];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+    WorkspaceShell::TabEntry& tab = shell_.open_tabs_[i];
+    if (tab.kind == WorkspaceShell::TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       bool retargeted = false;
       bool close_tab = false;
       for (auto& view : tab.editor_state->views) {
@@ -86,7 +86,7 @@ void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+    if (tab.kind == WorkspaceShell::TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path =
           ReplacePathPrefix(tab.compare->path, old_path, new_path);
@@ -106,7 +106,7 @@ void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
         tab.title = tab.compare->title;
         continue;
       }
-      CompareTabState updated_compare = *tab.compare;
+      WorkspaceShell::CompareTabState updated_compare = *tab.compare;
       updated_compare.path = updated_path.lexically_normal();
       if (updated_compare.right_ref == "WORKTREE" &&
           PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
@@ -122,7 +122,7 @@ void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
-    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
 
@@ -209,14 +209,13 @@ void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
     shell_.overlay_workflow_.compare_picker.path =
         ReplacePathPrefix(shell_.overlay_workflow_.compare_picker.path, old_path, new_path);
     if (shell_.overlay_state_.visible &&
-        shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+        shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
       shell_.overlay_state_.visible = false;
     }
   }
 }
 
-void WorkspaceShell::PathMutationCoordinator::CloseOpenTabsForPath(
-    const std::filesystem::path& path) {
+void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& path) {
   if (shell_.ActiveTabIsEditor()) {
     shell_.SyncActiveEditorTab();
   }
@@ -225,7 +224,7 @@ void WorkspaceShell::PathMutationCoordinator::CloseOpenTabsForPath(
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
     auto& tab = shell_.open_tabs_[i];
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
       continue;
     }
 
@@ -251,7 +250,7 @@ void WorkspaceShell::PathMutationCoordinator::CloseOpenTabsForPath(
         tab.editor_state->views.end());
 
     const auto prune_node = [&](auto&& self,
-                                std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>& node)
+                                std::unique_ptr<WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode>& node)
         -> void {
       if (node == nullptr) {
         return;
@@ -330,7 +329,7 @@ void WorkspaceShell::PathMutationCoordinator::CloseOpenTabsForPath(
     shell_.overlay_workflow_.compare_picker.commits.clear();
     shell_.overlay_workflow_.compare_picker.matches.clear();
     if (shell_.overlay_state_.visible &&
-        shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+        shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
       shell_.overlay_state_.visible = false;
     }
   }

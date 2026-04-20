@@ -10,13 +10,13 @@
 
 namespace microide::workspace {
 
-std::filesystem::path WorkspaceShell::PersistenceCoordinator::WorkspaceSessionStatePath() const {
+std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const {
   const std::filesystem::path state_root =
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
   return state_root.empty() ? std::filesystem::path{} : state_root / "workspace-session";
 }
 
-bool WorkspaceShell::PersistenceCoordinator::RestoreWorkspaceSession() {
+bool PersistenceCoordinator::RestoreWorkspaceSession() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreWorkspaceSession");
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
   if (session_path.empty()) {
@@ -48,7 +48,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreWorkspaceSession() {
         !std::filesystem::is_directory(normalized_root, error)) {
       continue;
     }
-    auto project_state = std::make_unique<ProjectWorkspaceState>();
+    auto project_state = std::make_unique<WorkspaceShell::ProjectWorkspaceState>();
     project_state->root = normalized_root;
     project_state->restore_persistence_on_activate = true;
     shell_.project_catalog_.entries.push_back(std::move(project_state));
@@ -69,7 +69,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreWorkspaceSession() {
   return true;
 }
 
-void WorkspaceShell::PersistenceCoordinator::SaveWorkspaceSession() const {
+void PersistenceCoordinator::SaveWorkspaceSession() const {
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
   if (session_path.empty()) {
     return;

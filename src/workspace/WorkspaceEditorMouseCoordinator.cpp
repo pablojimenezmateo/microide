@@ -9,28 +9,27 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::EditorMouseCoordinator::EditorMouseCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+EditorMouseCoordinator::EditorMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
+                                              const WorkspaceLayout& layout) {
   const auto dividers = shell_.ComputeEditorSplitDividerLayouts(layout.editor_surface);
   const auto divider_it = std::find_if(
-      dividers.begin(), dividers.end(), [&](const EditorSplitDividerLayout& divider) {
+      dividers.begin(), dividers.end(),
+      [&](const WorkspaceShell::EditorSplitDividerLayout& divider) {
         return Contains(divider.rect, event.button.x, event.button.y);
       });
   if (divider_it != dividers.end()) {
-    shell_.interaction_state_.drag_target = DragTarget::EditorSplitDivider;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::EditorSplitDivider;
     shell_.interaction_state_.drag_editor_split_path = divider_it->node_path;
     shell_.interaction_state_.drag_editor_split_divider_index = divider_it->divider_index;
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
   const auto panes = shell_.ComputeEditorPaneLayouts(layout.editor_surface);
   const auto pane_it =
-      std::find_if(panes.begin(), panes.end(), [&](const EditorPaneLayout& pane) {
+      std::find_if(panes.begin(), panes.end(), [&](const WorkspaceShell::EditorPaneLayout& pane) {
         return Contains(pane.rect, event.button.x, event.button.y);
       });
   if (pane_it == panes.end()) {
@@ -50,7 +49,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
       shell_.ComputeEditorScrollLayout(editor_rect, shell_.text_viewport_, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::EditorVerticalScrollbar;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::EditorVerticalScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) -
@@ -60,12 +59,12 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
                                               static_cast<float>(event.button.y),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
   if (scroll_layout.horizontal_scrollbar.has_value() &&
       Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::EditorHorizontalScrollbar;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::EditorHorizontalScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.x) -
@@ -75,7 +74,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
@@ -96,7 +95,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
   shell_.text_viewport_.MoveCursorToVisualColumn(
       line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
   shell_.ResetCaretBlink();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   if (event.button.button == SDL_BUTTON_MIDDLE) {
     if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
         text.has_value()) {
@@ -119,9 +118,9 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
   return true;
 }
 
-bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
-                                                        const WorkspaceLayout& layout) {
-  if (shell_.interaction_state_.drag_target == DragTarget::EditorSplitDivider) {
+bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
+                                        const WorkspaceLayout& layout) {
+  if (shell_.interaction_state_.drag_target == WorkspaceShell::DragTarget::EditorSplitDivider) {
     auto* editor_tab = shell_.ActiveEditorTab();
     if (editor_tab == nullptr || editor_tab->views.size() < 2 ||
         editor_tab->split_root == nullptr) {
@@ -135,7 +134,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
     const auto node_rect = shell_.ComputeEditorSplitNodeRect(
         layout.editor_surface, shell_.interaction_state_.drag_editor_split_path);
     if (split_node == nullptr || node_rect == std::nullopt || split_node->IsLeaf() ||
-        split_node->orientation == EditorSplitOrientation::None ||
+        split_node->orientation == WorkspaceShell::EditorSplitOrientation::None ||
         shell_.interaction_state_.drag_editor_split_divider_index + 1 >=
             split_node->children.size()) {
       shell_.ClearDragState();
@@ -143,7 +142,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
     }
 
     const bool vertical =
-        split_node->orientation == EditorSplitOrientation::Vertical;
+        split_node->orientation == WorkspaceShell::EditorSplitOrientation::Vertical;
     std::vector<float> size_fractions(split_node->children.size(), 0.0f);
     for (std::size_t i = 0; i < split_node->children.size(); ++i) {
       size_fractions[i] = split_node->children[i]->size_fraction;
@@ -191,18 +190,21 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
     split_node->children[shell_.interaction_state_.drag_editor_split_divider_index + 1]
         ->size_fraction = trailing_extent / split_layout->total_extent;
     shell_.NormalizeEditorSplitNode(*split_node);
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
-  if (shell_.interaction_state_.drag_target != DragTarget::EditorVerticalScrollbar &&
-      shell_.interaction_state_.drag_target != DragTarget::EditorHorizontalScrollbar) {
+  if (shell_.interaction_state_.drag_target !=
+          WorkspaceShell::DragTarget::EditorVerticalScrollbar &&
+      shell_.interaction_state_.drag_target !=
+          WorkspaceShell::DragTarget::EditorHorizontalScrollbar) {
     return false;
   }
 
   const auto panes = shell_.ComputeEditorPaneLayouts(layout.editor_surface);
   const auto active_pane = std::find_if(
-      panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
+      panes.begin(), panes.end(),
+      [](const WorkspaceShell::EditorPaneLayout& pane) { return pane.active; });
   const SDL_FRect editor_rect =
       active_pane != panes.end() ? active_pane->rect : layout.editor_surface;
   const editor::EditorViewMetrics metrics =
@@ -212,7 +214,8 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
   const auto scroll_layout =
       shell_.ComputeEditorScrollLayout(editor_rect, shell_.text_viewport_, metrics);
 
-  if (shell_.interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar) {
+  if (shell_.interaction_state_.drag_target ==
+      WorkspaceShell::DragTarget::EditorVerticalScrollbar) {
     if (!scroll_layout.vertical_scrollbar.has_value()) {
       shell_.ClearDragState();
       return false;
@@ -231,16 +234,16 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
                                               static_cast<float>(event.motion.x),
                                               shell_.interaction_state_.drag_scrollbar_offset)))));
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::EditorMouseCoordinator::HandleSelectionMotion(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
+                                                   const WorkspaceLayout& layout) {
   const auto panes = shell_.ComputeEditorPaneLayouts(layout.editor_surface);
   const auto active_pane = std::find_if(
-      panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
+      panes.begin(), panes.end(),
+      [](const WorkspaceShell::EditorPaneLayout& pane) { return pane.active; });
   const SDL_FRect editor_rect =
       active_pane != panes.end() ? active_pane->rect : layout.editor_surface;
   if (!Contains(editor_rect, event.motion.x, event.motion.y)) {
@@ -269,27 +272,28 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleSelectionMotion(
   shell_.text_viewport_.MoveCursorToVisualColumn(line, visual_column, true);
   shell_.ResetCaretBlink();
   shell_.RequestFocusedEditorRedraw();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                                         const WorkspaceLayout& layout,
-                                                         int vertical_ticks) {
+bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
+                                         const WorkspaceLayout& layout,
+                                         int vertical_ticks) {
   if (!Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
 
   const auto panes = shell_.ComputeEditorPaneLayouts(layout.editor_surface);
   const auto hovered_pane =
-      std::find_if(panes.begin(), panes.end(), [&](const EditorPaneLayout& pane) {
+      std::find_if(panes.begin(), panes.end(),
+                   [&](const WorkspaceShell::EditorPaneLayout& pane) {
         return Contains(pane.rect, event.wheel.mouse_x, event.wheel.mouse_y);
       });
   if (hovered_pane != panes.end() && !hovered_pane->active) {
     shell_.SetActiveEditorSplit(hovered_pane->leaf_id);
   }
   shell_.text_viewport_.ScrollVertical(-vertical_ticks * 3);
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 

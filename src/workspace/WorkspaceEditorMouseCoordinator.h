@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::EditorMouseCoordinator {
+class EditorMouseCoordinator {
  public:
   explicit EditorMouseCoordinator(WorkspaceShell& shell);
 

@@ -5,7 +5,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::SidebarMouseCoordinator {
+class SidebarMouseCoordinator {
  public:
   explicit SidebarMouseCoordinator(WorkspaceShell& shell);
 

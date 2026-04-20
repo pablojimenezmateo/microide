@@ -34,9 +34,32 @@
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
+#include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
 namespace microide::workspace {
+
+class WorkspaceActionContext;
+class ProjectCatalogCoordinator;
+class PersistenceCoordinator;
+class CommandPromptCoordinator;
+class MenuCoordinator;
+class KeyInputCoordinator;
+class TextInputCoordinator;
+class TabCoordinator;
+class PathMutationCoordinator;
+class LifecycleCoordinator;
+class DirtyPromptCoordinator;
+class CompareInteractionCoordinator;
+class DiffTabCoordinator;
+class SidebarCoordinator;
+class ChromeMouseCoordinator;
+class EditorMouseCoordinator;
+class CompareMouseCoordinator;
+class MergeMouseCoordinator;
+class TabMouseCoordinator;
+class SidebarMouseCoordinator;
+class PanelMouseCoordinator;
 
 class WorkspaceShell {
  public:
@@ -47,6 +70,15 @@ class WorkspaceShell {
   using TreeContextTargetKind = workspace::TreeContextTargetKind;
   using MenuItemSpec = workspace::MenuItemSpec;
   using MenuSpec = workspace::MenuSpec;
+  using SidebarMode = workspace::SidebarMode;
+  using GitSidebarEntry = workspace::GitSidebarEntry;
+  using GitSidebarLine = workspace::GitSidebarLine;
+  using GitSidebarEntryActionLayout = workspace::GitSidebarEntryActionLayout;
+  using ProblemsSidebarEntry = workspace::ProblemsSidebarEntry;
+  using GitSidebarState = workspace::GitSidebarState;
+  using ProblemsSidebarState = workspace::ProblemsSidebarState;
+  using PluginSidebarState = workspace::PluginSidebarState;
+  using SidebarState = workspace::SidebarState;
 
   enum class WindowAction {
     None,
@@ -129,16 +161,6 @@ class WorkspaceShell {
     Editor,
     Panel,
     Overlay,
-  };
-
- public:
-  enum class SidebarMode {
-    None,
-    Tree,
-    Search,
-    Problems,
-    Git,
-    Plugin,
   };
 
  private:
@@ -428,47 +450,6 @@ class WorkspaceShell {
     bool hovered = false;
   };
 
-  struct GitSidebarEntry {
-    enum class Section {
-      Modified,
-      Outgoing,
-    };
-
-    Section section = Section::Modified;
-    std::filesystem::path path;
-    std::filesystem::path relative_path;
-    project::GitFileStatus status = project::GitFileStatus::Clean;
-    bool conflicted = false;
-    bool staged = false;
-  };
-
-  struct GitSidebarLine {
-    enum class Kind {
-      Header,
-      Entry,
-      Empty,
-    };
-
-    Kind kind = Kind::Empty;
-    GitSidebarEntry::Section section = GitSidebarEntry::Section::Modified;
-    std::string label;
-    int entry_index = -1;
-  };
-
-  struct GitSidebarEntryActionLayout {
-    std::optional<SDL_FRect> primary_rect;
-    std::optional<SDL_FRect> discard_rect;
-    float content_right_edge = 0.0f;
-  };
-
-  struct ProblemsSidebarEntry {
-    editor::PublishedDiagnostic diagnostic;
-    std::string primary_label;
-    std::string detail_label;
-
-    bool operator==(const ProblemsSidebarEntry&) const = default;
-  };
-
   struct EditorPaneLayout {
     std::size_t leaf_id = 0;
     SDL_FRect rect{};
@@ -725,39 +706,6 @@ class WorkspaceShell {
     CommandState command;
   };
 
-  struct GitSidebarState {
-    std::vector<GitSidebarEntry> entries;
-    std::string base_ref;
-    std::string base_label;
-    bool repo_available = false;
-    std::size_t selected_index = 0;
-  };
-
-  struct ProblemsSidebarState {
-    std::vector<ProblemsSidebarEntry> entries;
-    std::size_t selected_index = 0;
-  };
-
-  struct PluginSidebarState {
-    std::vector<plugin::PluginHost::SidebarItem> items;
-    std::string error;
-    std::size_t selected_index = 0;
-  };
-
-  struct SidebarState {
-    bool visible = true;
-    SidebarMode mode = SidebarMode::Tree;
-    SidebarMode prev_mode = SidebarMode::None;
-    std::string view_id = "tree";
-    std::string prev_view_id;
-    bool temporary = false;
-    float width = 288.0f;
-    int scroll_row = 0;
-    GitSidebarState git;
-    ProblemsSidebarState problems;
-    PluginSidebarState plugin;
-  };
-
   struct PromptState {
     bool dirty_visible = false;
     FocusTarget dirty_previous_focus = FocusTarget::Editor;
@@ -796,27 +744,27 @@ class WorkspaceShell {
     int tab_scroll_index = 0;
   };
 
-  class ProjectCatalogCoordinator;
-  class PersistenceCoordinator;
-  class CommandPromptCoordinator;
-  class DirtyPromptCoordinator;
-  class PathMutationCoordinator;
-  class TabCoordinator;
-  class DiffTabCoordinator;
-  class LifecycleCoordinator;
-  class SidebarCoordinator;
-  class CompareInteractionCoordinator;
-  class ChromeMouseCoordinator;
-  class EditorMouseCoordinator;
-  class CompareMouseCoordinator;
-  class MergeMouseCoordinator;
-  class TabMouseCoordinator;
-  class SidebarMouseCoordinator;
-  class PanelMouseCoordinator;
-  class ActionCoordinator;
-  class MenuCoordinator;
-  class KeyInputCoordinator;
-  class TextInputCoordinator;
+  friend class WorkspaceActionContext;
+  friend class ProjectCatalogCoordinator;
+  friend class PersistenceCoordinator;
+  friend class CommandPromptCoordinator;
+  friend class MenuCoordinator;
+  friend class KeyInputCoordinator;
+  friend class TextInputCoordinator;
+  friend class TabCoordinator;
+  friend class PathMutationCoordinator;
+  friend class LifecycleCoordinator;
+  friend class DirtyPromptCoordinator;
+  friend class CompareInteractionCoordinator;
+  friend class DiffTabCoordinator;
+  friend class SidebarCoordinator;
+  friend class ChromeMouseCoordinator;
+  friend class EditorMouseCoordinator;
+  friend class CompareMouseCoordinator;
+  friend class MergeMouseCoordinator;
+  friend class TabMouseCoordinator;
+  friend class SidebarMouseCoordinator;
+  friend class PanelMouseCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -1052,6 +1000,8 @@ class WorkspaceShell {
   void OpenComparePicker();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
+  SidebarMode SidebarModeForViewId(std::string_view view_id) const;
+  SidebarMode ActiveSidebarMode() const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
                                                const project::GitCommitEntry& commit,
                                                std::size_t selected_row = 0) const;

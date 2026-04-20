@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::TabMouseCoordinator {
+class TabMouseCoordinator {
  public:
   explicit TabMouseCoordinator(WorkspaceShell& shell);
 
@@ -16,7 +16,7 @@ class WorkspaceShell::TabMouseCoordinator {
                    int vertical_ticks);
 
  private:
-  void PersistReorderedTabs(TabDragKind kind);
+  void PersistReorderedTabs(WorkspaceShell::TabDragKind kind);
 
   WorkspaceShell& shell_;
 };

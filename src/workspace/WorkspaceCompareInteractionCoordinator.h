@@ -7,7 +7,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::CompareInteractionCoordinator {
+class CompareInteractionCoordinator {
  public:
   explicit CompareInteractionCoordinator(WorkspaceShell& shell);
 

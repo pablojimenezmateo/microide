@@ -7,7 +7,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::CommandPromptCoordinator {
+class CommandPromptCoordinator {
  public:
   explicit CommandPromptCoordinator(WorkspaceShell& shell);
 

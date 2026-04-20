@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::MergeMouseCoordinator {
+class MergeMouseCoordinator {
  public:
   explicit MergeMouseCoordinator(WorkspaceShell& shell);
 

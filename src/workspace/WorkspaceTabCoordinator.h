@@ -11,7 +11,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::TabCoordinator {
+class TabCoordinator {
  public:
   explicit TabCoordinator(WorkspaceShell& shell);
 

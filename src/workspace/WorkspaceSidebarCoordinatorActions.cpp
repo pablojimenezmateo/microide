@@ -10,7 +10,7 @@
 
 namespace microide::workspace {
 
-void WorkspaceShell::SidebarCoordinator::MoveGitSelection(int delta) {
+void SidebarCoordinator::MoveGitSelection(int delta) {
   if (shell_.git_sidebar_.entries.empty() || delta == 0) {
     return;
   }
@@ -21,7 +21,7 @@ void WorkspaceShell::SidebarCoordinator::MoveGitSelection(int delta) {
   RevealSelectedGitLine();
 }
 
-void WorkspaceShell::SidebarCoordinator::MoveProblemsSelection(int delta) {
+void SidebarCoordinator::MoveProblemsSelection(int delta) {
   if (shell_.problems_sidebar_.entries.empty() || delta == 0) {
     return;
   }
@@ -32,7 +32,7 @@ void WorkspaceShell::SidebarCoordinator::MoveProblemsSelection(int delta) {
   RevealSelectedProblemsLine();
 }
 
-void WorkspaceShell::SidebarCoordinator::MovePluginSelection(int delta) {
+void SidebarCoordinator::MovePluginSelection(int delta) {
   if (shell_.plugin_sidebar_.items.empty() || delta == 0) {
     return;
   }
@@ -43,7 +43,7 @@ void WorkspaceShell::SidebarCoordinator::MovePluginSelection(int delta) {
   RevealSelectedPluginLine();
 }
 
-bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
+bool SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
   if (entry_index >= shell_.git_sidebar_.entries.size()) {
     return false;
   }
@@ -66,13 +66,13 @@ bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
         "HEAD", "HEAD");
   }
   if (opened && shell_.sidebar_state_.visible &&
-      shell_.sidebar_state_.mode == SidebarMode::Git) {
+      shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Git) {
     shell_.RequestSidebarRedraw();
   }
   return opened;
 }
 
-bool WorkspaceShell::SidebarCoordinator::OpenProblemItem() {
+bool SidebarCoordinator::OpenProblemItem() {
   if (shell_.problems_sidebar_.entries.empty() ||
       shell_.problems_sidebar_.selected_index >= shell_.problems_sidebar_.entries.size()) {
     return false;
@@ -87,11 +87,11 @@ bool WorkspaceShell::SidebarCoordinator::OpenProblemItem() {
   if (shell_.sidebar_state_.temporary) {
     shell_.RestorePreviousSidebar();
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
+bool SidebarCoordinator::OpenPluginItem() {
   if (shell_.plugin_sidebar_.items.empty() ||
       shell_.plugin_sidebar_.selected_index >= shell_.plugin_sidebar_.items.size()) {
     return false;
@@ -107,26 +107,26 @@ bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
     shell_.RestorePreviousSidebar();
   }
   if (confirmed && !item.path.empty()) {
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   }
   return confirmed;
 }
 
-bool WorkspaceShell::SidebarCoordinator::CanStageAllGitEntries() const {
+bool SidebarCoordinator::CanStageAllGitEntries() const {
   return std::any_of(shell_.git_sidebar_.entries.begin(), shell_.git_sidebar_.entries.end(),
                      [](const auto& entry) {
                        return entry.section == GitSidebarEntry::Section::Modified && !entry.staged;
                      });
 }
 
-bool WorkspaceShell::SidebarCoordinator::CanDiscardAllGitEntries() const {
+bool SidebarCoordinator::CanDiscardAllGitEntries() const {
   return std::any_of(shell_.git_sidebar_.entries.begin(), shell_.git_sidebar_.entries.end(),
                      [](const auto& entry) {
                        return entry.section == GitSidebarEntry::Section::Modified;
                      });
 }
 
-bool WorkspaceShell::SidebarCoordinator::StageAllGitEntries() {
+bool SidebarCoordinator::StageAllGitEntries() {
   if (!CanStageAllGitEntries()) {
     return false;
   }
@@ -151,15 +151,16 @@ bool WorkspaceShell::SidebarCoordinator::StageAllGitEntries() {
   return true;
 }
 
-void WorkspaceShell::SidebarCoordinator::OpenDiscardAllGitPrompt() {
+void SidebarCoordinator::OpenDiscardAllGitPrompt() {
   if (!CanDiscardAllGitEntries()) {
     return;
   }
-  shell_.OpenPromptSurface(PromptSurfaceState::Action::DiscardGitChanges,
-                           PromptSurfaceState::Kind::Confirm, shell_.project_root_);
+  shell_.OpenPromptSurface(WorkspaceShell::PromptSurfaceState::Action::DiscardGitChanges,
+                           WorkspaceShell::PromptSurfaceState::Kind::Confirm,
+                           shell_.project_root_);
 }
 
-bool WorkspaceShell::SidebarCoordinator::DiscardAllGitEntries() {
+bool SidebarCoordinator::DiscardAllGitEntries() {
   if (!CanDiscardAllGitEntries()) {
     return false;
   }
@@ -193,7 +194,7 @@ bool WorkspaceShell::SidebarCoordinator::DiscardAllGitEntries() {
   return true;
 }
 
-bool WorkspaceShell::SidebarCoordinator::StageGitEntry(std::size_t entry_index) {
+bool SidebarCoordinator::StageGitEntry(std::size_t entry_index) {
   if (entry_index >= shell_.git_sidebar_.entries.size()) {
     return false;
   }
@@ -209,7 +210,7 @@ bool WorkspaceShell::SidebarCoordinator::StageGitEntry(std::size_t entry_index) 
   return true;
 }
 
-bool WorkspaceShell::SidebarCoordinator::UnstageGitEntry(std::size_t entry_index) {
+bool SidebarCoordinator::UnstageGitEntry(std::size_t entry_index) {
   if (entry_index >= shell_.git_sidebar_.entries.size()) {
     return false;
   }
@@ -225,7 +226,7 @@ bool WorkspaceShell::SidebarCoordinator::UnstageGitEntry(std::size_t entry_index
   return true;
 }
 
-bool WorkspaceShell::SidebarCoordinator::DiscardGitEntry(std::size_t entry_index) {
+bool SidebarCoordinator::DiscardGitEntry(std::size_t entry_index) {
   if (entry_index >= shell_.git_sidebar_.entries.size()) {
     return false;
   }
@@ -247,8 +248,7 @@ bool WorkspaceShell::SidebarCoordinator::DiscardGitEntry(std::size_t entry_index
   return true;
 }
 
-void WorkspaceShell::SidebarCoordinator::ReconcileOpenTabsAfterPathDiscard(
-    const std::filesystem::path& path) {
+void SidebarCoordinator::ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   std::error_code error;
   if (std::filesystem::exists(normalized_path, error) && !error) {

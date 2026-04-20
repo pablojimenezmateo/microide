@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::ChromeMouseCoordinator {
+class ChromeMouseCoordinator {
  public:
   explicit ChromeMouseCoordinator(WorkspaceShell& shell);
 

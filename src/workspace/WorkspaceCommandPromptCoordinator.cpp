@@ -15,25 +15,23 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::CommandPromptCoordinator::CommandPromptCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+CommandPromptCoordinator::CommandPromptCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-void WorkspaceShell::CommandPromptCoordinator::ResetSessionState() {
+void CommandPromptCoordinator::ResetSessionState() {
   shell_.command_.history_index.reset();
   shell_.command_.history_pending_input.clear();
   ClearFeedback();
 }
 
-void WorkspaceShell::CommandPromptCoordinator::ClearFeedback() {
+void CommandPromptCoordinator::ClearFeedback() {
   shell_.command_.feedback_text.clear();
 }
 
-void WorkspaceShell::CommandPromptCoordinator::SetFeedback(std::string feedback) {
+void CommandPromptCoordinator::SetFeedback(std::string feedback) {
   shell_.command_.feedback_text = std::move(feedback);
 }
 
-bool WorkspaceShell::CommandPromptCoordinator::RejectAction(ActionSource source,
-                                                            std::string feedback) {
+bool CommandPromptCoordinator::RejectAction(ActionSource source, std::string feedback) {
   if (source != ActionSource::Command) {
     return true;
   }
@@ -41,14 +39,14 @@ bool WorkspaceShell::CommandPromptCoordinator::RejectAction(ActionSource source,
   return false;
 }
 
-void WorkspaceShell::CommandPromptCoordinator::AppendInput(std::string_view input) {
+void CommandPromptCoordinator::AppendInput(std::string_view input) {
   shell_.command_.input.append(input);
   shell_.command_.history_index.reset();
   shell_.command_.history_pending_input.clear();
   ClearFeedback();
 }
 
-void WorkspaceShell::CommandPromptCoordinator::PushHistory(std::string command_line) {
+void CommandPromptCoordinator::PushHistory(std::string command_line) {
   if (command_line.empty()) {
     return;
   }
@@ -62,7 +60,7 @@ void WorkspaceShell::CommandPromptCoordinator::PushHistory(std::string command_l
   }
 }
 
-void WorkspaceShell::CommandPromptCoordinator::StepHistory(int delta) {
+void CommandPromptCoordinator::StepHistory(int delta) {
   if (delta == 0 || shell_.command_.history.empty()) {
     return;
   }
@@ -91,7 +89,7 @@ void WorkspaceShell::CommandPromptCoordinator::StepHistory(int delta) {
   ClearFeedback();
 }
 
-void WorkspaceShell::CommandPromptCoordinator::CompleteInput() {
+void CommandPromptCoordinator::CompleteInput() {
   const ParsedCommandLine parsed = ParseCommandLine(shell_.command_.input);
   if (parsed.dangling_escape) {
     SetFeedback("Command completion stopped at a trailing escape");
@@ -202,7 +200,7 @@ void WorkspaceShell::CommandPromptCoordinator::CompleteInput() {
   SetFeedback(std::move(matches));
 }
 
-bool WorkspaceShell::CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
+bool CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   switch (event.key) {
     case SDLK_ESCAPE: {
       const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
@@ -242,8 +240,7 @@ bool WorkspaceShell::CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardE
   }
 }
 
-std::string WorkspaceShell::CommandPromptCoordinator::PromptStatusText(
-    const WorkspaceShell& shell) {
+std::string CommandPromptCoordinator::PromptStatusText(const WorkspaceShell& shell) {
   if (!shell.command_.feedback_text.empty()) {
     return shell.command_.feedback_text;
   }
@@ -255,8 +252,7 @@ std::string WorkspaceShell::CommandPromptCoordinator::PromptStatusText(
   return "Enter run  Esc cancel  Up/Down history  Tab complete";
 }
 
-bool WorkspaceShell::CommandPromptCoordinator::ExecuteCommandLine(
-    const std::string& command_line) {
+bool CommandPromptCoordinator::ExecuteCommandLine(const std::string& command_line) {
   const ParsedCommandLine parsed = ParseCommandLine(command_line);
   if (parsed.dangling_escape) {
     SetFeedback("Command parse error: trailing escape");

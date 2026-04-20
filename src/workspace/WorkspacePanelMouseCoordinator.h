@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::PanelMouseCoordinator {
+class PanelMouseCoordinator {
  public:
   explicit PanelMouseCoordinator(WorkspaceShell& shell);
 

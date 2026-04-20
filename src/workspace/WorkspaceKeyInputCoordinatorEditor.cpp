@@ -4,9 +4,9 @@
 
 namespace microide::workspace {
 
-bool WorkspaceShell::KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
-                                                               SDL_Keymod modifiers) {
-  CompareTabState* compare_tab = shell_.ActiveCompareTab();
+bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
+                                               SDL_Keymod modifiers) {
+  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
   if (compare_tab != nullptr && compare_tab->right_editable && compare_tab->right_view_active) {
     auto& viewport = compare_tab->right_viewport;
     const auto apply_compare_edit = [&](auto&& edit) {
@@ -188,9 +188,9 @@ bool WorkspaceShell::KeyInputCoordinator::HandleCompareKeyDown(const SDL_Keyboar
   }
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
-                                                             SDL_Keymod modifiers) {
-  MergeTabState* merge_tab = shell_.ActiveMergeTab();
+bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
+                                             SDL_Keymod modifiers) {
+  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;
   }
@@ -306,8 +306,8 @@ bool WorkspaceShell::KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardE
   }
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
-                                                                     SDL_Keymod modifiers) {
+bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
+                                                     SDL_Keymod modifiers) {
   switch (event.key) {
     case SDLK_TAB: {
       const bool was_dirty = shell_.text_viewport_.dirty();

@@ -6,9 +6,9 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::KeyInputCoordinator::KeyInputCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+KeyInputCoordinator::KeyInputCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
+bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   const auto ensure_redraw = [this](auto request_redraw) {
     if (!shell_.pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
@@ -65,35 +65,37 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
     ensure_redraw([this]() { shell_.RequestWindowRedraw(); });
     return true;
   }
-  if (shell_.surface_.focus == FocusTarget::Overlay) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Overlay) {
     const bool handled = HandleOverlayKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestOverlayRedraw(); });
     }
     return handled;
   }
-  if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.sidebar_state_.visible) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Sidebar &&
+      shell_.sidebar_state_.visible) {
     const bool handled = HandleSidebarKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestSidebarRedraw(); });
     }
     return handled;
   }
-  if (shell_.surface_.focus == FocusTarget::Panel && shell_.ActiveTerminalTab() != nullptr) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel &&
+      shell_.ActiveTerminalTab() != nullptr) {
     const bool handled = text_input.HandleTerminalKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestBottomPanelContentRedraw(); });
     }
     return handled;
   }
-  if (shell_.surface_.focus == FocusTarget::Editor && active_compare_tab) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor && active_compare_tab) {
     const bool handled = HandleCompareKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestFocusedEditorRedraw(); });
     }
     return handled;
   }
-  if (shell_.surface_.focus == FocusTarget::Editor && active_merge_tab) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor && active_merge_tab) {
     const bool handled = HandleMergeKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestFocusedEditorRedraw(); });
@@ -108,10 +110,10 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
   return handled;
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
-                                                              SDL_Keymod modifiers,
-                                                              bool active_compare_tab,
-                                                              bool active_merge_tab) {
+bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
+                                              SDL_Keymod modifiers,
+                                              bool active_compare_tab,
+                                              bool active_merge_tab) {
   ActionCoordinator action(shell_);
   if ((modifiers & SDL_KMOD_CTRL) && !shell_.panel_state_.command_mode &&
       !shell_.overlay_state_.visible && event.key == SDLK_N) {
@@ -119,14 +121,16 @@ bool WorkspaceShell::KeyInputCoordinator::HandleGlobalKeyDown(const SDL_Keyboard
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !shell_.panel_state_.command_mode &&
-      !shell_.overlay_state_.visible && shell_.surface_.focus == FocusTarget::Editor &&
+      !shell_.overlay_state_.visible &&
+      shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor &&
       !active_compare_tab && shell_.ActiveEditableViewport() != nullptr && event.key == SDLK_A) {
     action.Execute(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
   if ((modifiers & SDL_KMOD_CTRL) && !shell_.panel_state_.command_mode &&
-      !shell_.overlay_state_.visible && shell_.surface_.focus == FocusTarget::Editor &&
+      !shell_.overlay_state_.visible &&
+      shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor &&
       !active_compare_tab) {
     if (!active_merge_tab && (modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_F) {
       action.Execute(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
@@ -195,9 +199,8 @@ bool WorkspaceShell::KeyInputCoordinator::HandleGlobalKeyDown(const SDL_Keyboard
   return false;
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
-    const SDL_KeyboardEvent& event,
-    SDL_Keymod modifiers) {
+bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event,
+                                                         SDL_Keymod modifiers) {
   ActionCoordinator action(shell_);
   switch (event.key) {
     case SDLK_F8:
@@ -209,7 +212,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
         if (shell_.overlay_state_.visible) {
-          shell_.surface_.focus = FocusTarget::Overlay;
+          shell_.surface_.focus = WorkspaceShell::FocusTarget::Overlay;
           return true;
         }
         const bool include_panel = shell_.BottomPanelVisible();
@@ -217,32 +220,37 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
           if (shell_.sidebar_state_.visible) {
             if (modifiers & SDL_KMOD_SHIFT) {
               shell_.surface_.focus =
-                  shell_.surface_.focus == FocusTarget::Sidebar
-                      ? FocusTarget::Panel
-                      : shell_.surface_.focus == FocusTarget::Panel ? FocusTarget::Editor
-                                                                    : FocusTarget::Sidebar;
+                  shell_.surface_.focus == WorkspaceShell::FocusTarget::Sidebar
+                      ? WorkspaceShell::FocusTarget::Panel
+                      : shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel
+                            ? WorkspaceShell::FocusTarget::Editor
+                            : WorkspaceShell::FocusTarget::Sidebar;
             } else {
               shell_.surface_.focus =
-                  shell_.surface_.focus == FocusTarget::Sidebar
-                      ? FocusTarget::Editor
-                      : shell_.surface_.focus == FocusTarget::Editor ? FocusTarget::Panel
-                                                                     : FocusTarget::Sidebar;
+                  shell_.surface_.focus == WorkspaceShell::FocusTarget::Sidebar
+                      ? WorkspaceShell::FocusTarget::Editor
+                      : shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor
+                            ? WorkspaceShell::FocusTarget::Panel
+                            : WorkspaceShell::FocusTarget::Sidebar;
             }
           } else {
-            shell_.surface_.focus = shell_.surface_.focus == FocusTarget::Panel
-                                        ? FocusTarget::Editor
-                                        : FocusTarget::Panel;
+            shell_.surface_.focus =
+                shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel
+                    ? WorkspaceShell::FocusTarget::Editor
+                    : WorkspaceShell::FocusTarget::Panel;
           }
         } else if (shell_.sidebar_state_.visible && !(modifiers & SDL_KMOD_SHIFT)) {
           shell_.surface_.focus =
-              shell_.surface_.focus == FocusTarget::Sidebar ? FocusTarget::Editor
-                                                            : FocusTarget::Sidebar;
+              shell_.surface_.focus == WorkspaceShell::FocusTarget::Sidebar
+                  ? WorkspaceShell::FocusTarget::Editor
+                  : WorkspaceShell::FocusTarget::Sidebar;
         } else if (shell_.sidebar_state_.visible) {
           shell_.surface_.focus =
-              shell_.surface_.focus == FocusTarget::Editor ? FocusTarget::Sidebar
-                                                           : FocusTarget::Editor;
+              shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor
+                  ? WorkspaceShell::FocusTarget::Sidebar
+                  : WorkspaceShell::FocusTarget::Editor;
         } else {
-          shell_.surface_.focus = FocusTarget::Editor;
+          shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
         }
         return true;
       }
@@ -252,8 +260,10 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
         shell_.DismissOverlay();
         return true;
       }
-      if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.sidebar_state_.visible &&
-          shell_.sidebar_state_.temporary && shell_.sidebar_state_.mode == SidebarMode::Search) {
+      if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Sidebar &&
+          shell_.sidebar_state_.visible &&
+          shell_.sidebar_state_.temporary &&
+          shell_.ActiveSidebarMode() == SidebarMode::Search) {
         shell_.CloseSidebar();
         return true;
       }

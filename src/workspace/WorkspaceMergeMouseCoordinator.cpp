@@ -24,22 +24,20 @@ bool MergeHoverStatesEqual(const std::optional<MergeHoverState>& lhs,
 
 }  // namespace
 
-WorkspaceShell::MergeMouseCoordinator::MergeMouseCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+MergeMouseCoordinator::MergeMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
+                                             const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsMerge()) {
     return false;
   }
 
-  MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;
   }
 
-  const MergeSurfaceLayout surface_layout =
+  const WorkspaceShell::MergeSurfaceLayout surface_layout =
       shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
   const auto scroll_layout =
       shell_.ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
@@ -50,7 +48,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
   merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-  const MergeInteractionLayout interaction =
+  const WorkspaceShell::MergeInteractionLayout interaction =
       shell_.BuildMergeInteractionLayout(layout.editor_surface, surface_layout, *merge_tab);
   const SDL_FRect left_divider_rect =
       MakeRect(surface_layout.center_x - surface_layout.divider_width,
@@ -61,17 +59,17 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
                layout.editor_surface.y, surface_layout.divider_width,
                layout.editor_surface.h);
   if (Contains(left_divider_rect, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::MergeLeftDivider;
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::MergeLeftDivider;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
   if (Contains(right_divider_rect, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::MergeRightDivider;
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::MergeRightDivider;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
-  const MergeToolbarLayout toolbar =
+  const WorkspaceShell::MergeToolbarLayout toolbar =
       shell_.ComputeMergeToolbarLayout(layout.editor_surface, surface_layout);
   if (Contains(toolbar.prev_rect, event.button.x, event.button.y)) {
     shell_.MoveMergeSelection(-1);
@@ -105,8 +103,8 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
       merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
     const auto& hovered_conflict =
         merge_tab->conflicts[merge_tab->hover_state->conflict_index];
-    if (merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingConflict ||
-        merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept) {
+    if (merge_tab->hover_state->kind == WorkspaceShell::MergeHoverState::Kind::IncomingConflict ||
+        merge_tab->hover_state->kind == WorkspaceShell::MergeHoverState::Kind::IncomingAccept) {
       if (Contains(source_button_rect(hovered_conflict, true), event.button.x,
                    event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
@@ -114,8 +112,8 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
         return true;
       }
     }
-    if (merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentConflict ||
-        merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept) {
+    if (merge_tab->hover_state->kind == WorkspaceShell::MergeHoverState::Kind::CurrentConflict ||
+        merge_tab->hover_state->kind == WorkspaceShell::MergeHoverState::Kind::CurrentAccept) {
       if (Contains(source_button_rect(hovered_conflict, false), event.button.x,
                    event.button.y)) {
         merge_tab->selected_hunk = merge_tab->hover_state->conflict_index;
@@ -123,8 +121,8 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
         return true;
       }
     }
-    if ((merge_tab->hover_state->kind == MergeHoverState::Kind::ResultConflict ||
-         merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction) &&
+    if ((merge_tab->hover_state->kind == WorkspaceShell::MergeHoverState::Kind::ResultConflict ||
+         merge_tab->hover_state->kind == WorkspaceShell::MergeHoverState::Kind::ResultAction) &&
         hovered_conflict.valid) {
       const auto action_rects = result_action_rects(hovered_conflict);
       if (Contains(action_rects[0], event.button.x, event.button.y)) {
@@ -153,7 +151,8 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x,
                event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::CompareVerticalScrollbar;
+    shell_.interaction_state_.drag_target =
+        WorkspaceShell::DragTarget::CompareVerticalScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x,
                  event.button.y)
@@ -168,14 +167,15 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
     merge_tab->result_viewport.SetScrollLine(
         static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
     merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value() &&
       Contains(scroll_layout.horizontal_scrollbar->track, event.button.x,
                event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::CompareHorizontalScrollbar;
+    shell_.interaction_state_.drag_target =
+        WorkspaceShell::DragTarget::CompareHorizontalScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x,
                  event.button.y)
@@ -189,7 +189,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
                 shell_.interaction_state_.drag_scrollbar_offset))));
     merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
     merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
@@ -210,7 +210,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
         static_cast<int>(merge_tab->result_viewport.scroll_line());
     merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
     shell_.ResetCaretBlink();
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     if (event.button.button == SDL_BUTTON_MIDDLE) {
       if (const std::optional<std::string> text = shell_.ReadPrimarySelectionText();
           text.has_value()) {
@@ -272,33 +272,34 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleButtonDown(
     shell_.RequestMergeConflictRedraw(previous_selected_hunk);
     shell_.RequestMergeConflictRedraw(merge_tab->selected_hunk);
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::MergeMouseCoordinator::HandleDrag(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
+                                       const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsMerge()) {
     return false;
   }
 
-  if ((shell_.interaction_state_.drag_target != DragTarget::MergeLeftDivider &&
-       shell_.interaction_state_.drag_target != DragTarget::MergeRightDivider &&
-       shell_.interaction_state_.drag_target != DragTarget::CompareVerticalScrollbar &&
-       shell_.interaction_state_.drag_target != DragTarget::CompareHorizontalScrollbar)) {
+  if ((shell_.interaction_state_.drag_target != WorkspaceShell::DragTarget::MergeLeftDivider &&
+       shell_.interaction_state_.drag_target != WorkspaceShell::DragTarget::MergeRightDivider &&
+       shell_.interaction_state_.drag_target !=
+           WorkspaceShell::DragTarget::CompareVerticalScrollbar &&
+       shell_.interaction_state_.drag_target !=
+           WorkspaceShell::DragTarget::CompareHorizontalScrollbar)) {
     return false;
   }
 
-  MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
   if (merge_tab == nullptr) {
     shell_.ClearDragState();
     return false;
   }
 
-  if (shell_.interaction_state_.drag_target == DragTarget::MergeLeftDivider ||
-      shell_.interaction_state_.drag_target == DragTarget::MergeRightDivider) {
-    const MergeSurfaceLayout surface_layout =
+  if (shell_.interaction_state_.drag_target == WorkspaceShell::DragTarget::MergeLeftDivider ||
+      shell_.interaction_state_.drag_target == WorkspaceShell::DragTarget::MergeRightDivider) {
+    const WorkspaceShell::MergeSurfaceLayout surface_layout =
         shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
     const float content_width =
         std::max(1.0f, surface_layout.left_width + surface_layout.center_width +
@@ -309,7 +310,8 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleDrag(
     const float current_left_fraction = surface_layout.left_width / content_width;
     const float current_right_fraction =
         (surface_layout.left_width + surface_layout.center_width) / content_width;
-    if (shell_.interaction_state_.drag_target == DragTarget::MergeLeftDivider) {
+    if (shell_.interaction_state_.drag_target ==
+        WorkspaceShell::DragTarget::MergeLeftDivider) {
       const float divider_center_x =
           layout.editor_surface.x + 8.0f + surface_layout.gutter_width +
           surface_layout.divider_width * 0.5f;
@@ -328,17 +330,18 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleDrag(
           std::clamp(raw_fraction, current_left_fraction + min_fraction,
                      1.0f - min_fraction);
     }
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
-  const MergeSurfaceLayout surface_layout =
+  const WorkspaceShell::MergeSurfaceLayout surface_layout =
       shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
   const auto scroll_layout =
       shell_.ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
   merge_tab->scroll_row = scroll_layout.vertical_scroll;
   merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-  if (shell_.interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar) {
+  if (shell_.interaction_state_.drag_target ==
+      WorkspaceShell::DragTarget::CompareVerticalScrollbar) {
     if (!scroll_layout.vertical_scrollbar.has_value()) {
       shell_.ClearDragState();
       return false;
@@ -352,7 +355,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleDrag(
     merge_tab->result_viewport.SetScrollLine(
         static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
     merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
@@ -366,28 +369,27 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleDrag(
                                             shell_.interaction_state_.drag_scrollbar_offset))));
   merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::MergeMouseCoordinator::HandleHoverMotion(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
+                                              const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsMerge()) {
     return false;
   }
 
-  MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;
   }
 
-  const std::optional<MergeHoverState> previous_hover = merge_tab->hover_state;
-  std::optional<MergeHoverState> next_hover;
+  const std::optional<WorkspaceShell::MergeHoverState> previous_hover = merge_tab->hover_state;
+  std::optional<WorkspaceShell::MergeHoverState> next_hover;
   if (Contains(layout.editor_surface, event.motion.x, event.motion.y) &&
       !(shell_.interaction_state_.mouse_selecting &&
         (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
-    const MergeSurfaceLayout surface_layout =
+    const WorkspaceShell::MergeSurfaceLayout surface_layout =
         shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
     const auto scroll_layout =
         shell_.ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
@@ -396,7 +398,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleHoverMotion(
     merge_tab->result_viewport.SetHorizontalScroll(scroll_layout.horizontal_scroll);
     merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
     merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-    const MergeInteractionLayout interaction =
+    const WorkspaceShell::MergeInteractionLayout interaction =
         shell_.BuildMergeInteractionLayout(layout.editor_surface, surface_layout,
                                            *merge_tab);
     next_hover = shell_.ClassifyMergeHoverState(
@@ -417,14 +419,13 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleHoverMotion(
   return true;
 }
 
-bool WorkspaceShell::MergeMouseCoordinator::HandleSelectionMotion(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
+                                                  const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsMerge()) {
     return false;
   }
 
-  MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;
   }
@@ -432,9 +433,9 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleSelectionMotion(
     merge_tab->hover_state.reset();
   }
 
-  const MergeSurfaceLayout surface_layout =
+  const WorkspaceShell::MergeSurfaceLayout surface_layout =
       shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-  const MergeInteractionLayout interaction =
+  const WorkspaceShell::MergeInteractionLayout interaction =
       shell_.BuildMergeInteractionLayout(layout.editor_surface, surface_layout, *merge_tab);
   if (!Contains(interaction.result.rect, event.motion.x, event.motion.y)) {
     return false;
@@ -459,14 +460,14 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleSelectionMotion(
   } else {
     shell_.RequestFocusedEditorRedraw();
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                                        const WorkspaceLayout& layout,
-                                                        int vertical_ticks,
-                                                        int horizontal_ticks) {
+bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
+                                        const WorkspaceLayout& layout,
+                                        int vertical_ticks,
+                                        int horizontal_ticks) {
   if (!shell_.ActiveTabIsMerge() ||
       !Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
@@ -475,9 +476,9 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
   if (horizontal_ticks != 0) {
     shell_.ScrollMergeColumns(-horizontal_ticks * 3);
   } else {
-    MergeTabState* merge_tab = shell_.ActiveMergeTab();
+    WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
     if (merge_tab != nullptr) {
-      const MergeSurfaceLayout surface_layout =
+      const WorkspaceShell::MergeSurfaceLayout surface_layout =
           shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
       const auto scroll_layout =
           shell_.ComputeMergeScrollLayout(layout.editor_surface, surface_layout,
@@ -490,7 +491,7 @@ bool WorkspaceShell::MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
       merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
     }
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 

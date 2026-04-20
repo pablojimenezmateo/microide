@@ -8,14 +8,13 @@
 
 namespace microide::workspace {
 
-std::vector<WorkspaceShell::PathMutationCoordinator::DirtyPathTarget>
-WorkspaceShell::PathMutationCoordinator::DirtyPathTargetsForPath(
+std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::DirtyPathTargetsForPath(
     const std::filesystem::path& path) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
   std::vector<DirtyPathTarget> targets;
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    const TabEntry& tab = shell_.open_tabs_[i];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+    const WorkspaceShell::TabEntry& tab = shell_.open_tabs_[i];
+    if (tab.kind == WorkspaceShell::TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       for (const auto& view : tab.editor_state->views) {
         const bool active_live_view =
             i == shell_.active_tab_index_ && view.leaf_id == tab.editor_state->active_leaf_id &&
@@ -36,7 +35,7 @@ WorkspaceShell::PathMutationCoordinator::DirtyPathTargetsForPath(
       continue;
     }
 
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+    if (tab.kind == WorkspaceShell::TabEntry::Kind::Compare && tab.compare.has_value() &&
         tab.compare->right_editable && tab.compare->right_viewport.dirty() &&
         PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), normalized_path)) {
       targets.push_back(DirtyPathTarget{
@@ -46,7 +45,7 @@ WorkspaceShell::PathMutationCoordinator::DirtyPathTargetsForPath(
       continue;
     }
 
-    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+    if (tab.kind == WorkspaceShell::TabEntry::Kind::Merge && tab.merge.has_value() &&
         tab.merge->result_viewport.dirty() &&
         (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
          PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
@@ -61,7 +60,7 @@ WorkspaceShell::PathMutationCoordinator::DirtyPathTargetsForPath(
   return targets;
 }
 
-std::vector<std::size_t> WorkspaceShell::PathMutationCoordinator::DirtyTabIndicesForPath(
+std::vector<std::size_t> PathMutationCoordinator::DirtyTabIndicesForPath(
     const std::filesystem::path& path) const {
   const std::vector<DirtyPathTarget> targets = DirtyPathTargetsForPath(path);
   std::vector<std::size_t> indices;
@@ -74,12 +73,12 @@ std::vector<std::size_t> WorkspaceShell::PathMutationCoordinator::DirtyTabIndice
   return indices;
 }
 
-std::vector<std::size_t> WorkspaceShell::PathMutationCoordinator::AffectedCompareTabIndices(
+std::vector<std::size_t> PathMutationCoordinator::AffectedCompareTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    const TabEntry& tab = shell_.open_tabs_[i];
-    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
+    const WorkspaceShell::TabEntry& tab = shell_.open_tabs_[i];
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Compare || !tab.compare.has_value()) {
       continue;
     }
     if (PathEqualsOrWithin(tab.compare->path.lexically_normal(), path.lexically_normal())) {
@@ -89,12 +88,12 @@ std::vector<std::size_t> WorkspaceShell::PathMutationCoordinator::AffectedCompar
   return indices;
 }
 
-std::vector<std::size_t> WorkspaceShell::PathMutationCoordinator::AffectedMergeTabIndices(
+std::vector<std::size_t> PathMutationCoordinator::AffectedMergeTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    const TabEntry& tab = shell_.open_tabs_[i];
-    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+    const WorkspaceShell::TabEntry& tab = shell_.open_tabs_[i];
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
     if (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), path.lexically_normal()) ||
@@ -107,9 +106,8 @@ std::vector<std::size_t> WorkspaceShell::PathMutationCoordinator::AffectedMergeT
   return indices;
 }
 
-bool WorkspaceShell::PathMutationCoordinator::HasDirtyEditorTabsForPath(
-    const std::filesystem::path& path,
-    std::string* blocking_label) const {
+bool PathMutationCoordinator::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
+                                                        std::string* blocking_label) const {
   const std::vector<std::size_t> dirty_tabs = DirtyTabIndicesForPath(path);
   if (!dirty_tabs.empty()) {
     if (blocking_label != nullptr) {
@@ -120,16 +118,16 @@ bool WorkspaceShell::PathMutationCoordinator::HasDirtyEditorTabsForPath(
   return false;
 }
 
-bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
+bool PathMutationCoordinator::ResolveDirtyTabsForPath(
     const std::filesystem::path& path,
-    DirtyPromptState::Kind prompt_kind,
-    DirtyPathResolution resolution) {
+    WorkspaceShell::DirtyPromptState::Kind prompt_kind,
+    WorkspaceShell::DirtyPathResolution resolution) {
   const std::vector<DirtyPathTarget> dirty_targets = DirtyPathTargetsForPath(path);
   if (dirty_targets.empty()) {
     return true;
   }
 
-  if (resolution == DirtyPathResolution::RequirePrompt) {
+  if (resolution == WorkspaceShell::DirtyPathResolution::RequirePrompt) {
     shell_.prompts_.dirty_visible = true;
     shell_.prompts_.dirty_previous_focus = shell_.surface_.focus;
     shell_.prompts_.dirty.kind = prompt_kind;
@@ -137,11 +135,11 @@ bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
     shell_.prompts_.dirty.dirty_count = dirty_targets.size();
     shell_.prompts_.dirty.path = path.lexically_normal();
     shell_.prompts_.dirty.selected_action = 0;
-    shell_.surface_.focus = FocusTarget::Overlay;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Overlay;
     return false;
   }
 
-  if (resolution == DirtyPathResolution::Save) {
+  if (resolution == WorkspaceShell::DirtyPathResolution::Save) {
     bool saved_any = false;
     for (const DirtyPathTarget& target : dirty_targets) {
       if (target.tab_index >= shell_.open_tabs_.size()) {
@@ -150,7 +148,7 @@ bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
 
       auto& tab = shell_.open_tabs_[target.tab_index];
       if (target.kind == DirtyPathTarget::Kind::CompareTab) {
-        if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+        if (tab.kind != WorkspaceShell::TabEntry::Kind::Compare || !tab.compare.has_value() ||
             !tab.compare->right_viewport.dirty()) {
           continue;
         }
@@ -161,7 +159,7 @@ bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
       if (target.kind == DirtyPathTarget::Kind::MergeTab) {
-        if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+        if (tab.kind != WorkspaceShell::TabEntry::Kind::Merge || !tab.merge.has_value()) {
           continue;
         }
         if (!tab.merge->result_viewport.dirty()) {
@@ -174,7 +172,7 @@ bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
 
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+      if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
           tab.editor_state->views.empty()) {
         continue;
       }
@@ -221,13 +219,13 @@ bool WorkspaceShell::PathMutationCoordinator::ResolveDirtyTabsForPath(
   return true;
 }
 
-void WorkspaceShell::PathMutationCoordinator::RefreshDiagnosticsAfterMutation() {
+void PathMutationCoordinator::RefreshDiagnosticsAfterMutation() {
   shell_.RefreshProblemsSidebar();
   shell_.QueueEditorHoverRefresh();
   shell_.RequestEditorSurfaceRedraw();
 }
 
-void WorkspaceShell::PathMutationCoordinator::RetargetDiagnosticsForRename(
+void PathMutationCoordinator::RetargetDiagnosticsForRename(
     const std::filesystem::path& old_path,
     const std::filesystem::path& new_path) {
   if (shell_.diagnostics_store_.RetargetPathPrefix(old_path, new_path)) {
@@ -235,14 +233,13 @@ void WorkspaceShell::PathMutationCoordinator::RetargetDiagnosticsForRename(
   }
 }
 
-void WorkspaceShell::PathMutationCoordinator::ClearDiagnosticsForPath(
-    const std::filesystem::path& path) {
+void PathMutationCoordinator::ClearDiagnosticsForPath(const std::filesystem::path& path) {
   if (shell_.diagnostics_store_.ClearPathPrefix(path)) {
     RefreshDiagnosticsAfterMutation();
   }
 }
 
-void WorkspaceShell::PathMutationCoordinator::RefreshProjectViewsAfterMutation(
+void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
     const std::filesystem::path& preferred_tree_path) {
   shell_.RefreshProjectFiles();
   if (!preferred_tree_path.empty() && std::filesystem::exists(preferred_tree_path)) {

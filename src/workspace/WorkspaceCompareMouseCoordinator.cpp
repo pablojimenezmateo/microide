@@ -14,22 +14,20 @@ constexpr float kCompareScrollbarReserve = 12.0f;
 
 }
 
-WorkspaceShell::CompareMouseCoordinator::CompareMouseCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+CompareMouseCoordinator::CompareMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
+                                               const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsCompare()) {
     return false;
   }
 
-  CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
   if (compare_tab == nullptr) {
     return false;
   }
 
-  const CompareSurfaceLayout surface_layout =
+  const WorkspaceShell::CompareSurfaceLayout surface_layout =
       shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const auto scroll_layout =
       shell_.ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
@@ -40,14 +38,14 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
       shell_.CompareDividerHitRect(layout.editor_surface, surface_layout);
 
   if (Contains(divider_rect, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::CompareDivider;
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::CompareDivider;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::CompareVerticalScrollbar;
+    shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::CompareVerticalScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) -
@@ -60,13 +58,14 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
         0, scroll_layout.max_vertical_scroll);
     compare_tab->scroll_row = target_scroll;
     shell_.SyncCompareViewportScroll(*compare_tab);
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value() &&
       Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.interaction_state_.drag_target = DragTarget::CompareHorizontalScrollbar;
+    shell_.interaction_state_.drag_target =
+        WorkspaceShell::DragTarget::CompareHorizontalScrollbar;
     shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.x) -
@@ -77,7 +76,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
                                               static_cast<float>(event.button.x),
                                               shell_.interaction_state_.drag_scrollbar_offset))));
     shell_.SyncCompareViewportScroll(*compare_tab);
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
@@ -122,7 +121,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
           shell_.RequestTabStripRedraw();
         }
       }
-      shell_.surface_.focus = FocusTarget::Editor;
+      shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
       return true;
     }
     shell_.interaction_state_.mouse_selecting = true;
@@ -135,33 +134,34 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
   } else if (compare_tab->right_view_active != previous_right_view_active) {
     shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
+                                         const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsCompare() ||
-      (shell_.interaction_state_.drag_target != DragTarget::CompareDivider &&
-       shell_.interaction_state_.drag_target != DragTarget::CompareVerticalScrollbar &&
-       shell_.interaction_state_.drag_target != DragTarget::CompareHorizontalScrollbar)) {
+      (shell_.interaction_state_.drag_target != WorkspaceShell::DragTarget::CompareDivider &&
+       shell_.interaction_state_.drag_target !=
+           WorkspaceShell::DragTarget::CompareVerticalScrollbar &&
+       shell_.interaction_state_.drag_target !=
+           WorkspaceShell::DragTarget::CompareHorizontalScrollbar)) {
     return false;
   }
 
-  CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
   if (compare_tab == nullptr) {
     shell_.ClearDragState();
     return false;
   }
 
-  const CompareSurfaceLayout surface_layout =
+  const WorkspaceShell::CompareSurfaceLayout surface_layout =
       shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   const auto scroll_layout =
       shell_.ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
   compare_tab->scroll_row = scroll_layout.vertical_scroll;
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-  if (shell_.interaction_state_.drag_target == DragTarget::CompareDivider) {
+  if (shell_.interaction_state_.drag_target == WorkspaceShell::DragTarget::CompareDivider) {
     const float content_width = std::max(
         40.0f, layout.editor_surface.w -
                    (surface_layout.show_vertical ? kCompareScrollbarReserve : 0.0f) -
@@ -174,10 +174,11 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
     compare_tab->divider_fraction =
         std::clamp(desired_left_width / std::max(content_width, 1.0f), min_fraction,
                    1.0f - min_fraction);
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
-  if (shell_.interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar) {
+  if (shell_.interaction_state_.drag_target ==
+      WorkspaceShell::DragTarget::CompareVerticalScrollbar) {
     if (!scroll_layout.vertical_scrollbar.has_value()) {
       shell_.ClearDragState();
       return false;
@@ -189,7 +190,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
         0, scroll_layout.max_vertical_scroll);
     compare_tab->scroll_row = target_scroll;
     shell_.SyncCompareViewportScroll(*compare_tab);
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
     return true;
   }
 
@@ -202,24 +203,23 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
                                             static_cast<float>(event.motion.x),
                                             shell_.interaction_state_.drag_scrollbar_offset))));
   shell_.SyncCompareViewportScroll(*compare_tab);
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::CompareMouseCoordinator::HandleSelectionMotion(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout) {
+bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
+                                                    const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsCompare()) {
     return false;
   }
 
-  CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
   if (compare_tab == nullptr || !compare_tab->right_editable ||
       !compare_tab->right_view_active) {
     return false;
   }
 
-  const CompareSurfaceLayout surface_layout =
+  const WorkspaceShell::CompareSurfaceLayout surface_layout =
       shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   if (event.motion.x < surface_layout.right_x) {
     return false;
@@ -245,14 +245,14 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleSelectionMotion(
   } else {
     shell_.RequestFocusedEditorRedraw();
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 
-bool WorkspaceShell::CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                                          const WorkspaceLayout& layout,
-                                                          int vertical_ticks,
-                                                          int horizontal_ticks) {
+bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
+                                          const WorkspaceLayout& layout,
+                                          int vertical_ticks,
+                                          int horizontal_ticks) {
   if (!shell_.ActiveTabIsCompare() ||
       !Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
@@ -266,7 +266,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleWheel(const SDL_Event& event
   if (auto* compare_tab = shell_.ActiveCompareTab(); compare_tab != nullptr) {
     shell_.SyncCompareViewportScroll(*compare_tab);
   }
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   return true;
 }
 

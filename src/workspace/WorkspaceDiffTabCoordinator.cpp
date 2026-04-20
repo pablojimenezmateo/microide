@@ -11,16 +11,14 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::DiffTabCoordinator::DiffTabCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+DiffTabCoordinator::DiffTabCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-std::optional<std::size_t> WorkspaceShell::DiffTabCoordinator::FindOpenCompareTabIndex(
-    const std::filesystem::path& path,
-    std::string_view left_ref,
-    std::string_view right_ref) const {
+std::optional<std::size_t> DiffTabCoordinator::FindOpenCompareTabIndex(
+    const std::filesystem::path& path, std::string_view left_ref, std::string_view right_ref) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
     const auto& tab = shell_.open_tabs_[i];
-    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Compare || !tab.compare.has_value()) {
       continue;
     }
     if (tab.compare->path == normalized_path && tab.compare->commit_hash == left_ref &&
@@ -31,12 +29,12 @@ std::optional<std::size_t> WorkspaceShell::DiffTabCoordinator::FindOpenCompareTa
   return std::nullopt;
 }
 
-std::optional<std::size_t> WorkspaceShell::DiffTabCoordinator::FindOpenMergeTabIndex(
+std::optional<std::size_t> DiffTabCoordinator::FindOpenMergeTabIndex(
     const std::filesystem::path& path) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
     const auto& tab = shell_.open_tabs_[i];
-    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
     if (tab.merge->output_path == normalized_path) {
@@ -46,31 +44,29 @@ std::optional<std::size_t> WorkspaceShell::DiffTabCoordinator::FindOpenMergeTabI
   return std::nullopt;
 }
 
-void WorkspaceShell::DiffTabCoordinator::ActivateCompareTab(std::size_t index,
-                                                            bool dismiss_overlay) {
+void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_overlay) {
   shell_.active_tab_index_ = index;
   shell_.RevealActiveCompareSelection();
   shell_.EnsureActiveTabVisible();
   if (dismiss_overlay) {
     shell_.DismissOverlay(true);
   } else {
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   }
   shell_.RequestActiveTabRedraw(false);
 }
 
-void WorkspaceShell::DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
+void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
   shell_.active_tab_index_ = index;
   shell_.RevealActiveMergeSelection();
   shell_.EnsureActiveTabVisible();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   shell_.RequestActiveTabRedraw(false);
 }
 
-void WorkspaceShell::DiffTabCoordinator::RefreshExistingCompareTab(
-    std::size_t index,
-    const std::filesystem::path& normalized_path,
-    bool only_when_clean) {
+void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,
+                                                   const std::filesystem::path& normalized_path,
+                                                   bool only_when_clean) {
   if (!shell_.open_tabs_[index].compare.has_value()) {
     return;
   }
@@ -84,8 +80,8 @@ void WorkspaceShell::DiffTabCoordinator::RefreshExistingCompareTab(
   }
 }
 
-void WorkspaceShell::DiffTabCoordinator::RestoreMergeViewState(MergeTabState& rebuilt_merge,
-                                                               const MergeTabState& previous_merge) {
+void DiffTabCoordinator::RestoreMergeViewState(WorkspaceShell::MergeTabState& rebuilt_merge,
+                                               const WorkspaceShell::MergeTabState& previous_merge) {
   rebuilt_merge.selected_hunk =
       rebuilt_merge.conflicts.empty()
           ? 0
@@ -104,7 +100,7 @@ void WorkspaceShell::DiffTabCoordinator::RestoreMergeViewState(MergeTabState& re
   rebuilt_merge.horizontal_scroll = rebuilt_merge.result_viewport.horizontal_scroll();
 }
 
-void WorkspaceShell::DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
+void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
   if (const auto existing_index =
           FindOpenCompareTabIndex(shell_.overlay_workflow_.compare_picker.path, commit.hash, "WORKTREE");
       existing_index.has_value()) {
@@ -124,11 +120,10 @@ void WorkspaceShell::DiffTabCoordinator::OpenComparison(const project::GitCommit
   ActivateCompareTab(shell_.open_tabs_.size() - 1, true);
 }
 
-bool WorkspaceShell::DiffTabCoordinator::OpenMergeEditor(
-    const std::filesystem::path& base_path,
-    const std::filesystem::path& incoming_path,
-    const std::filesystem::path& current_path,
-    const std::filesystem::path& output_path) {
+bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
+                                         const std::filesystem::path& incoming_path,
+                                         const std::filesystem::path& current_path,
+                                         const std::filesystem::path& output_path) {
   const std::filesystem::path normalized_base = base_path.lexically_normal();
   const std::filesystem::path normalized_incoming = incoming_path.lexically_normal();
   const std::filesystem::path normalized_current = current_path.lexically_normal();
@@ -161,10 +156,9 @@ bool WorkspaceShell::DiffTabCoordinator::OpenMergeEditor(
   return true;
 }
 
-bool WorkspaceShell::DiffTabCoordinator::OpenWorkingTreeComparison(
-    const std::filesystem::path& path,
-    const std::string& left_ref,
-    const std::string& left_label) {
+bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& path,
+                                                   const std::string& left_ref,
+                                                   const std::string& left_label) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, "WORKTREE");
       existing_index.has_value()) {
@@ -198,12 +192,11 @@ bool WorkspaceShell::DiffTabCoordinator::OpenWorkingTreeComparison(
   return true;
 }
 
-bool WorkspaceShell::DiffTabCoordinator::OpenBranchHeadComparison(
-    const std::filesystem::path& path,
-    const std::string& left_ref,
-    const std::string& left_label,
-    const std::string& right_ref,
-    const std::string& right_label) {
+bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& path,
+                                                  const std::string& left_ref,
+                                                  const std::string& left_label,
+                                                  const std::string& right_ref,
+                                                  const std::string& right_label) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
       existing_index.has_value()) {
@@ -235,7 +228,7 @@ bool WorkspaceShell::DiffTabCoordinator::OpenBranchHeadComparison(
   return true;
 }
 
-bool WorkspaceShell::DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path) {
+bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path);
       existing_index.has_value() && shell_.open_tabs_[*existing_index].merge.has_value() &&

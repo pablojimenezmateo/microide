@@ -10,13 +10,13 @@
 
 namespace microide::workspace {
 
-void WorkspaceShell::PersistenceCoordinator::RefreshAvailableColorschemeNames() {
+void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
   shell_.available_colorscheme_names_ = render::ListAvailableThemeNames();
 }
 
-bool WorkspaceShell::PersistenceCoordinator::ApplyColorscheme(std::string_view name,
-                                                              bool persist,
-                                                              bool log_feedback) {
+bool PersistenceCoordinator::ApplyColorscheme(std::string_view name,
+                                              bool persist,
+                                              bool log_feedback) {
   (void)log_feedback;
   render::Theme loaded_theme;
   std::string resolved_name;
@@ -48,9 +48,9 @@ bool WorkspaceShell::PersistenceCoordinator::ApplyColorscheme(std::string_view n
   return true;
 }
 
-bool WorkspaceShell::PersistenceCoordinator::ApplyUiScale(float scale,
-                                                          bool persist,
-                                                          bool log_feedback) {
+bool PersistenceCoordinator::ApplyUiScale(float scale,
+                                          bool persist,
+                                          bool log_feedback) {
   (void)log_feedback;
   if (!std::isfinite(scale)) {
     return false;
@@ -63,7 +63,7 @@ bool WorkspaceShell::PersistenceCoordinator::ApplyUiScale(float scale,
   return true;
 }
 
-bool WorkspaceShell::PersistenceCoordinator::RestoreUserConfig() {
+bool PersistenceCoordinator::RestoreUserConfig() {
   const std::filesystem::path config_path = shell_.UserConfigPath();
   if (config_path.empty()) {
     return false;
@@ -82,7 +82,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreUserConfig() {
   return ApplyUiScale(state.ui_scale, false, false);
 }
 
-void WorkspaceShell::PersistenceCoordinator::SaveUserConfig() const {
+void PersistenceCoordinator::SaveUserConfig() const {
   const std::filesystem::path config_path = shell_.UserConfigPath();
   if (config_path.empty()) {
     return;
@@ -92,7 +92,7 @@ void WorkspaceShell::PersistenceCoordinator::SaveUserConfig() const {
       config_path, SerializeUserConfig(PersistedUserConfigState{.ui_scale = shell_.ui_scale_}));
 }
 
-bool WorkspaceShell::PersistenceCoordinator::RestoreConfigState() {
+bool PersistenceCoordinator::RestoreConfigState() {
   const std::filesystem::path config_path = shell_.ConfigStatePath();
   if (config_path.empty()) {
     return false;
@@ -122,7 +122,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreConfigState() {
   return true;
 }
 
-void WorkspaceShell::PersistenceCoordinator::SaveConfigState() const {
+void PersistenceCoordinator::SaveConfigState() const {
   if (shell_.project_root_.empty()) {
     return;
   }

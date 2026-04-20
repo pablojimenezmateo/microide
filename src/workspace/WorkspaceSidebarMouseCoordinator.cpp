@@ -12,11 +12,10 @@ constexpr float kSidebarHeaderHeight = 26.0f;
 
 }  // namespace
 
-WorkspaceShell::SidebarMouseCoordinator::SidebarMouseCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+SidebarMouseCoordinator::SidebarMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
-                                                               const WorkspaceLayout& layout) {
+bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
+                                               const WorkspaceLayout& layout) {
   if (event.button.button == SDL_BUTTON_LEFT && BeginScrollbarDrag(event, layout)) {
     return true;
   }
@@ -26,41 +25,42 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
     return false;
   }
 
-  shell_.surface_.focus = FocusTarget::Sidebar;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
   const float local_y =
       event.button.y - (layout.sidebar.y + kSidebarHeaderHeight + 6.0f);
+  const SidebarMode sidebar_mode = shell_.ActiveSidebarMode();
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Search) {
+  if (sidebar_mode == SidebarMode::Search) {
     return HandleSearchButtonDown(event, layout, local_y);
   }
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Git) {
+  if (sidebar_mode == SidebarMode::Git) {
     return HandleGitButtonDown(event, layout, local_y);
   }
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Problems) {
+  if (sidebar_mode == SidebarMode::Problems) {
     return HandleProblemsButtonDown(event, layout, local_y);
   }
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Plugin) {
+  if (sidebar_mode == SidebarMode::Plugin) {
     return HandlePluginButtonDown(event, layout, local_y);
   }
 
   return HandleTreeButtonDown(event, layout, local_y);
 }
 
-bool WorkspaceShell::SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
-                                                                     const WorkspaceLayout& layout,
-                                                                     float local_y) {
+bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
+                                                     const WorkspaceLayout& layout,
+                                                     float local_y) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return true;
   }
   if (Contains(shell_.ProjectSearchQueryRect(layout.sidebar), event.button.x, event.button.y)) {
-    shell_.BeginProjectSearchEdit(ProjectSearchEditField::Query);
+    shell_.BeginProjectSearchEdit(WorkspaceShell::ProjectSearchEditField::Query);
     return true;
   }
   if (Contains(shell_.ProjectSearchReplaceRect(layout.sidebar), event.button.x, event.button.y)) {
-    shell_.BeginProjectSearchEdit(ProjectSearchEditField::Replace);
+    shell_.BeginProjectSearchEdit(WorkspaceShell::ProjectSearchEditField::Replace);
     return true;
   }
   if (Contains(shell_.ProjectSearchModeButtonRect(layout.sidebar), event.button.x,
@@ -108,14 +108,14 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_E
     if (shell_.sidebar_state_.temporary) {
       shell_.RestorePreviousSidebar();
     }
-    shell_.surface_.focus = FocusTarget::Editor;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   }
   return true;
 }
 
-bool WorkspaceShell::SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
-                                                                  const WorkspaceLayout& layout,
-                                                                  float local_y) {
+bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
+                                                  const WorkspaceLayout& layout,
+                                                  float local_y) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return true;
   }
@@ -175,10 +175,9 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Even
   return true;
 }
 
-bool WorkspaceShell::SidebarMouseCoordinator::HandleProblemsButtonDown(
-    const SDL_Event& event,
-    const WorkspaceLayout& layout,
-    float local_y) {
+bool SidebarMouseCoordinator::HandleProblemsButtonDown(const SDL_Event& event,
+                                                       const WorkspaceLayout& layout,
+                                                       float local_y) {
   if (local_y < 0.0f) {
     return true;
   }
@@ -199,9 +198,9 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleProblemsButtonDown(
   return true;
 }
 
-bool WorkspaceShell::SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_Event& event,
-                                                                     const WorkspaceLayout& layout,
-                                                                     float local_y) {
+bool SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_Event& event,
+                                                     const WorkspaceLayout& layout,
+                                                     float local_y) {
   if (local_y < 0.0f) {
     return true;
   }
@@ -222,9 +221,9 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_E
   return true;
 }
 
-bool WorkspaceShell::SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
-                                                                  const WorkspaceLayout& layout,
-                                                                  float local_y) {
+bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
+                                                   const WorkspaceLayout& layout,
+                                                   float local_y) {
   if (event.button.button == SDL_BUTTON_LEFT && shell_.directory_tree_.CanCollapseAll() &&
       Contains(shell_.TreeSidebarCollapseButtonRect(layout.sidebar), event.button.x,
                event.button.y)) {

@@ -54,12 +54,13 @@ std::size_t MoveTargetIndexForInsertion(std::size_t insertion_slot,
 
 }  // namespace
 
-WorkspaceShell::TabMouseCoordinator::TabMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+TabMouseCoordinator::TabMouseCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
-                                                           const WorkspaceLayout& layout) {
+bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
+                                           const WorkspaceLayout& layout) {
   if (Contains(layout.project_tab_strip, event.button.x, event.button.y)) {
-    for (const VisibleStripTab& tab : shell_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (!Contains(tab.rect, event.button.x, event.button.y)) {
         continue;
       }
@@ -69,8 +70,8 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
         shell_.RequestCloseProject(tab.index);
       } else if (event.button.button == SDL_BUTTON_LEFT) {
         shell_.SwitchProject(tab.index, true);
-        shell_.tab_drag_state_ = TabDragState{
-            .kind = TabDragKind::Project,
+        shell_.tab_drag_state_ = WorkspaceShell::TabDragState{
+            .kind = WorkspaceShell::TabDragKind::Project,
             .press_x = static_cast<float>(event.button.x),
             .press_y = static_cast<float>(event.button.y),
         };
@@ -89,13 +90,13 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
                    std::max(22.0f, layout.tab_strip.h - 2.0f));
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {
-        shell_.surface_.focus = FocusTarget::Editor;
+        shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
         return true;
       }
       return false;
     }
 
-    for (const VisibleStripTab& tab : shell_.ComputeVisibleTabs(layout.tab_strip)) {
+    for (const WorkspaceShell::VisibleStripTab& tab : shell_.ComputeVisibleTabs(layout.tab_strip)) {
       if (!Contains(tab.rect, event.button.x, event.button.y)) {
         continue;
       }
@@ -105,8 +106,8 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
         shell_.RequestCloseTab(tab.index);
       } else if (event.button.button == SDL_BUTTON_LEFT) {
         shell_.ActivateTab(tab.index);
-        shell_.tab_drag_state_ = TabDragState{
-            .kind = TabDragKind::Editor,
+        shell_.tab_drag_state_ = WorkspaceShell::TabDragState{
+            .kind = WorkspaceShell::TabDragKind::Editor,
             .press_x = static_cast<float>(event.button.x),
             .press_y = static_cast<float>(event.button.y),
         };
@@ -140,7 +141,8 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
     return true;
   }
 
-  for (const VisibleStripTab& tab : shell_.ComputeVisibleTerminalTabs(panel_header)) {
+  for (const WorkspaceShell::VisibleStripTab& tab :
+       shell_.ComputeVisibleTerminalTabs(panel_header)) {
     if (!Contains(tab.rect, event.button.x, event.button.y)) {
       continue;
     }
@@ -151,15 +153,15 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
       shell_.CloseTerminalTab(tab.index);
     } else if (event.button.button == SDL_BUTTON_LEFT) {
       shell_.active_terminal_tab_index_ = tab.index;
-      shell_.surface_.focus = FocusTarget::Panel;
-      shell_.tab_drag_state_ = TabDragState{
-          .kind = TabDragKind::Terminal,
+      shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
+      shell_.tab_drag_state_ = WorkspaceShell::TabDragState{
+          .kind = WorkspaceShell::TabDragKind::Terminal,
           .press_x = static_cast<float>(event.button.x),
           .press_y = static_cast<float>(event.button.y),
       };
     } else if (event.button.button == SDL_BUTTON_RIGHT) {
       shell_.active_terminal_tab_index_ = tab.index;
-      shell_.surface_.focus = FocusTarget::Panel;
+      shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
       MenuCoordinator(shell_).OpenAnchoredMenu(
           MenuId::TerminalTabContext,
           MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
@@ -171,13 +173,13 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonDown(const SDL_Event& even
   return false;
 }
 
-bool WorkspaceShell::TabMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
+bool TabMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT ||
-      shell_.tab_drag_state_.kind == TabDragKind::None) {
+      shell_.tab_drag_state_.kind == WorkspaceShell::TabDragKind::None) {
     return false;
   }
 
-  const TabDragKind kind = shell_.tab_drag_state_.kind;
+  const WorkspaceShell::TabDragKind kind = shell_.tab_drag_state_.kind;
   const bool reordered = shell_.tab_drag_state_.reordered;
   shell_.ClearTabDrag();
   if (reordered) {
@@ -186,12 +188,12 @@ bool WorkspaceShell::TabMouseCoordinator::HandleButtonUp(const SDL_Event& event)
   return true;
 }
 
-bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
-  if (shell_.tab_drag_state_.kind == TabDragKind::None) {
+bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
+  if (shell_.tab_drag_state_.kind == WorkspaceShell::TabDragKind::None) {
     return false;
   }
   if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
-    const TabDragKind kind = shell_.tab_drag_state_.kind;
+    const WorkspaceShell::TabDragKind kind = shell_.tab_drag_state_.kind;
     const bool reordered = shell_.tab_drag_state_.reordered;
     shell_.ClearTabDrag();
     if (reordered) {
@@ -214,7 +216,7 @@ bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
   }
   const WorkspaceLayout layout = *layout_state;
   switch (shell_.tab_drag_state_.kind) {
-    case TabDragKind::Project:
+    case WorkspaceShell::TabDragKind::Project:
       if (Contains(layout.project_tab_strip, event.motion.x, event.motion.y) &&
           !shell_.project_catalog_.entries.empty()) {
         const auto visible_tabs = shell_.ComputeVisibleProjectTabs(layout.project_tab_strip);
@@ -230,7 +232,7 @@ bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
         }
       }
       return true;
-    case TabDragKind::Editor:
+    case WorkspaceShell::TabDragKind::Editor:
       if (Contains(layout.tab_strip, event.motion.x, event.motion.y) &&
           !shell_.open_tabs_.empty()) {
         const auto visible_tabs = shell_.ComputeVisibleTabs(layout.tab_strip);
@@ -244,7 +246,7 @@ bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
         }
       }
       return true;
-    case TabDragKind::Terminal:
+    case WorkspaceShell::TabDragKind::Terminal:
       if (shell_.BottomPanelVisible()) {
         const SDL_FRect panel_header =
             MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
@@ -264,15 +266,15 @@ bool WorkspaceShell::TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
         }
       }
       return true;
-    case TabDragKind::None:
+    case WorkspaceShell::TabDragKind::None:
     default:
       return false;
   }
 }
 
-bool WorkspaceShell::TabMouseCoordinator::HandleWheel(const SDL_Event& event,
-                                                      const WorkspaceLayout& layout,
-                                                      int vertical_ticks) {
+bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
+                                      const WorkspaceLayout& layout,
+                                      int vertical_ticks) {
   if (Contains(layout.project_tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
       !shell_.project_catalog_.entries.empty()) {
     const int max_scroll =
@@ -293,8 +295,8 @@ bool WorkspaceShell::TabMouseCoordinator::HandleWheel(const SDL_Event& event,
   return false;
 }
 
-void WorkspaceShell::TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
-  if (kind == TabDragKind::Project) {
+void TabMouseCoordinator::PersistReorderedTabs(WorkspaceShell::TabDragKind kind) {
+  if (kind == WorkspaceShell::TabDragKind::Project) {
     PersistenceCoordinator(shell_).SaveWorkspaceSession();
   } else {
     PersistenceCoordinator(shell_).SaveSessionState();

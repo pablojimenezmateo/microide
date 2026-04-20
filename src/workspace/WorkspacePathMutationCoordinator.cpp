@@ -7,22 +7,20 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::PathMutationCoordinator::PathMutationCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+PathMutationCoordinator::PathMutationCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
-    DirtyPathResolution resolution) {
+void PathMutationCoordinator::ConfirmPromptSurface(WorkspaceShell::DirtyPathResolution resolution) {
   if (!shell_.prompts_.surface_visible) {
     return;
   }
 
-  const PromptSurfaceState state = shell_.prompts_.surface;
+  const WorkspaceShell::PromptSurfaceState state = shell_.prompts_.surface;
   if (state.selected_button == 1) {
     shell_.DismissPromptSurface(true);
     return;
   }
 
-  if (state.kind == PromptSurfaceState::Kind::TextInput) {
+  if (state.kind == WorkspaceShell::PromptSurfaceState::Kind::TextInput) {
     if (state.input.empty()) {
       return;
     }
@@ -33,8 +31,9 @@ void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
     }
 
     std::filesystem::path destination;
-    if (state.action == PromptSurfaceState::Action::RenamePath) {
-      if (!ResolveDirtyTabsForPath(state.path, DirtyPromptState::Kind::RenamePath, resolution)) {
+    if (state.action == WorkspaceShell::PromptSurfaceState::Action::RenamePath) {
+      if (!ResolveDirtyTabsForPath(state.path, WorkspaceShell::DirtyPromptState::Kind::RenamePath,
+                                   resolution)) {
         return;
       }
       destination = (state.path.parent_path() / typed_path).lexically_normal();
@@ -47,9 +46,9 @@ void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
     }
 
     project::FileOperationResult result;
-    if (state.action == PromptSurfaceState::Action::CreateFile) {
+    if (state.action == WorkspaceShell::PromptSurfaceState::Action::CreateFile) {
       result = project::FileOperationService::CreateFile(destination);
-    } else if (state.action == PromptSurfaceState::Action::CreateDirectory) {
+    } else if (state.action == WorkspaceShell::PromptSurfaceState::Action::CreateDirectory) {
       result = project::FileOperationService::CreateDirectory(destination);
     } else {
       result = project::FileOperationService::RenamePath(state.path, destination);
@@ -63,36 +62,37 @@ void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
       shell_.DismissDirtyPrompt(false);
     }
     shell_.DismissPromptSurface(false);
-    if (state.action == PromptSurfaceState::Action::CreateFile) {
+    if (state.action == WorkspaceShell::PromptSurfaceState::Action::CreateFile) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
       shell_.OpenFile(result.resulting_path);
       return;
     }
-    if (state.action == PromptSurfaceState::Action::CreateDirectory) {
+    if (state.action == WorkspaceShell::PromptSurfaceState::Action::CreateDirectory) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
-      shell_.surface_.focus = FocusTarget::Sidebar;
+      shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
       return;
     }
 
     RetargetOpenTabsForRename(state.path, result.resulting_path,
-                              resolution != DirtyPathResolution::Discard);
+                              resolution != WorkspaceShell::DirtyPathResolution::Discard);
     RetargetDiagnosticsForRename(state.path, result.resulting_path);
     shell_.ClearEditorBlame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
-    shell_.surface_.focus = FocusTarget::Sidebar;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
     return;
   }
 
-  if (state.action == PromptSurfaceState::Action::DiscardGitChanges) {
+  if (state.action == WorkspaceShell::PromptSurfaceState::Action::DiscardGitChanges) {
     const bool discarded = shell_.DiscardAllGitSidebarEntries();
     shell_.DismissPromptSurface(discarded ? false : true);
     if (discarded) {
-      shell_.surface_.focus = FocusTarget::Sidebar;
+      shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
     }
     return;
   }
 
-  if (!ResolveDirtyTabsForPath(state.path, DirtyPromptState::Kind::DeletePath, resolution)) {
+  if (!ResolveDirtyTabsForPath(state.path, WorkspaceShell::DirtyPromptState::Kind::DeletePath,
+                               resolution)) {
     return;
   }
 
@@ -110,7 +110,7 @@ void WorkspaceShell::PathMutationCoordinator::ConfirmPromptSurface(
   ClearDiagnosticsForPath(state.path);
   shell_.ClearEditorBlame();
   RefreshProjectViewsAfterMutation(parent);
-  shell_.surface_.focus = FocusTarget::Sidebar;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
 }
 
 }  // namespace microide::workspace

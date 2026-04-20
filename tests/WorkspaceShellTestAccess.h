@@ -27,7 +27,6 @@ struct WorkspaceShellTestAccess {
     shell.file_index_.SetRoot(shell.project_root_);
     shell.file_finder_.SetIndex(&shell.file_index_);
     shell.sidebar_state_.visible = true;
-    shell.sidebar_state_.mode = WorkspaceShell::SidebarMode::Tree;
     shell.sidebar_state_.view_id = "tree";
     shell.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
   }
@@ -239,19 +238,19 @@ struct WorkspaceShellTestAccess {
                  shell.window_presentation_.logical_height);
   }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteProjectOpenFromCommand(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Command);
   }
   static void ResetProjectScopedState(WorkspaceShell& shell, bool show_welcome) {
     shell.ResetProjectScopedState(show_welcome);
   }
   static bool ExecuteFilesFromShortcut(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(WorkspaceShell::ActionId::Files, {},
-                                                            WorkspaceShell::ActionSource::Shortcut);
+    return ActionCoordinator(shell).Execute(WorkspaceShell::ActionId::Files, {},
+                                            WorkspaceShell::ActionSource::Shortcut);
   }
   static void SetClipboardTextReader(
       WorkspaceShell& shell,
@@ -319,7 +318,7 @@ struct WorkspaceShellTestAccess {
     return shell.OpenFileInNewTab(path);
   }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
-    return WorkspaceShell::CommandPromptCoordinator(shell).ExecuteCommandLine(command_line);
+    return CommandPromptCoordinator(shell).ExecuteCommandLine(command_line);
   }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Messages();
@@ -353,45 +352,45 @@ struct WorkspaceShellTestAccess {
     return shell.diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
   }
   static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::CopySelectionWithContext, {},
         WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCopyLastTerminalCommand(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
         WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseAllTabs(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::CloseAllTabs, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseOtherTabs(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::CloseOtherTabs, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseTabsToRight(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::CloseTabsToRight, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseTabsToLeft(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::CloseTabsToLeft, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteTreeRefresh(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::TreeRefresh, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteGitRefresh(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::GitRefresh, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteShowGitSidebar(WorkspaceShell& shell) {
-    return WorkspaceShell::ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell).Execute(
         WorkspaceShell::ActionId::SidebarShow, {"git"}, WorkspaceShell::ActionSource::Menu);
   }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
@@ -466,13 +465,13 @@ struct WorkspaceShellTestAccess {
                                     SDL_Keymod modifiers) {
     SDL_KeyboardEvent event{};
     event.key = key;
-    return WorkspaceShell::TextInputCoordinator(shell).HandleTerminalKeyDown(event, modifiers);
+    return TextInputCoordinator(shell).HandleTerminalKeyDown(event, modifiers);
   }
   static bool HandleTextInput(WorkspaceShell& shell, std::string_view text) {
     SDL_TextInputEvent event{};
     const std::string storage(text);
     event.text = storage.c_str();
-    return WorkspaceShell::TextInputCoordinator(shell).HandleTextInput(event);
+    return TextInputCoordinator(shell).HandleTextInput(event);
   }
   static bool HandleKeyEvent(WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
     SDL_Event event{};
@@ -822,16 +821,16 @@ struct WorkspaceShellTestAccess {
     return {};
   }
   static bool RestoreSessionState(WorkspaceShell& shell) {
-    return WorkspaceShell::PersistenceCoordinator(shell).RestoreSessionState();
+    return PersistenceCoordinator(shell).RestoreSessionState();
   }
   static void SaveSessionState(WorkspaceShell& shell) {
-    WorkspaceShell::PersistenceCoordinator(shell).SaveSessionState();
+    PersistenceCoordinator(shell).SaveSessionState();
   }
   static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
-    return WorkspaceShell::PersistenceCoordinator(shell).RestoreWorkspaceSession();
+    return PersistenceCoordinator(shell).RestoreWorkspaceSession();
   }
   static void SaveWorkspaceSession(WorkspaceShell& shell) {
-    WorkspaceShell::PersistenceCoordinator(shell).SaveWorkspaceSession();
+    PersistenceCoordinator(shell).SaveWorkspaceSession();
   }
   static void RequestQuit(WorkspaceShell& shell) { shell.RequestQuit(); }
   static bool ConsumeQuitRequested(WorkspaceShell& shell) { return shell.ConsumeQuitRequested(); }
@@ -993,7 +992,7 @@ struct WorkspaceShellTestAccess {
   static bool CommandMode(const WorkspaceShell& shell) { return shell.panel_state_.command_mode; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
-    return WorkspaceShell::CommandPromptCoordinator::PromptStatusText(shell);
+    return CommandPromptCoordinator::PromptStatusText(shell);
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.overlay_workflow_.project_search.query;
@@ -1013,7 +1012,7 @@ struct WorkspaceShellTestAccess {
   }
   static bool SidebarVisible(const WorkspaceShell& shell) { return shell.sidebar_state_.visible; }
   static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
-    return shell.sidebar_state_.mode;
+    return shell.ActiveSidebarMode();
   }
   static const std::string& SidebarViewId(const WorkspaceShell& shell) {
     return shell.sidebar_state_.view_id;

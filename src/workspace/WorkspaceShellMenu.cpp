@@ -236,8 +236,7 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
       if (view->mode == SidebarMode::Search && sidebar_state_.temporary) {
         return false;
       }
-      return sidebar_state_.visible && sidebar_state_.mode == view->mode &&
-             sidebar_state_.view_id == view->id;
+      return sidebar_state_.visible && sidebar_state_.view_id == view->id;
     }
   }
   return false;

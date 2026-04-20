@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::TextInputCoordinator {
+class TextInputCoordinator {
  public:
   explicit TextInputCoordinator(WorkspaceShell& shell);
 
@@ -16,7 +16,7 @@ class WorkspaceShell::TextInputCoordinator {
   bool PasteClipboardIntoTerminal();
 
  private:
-  void RequestCompositionRedraw(TextInputSurface surface);
+  void RequestCompositionRedraw(WorkspaceShell::TextInputSurface surface);
 
   WorkspaceShell& shell_;
 };

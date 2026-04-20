@@ -599,6 +599,38 @@ Status:
   overlay, and panel ownership into dedicated `SidebarState`, `OverlayState`, and `PanelState`
   models, removing duplicated sidebar, overlay, command-prompt, focus, width, height, and
   scroll bookkeeping
+- follow-up cleanup on 2026-04-20 also makes the stable sidebar `view_id` the shell's single
+  source of truth for the active left-sidebar contribution, so built-in and plugin sidebar
+  behavior now resolves through `WorkspaceSidebarRegistry*` instead of duplicating enum mode plus
+  view id state on `WorkspaceShell`
+- follow-up cleanup on 2026-04-20 also moves sidebar enum and state definitions into dedicated
+  `WorkspaceSidebarState*` ownership instead of keeping those models nested inside
+  `WorkspaceShell`
+- follow-up cleanup on 2026-04-20 also makes action dispatch a top-level
+  `WorkspaceActionCoordinator` and routes project, sidebar, search, tab, edit, and global shell
+  interaction through a dedicated `WorkspaceActionContext*` facade instead of a nested
+  shell-owned action coordinator with broad private access
+- follow-up cleanup on 2026-04-20 also promotes the project catalog, persistence, command-prompt,
+  and menu coordinators to top-level types, so workspace-session restore or save, project
+  activation, command feedback, and menu-surface transitions no longer depend on nested
+  `WorkspaceShell::*Coordinator` classes
+- follow-up cleanup on 2026-04-20 also promotes key and text input handling to top-level
+  `WorkspaceKeyInputCoordinator` and `WorkspaceTextInputCoordinator` types, so keyboard routing,
+  composition, and terminal text entry no longer depend on nested shell-owned coordinator classes
+- follow-up cleanup on 2026-04-20 also promotes tab management, lifecycle, and dirty-path
+  mutation to top-level `WorkspaceTabCoordinator`, `WorkspaceLifecycleCoordinator`, and
+  `WorkspacePathMutationCoordinator` types, so tab dirtiness, reopen or save flow, startup or
+  shutdown sequencing, and prompt-driven rename or delete handling no longer depend on nested
+  `WorkspaceShell::*Coordinator` classes
+- follow-up cleanup on 2026-04-20 also promotes dirty-save confirmation, compare or merge
+  interaction handling, and chrome or editor or compare or merge or tab or sidebar or panel
+  mouse routing to top-level `WorkspaceDirtyPromptCoordinator`,
+  `WorkspaceCompareInteractionCoordinator`, and `Workspace*MouseCoordinator` types, so the
+  interaction layer no longer depends on nested `WorkspaceShell::*Coordinator` classes
+- follow-up cleanup on 2026-04-20 also promotes compare-tab lifecycle and sidebar mode or
+  refresh or action handling to top-level `WorkspaceDiffTabCoordinator` and
+  `WorkspaceSidebarCoordinator` types, so `WorkspaceShell` no longer carries nested coordinator
+  declarations and only exposes friend-based access to top-level coordinators
 - follow-up cleanup on 2026-04-20 also keeps transient drag, mouse-selection, and window-focus
   interaction state outside `ProjectSurfaceState`, so project switches clear in-flight gestures
   instead of restoring stale interaction state from another project

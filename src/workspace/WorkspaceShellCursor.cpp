@@ -288,10 +288,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (sidebar_state_.visible && Contains(layout.sidebar, x, y)) {
+    const SidebarMode sidebar_mode = ActiveSidebarMode();
     if (Contains(SidebarModeControlRect(layout.sidebar), x, y)) {
       return CursorKind::Pointer;
     }
-    if (sidebar_state_.mode == SidebarMode::Search) {
+    if (sidebar_mode == SidebarMode::Search) {
       if (Contains(ProjectSearchQueryRect(layout.sidebar), x, y) ||
           Contains(ProjectSearchReplaceRect(layout.sidebar), x, y)) {
         return CursorKind::Text;
@@ -315,7 +316,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
-    if (sidebar_state_.mode == SidebarMode::Git) {
+    if (sidebar_mode == SidebarMode::Git) {
       if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&
           CanStageAllGitSidebarEntries()) {
         return CursorKind::Pointer;
@@ -352,7 +353,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Pointer;
     }
-    if (sidebar_state_.mode == SidebarMode::Problems) {
+    if (sidebar_mode == SidebarMode::Problems) {
       const auto list_layout =
           ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
@@ -364,7 +365,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
     }
-    if (sidebar_state_.mode == SidebarMode::Plugin) {
+    if (sidebar_mode == SidebarMode::Plugin) {
       const auto list_layout =
           ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);

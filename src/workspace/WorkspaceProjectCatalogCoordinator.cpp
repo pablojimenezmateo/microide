@@ -7,15 +7,14 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-bool WorkspaceShell::ProjectCatalogCoordinator::Open(const std::filesystem::path& normalized_root,
-                                                     bool restore_persistence,
-                                                     bool log_feedback) {
+bool ProjectCatalogCoordinator::Open(const std::filesystem::path& normalized_root,
+                                     bool restore_persistence,
+                                     bool log_feedback) {
   const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
 
-  auto project_state = std::make_unique<ProjectWorkspaceState>();
+  auto project_state = std::make_unique<WorkspaceShell::ProjectWorkspaceState>();
   project_state->root = normalized_root;
   project_state->initialized = true;
   shell_.project_catalog_.entries.push_back(std::move(project_state));
@@ -31,8 +30,7 @@ bool WorkspaceShell::ProjectCatalogCoordinator::Open(const std::filesystem::path
   return true;
 }
 
-bool WorkspaceShell::ProjectCatalogCoordinator::Switch(std::size_t index,
-                                                       bool activate_restored_tab) {
+bool ProjectCatalogCoordinator::Switch(std::size_t index, bool activate_restored_tab) {
   const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
   if (!Activate(index, activate_restored_tab)) {
     RestoreActivationCheckpoint(checkpoint);
@@ -43,8 +41,7 @@ bool WorkspaceShell::ProjectCatalogCoordinator::Switch(std::size_t index,
   return true;
 }
 
-void WorkspaceShell::ProjectCatalogCoordinator::Close(std::size_t index,
-                                                      bool activate_restored_tab) {
+void ProjectCatalogCoordinator::Close(std::size_t index, bool activate_restored_tab) {
   if (index >= shell_.project_catalog_.entries.size()) {
     return;
   }
@@ -75,8 +72,8 @@ void WorkspaceShell::ProjectCatalogCoordinator::Close(std::size_t index,
   FinalizeMutation();
 }
 
-bool WorkspaceShell::ProjectCatalogCoordinator::RestoreAfterRemoval(std::size_t preferred_index,
-                                                                    bool activate_restored_tab) {
+bool ProjectCatalogCoordinator::RestoreAfterRemoval(std::size_t preferred_index,
+                                                    bool activate_restored_tab) {
   while (!shell_.project_catalog_.entries.empty()) {
     const std::size_t index =
         std::min(preferred_index, shell_.project_catalog_.entries.size() - 1);
@@ -92,7 +89,7 @@ bool WorkspaceShell::ProjectCatalogCoordinator::RestoreAfterRemoval(std::size_t 
   return false;
 }
 
-void WorkspaceShell::ProjectCatalogCoordinator::PersistActiveEntry() {
+void ProjectCatalogCoordinator::PersistActiveEntry() {
   if (!shell_.HasActiveProjectCatalogEntry()) {
     return;
   }
@@ -103,7 +100,7 @@ void WorkspaceShell::ProjectCatalogCoordinator::PersistActiveEntry() {
   shell_.plugin_runtime_.ShutdownHost();
 }
 
-void WorkspaceShell::ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
+void ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
   PersistenceCoordinator persistence(shell_);
   for (std::size_t i = 0; i < shell_.project_catalog_.entries.size(); ++i) {
     auto* entry = shell_.ProjectCatalogEntry(i);
@@ -118,8 +115,7 @@ void WorkspaceShell::ProjectCatalogCoordinator::PersistInactiveEntriesForShutdow
   }
 }
 
-bool WorkspaceShell::ProjectCatalogCoordinator::Activate(std::size_t index,
-                                                         bool activate_restored_tab) {
+bool ProjectCatalogCoordinator::Activate(std::size_t index, bool activate_restored_tab) {
   auto* entry = shell_.ProjectCatalogEntry(index);
   if (entry == nullptr) {
     return false;
@@ -128,8 +124,7 @@ bool WorkspaceShell::ProjectCatalogCoordinator::Activate(std::size_t index,
   return shell_.ActivateProjectState(*entry, activate_restored_tab);
 }
 
-WorkspaceShell::ProjectCatalogCoordinator::ActivationCheckpoint
-WorkspaceShell::ProjectCatalogCoordinator::CaptureActivationCheckpoint() {
+ProjectCatalogCoordinator::ActivationCheckpoint ProjectCatalogCoordinator::CaptureActivationCheckpoint() {
   ActivationCheckpoint checkpoint = {
       .had_active_project = shell_.HasActiveProjectCatalogEntry(),
       .previous_active_index = shell_.project_catalog_.active_index,
@@ -140,8 +135,7 @@ WorkspaceShell::ProjectCatalogCoordinator::CaptureActivationCheckpoint() {
   return checkpoint;
 }
 
-void WorkspaceShell::ProjectCatalogCoordinator::RestoreActivationCheckpoint(
-    const ActivationCheckpoint& checkpoint) {
+void ProjectCatalogCoordinator::RestoreActivationCheckpoint(const ActivationCheckpoint& checkpoint) {
   if (checkpoint.had_active_project &&
       checkpoint.previous_active_index < shell_.project_catalog_.entries.size() &&
       Activate(checkpoint.previous_active_index, true)) {
@@ -150,7 +144,7 @@ void WorkspaceShell::ProjectCatalogCoordinator::RestoreActivationCheckpoint(
   shell_.ResetProjectCatalogToWelcomeState();
 }
 
-void WorkspaceShell::ProjectCatalogCoordinator::FinalizeMutation() {
+void ProjectCatalogCoordinator::FinalizeMutation() {
   shell_.EnsureActiveProjectVisible();
   PersistenceCoordinator(shell_).SaveWorkspaceSession();
   shell_.RequestWindowRedraw();

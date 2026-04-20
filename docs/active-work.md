@@ -94,10 +94,22 @@ Current state:
   search, tab, edit, and global action-domain implementations now live in dedicated
   `Workspace*ActionExecutor.cpp` translation units instead of one monolithic
   `WorkspaceActionCoordinator.cpp`
+- the top-level action coordinator now routes project, sidebar, search, tab, edit, and global
+  execution through a dedicated `WorkspaceActionContext*` facade instead of keeping action
+  behavior on a nested shell-owned `WorkspaceShell::ActionCoordinator` with broad private access
+- project-catalog mutation, project or workspace session persistence, command-prompt feedback,
+  and menu-surface transitions now use top-level `WorkspaceProjectCatalogCoordinator`,
+  `WorkspacePersistenceCoordinator`, `WorkspaceCommandPromptCoordinator`, and
+  `WorkspaceMenuCoordinator` types instead of nested shell-owned coordinator classes
 - built-in Tree, Search, Problems, and Git sidebar views plus plugin sidebar providers now share
   one `WorkspaceSidebarRegistry*` path for ids, menu wiring, command parsing or completion, and
   project-scoped active-view persistence instead of keeping plugin sidebars as a special-case
   shell path
+- sidebar surface state now treats the stable active `view_id` as the source of truth and derives
+  built-in versus plugin behavior through the sidebar registry instead of duplicating both enum
+  mode and view id on `WorkspaceShell`
+- sidebar enum and state models now live in dedicated `WorkspaceSidebarState*` ownership instead
+  of staying defined as nested `WorkspaceShell` types
 - menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
   menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
 - menu-bar, anchored-menu, and tree-context-menu popup state now lives in a dedicated
@@ -107,6 +119,20 @@ Current state:
   `WorkspaceKeyInputCoordinator.cpp`, `WorkspaceKeyInputCoordinatorModal.cpp`,
   `WorkspaceKeyInputCoordinatorSurfaces.cpp`, and `WorkspaceKeyInputCoordinatorEditor.cpp`
   units instead of one monolithic coordinator translation unit
+- keydown and text-input coordination now use top-level `WorkspaceKeyInputCoordinator` and
+  `WorkspaceTextInputCoordinator` types instead of nested shell-owned coordinator classes
+- dirty-save confirmation flow, compare or merge interaction commands, and chrome or editor or
+  compare or merge or tab or sidebar or panel mouse routing now use top-level
+  `WorkspaceDirtyPromptCoordinator`, `WorkspaceCompareInteractionCoordinator`, and
+  `Workspace*MouseCoordinator` types instead of nested shell-owned coordinator classes
+- compare-tab open or refresh flow and sidebar mode or refresh or action handling now use
+  top-level `WorkspaceDiffTabCoordinator` and `WorkspaceSidebarCoordinator` types instead of
+  nested shell-owned coordinator classes, leaving `WorkspaceShell` with friend-based access to
+  top-level coordinators instead of nested coordinator declarations
+- tab save, reopen, dirty-state, retarget, and project-local dirty-tab enumeration plus
+  lifecycle init or shutdown sequencing and prompt-driven path mutation now use top-level
+  `WorkspaceTabCoordinator`, `WorkspacePathMutationCoordinator`, and
+  `WorkspaceLifecycleCoordinator` types instead of nested shell-owned coordinator classes
 - sidebar mode transitions, refresh logic, and git or problem or plugin entry actions now run
   through a dedicated sidebar coordinator split across `WorkspaceSidebarCoordinator.cpp`,
   `WorkspaceSidebarCoordinatorRefresh.cpp`, and `WorkspaceSidebarCoordinatorActions.cpp`

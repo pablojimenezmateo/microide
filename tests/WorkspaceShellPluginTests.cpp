@@ -460,6 +460,70 @@ return ide.plugin({
          "plugin sidebar confirm should be able to open files at the requested location");
 }
 
+void TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path plugin_root = plugins_root / "reload-sidebar";
+  WriteFile(project_root / "README.md", "reload sidebar fixture\n");
+
+  WritePluginInit(
+      plugins_root, "reload-sidebar",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "reload-sidebar",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = "reload-sidebar",
+      label = "Reload Sidebar",
+      snapshot = function()
+        return {
+          { label = "README.md", path = "README.md" }
+        }
+      end
+    })
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "sidebar reload fixture should open the project");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show reload-sidebar"),
+         "sidebar reload fixture should show the plugin sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
+         "showing the plugin sidebar should resolve plugin mode from the active view id");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "reload-sidebar",
+         "showing the plugin sidebar should keep the plugin view id");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
+         "showing the plugin sidebar should snapshot its items");
+
+  WriteFile(
+      plugin_root / "init.lua",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "reload-sidebar"
+})
+)");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "plugins-reload should succeed after removing the active sidebar contribution");
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell),
+         "removing the active plugin sidebar should keep the sidebar surface visible");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Tree,
+         "removing the active plugin sidebar should fall back to the built-in tree view");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "tree",
+         "removing the active plugin sidebar should reset the active sidebar id to tree");
+  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).empty(),
+         "removing the active plugin sidebar should clear the stale plugin snapshot");
+}
+
 void TestWorkspaceShellSidebarModeMenuListsPluginSidebars() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1002,6 +1066,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginWatcherReloadsRuntimeSyntaxHighlighting);
   AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
           TestWorkspaceShellPluginSidebarOpensItems);
+  AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
+          TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",
           TestWorkspaceShellSidebarModeMenuListsPluginSidebars);
   AddTest(tests, "WorkspaceShell/PluginDiagnosticsPersistAcrossProjectSwitches",

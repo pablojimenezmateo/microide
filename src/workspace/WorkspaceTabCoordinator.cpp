@@ -25,21 +25,21 @@ std::string EditorTabLabel(const editor::TextViewport& viewport) {
 
 }  // namespace
 
-WorkspaceShell::TabCoordinator::TabCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+TabCoordinator::TabCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-std::string WorkspaceShell::TabCoordinator::ActiveTitle() const {
+std::string TabCoordinator::ActiveTitle() const {
   if (shell_.active_tab_index_ >= shell_.open_tabs_.size()) {
     return EditorTabLabel(shell_.text_viewport_);
   }
   return shell_.open_tabs_[shell_.active_tab_index_].title;
 }
 
-bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
+bool TabCoordinator::Save(std::size_t index) {
   if (index >= shell_.open_tabs_.size()) {
     return false;
   }
 
-  if (shell_.open_tabs_[index].kind == TabEntry::Kind::Compare &&
+  if (shell_.open_tabs_[index].kind == WorkspaceShell::TabEntry::Kind::Compare &&
       shell_.open_tabs_[index].compare.has_value()) {
     auto& compare_tab = shell_.open_tabs_[index].compare.value();
     if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
@@ -53,7 +53,7 @@ bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
     return true;
   }
 
-  if (shell_.open_tabs_[index].kind == TabEntry::Kind::Merge &&
+  if (shell_.open_tabs_[index].kind == WorkspaceShell::TabEntry::Kind::Merge &&
       shell_.open_tabs_[index].merge.has_value()) {
     auto& merge_tab = shell_.open_tabs_[index].merge.value();
     if (!merge_tab.result_viewport.dirty()) {
@@ -69,7 +69,7 @@ bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
     return true;
   }
 
-  if (shell_.open_tabs_[index].kind != TabEntry::Kind::Editor) {
+  if (shell_.open_tabs_[index].kind != WorkspaceShell::TabEntry::Kind::Editor) {
     return false;
   }
 
@@ -125,23 +125,23 @@ bool WorkspaceShell::TabCoordinator::Save(std::size_t index) {
   return attempted_save || !editor_state->views.empty();
 }
 
-bool WorkspaceShell::TabCoordinator::IsDirty(std::size_t index) const {
+bool TabCoordinator::IsDirty(std::size_t index) const {
   if (index >= shell_.open_tabs_.size()) {
     return false;
   }
 
-  if (shell_.open_tabs_[index].kind == TabEntry::Kind::Compare &&
+  if (shell_.open_tabs_[index].kind == WorkspaceShell::TabEntry::Kind::Compare &&
       shell_.open_tabs_[index].compare.has_value()) {
     return shell_.open_tabs_[index].compare->right_editable &&
            shell_.open_tabs_[index].compare->right_viewport.dirty();
   }
 
-  if (shell_.open_tabs_[index].kind == TabEntry::Kind::Merge &&
+  if (shell_.open_tabs_[index].kind == WorkspaceShell::TabEntry::Kind::Merge &&
       shell_.open_tabs_[index].merge.has_value()) {
     return shell_.open_tabs_[index].merge->result_viewport.dirty();
   }
 
-  if (shell_.open_tabs_[index].kind != TabEntry::Kind::Editor) {
+  if (shell_.open_tabs_[index].kind != WorkspaceShell::TabEntry::Kind::Editor) {
     return false;
   }
 
@@ -164,7 +164,7 @@ bool WorkspaceShell::TabCoordinator::IsDirty(std::size_t index) const {
   return false;
 }
 
-std::vector<std::size_t> WorkspaceShell::TabCoordinator::DirtyIndices() const {
+std::vector<std::size_t> TabCoordinator::DirtyIndices() const {
   std::vector<std::size_t> dirty_tabs;
   dirty_tabs.reserve(shell_.open_tabs_.size());
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
@@ -175,8 +175,7 @@ std::vector<std::size_t> WorkspaceShell::TabCoordinator::DirtyIndices() const {
   return dirty_tabs;
 }
 
-std::vector<std::size_t> WorkspaceShell::TabCoordinator::DirtyIndicesForProject(
-    std::size_t project_index) const {
+std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t project_index) const {
   if (project_index >= shell_.project_catalog_.entries.size()) {
     return {};
   }
@@ -188,12 +187,12 @@ std::vector<std::size_t> WorkspaceShell::TabCoordinator::DirtyIndicesForProject(
                           : WorkspaceShell::DirtyEditorTabIndices(*state);
 }
 
-void WorkspaceShell::TabCoordinator::ReloadCleanEditorTabsForPath(
-    const std::filesystem::path& path) {
+void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
   shell_.InvalidateEditorBlamePath(path);
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
     auto& tab = shell_.open_tabs_[i];
-    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || IsDirty(i)) {
+    if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+        IsDirty(i)) {
       continue;
     }
 
@@ -239,7 +238,7 @@ void WorkspaceShell::TabCoordinator::ReloadCleanEditorTabsForPath(
   }
 }
 
-bool WorkspaceShell::TabCoordinator::OpenUntitled() {
+bool TabCoordinator::OpenUntitled() {
   if (shell_.project_root_.empty()) {
     return false;
   }
@@ -250,8 +249,8 @@ bool WorkspaceShell::TabCoordinator::OpenUntitled() {
   shell_.ApplyEditorPreferences(untitled_view);
   shell_.text_viewport_ = untitled_view;
 
-  shell_.open_tabs_.push_back(TabEntry{
-      .kind = TabEntry::Kind::Editor,
+  shell_.open_tabs_.push_back(WorkspaceShell::TabEntry{
+      .kind = WorkspaceShell::TabEntry::Kind::Editor,
       .path = {},
       .title = "untitled",
       .editor_state = shell_.MakeEditorTabState(untitled_view),
@@ -260,13 +259,13 @@ bool WorkspaceShell::TabCoordinator::OpenUntitled() {
   });
   shell_.active_tab_index_ = shell_.open_tabs_.size() - 1;
   shell_.EnsureActiveTabVisible();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   shell_.ResetCaretBlink();
   shell_.RequestActiveTabRedraw(false);
   return true;
 }
 
-bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
+bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   if (shell_.project_root_.empty()) {
     return false;
   }
@@ -274,8 +273,8 @@ bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::pat
   shell_.SyncActiveEditorTab();
 
   auto existing = std::find_if(shell_.open_tabs_.begin(), shell_.open_tabs_.end(),
-                               [&](const TabEntry& tab) {
-                                 return tab.kind == TabEntry::Kind::Editor &&
+                               [&](const WorkspaceShell::TabEntry& tab) {
+                                 return tab.kind == WorkspaceShell::TabEntry::Kind::Editor &&
                                         tab.path == normalized_path;
                                });
 
@@ -299,8 +298,8 @@ bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::pat
   shell_.ApplyEditorPreferences(opened_view);
   shell_.text_viewport_ = opened_view;
 
-  shell_.open_tabs_.push_back(TabEntry{
-      .kind = TabEntry::Kind::Editor,
+  shell_.open_tabs_.push_back(WorkspaceShell::TabEntry{
+      .kind = WorkspaceShell::TabEntry::Kind::Editor,
       .path = normalized_path,
       .title = normalized_path.filename().string(),
       .editor_state = shell_.MakeEditorTabState(opened_view),
@@ -309,14 +308,14 @@ bool WorkspaceShell::TabCoordinator::OpenFileInNewTab(const std::filesystem::pat
   });
   shell_.active_tab_index_ = shell_.open_tabs_.size() - 1;
   shell_.EnsureActiveTabVisible();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   shell_.ResetCaretBlink();
   shell_.NotifyPluginBufferOpen(normalized_path);
   shell_.RequestActiveTabRedraw(true);
   return true;
 }
 
-bool WorkspaceShell::TabCoordinator::MoveActiveTo(std::size_t index) {
+bool TabCoordinator::MoveActiveTo(std::size_t index) {
   if (shell_.active_tab_index_ >= shell_.open_tabs_.size() || index >= shell_.open_tabs_.size()) {
     return false;
   }
@@ -327,7 +326,7 @@ bool WorkspaceShell::TabCoordinator::MoveActiveTo(std::size_t index) {
 
   shell_.SyncActiveEditorTab();
 
-  TabEntry moved_tab = std::move(shell_.open_tabs_[shell_.active_tab_index_]);
+  WorkspaceShell::TabEntry moved_tab = std::move(shell_.open_tabs_[shell_.active_tab_index_]);
   shell_.open_tabs_.erase(
       shell_.open_tabs_.begin() + static_cast<std::ptrdiff_t>(shell_.active_tab_index_));
   shell_.open_tabs_.insert(shell_.open_tabs_.begin() + static_cast<std::ptrdiff_t>(index),
@@ -335,14 +334,13 @@ bool WorkspaceShell::TabCoordinator::MoveActiveTo(std::size_t index) {
 
   shell_.active_tab_index_ = index;
   shell_.EnsureActiveTabVisible();
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   shell_.RequestTabStripRedraw();
   return true;
 }
 
-std::optional<std::size_t> WorkspaceShell::TabCoordinator::FindIndexBySpecifier(
-    std::string_view specifier,
-    std::string* error_message) const {
+std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view specifier,
+                                                                std::string* error_message) const {
   if (specifier.empty()) {
     if (error_message != nullptr) {
       *error_message = "usage: tabswitch <tab>";
@@ -369,7 +367,7 @@ std::optional<std::size_t> WorkspaceShell::TabCoordinator::FindIndexBySpecifier(
   std::vector<std::size_t> exact_matches;
   std::vector<std::size_t> partial_matches;
   for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    const TabEntry& tab = shell_.open_tabs_[i];
+    const WorkspaceShell::TabEntry& tab = shell_.open_tabs_[i];
     const std::string lowered_title = ToLower(tab.title);
     const std::string lowered_path = ToLower(RelativePathLabel(shell_.project_root_, tab.path));
     const std::string lowered_absolute_path = ToLower(tab.path.lexically_normal().string());
@@ -413,13 +411,13 @@ std::optional<std::size_t> WorkspaceShell::TabCoordinator::FindIndexBySpecifier(
   return std::nullopt;
 }
 
-bool WorkspaceShell::TabCoordinator::ReopenActive() {
+bool TabCoordinator::ReopenActive() {
   if (shell_.active_tab_index_ >= shell_.open_tabs_.size()) {
     return false;
   }
 
   auto& tab = shell_.open_tabs_[shell_.active_tab_index_];
-  if (tab.kind != TabEntry::Kind::Editor) {
+  if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor) {
     return false;
   }
   const std::filesystem::path reopen_path = shell_.text_viewport_.path().empty()
@@ -459,7 +457,7 @@ bool WorkspaceShell::TabCoordinator::ReopenActive() {
   }
   shell_.SyncActiveEditorTabMetadata();
   shell_.InvalidateEditorBlamePath(reopen_path);
-  shell_.surface_.focus = FocusTarget::Editor;
+  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
   shell_.ResetCaretBlink();
   shell_.RequestEditorSurfaceRedraw();
   return true;

@@ -4,7 +4,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::CompareMouseCoordinator {
+class CompareMouseCoordinator {
  public:
   explicit CompareMouseCoordinator(WorkspaceShell& shell);
 

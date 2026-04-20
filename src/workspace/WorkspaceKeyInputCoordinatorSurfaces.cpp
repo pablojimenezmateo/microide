@@ -5,9 +5,9 @@
 
 namespace microide::workspace {
 
-bool WorkspaceShell::KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
-                                                               SDL_Keymod modifiers) {
-  if (shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
+                                               SDL_Keymod modifiers) {
+  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
     switch (event.key) {
       case SDLK_ESCAPE:
         shell_.DismissOverlay();
@@ -54,7 +54,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleOverlayKeyDown(const SDL_Keyboar
     }
   }
 
-  if (shell_.overlay_state_.mode == OverlayMode::BufferSearch) {
+  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::BufferSearch) {
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -81,17 +81,18 @@ bool WorkspaceShell::KeyInputCoordinator::HandleOverlayKeyDown(const SDL_Keyboar
     }
   }
 
-  if (shell_.overlay_state_.mode == OverlayMode::BufferReplace) {
+  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::BufferReplace) {
     switch (event.key) {
       case SDLK_ESCAPE:
         shell_.overlay_state_.visible = false;
-        shell_.surface_.focus = FocusTarget::Editor;
+        shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
         return true;
       case SDLK_TAB:
         shell_.overlay_state_.buffer_search_field =
-            shell_.overlay_state_.buffer_search_field == BufferSearchField::Search
-                ? BufferSearchField::Replace
-                : BufferSearchField::Search;
+            shell_.overlay_state_.buffer_search_field ==
+                    WorkspaceShell::BufferSearchField::Search
+                ? WorkspaceShell::BufferSearchField::Replace
+                : WorkspaceShell::BufferSearchField::Search;
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -114,7 +115,8 @@ bool WorkspaceShell::KeyInputCoordinator::HandleOverlayKeyDown(const SDL_Keyboar
         shell_.MoveBufferSearchSelection(8);
         return true;
       case SDLK_BACKSPACE:
-        if (shell_.overlay_state_.buffer_search_field == BufferSearchField::Search) {
+        if (shell_.overlay_state_.buffer_search_field ==
+            WorkspaceShell::BufferSearchField::Search) {
           if (RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.buffer_search.query)) {
             shell_.RefreshBufferSearch();
           }
@@ -127,11 +129,11 @@ bool WorkspaceShell::KeyInputCoordinator::HandleOverlayKeyDown(const SDL_Keyboar
     }
   }
 
-  if (shell_.overlay_state_.mode == OverlayMode::ProjectSearch) {
+  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::ProjectSearch) {
     switch (event.key) {
       case SDLK_ESCAPE:
         shell_.overlay_state_.visible = false;
-        shell_.surface_.focus = FocusTarget::Editor;
+        shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
@@ -183,9 +185,10 @@ bool WorkspaceShell::KeyInputCoordinator::HandleOverlayKeyDown(const SDL_Keyboar
   }
 }
 
-bool WorkspaceShell::KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
-                                                               SDL_Keymod modifiers) {
-  if (shell_.sidebar_state_.mode == SidebarMode::Search) {
+bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
+                                               SDL_Keymod modifiers) {
+  const SidebarMode sidebar_mode = shell_.ActiveSidebarMode();
+  if (sidebar_mode == SidebarMode::Search) {
     const char input_character = shell_.KeycodeToAscii(event.key, modifiers);
     if (shell_.overlay_workflow_.project_search.editing) {
       switch (event.key) {
@@ -224,7 +227,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSidebarKeyDown(const SDL_Keyboar
           if (shell_.sidebar_state_.temporary) {
             shell_.RestorePreviousSidebar();
           }
-          shell_.surface_.focus = FocusTarget::Editor;
+          shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
         }
         return true;
       case SDLK_UP:
@@ -258,10 +261,10 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSidebarKeyDown(const SDL_Keyboar
         }
         return true;
       case SDLK_EQUALS:
-        shell_.BeginProjectSearchEdit(ProjectSearchEditField::Replace);
+        shell_.BeginProjectSearchEdit(WorkspaceShell::ProjectSearchEditField::Replace);
         return true;
       case SDLK_SLASH:
-        shell_.BeginProjectSearchEdit(ProjectSearchEditField::Query);
+        shell_.BeginProjectSearchEdit(WorkspaceShell::ProjectSearchEditField::Query);
         return true;
       default:
         if (event.key == SDLK_J && input_character == 'j') {
@@ -276,7 +279,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSidebarKeyDown(const SDL_Keyboar
     }
   }
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Git) {
+  if (sidebar_mode == SidebarMode::Git) {
     switch (event.key) {
       case SDLK_UP:
         shell_.MoveGitSidebarSelection(-1);
@@ -323,7 +326,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSidebarKeyDown(const SDL_Keyboar
     }
   }
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Problems) {
+  if (sidebar_mode == SidebarMode::Problems) {
     switch (event.key) {
       case SDLK_ESCAPE:
         if (shell_.sidebar_state_.temporary) {
@@ -367,7 +370,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSidebarKeyDown(const SDL_Keyboar
     }
   }
 
-  if (shell_.sidebar_state_.mode == SidebarMode::Plugin) {
+  if (sidebar_mode == SidebarMode::Plugin) {
     switch (event.key) {
       case SDLK_ESCAPE:
         if (shell_.sidebar_state_.temporary) {

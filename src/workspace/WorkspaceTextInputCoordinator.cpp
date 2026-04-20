@@ -9,24 +9,23 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::TextInputCoordinator::TextInputCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+TextInputCoordinator::TextInputCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-void WorkspaceShell::TextInputCoordinator::SyncTextInputSurface(SDL_Window* window) {
-  const TextInputSurface current_surface = shell_.CurrentTextInputSurface();
+void TextInputCoordinator::SyncTextInputSurface(SDL_Window* window) {
+  const WorkspaceShell::TextInputSurface current_surface = shell_.CurrentTextInputSurface();
   if (current_surface == shell_.active_text_input_surface_) {
     return;
   }
 
   shell_.active_text_input_surface_ = current_surface;
-  shell_.text_composition_ = TextCompositionState{};
+  shell_.text_composition_ = WorkspaceShell::TextCompositionState{};
   SDL_Window* target_window = window != nullptr ? window : SDL_GetKeyboardFocus();
   if (target_window != nullptr) {
     SDL_ClearComposition(target_window);
   }
 }
 
-bool WorkspaceShell::TextInputCoordinator::CompositionConsumesKey(SDL_Keycode key,
-                                                                  SDL_Keymod modifiers) const {
+bool TextInputCoordinator::CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const {
   if (shell_.text_composition_.text.empty() ||
       shell_.text_composition_.surface != shell_.CurrentTextInputSurface() ||
       (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) != 0) {
@@ -54,51 +53,52 @@ bool WorkspaceShell::TextInputCoordinator::CompositionConsumesKey(SDL_Keycode ke
   }
 }
 
-void WorkspaceShell::TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
+void TextInputCoordinator::RequestCompositionRedraw(WorkspaceShell::TextInputSurface surface) {
   switch (surface) {
-    case TextInputSurface::PromptInput:
+    case WorkspaceShell::TextInputSurface::PromptInput:
       shell_.RequestPromptRedraw();
       break;
-    case TextInputSurface::Command:
+    case WorkspaceShell::TextInputSurface::Command:
       shell_.RequestBottomPanelCommandRedraw();
       break;
-    case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace:
+    case WorkspaceShell::TextInputSurface::SidebarSearchQuery:
+    case WorkspaceShell::TextInputSurface::SidebarSearchReplace:
       shell_.RequestSidebarRedraw();
       break;
-    case TextInputSurface::FileFinder:
-    case TextInputSurface::BufferSearch:
-    case TextInputSurface::BufferReplaceSearch:
-    case TextInputSurface::BufferReplaceReplace:
-    case TextInputSurface::ProjectSearchOverlay:
-    case TextInputSurface::CommitPicker:
+    case WorkspaceShell::TextInputSurface::FileFinder:
+    case WorkspaceShell::TextInputSurface::BufferSearch:
+    case WorkspaceShell::TextInputSurface::BufferReplaceSearch:
+    case WorkspaceShell::TextInputSurface::BufferReplaceReplace:
+    case WorkspaceShell::TextInputSurface::ProjectSearchOverlay:
+    case WorkspaceShell::TextInputSurface::CommitPicker:
       shell_.RequestOverlayRedraw();
       break;
-    case TextInputSurface::Editor:
+    case WorkspaceShell::TextInputSurface::Editor:
       shell_.RequestFocusedEditorRedraw();
       break;
-    case TextInputSurface::None:
-    case TextInputSurface::Terminal:
+    case WorkspaceShell::TextInputSurface::None:
+    case WorkspaceShell::TextInputSurface::Terminal:
       break;
   }
 }
 
-bool WorkspaceShell::TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) {
+bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) {
   if (shell_.menu_state_.menu_bar_open || shell_.menu_state_.tree_context_menu.open) {
     if (!shell_.text_composition_.text.empty()) {
       shell_.RequestWindowRedraw();
     }
-    shell_.text_composition_ = TextCompositionState{};
+    shell_.text_composition_ = WorkspaceShell::TextCompositionState{};
     return true;
   }
 
   SyncTextInputSurface(nullptr);
-  const TextInputSurface surface = shell_.CurrentTextInputSurface();
-  if (surface == TextInputSurface::None || surface == TextInputSurface::Terminal) {
+  const WorkspaceShell::TextInputSurface surface = shell_.CurrentTextInputSurface();
+  if (surface == WorkspaceShell::TextInputSurface::None ||
+      surface == WorkspaceShell::TextInputSurface::Terminal) {
     if (!shell_.text_composition_.text.empty()) {
       shell_.RequestWindowRedraw();
     }
-    shell_.text_composition_ = TextCompositionState{};
+    shell_.text_composition_ = WorkspaceShell::TextCompositionState{};
     return false;
   }
 
@@ -106,7 +106,7 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextEditing(const SDL_TextEditi
     if (!shell_.text_composition_.text.empty()) {
       RequestCompositionRedraw(surface);
     }
-    shell_.text_composition_ = TextCompositionState{};
+    shell_.text_composition_ = WorkspaceShell::TextCompositionState{};
     return true;
   }
 
@@ -118,7 +118,7 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextEditing(const SDL_TextEditi
   return true;
 }
 
-bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
+bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
   if (shell_.menu_state_.menu_bar_open || shell_.menu_state_.tree_context_menu.open) {
     return true;
   }
@@ -127,10 +127,10 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
   }
 
   SyncTextInputSurface(nullptr);
-  shell_.text_composition_ = TextCompositionState{};
+  shell_.text_composition_ = WorkspaceShell::TextCompositionState{};
   const std::string_view input(event.text);
   if (shell_.prompts_.surface_visible &&
-      shell_.prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
+      shell_.prompts_.surface.kind == WorkspaceShell::PromptSurfaceState::Kind::TextInput) {
     shell_.prompts_.surface.input.append(input);
     shell_.RequestPromptRedraw();
     return true;
@@ -143,16 +143,17 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
 
   if (shell_.overlay_state_.visible) {
     switch (shell_.overlay_state_.mode) {
-      case OverlayMode::CommitPicker:
+      case WorkspaceShell::OverlayMode::CommitPicker:
         shell_.overlay_workflow_.compare_picker.query.append(input);
         shell_.RefreshComparePicker();
         return true;
-      case OverlayMode::BufferSearch:
+      case WorkspaceShell::OverlayMode::BufferSearch:
         shell_.overlay_workflow_.buffer_search.query.append(input);
         shell_.RefreshBufferSearch();
         return true;
-      case OverlayMode::BufferReplace:
-        if (shell_.overlay_state_.buffer_search_field == BufferSearchField::Search) {
+      case WorkspaceShell::OverlayMode::BufferReplace:
+        if (shell_.overlay_state_.buffer_search_field ==
+            WorkspaceShell::BufferSearchField::Search) {
           shell_.overlay_workflow_.buffer_search.query.append(input);
           shell_.RefreshBufferSearch();
         } else {
@@ -160,11 +161,11 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
           shell_.RequestOverlayRedraw();
         }
         return true;
-      case OverlayMode::ProjectSearch:
+      case WorkspaceShell::OverlayMode::ProjectSearch:
         shell_.overlay_workflow_.project_search.query.append(input);
         shell_.RefreshProjectSearch();
         return true;
-      case OverlayMode::FileFinder:
+      case WorkspaceShell::OverlayMode::FileFinder:
       default:
         shell_.file_finder_.AppendQueryText(input);
         shell_.ResetOverlayScroll();
@@ -172,15 +173,17 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
     }
   }
 
-  if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.sidebar_state_.visible &&
-      shell_.sidebar_state_.mode == SidebarMode::Search &&
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Sidebar &&
+      shell_.sidebar_state_.visible &&
+      shell_.ActiveSidebarMode() == SidebarMode::Search &&
       shell_.overlay_workflow_.project_search.editing) {
     shell_.overlay_workflow_.project_search.edit_buffer.append(input);
     shell_.RequestSidebarRedraw();
     return true;
   }
 
-  if (shell_.surface_.focus == FocusTarget::Editor && shell_.ActiveEditableViewport() != nullptr) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Editor &&
+      shell_.ActiveEditableViewport() != nullptr) {
     editor::TextViewport* viewport = shell_.ActiveEditableViewport();
     if (viewport == nullptr) {
       return false;
@@ -210,7 +213,8 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
     return true;
   }
 
-  if (shell_.surface_.focus == FocusTarget::Panel && shell_.ActiveTerminalTab() != nullptr) {
+  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel &&
+      shell_.ActiveTerminalTab() != nullptr) {
     shell_.ClearTerminalSelection();
     if (auto* terminal_tab = shell_.ActiveTerminalTab(); terminal_tab != nullptr) {
       terminal_tab->follow_tail = true;
@@ -224,8 +228,8 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
   return false;
 }
 
-bool WorkspaceShell::TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
-                                                                 SDL_Keymod modifiers) {
+bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
+                                                 SDL_Keymod modifiers) {
   auto* terminal_tab = shell_.ActiveTerminalTab();
   if (terminal_tab == nullptr) {
     return false;
@@ -287,7 +291,7 @@ bool WorkspaceShell::TextInputCoordinator::HandleTerminalKeyDown(const SDL_Keybo
   }
 
   if (modifiers & SDL_KMOD_ALT) {
-    const char input_character = KeycodeToAscii(event.key, modifiers);
+    const char input_character = WorkspaceShell::KeycodeToAscii(event.key, modifiers);
     if (input_character != '\0') {
       std::string bytes(1, '\x1b');
       bytes.push_back(input_character);
@@ -364,7 +368,7 @@ bool WorkspaceShell::TextInputCoordinator::HandleTerminalKeyDown(const SDL_Keybo
   return false;
 }
 
-bool WorkspaceShell::TextInputCoordinator::PasteClipboardIntoTerminal() {
+bool TextInputCoordinator::PasteClipboardIntoTerminal() {
   auto* terminal_tab = shell_.ActiveTerminalTab();
   if (terminal_tab == nullptr) {
     return false;

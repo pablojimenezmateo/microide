@@ -8,11 +8,11 @@
 
 namespace microide::workspace {
 
-WorkspaceShell::LifecycleCoordinator::LifecycleCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+LifecycleCoordinator::LifecycleCoordinator(WorkspaceShell& shell) : shell_(shell) {}
 
-void WorkspaceShell::LifecycleCoordinator::ResetStartupState() {
+void LifecycleCoordinator::ResetStartupState() {
   shell_.caret_blink_epoch_ms_ = SDL_GetTicks();
-  shell_.cursor_kind_ = CursorKind::Default;
+  shell_.cursor_kind_ = WorkspaceShell::CursorKind::Default;
   shell_.last_mouse_position_valid_ = false;
   shell_.quit_requested_ = false;
   shell_.prompts_.dirty_visible = false;
@@ -21,7 +21,7 @@ void WorkspaceShell::LifecycleCoordinator::ResetStartupState() {
   shell_.project_catalog_.tab_scroll_index = 0;
 }
 
-void WorkspaceShell::LifecycleCoordinator::RegisterWakeEvents() {
+void LifecycleCoordinator::RegisterWakeEvents() {
   const Uint32 plugin_asset_event_type = SDL_RegisterEvents(1);
   shell_.plugin_runtime_.SetWakeEventType(
       plugin_asset_event_type != static_cast<Uint32>(-1) ? plugin_asset_event_type : 0);
@@ -44,7 +44,7 @@ void WorkspaceShell::LifecycleCoordinator::RegisterWakeEvents() {
   }
 }
 
-void WorkspaceShell::LifecycleCoordinator::DestroyCursors() {
+void LifecycleCoordinator::DestroyCursors() {
   if (SDL_Cursor* default_cursor = SDL_GetDefaultCursor(); default_cursor != nullptr) {
     SDL_SetCursor(default_cursor);
   }
@@ -66,11 +66,11 @@ void WorkspaceShell::LifecycleCoordinator::DestroyCursors() {
     shell_.ns_resize_cursor_ = nullptr;
   }
 
-  shell_.cursor_kind_ = CursorKind::Default;
+  shell_.cursor_kind_ = WorkspaceShell::CursorKind::Default;
   shell_.last_mouse_position_valid_ = false;
 }
 
-std::size_t WorkspaceShell::LifecycleCoordinator::DirtyProjectTabCount() const {
+std::size_t LifecycleCoordinator::DirtyProjectTabCount() const {
   std::size_t dirty_count = shell_.DirtyEditorTabIndices().size();
   for (std::size_t i = 0; i < shell_.project_catalog_.entries.size(); ++i) {
     if (shell_.HasActiveProjectCatalogEntry() && i == shell_.project_catalog_.active_index) {
@@ -81,8 +81,7 @@ std::size_t WorkspaceShell::LifecycleCoordinator::DirtyProjectTabCount() const {
   return dirty_count;
 }
 
-bool WorkspaceShell::LifecycleCoordinator::Initialize(
-    const std::filesystem::path& project_root) {
+bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::Initialize");
   PersistenceCoordinator persistence(shell_);
   ResetStartupState();
@@ -120,7 +119,7 @@ bool WorkspaceShell::LifecycleCoordinator::Initialize(
   return shell_.OpenProjectTab(project_root, true, true);
 }
 
-void WorkspaceShell::LifecycleCoordinator::Shutdown() {
+void LifecycleCoordinator::Shutdown() {
   PersistenceCoordinator persistence(shell_);
   shell_.plugin_runtime_.Shutdown();
   persistence.SaveUserConfig();
@@ -137,15 +136,15 @@ void WorkspaceShell::LifecycleCoordinator::Shutdown() {
   DestroyCursors();
 }
 
-void WorkspaceShell::LifecycleCoordinator::RequestQuit() {
+void LifecycleCoordinator::RequestQuit() {
   if (shell_.prompts_.dirty_visible) {
-    shell_.surface_.focus = FocusTarget::Overlay;
+    shell_.surface_.focus = WorkspaceShell::FocusTarget::Overlay;
     return;
   }
   shell_.quit_requested_ = true;
 }
 
-bool WorkspaceShell::LifecycleCoordinator::ConsumeQuitRequested() {
+bool LifecycleCoordinator::ConsumeQuitRequested() {
   const bool requested = shell_.quit_requested_;
   shell_.quit_requested_ = false;
   return requested;

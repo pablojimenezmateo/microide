@@ -138,7 +138,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     }
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
-      if (!sidebar_state_.visible || sidebar_state_.mode != SidebarMode::Search ||
+      if (!sidebar_state_.visible || ActiveSidebarMode() != SidebarMode::Search ||
           !overlay_workflow_.project_search.editing) {
         return std::nullopt;
       }

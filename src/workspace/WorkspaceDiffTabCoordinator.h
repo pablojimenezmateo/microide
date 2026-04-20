@@ -10,7 +10,7 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell::DiffTabCoordinator {
+class DiffTabCoordinator {
  public:
   explicit DiffTabCoordinator(WorkspaceShell& shell);
 
@@ -39,8 +39,8 @@ class WorkspaceShell::DiffTabCoordinator {
   void RefreshExistingCompareTab(std::size_t index,
                                  const std::filesystem::path& normalized_path,
                                  bool only_when_clean);
-  static void RestoreMergeViewState(MergeTabState& rebuilt_merge,
-                                    const MergeTabState& previous_merge);
+  static void RestoreMergeViewState(WorkspaceShell::MergeTabState& rebuilt_merge,
+                                    const WorkspaceShell::MergeTabState& previous_merge);
 
   WorkspaceShell& shell_;
 };

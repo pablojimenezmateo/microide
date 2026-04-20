@@ -57,7 +57,7 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   }
 
   if (surface_.focus == FocusTarget::Sidebar && sidebar_state_.visible &&
-      sidebar_state_.mode == SidebarMode::Search &&
+      ActiveSidebarMode() == SidebarMode::Search &&
       overlay_workflow_.project_search.editing) {
     return overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
                ? TextInputSurface::SidebarSearchQuery

@@ -261,7 +261,7 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   RefreshGitSidebar();
   RefreshProblemsSidebar();
 
-  if (sidebar_state_.mode == SidebarMode::Search &&
+  if (ActiveSidebarMode() == SidebarMode::Search &&
       !overlay_workflow_.project_search.query.empty()) {
     RefreshProjectSearch();
   }

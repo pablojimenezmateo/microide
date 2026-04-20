@@ -5,23 +5,14 @@
 #include <utility>
 #include <vector>
 
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
-#include "workspace/WorkspaceMenuCoordinator.h"
-
 namespace microide::workspace {
 
-WorkspaceShell::ActionCoordinator::ActionCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+ActionCoordinator::ActionCoordinator(WorkspaceShell& shell) : context_(shell) {}
 
-bool WorkspaceShell::ActionCoordinator::Execute(ActionId id,
-                                                const std::vector<std::string>& args,
-                                                ActionSource source) {
-  if (source != ActionSource::ContextMenu) {
-    MenuCoordinator(shell_).CloseTreeContextMenu();
-  }
-
-  const auto reject_command = [&](std::string feedback) {
-    return CommandPromptCoordinator(shell_).RejectAction(source, std::move(feedback));
-  };
+bool ActionCoordinator::Execute(ActionId id,
+                                const std::vector<std::string>& args,
+                                ActionSource source) {
+  context_.PrepareForAction(source);
 
   std::string rejection_feedback;
   const auto dispatch_result = [&](DispatchResult result) -> std::optional<bool> {
@@ -31,7 +22,7 @@ bool WorkspaceShell::ActionCoordinator::Execute(ActionId id,
       case DispatchResult::Handled:
         return true;
       case DispatchResult::Rejected:
-        return reject_command(std::move(rejection_feedback));
+        return context_.RejectAction(source, std::move(rejection_feedback));
     }
     return std::nullopt;
   };

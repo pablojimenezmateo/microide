@@ -12,6 +12,18 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
   return WorkspaceCommandSpecs();
 }
 
+WorkspaceShell::SidebarMode WorkspaceShell::SidebarModeForViewId(std::string_view view_id) const {
+  if (view_id.empty()) {
+    return SidebarMode::None;
+  }
+  const auto view = FindSidebarView(view_id, plugin_runtime_.Host());
+  return view.has_value() ? view->mode : SidebarMode::None;
+}
+
+WorkspaceShell::SidebarMode WorkspaceShell::ActiveSidebarMode() const {
+  return SidebarModeForViewId(sidebar_state_.view_id);
+}
+
 const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionSpec(ActionId id) {
   return FindWorkspaceActionSpec(id);
 }
@@ -187,7 +199,7 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
 }
 
 const project::TreeEntry* WorkspaceShell::SelectedTreeEntry() const {
-  if (sidebar_state_.mode != SidebarMode::Tree) {
+  if (ActiveSidebarMode() != SidebarMode::Tree) {
     return nullptr;
   }
   const auto& entries = directory_tree_.entries();

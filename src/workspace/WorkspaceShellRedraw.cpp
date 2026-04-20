@@ -170,7 +170,7 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
   RequestBreadcrumbRedraw();
   RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
-  if (include_tree_sidebar && sidebar_state_.visible && sidebar_state_.mode == SidebarMode::Tree) {
+  if (include_tree_sidebar && sidebar_state_.visible && ActiveSidebarMode() == SidebarMode::Tree) {
     RequestSidebarRedraw();
   }
 }
