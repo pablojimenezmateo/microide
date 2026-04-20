@@ -223,7 +223,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            surface_.drag_target == DragTarget::SidebarScrollbar);
+                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
   } else if (surface_.sidebar_mode == SidebarMode::Git) {
     draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
                        CanStageAllGitSidebarEntries());
@@ -326,7 +326,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            surface_.drag_target == DragTarget::SidebarScrollbar);
+                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
   } else if (surface_.sidebar_mode == SidebarMode::Problems) {
     const auto list_layout =
         ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
@@ -381,7 +381,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect,
                             static_cast<float>(problems_sidebar_.entries.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            surface_.drag_target == DragTarget::SidebarScrollbar);
+                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
   } else if (surface_.sidebar_mode == SidebarMode::Plugin) {
     const auto list_layout =
         ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
@@ -439,7 +439,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(plugin_sidebar_.items.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            surface_.drag_target == DragTarget::SidebarScrollbar);
+                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
   } else {
     const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
     const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
@@ -516,7 +516,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(entries.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            surface_.drag_target == DragTarget::SidebarScrollbar);
+                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
   }
 
   const std::string hovered_git_sidebar_tooltip = HoveredGitSidebarTooltipLabel(layout.sidebar);

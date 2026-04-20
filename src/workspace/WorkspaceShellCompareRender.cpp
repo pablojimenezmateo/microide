@@ -497,13 +497,13 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_F
     DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
     DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
     DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       surface_.drag_target == DragTarget::CompareVerticalScrollbar);
+                       interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  surface_.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  interaction_state_.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
 }
 

@@ -21,9 +21,9 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
         return Contains(divider.rect, event.button.x, event.button.y);
       });
   if (divider_it != dividers.end()) {
-    shell_.surface_.drag_target = DragTarget::EditorSplitDivider;
-    shell_.surface_.drag_editor_split_path = divider_it->node_path;
-    shell_.surface_.drag_editor_split_divider_index = divider_it->divider_index;
+    shell_.interaction_state_.drag_target = DragTarget::EditorSplitDivider;
+    shell_.interaction_state_.drag_editor_split_path = divider_it->node_path;
+    shell_.interaction_state_.drag_editor_split_divider_index = divider_it->divider_index;
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
   }
@@ -50,8 +50,8 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
       shell_.ComputeEditorScrollLayout(editor_rect, shell_.text_viewport_, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.surface_.drag_target = DragTarget::EditorVerticalScrollbar;
-    shell_.surface_.drag_scrollbar_offset =
+    shell_.interaction_state_.drag_target = DragTarget::EditorVerticalScrollbar;
+    shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) -
                   scroll_layout.vertical_scrollbar->thumb.y
@@ -59,14 +59,14 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
     shell_.text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
                                               static_cast<float>(event.button.y),
-                                              shell_.surface_.drag_scrollbar_offset)))));
+                                              shell_.interaction_state_.drag_scrollbar_offset)))));
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
   }
   if (scroll_layout.horizontal_scrollbar.has_value() &&
       Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.surface_.drag_target = DragTarget::EditorHorizontalScrollbar;
-    shell_.surface_.drag_scrollbar_offset =
+    shell_.interaction_state_.drag_target = DragTarget::EditorHorizontalScrollbar;
+    shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.x) -
                   scroll_layout.horizontal_scrollbar->thumb.x
@@ -74,7 +74,7 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
     shell_.text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
-                                              shell_.surface_.drag_scrollbar_offset)))));
+                                              shell_.interaction_state_.drag_scrollbar_offset)))));
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
   }
@@ -115,30 +115,30 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleButtonDown(
     return true;
   }
   shell_.RequestFocusedEditorRedraw();
-  shell_.surface_.mouse_selecting = true;
+  shell_.interaction_state_.mouse_selecting = true;
   return true;
 }
 
 bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
                                                         const WorkspaceLayout& layout) {
-  if (shell_.surface_.drag_target == DragTarget::EditorSplitDivider) {
+  if (shell_.interaction_state_.drag_target == DragTarget::EditorSplitDivider) {
     auto* editor_tab = shell_.ActiveEditorTab();
     if (editor_tab == nullptr || editor_tab->views.size() < 2 ||
         editor_tab->split_root == nullptr) {
-      shell_.surface_.drag_target = DragTarget::None;
+      shell_.ClearDragState();
       return false;
     }
 
     shell_.NormalizeEditorSplitTree(*editor_tab);
     auto* split_node = shell_.FindEditorSplitNode(
-        editor_tab->split_root.get(), shell_.surface_.drag_editor_split_path);
+        editor_tab->split_root.get(), shell_.interaction_state_.drag_editor_split_path);
     const auto node_rect = shell_.ComputeEditorSplitNodeRect(
-        layout.editor_surface, shell_.surface_.drag_editor_split_path);
+        layout.editor_surface, shell_.interaction_state_.drag_editor_split_path);
     if (split_node == nullptr || node_rect == std::nullopt || split_node->IsLeaf() ||
         split_node->orientation == EditorSplitOrientation::None ||
-        shell_.surface_.drag_editor_split_divider_index + 1 >=
+        shell_.interaction_state_.drag_editor_split_divider_index + 1 >=
             split_node->children.size()) {
-      shell_.surface_.drag_target = DragTarget::None;
+      shell_.ClearDragState();
       return false;
     }
 
@@ -156,13 +156,13 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
     }
 
     float before_extent = 0.0f;
-    for (std::size_t i = 0; i < shell_.surface_.drag_editor_split_divider_index; ++i) {
+    for (std::size_t i = 0; i < shell_.interaction_state_.drag_editor_split_divider_index; ++i) {
       before_extent += split_layout->extents[i];
     }
     const float pair_extent =
-        split_layout->extents[shell_.surface_.drag_editor_split_divider_index] +
+        split_layout->extents[shell_.interaction_state_.drag_editor_split_divider_index] +
         split_layout
-            ->extents[shell_.surface_.drag_editor_split_divider_index + 1];
+            ->extents[shell_.interaction_state_.drag_editor_split_divider_index + 1];
     const float min_extent =
         split_layout->total_extent >
                 split_layout->min_pane_extent *
@@ -174,29 +174,29 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
             ? static_cast<float>(event.motion.x) - node_rect->x - before_extent -
                   split_layout->divider_thickness *
                       static_cast<float>(
-                          shell_.surface_.drag_editor_split_divider_index) -
+                          shell_.interaction_state_.drag_editor_split_divider_index) -
                   split_layout->divider_thickness * 0.5f
             : static_cast<float>(event.motion.y) - node_rect->y - before_extent -
                   split_layout->divider_thickness *
                       static_cast<float>(
-                          shell_.surface_.drag_editor_split_divider_index) -
+                          shell_.interaction_state_.drag_editor_split_divider_index) -
                   split_layout->divider_thickness * 0.5f;
     leading_extent =
         pair_extent <= min_extent * 2.0f
             ? std::clamp(leading_extent, 0.0f, pair_extent)
             : std::clamp(leading_extent, min_extent, pair_extent - min_extent);
     const float trailing_extent = std::max(0.0f, pair_extent - leading_extent);
-    split_node->children[shell_.surface_.drag_editor_split_divider_index]
+    split_node->children[shell_.interaction_state_.drag_editor_split_divider_index]
         ->size_fraction = leading_extent / split_layout->total_extent;
-    split_node->children[shell_.surface_.drag_editor_split_divider_index + 1]
+    split_node->children[shell_.interaction_state_.drag_editor_split_divider_index + 1]
         ->size_fraction = trailing_extent / split_layout->total_extent;
     shell_.NormalizeEditorSplitNode(*split_node);
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
   }
 
-  if (shell_.surface_.drag_target != DragTarget::EditorVerticalScrollbar &&
-      shell_.surface_.drag_target != DragTarget::EditorHorizontalScrollbar) {
+  if (shell_.interaction_state_.drag_target != DragTarget::EditorVerticalScrollbar &&
+      shell_.interaction_state_.drag_target != DragTarget::EditorHorizontalScrollbar) {
     return false;
   }
 
@@ -212,26 +212,24 @@ bool WorkspaceShell::EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
   const auto scroll_layout =
       shell_.ComputeEditorScrollLayout(editor_rect, shell_.text_viewport_, metrics);
 
-  if (shell_.surface_.drag_target == DragTarget::EditorVerticalScrollbar) {
+  if (shell_.interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar) {
     if (!scroll_layout.vertical_scrollbar.has_value()) {
-      shell_.surface_.drag_target = DragTarget::None;
-      shell_.surface_.drag_scrollbar_offset = 0.0f;
+      shell_.ClearDragState();
       return false;
     }
     shell_.text_viewport_.SetScrollLine(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.vertical_scrollbar,
                                               static_cast<float>(event.motion.y),
-                                              shell_.surface_.drag_scrollbar_offset)))));
+                                              shell_.interaction_state_.drag_scrollbar_offset)))));
   } else {
     if (!scroll_layout.horizontal_scrollbar.has_value()) {
-      shell_.surface_.drag_target = DragTarget::None;
-      shell_.surface_.drag_scrollbar_offset = 0.0f;
+      shell_.ClearDragState();
       return false;
     }
     shell_.text_viewport_.SetHorizontalScroll(static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.motion.x),
-                                              shell_.surface_.drag_scrollbar_offset)))));
+                                              shell_.interaction_state_.drag_scrollbar_offset)))));
   }
   shell_.surface_.focus = FocusTarget::Editor;
   return true;

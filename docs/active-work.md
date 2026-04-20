@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-19.
+Reviewed on 2026-04-20.
 
 This is the single source of truth for:
 
@@ -142,9 +142,13 @@ Current state:
   catalog entries, so project switching and persistence no longer hand-maintain duplicated move or
   reset lists for tabs, tree or index state, terminals, overlays, diagnostics, command history,
   colorscheme, or editor preferences
-- the active shell surface now reuses the same `ProjectSurfaceState` shape stored in project
-  workspace state, so project switching no longer hand-copies duplicated sidebar, overlay,
-  command-mode, focus, width, or scroll fields between active and persisted surface models
+- the active shell now aliases the `ProjectSurfaceState` stored in the current
+  `ProjectWorkspaceState`, so project switching no longer hand-copies duplicated sidebar,
+  overlay, command-mode, focus, width, or scroll fields between active and persisted surface
+  models
+- transient drag, mouse-selection, and window-focus interaction state now lives outside
+  `ProjectSurfaceState`, so project switches clear in-flight gestures instead of leaking stale
+  interaction state across projects
 - editor blame, diagnostic, or plugin hover targeting now lives apart from popup layout or hover
   lifetime across `WorkspaceShellHoverTargets.cpp` and `WorkspaceShellHoverPopup.cpp` instead of
   one catch-all hover translation unit

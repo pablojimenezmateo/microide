@@ -40,15 +40,15 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
       shell_.CompareDividerHitRect(layout.editor_surface, surface_layout);
 
   if (Contains(divider_rect, event.button.x, event.button.y)) {
-    shell_.surface_.drag_target = DragTarget::CompareDivider;
+    shell_.interaction_state_.drag_target = DragTarget::CompareDivider;
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
   }
 
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.surface_.drag_target = DragTarget::CompareVerticalScrollbar;
-    shell_.surface_.drag_scrollbar_offset =
+    shell_.interaction_state_.drag_target = DragTarget::CompareVerticalScrollbar;
+    shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) -
                   scroll_layout.vertical_scrollbar->thumb.y
@@ -56,7 +56,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
     const int target_scroll = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
-            shell_.surface_.drag_scrollbar_offset))),
+            shell_.interaction_state_.drag_scrollbar_offset))),
         0, scroll_layout.max_vertical_scroll);
     compare_tab->scroll_row = target_scroll;
     shell_.SyncCompareViewportScroll(*compare_tab);
@@ -66,8 +66,8 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
 
   if (scroll_layout.horizontal_scrollbar.has_value() &&
       Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
-    shell_.surface_.drag_target = DragTarget::CompareHorizontalScrollbar;
-    shell_.surface_.drag_scrollbar_offset =
+    shell_.interaction_state_.drag_target = DragTarget::CompareHorizontalScrollbar;
+    shell_.interaction_state_.drag_scrollbar_offset =
         Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.x) -
                   scroll_layout.horizontal_scrollbar->thumb.x
@@ -75,7 +75,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
     compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),
-                                              shell_.surface_.drag_scrollbar_offset))));
+                                              shell_.interaction_state_.drag_scrollbar_offset))));
     shell_.SyncCompareViewportScroll(*compare_tab);
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
@@ -125,7 +125,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleButtonDown(
       shell_.surface_.focus = FocusTarget::Editor;
       return true;
     }
-    shell_.surface_.mouse_selecting = true;
+    shell_.interaction_state_.mouse_selecting = true;
   } else {
     compare_tab->right_view_active = false;
   }
@@ -143,16 +143,15 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
     const SDL_Event& event,
     const WorkspaceLayout& layout) {
   if (!shell_.ActiveTabIsCompare() ||
-      (shell_.surface_.drag_target != DragTarget::CompareDivider &&
-       shell_.surface_.drag_target != DragTarget::CompareVerticalScrollbar &&
-       shell_.surface_.drag_target != DragTarget::CompareHorizontalScrollbar)) {
+      (shell_.interaction_state_.drag_target != DragTarget::CompareDivider &&
+       shell_.interaction_state_.drag_target != DragTarget::CompareVerticalScrollbar &&
+       shell_.interaction_state_.drag_target != DragTarget::CompareHorizontalScrollbar)) {
     return false;
   }
 
   CompareTabState* compare_tab = shell_.ActiveCompareTab();
   if (compare_tab == nullptr) {
-    shell_.surface_.drag_target = DragTarget::None;
-    shell_.surface_.drag_scrollbar_offset = 0.0f;
+    shell_.ClearDragState();
     return false;
   }
 
@@ -162,7 +161,7 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
       shell_.ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
   compare_tab->scroll_row = scroll_layout.vertical_scroll;
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-  if (shell_.surface_.drag_target == DragTarget::CompareDivider) {
+  if (shell_.interaction_state_.drag_target == DragTarget::CompareDivider) {
     const float content_width = std::max(
         40.0f, layout.editor_surface.w -
                    (surface_layout.show_vertical ? kCompareScrollbarReserve : 0.0f) -
@@ -178,16 +177,15 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
     shell_.surface_.focus = FocusTarget::Editor;
     return true;
   }
-  if (shell_.surface_.drag_target == DragTarget::CompareVerticalScrollbar) {
+  if (shell_.interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar) {
     if (!scroll_layout.vertical_scrollbar.has_value()) {
-      shell_.surface_.drag_target = DragTarget::None;
-      shell_.surface_.drag_scrollbar_offset = 0.0f;
+      shell_.ClearDragState();
       return false;
     }
     const int target_scroll = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *scroll_layout.vertical_scrollbar, static_cast<float>(event.motion.y),
-            shell_.surface_.drag_scrollbar_offset))),
+            shell_.interaction_state_.drag_scrollbar_offset))),
         0, scroll_layout.max_vertical_scroll);
     compare_tab->scroll_row = target_scroll;
     shell_.SyncCompareViewportScroll(*compare_tab);
@@ -196,14 +194,13 @@ bool WorkspaceShell::CompareMouseCoordinator::HandleDrag(
   }
 
   if (!scroll_layout.horizontal_scrollbar.has_value()) {
-    shell_.surface_.drag_target = DragTarget::None;
-    shell_.surface_.drag_scrollbar_offset = 0.0f;
+    shell_.ClearDragState();
     return false;
   }
   compare_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
       0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                             static_cast<float>(event.motion.x),
-                                            shell_.surface_.drag_scrollbar_offset))));
+                                            shell_.interaction_state_.drag_scrollbar_offset))));
   shell_.SyncCompareViewportScroll(*compare_tab);
   shell_.surface_.focus = FocusTarget::Editor;
   return true;

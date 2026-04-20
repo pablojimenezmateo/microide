@@ -307,6 +307,37 @@ void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
          "switching forward should restore the second project's sidebar width");
 }
 
+void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  WorkspaceShellTestAccess::SetTransientDragTargetSidebarDivider(shell);
+  WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+  Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
+         "opening a different project should clear the transient drag target");
+  Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
+         "opening a different project should clear transient selection tracking");
+
+  WorkspaceShellTestAccess::SetTransientDragTargetBottomPanelScrollbar(shell);
+  WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "switching back to the first project should succeed");
+  Expect(WorkspaceShellTestAccess::TransientDragTargetIsNone(shell),
+         "switching back should not restore stale drag state from the previous project");
+  Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
+         "switching back should not restore stale transient selection state");
+}
+
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1169,6 +1200,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState);
   AddTest(tests, "WorkspaceShell/ProjectSwitchPreservesSearchSidebarSurfaceState",
           TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchClearsTransientInteractionState",
+          TestWorkspaceShellProjectSwitchClearsTransientInteractionState);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
           TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
   AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",

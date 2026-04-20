@@ -36,7 +36,7 @@ void WorkspaceShell::RenderPromptSurface(
     DrawVCenteredTextOn(text_renderer_, renderer, input_rect, 6.0f, theme_.surface_text,
                         theme_.surface_background,
                         TruncateLabel(prompts_.surface.input, input_rect.w - 12.0f));
-    if (surface_.window_has_input_focus && text_composition_.text.empty() &&
+    if (interaction_state_.window_has_input_focus && text_composition_.text.empty() &&
         active_text_input_visual.has_value() &&
         active_text_input_visual->surface == TextInputSurface::PromptInput) {
       DrawFilledRect(renderer,

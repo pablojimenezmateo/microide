@@ -35,18 +35,22 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   state.file_finder.SetIndex(&state.file_index);
 }
 
+void WorkspaceShell::ClearDragState() {
+  interaction_state_.drag_target = DragTarget::None;
+  interaction_state_.drag_scrollbar_offset = 0.0f;
+  interaction_state_.drag_editor_split_path.clear();
+  interaction_state_.drag_editor_split_divider_index = 0;
+}
+
+void WorkspaceShell::ResetTransientInteractionState() {
+  ClearDragState();
+  interaction_state_.mouse_selecting = false;
+}
+
 void WorkspaceShell::ResetCurrentProjectStateStorage() {
   current_project_state_ = ProjectWorkspaceState{};
   RebindProjectState(current_project_state_);
-}
-
-WorkspaceShell::ProjectSurfaceState WorkspaceShell::CaptureProjectSurfaceState(
-    const SurfaceState& state) {
-  return static_cast<const ProjectSurfaceState&>(state);
-}
-
-void WorkspaceShell::ApplyProjectSurfaceState(const ProjectSurfaceState& state) {
-  static_cast<ProjectSurfaceState&>(surface_) = state;
+  ResetTransientInteractionState();
 }
 
 std::filesystem::path WorkspaceShell::ResolveProjectRootInput(
@@ -87,11 +91,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
 
   ResetCurrentProjectStateStorage();
 
-  ProjectSurfaceState project_surface = current_project_state_.surface;
-  project_surface.sidebar_visible = !show_welcome;
-  project_surface.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
-  current_project_state_.surface = project_surface;
-  ApplyProjectSurfaceState(project_surface);
+  surface_.sidebar_visible = !show_welcome;
+  surface_.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
   tab_drag_state_ = TabDragState{};
   persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
   ApplyEditorPreferences(text_viewport_);
@@ -203,7 +204,6 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 
   current_project_state_.initialized = true;
   current_project_state_.restore_persistence_on_activate = false;
-  current_project_state_.surface = CaptureProjectSurfaceState(surface_);
   current_project_state_.overlay_workflow.project_search.running = false;
   state = std::move(current_project_state_);
   RebindProjectState(state);
@@ -219,7 +219,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   current_project_state_ = std::move(state);
   current_project_state_.overlay_workflow.project_search.running = false;
   RebindProjectState(current_project_state_);
-  ApplyProjectSurfaceState(current_project_state_.surface);
+  ResetTransientInteractionState();
 
   state = ProjectWorkspaceState{};
   state.root = project_root_;

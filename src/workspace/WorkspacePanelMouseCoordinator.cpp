@@ -19,7 +19,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleResizeButtonDown(
       !Contains(BottomPanelResizeHandleRect(layout), event.button.x, event.button.y)) {
     return false;
   }
-  shell_.surface_.drag_target = DragTarget::BottomPanelDivider;
+  shell_.interaction_state_.drag_target = DragTarget::BottomPanelDivider;
   return true;
 }
 
@@ -35,8 +35,8 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
     if (panel_layout.scroll.vertical_scrollbar.has_value() &&
         Contains(panel_layout.scroll.vertical_scrollbar->track, event.button.x,
                  event.button.y)) {
-      shell_.surface_.drag_target = DragTarget::BottomPanelScrollbar;
-      shell_.surface_.drag_scrollbar_offset =
+      shell_.interaction_state_.drag_target = DragTarget::BottomPanelScrollbar;
+      shell_.interaction_state_.drag_scrollbar_offset =
           Contains(panel_layout.scroll.vertical_scrollbar->thumb, event.button.x,
                    event.button.y)
               ? static_cast<float>(event.button.y) -
@@ -46,7 +46,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
           std::clamp(static_cast<int>(std::lround(
                          ScrollUnitsForPointer(*panel_layout.scroll.vertical_scrollbar,
                                               static_cast<float>(event.button.y),
-                                              shell_.surface_.drag_scrollbar_offset))),
+                                              shell_.interaction_state_.drag_scrollbar_offset))),
                      0, panel_layout.scroll.max_vertical_scroll),
           line_count, panel_layout.scroll.visible_rows);
       if (shell_.ActiveTerminalTab() != nullptr) {
@@ -148,11 +148,9 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonUp(const SDL_Event& even
     return false;
   }
 
-  if (shell_.surface_.drag_target == DragTarget::BottomPanelDivider ||
-      shell_.surface_.drag_target == DragTarget::BottomPanelScrollbar) {
-    shell_.surface_.drag_target = DragTarget::None;
-    shell_.surface_.drag_scrollbar_offset = 0.0f;
-    shell_.surface_.mouse_selecting = false;
+  if (shell_.interaction_state_.drag_target == DragTarget::BottomPanelDivider ||
+      shell_.interaction_state_.drag_target == DragTarget::BottomPanelScrollbar) {
+    shell_.ResetTransientInteractionState();
     return true;
   }
 
@@ -168,7 +166,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonUp(const SDL_Event& even
 
 bool WorkspaceShell::PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
                                                        const WorkspaceLayout& layout) {
-  if (shell_.surface_.drag_target == DragTarget::BottomPanelDivider) {
+  if (shell_.interaction_state_.drag_target == DragTarget::BottomPanelDivider) {
     const auto window_rect = shell_.CurrentWindowRect();
     if (!window_rect.has_value()) {
       return false;
@@ -179,7 +177,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
     return true;
   }
 
-  if (shell_.surface_.drag_target != DragTarget::BottomPanelScrollbar ||
+  if (shell_.interaction_state_.drag_target != DragTarget::BottomPanelScrollbar ||
       !shell_.BottomPanelVisible()) {
     return false;
   }
@@ -191,15 +189,14 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
   const BottomPanelLogLayout panel_layout =
       shell_.ComputeBottomPanelLogLayout(layout, line_count);
   if (!panel_layout.scroll.vertical_scrollbar.has_value()) {
-    shell_.surface_.drag_target = DragTarget::None;
-    shell_.surface_.drag_scrollbar_offset = 0.0f;
+    shell_.ClearDragState();
     return false;
   }
   shell_.SetBottomPanelScrollRow(
       std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
                      *panel_layout.scroll.vertical_scrollbar,
                      static_cast<float>(event.motion.y),
-                     shell_.surface_.drag_scrollbar_offset))),
+                     shell_.interaction_state_.drag_scrollbar_offset))),
                  0, panel_layout.scroll.max_vertical_scroll),
       line_count, panel_layout.scroll.visible_rows);
   if (shell_.ActiveTerminalTab() != nullptr) {

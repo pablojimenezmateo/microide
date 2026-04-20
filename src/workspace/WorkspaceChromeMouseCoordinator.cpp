@@ -282,15 +282,15 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
   const auto list_layout = shell_.ComputeOverlayListLayout(overlay);
   if (list_layout.scrollbar.has_value() &&
       Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
-    shell_.surface_.drag_target = DragTarget::OverlayScrollbar;
-    shell_.surface_.drag_scrollbar_offset =
+    shell_.interaction_state_.drag_target = DragTarget::OverlayScrollbar;
+    shell_.interaction_state_.drag_scrollbar_offset =
         Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
             : list_layout.scrollbar->thumb.h * 0.5f;
     shell_.surface_.overlay_scroll_row = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *list_layout.scrollbar, static_cast<float>(event.button.y),
-            shell_.surface_.drag_scrollbar_offset))),
+            shell_.interaction_state_.drag_scrollbar_offset))),
         0, list_layout.max_scroll);
     shell_.surface_.focus = FocusTarget::Overlay;
     shell_.RequestOverlayRedraw();

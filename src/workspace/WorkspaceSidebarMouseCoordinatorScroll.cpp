@@ -9,22 +9,21 @@ namespace microide::workspace {
 
 bool WorkspaceShell::SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
                                                          const WorkspaceLayout& layout) {
-  if (shell_.surface_.drag_target != DragTarget::SidebarScrollbar ||
+  if (shell_.interaction_state_.drag_target != DragTarget::SidebarScrollbar ||
       !shell_.surface_.sidebar_visible) {
     return false;
   }
 
   const auto list_layout = CurrentListLayout(layout);
   if (!list_layout.scrollbar.has_value()) {
-    shell_.surface_.drag_target = DragTarget::None;
-    shell_.surface_.drag_scrollbar_offset = 0.0f;
+    shell_.ClearDragState();
     return false;
   }
 
   shell_.surface_.sidebar_scroll_row = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
           *list_layout.scrollbar, static_cast<float>(event.motion.y),
-          shell_.surface_.drag_scrollbar_offset))),
+          shell_.interaction_state_.drag_scrollbar_offset))),
       0, list_layout.max_scroll);
   shell_.surface_.focus = FocusTarget::Sidebar;
   return true;
@@ -58,15 +57,15 @@ bool WorkspaceShell::SidebarMouseCoordinator::BeginScrollbarDrag(
     return false;
   }
 
-  shell_.surface_.drag_target = DragTarget::SidebarScrollbar;
-  shell_.surface_.drag_scrollbar_offset =
+  shell_.interaction_state_.drag_target = DragTarget::SidebarScrollbar;
+  shell_.interaction_state_.drag_scrollbar_offset =
       Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
           ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
           : list_layout.scrollbar->thumb.h * 0.5f;
   shell_.surface_.sidebar_scroll_row = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
           *list_layout.scrollbar, static_cast<float>(event.button.y),
-          shell_.surface_.drag_scrollbar_offset))),
+          shell_.interaction_state_.drag_scrollbar_offset))),
       0, list_layout.max_scroll);
   shell_.surface_.focus = FocusTarget::Sidebar;
   return true;

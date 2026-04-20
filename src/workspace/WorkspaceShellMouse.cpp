@@ -86,7 +86,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
   }
 
-  surface_.mouse_selecting = false;
+  interaction_state_.mouse_selecting = false;
 
   if (ChromeMouseCoordinator(*this).HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
@@ -104,7 +104,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (event.button.button == SDL_BUTTON_LEFT && surface_.sidebar_visible &&
       Contains(SidebarResizeHandleRect(layout), event.button.x, event.button.y)) {
-    surface_.drag_target = DragTarget::SidebarDivider;
+    interaction_state_.drag_target = DragTarget::SidebarDivider;
     return true;
   }
 
@@ -202,18 +202,15 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
-  if (surface_.drag_target != DragTarget::None) {
-    surface_.drag_target = DragTarget::None;
-    surface_.drag_scrollbar_offset = 0.0f;
-    surface_.drag_editor_split_path.clear();
-    surface_.drag_editor_split_divider_index = 0;
-    surface_.mouse_selecting = false;
+  if (interaction_state_.drag_target != DragTarget::None) {
+    ClearDragState();
+    interaction_state_.mouse_selecting = false;
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
-  const bool was_selecting = surface_.mouse_selecting;
-  surface_.mouse_selecting = false;
+  const bool was_selecting = interaction_state_.mouse_selecting;
+  interaction_state_.mouse_selecting = false;
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });

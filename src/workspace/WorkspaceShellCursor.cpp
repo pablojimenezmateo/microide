@@ -115,7 +115,7 @@ WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {
-  switch (surface_.drag_target) {
+  switch (interaction_state_.drag_target) {
     case DragTarget::SidebarDivider:
       return CursorKind::EwResize;
     case DragTarget::BottomPanelDivider:
@@ -124,7 +124,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const auto* editor_tab = ActiveEditorTab();
       const auto* split_node = editor_tab != nullptr
                                    ? FindEditorSplitNode(editor_tab->split_root.get(),
-                                                         surface_.drag_editor_split_path)
+                                                         interaction_state_.drag_editor_split_path)
                                    : nullptr;
       return split_node != nullptr &&
                      split_node->orientation == EditorSplitOrientation::Horizontal

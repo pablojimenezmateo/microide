@@ -1033,6 +1033,21 @@ struct WorkspaceShellTestAccess {
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.editor_preferences_.soft_tabs;
   }
+  static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
+    shell.interaction_state_.drag_target = WorkspaceShell::DragTarget::SidebarDivider;
+  }
+  static void SetTransientDragTargetBottomPanelScrollbar(WorkspaceShell& shell) {
+    shell.interaction_state_.drag_target = WorkspaceShell::DragTarget::BottomPanelScrollbar;
+  }
+  static bool TransientDragTargetIsNone(const WorkspaceShell& shell) {
+    return shell.interaction_state_.drag_target == WorkspaceShell::DragTarget::None;
+  }
+  static void SetTransientMouseSelecting(WorkspaceShell& shell, bool selecting) {
+    shell.interaction_state_.mouse_selecting = selecting;
+  }
+  static bool TransientMouseSelecting(const WorkspaceShell& shell) {
+    return shell.interaction_state_.mouse_selecting;
+  }
   static bool FocusIsEditor(const WorkspaceShell& shell) {
     return shell.surface_.focus == WorkspaceShell::FocusTarget::Editor;
   }

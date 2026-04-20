@@ -223,7 +223,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   if (panel_layout.scroll.vertical_scrollbar.has_value()) {
     DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
                   panel_layout.scroll.vertical_scrollbar->thumb,
-                  surface_.drag_target == DragTarget::BottomPanelScrollbar);
+                 interaction_state_.drag_target == DragTarget::BottomPanelScrollbar);
   }
 }
 

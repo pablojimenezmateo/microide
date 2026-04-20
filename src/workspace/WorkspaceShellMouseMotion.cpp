@@ -60,26 +60,23 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return handled;
   }
 
-  if (surface_.drag_target != DragTarget::None) {
+  if (interaction_state_.drag_target != DragTarget::None) {
     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
-      surface_.drag_target = DragTarget::None;
-      surface_.drag_scrollbar_offset = 0.0f;
-      surface_.drag_editor_split_path.clear();
-      surface_.drag_editor_split_divider_index = 0;
+      ClearDragState();
       UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
       return false;
     }
 
     const WorkspaceLayout drag_layout = layout;
 
-    if (surface_.drag_target == DragTarget::SidebarDivider) {
+    if (interaction_state_.drag_target == DragTarget::SidebarDivider) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
       surface_.sidebar_width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
       RequestSidebarLayoutChangeRedraw(drag_layout);
       return true;
     }
 
-    if (surface_.drag_target == DragTarget::BottomPanelDivider) {
+    if (interaction_state_.drag_target == DragTarget::BottomPanelDivider) {
       if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
         RequestBottomPanelLayoutChangeRedraw(drag_layout);
         return true;
@@ -96,7 +93,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (surface_.drag_target == DragTarget::SidebarScrollbar) {
+    if (interaction_state_.drag_target == DragTarget::SidebarScrollbar) {
       const bool handled = SidebarMouseCoordinator(*this).HandleDrag(event, drag_layout);
       if (handled) {
         ensure_redraw([this]() { RequestSidebarRedraw(); });
@@ -104,19 +101,18 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return handled;
     }
 
-    if (surface_.drag_target == DragTarget::OverlayScrollbar && surface_.overlay_visible) {
+    if (interaction_state_.drag_target == DragTarget::OverlayScrollbar && surface_.overlay_visible) {
       const SDL_FRect overlay = ComputeOverlayRect(drag_layout.editor_area);
       const auto list_layout = ComputeOverlayListLayout(overlay);
       if (!list_layout.scrollbar.has_value()) {
-        surface_.drag_target = DragTarget::None;
-        surface_.drag_scrollbar_offset = 0.0f;
+        ClearDragState();
         return false;
       }
       surface_.overlay_scroll_row =
           std::clamp(static_cast<int>(std::lround(
                          ScrollUnitsForPointer(*list_layout.scrollbar,
                                               static_cast<float>(event.motion.y),
-                                              surface_.drag_scrollbar_offset))),
+                                              interaction_state_.drag_scrollbar_offset))),
                      0, list_layout.max_scroll);
       surface_.focus = FocusTarget::Overlay;
       ensure_redraw([this]() { RequestOverlayRedraw(); });
@@ -133,8 +129,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    surface_.drag_target = DragTarget::None;
-    surface_.drag_scrollbar_offset = 0.0f;
+    ClearDragState();
     return false;
   }
 
@@ -153,7 +148,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
 
-  if (!surface_.mouse_selecting || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
+  if (!interaction_state_.mouse_selecting || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
     return hover_visual_changed;
   }
 

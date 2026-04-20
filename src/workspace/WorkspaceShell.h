@@ -673,7 +673,7 @@ class WorkspaceShell {
     int overlay_scroll_row = 0;
   };
 
-  struct SurfaceState : ProjectSurfaceState {
+  struct InteractionState {
     bool window_has_input_focus = true;
     bool mouse_selecting = false;
     DragTarget drag_target = DragTarget::None;
@@ -857,6 +857,8 @@ class WorkspaceShell {
                                     const std::filesystem::path& project_root);
   void RebindProjectState(ProjectWorkspaceState& state);
   void ResetCurrentProjectStateStorage();
+  void ResetTransientInteractionState();
+  void ClearDragState();
   bool HasActiveProjectCatalogEntry() const;
   ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index);
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
@@ -869,8 +871,6 @@ class WorkspaceShell {
   void NotifyPluginsAboutOpenBuffers();
   void NotifyPluginBufferOpen(const std::filesystem::path& path);
   void NotifyPluginBufferSave(const std::filesystem::path& path);
-  static ProjectSurfaceState CaptureProjectSurfaceState(const SurfaceState& state);
-  void ApplyProjectSurfaceState(const ProjectSurfaceState& state);
   void ResetProjectScopedState(bool show_welcome);
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
@@ -1474,8 +1474,8 @@ class WorkspaceShell {
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
   ProjectCatalogState project_catalog_;
-  // Keep the active workspace in the same state container used by project-catalog entries so
-  // project activation, persistence, and reset paths do not hand-maintain duplicated field lists.
+  // Keep the active workspace, including its project-scoped surface state, in the same container
+  // used by project-catalog entries so activation, persistence, and reset paths do not copy it.
   ProjectWorkspaceState current_project_state_;
   std::filesystem::path& project_root_ = current_project_state_.root;
   project::DirectoryTree& directory_tree_ = current_project_state_.directory_tree;
@@ -1485,7 +1485,8 @@ class WorkspaceShell {
   std::vector<TabEntry>& open_tabs_ = current_project_state_.open_tabs;
   std::size_t& active_tab_index_ = current_project_state_.active_tab_index;
   int& tab_scroll_index_ = current_project_state_.tab_scroll_index;
-  SurfaceState surface_;
+  ProjectSurfaceState& surface_ = current_project_state_.surface;
+  InteractionState interaction_state_;
   MenuSurfaceState menu_state_;
   std::vector<std::unique_ptr<TerminalTabState>>& terminal_tabs_ = current_project_state_.terminal_tabs;
   std::size_t& active_terminal_tab_index_ = current_project_state_.active_terminal_tab_index;

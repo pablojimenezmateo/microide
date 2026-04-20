@@ -158,7 +158,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
     DrawFilledRect(renderer,
                    MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
                             kWorkspaceDividerThickness, layout.sidebar.h),
-                   surface_.drag_target == DragTarget::SidebarDivider ? theme_.accent
+                   interaction_state_.drag_target == DragTarget::SidebarDivider ? theme_.accent
                                                                       : theme_.border);
     const SDL_FRect sidebar_header =
         MakeRect(layout.sidebar.x, layout.sidebar.y, layout.sidebar.w, kSidebarHeaderHeight);
@@ -175,7 +175,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
     DrawFilledRect(renderer,
                    MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                             kWorkspaceDividerThickness),
-                   surface_.drag_target == DragTarget::BottomPanelDivider ? theme_.accent
+                   interaction_state_.drag_target == DragTarget::BottomPanelDivider ? theme_.accent
                                                                           : theme_.border);
     const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
                                             layout.bottom_panel.w,
@@ -271,21 +271,21 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track,
                       scroll_layout.vertical_scrollbar->thumb,
                       pane.active &&
-                          surface_.drag_target == DragTarget::EditorVerticalScrollbar);
+                         interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar);
       }
       if (scroll_layout.horizontal_scrollbar.has_value()) {
         DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                       scroll_layout.horizontal_scrollbar->thumb,
                       pane.active &&
-                          surface_.drag_target == DragTarget::EditorHorizontalScrollbar);
+                         interaction_state_.drag_target == DragTarget::EditorHorizontalScrollbar);
       }
     }
     for (const EditorSplitDividerLayout& divider :
          ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
       const bool divider_active =
-          surface_.drag_target == DragTarget::EditorSplitDivider &&
-          divider.divider_index == surface_.drag_editor_split_divider_index &&
-          divider.node_path == surface_.drag_editor_split_path;
+          interaction_state_.drag_target == DragTarget::EditorSplitDivider &&
+          divider.divider_index == interaction_state_.drag_editor_split_divider_index &&
+          divider.node_path == interaction_state_.drag_editor_split_path;
       DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
     }
   }

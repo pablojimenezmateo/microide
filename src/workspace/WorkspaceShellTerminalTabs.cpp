@@ -40,7 +40,8 @@ const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() cons
 }
 
 std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {
-  if (!surface_.window_has_input_focus || CurrentTextInputSurface() != TextInputSurface::Terminal ||
+  if (!interaction_state_.window_has_input_focus ||
+      CurrentTextInputSurface() != TextInputSurface::Terminal ||
       active_terminal_tab_index_ >= terminal_tabs_.size() ||
       terminal_tabs_[active_terminal_tab_index_] == nullptr) {
     return std::nullopt;

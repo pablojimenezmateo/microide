@@ -199,7 +199,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   draw_vertical_scrollbar(overlay_list_layout.list_rect, static_cast<float>(OverlayItemCount()),
                           overlay_list_layout.visible_units,
                           static_cast<float>(surface_.overlay_scroll_row),
-                          surface_.drag_target == DragTarget::OverlayScrollbar);
+                         interaction_state_.drag_target == DragTarget::OverlayScrollbar);
 }
 
 }  // namespace microide::workspace

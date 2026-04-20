@@ -1,6 +1,6 @@
 # Plugin Platform Expansion Plan
 
-Reviewed on 2026-04-19.
+Reviewed on 2026-04-20.
 
 This document supersedes the earlier compatibility-first framing.
 The top VS Code Marketplace extensions remain a useful demand signal, but they are no longer the
@@ -594,9 +594,12 @@ Status:
   `ProjectWorkspaceState` container shape used by project-catalog entries, removing duplicated
   project-switch and persistence bookkeeping for tabs, search state, terminals, diagnostics,
   command history, colorscheme, and editor preferences
-- follow-up cleanup on 2026-04-19 also keeps the active shell surface on the same
-  `ProjectSurfaceState` shape used by persisted project state, removing duplicated sidebar,
-  overlay, command-mode, focus, width, and scroll bookkeeping
+- follow-up cleanup on 2026-04-19 also keeps the active shell surface as a direct alias of the
+  `ProjectSurfaceState` stored in persisted project state, removing duplicated sidebar, overlay,
+  command-mode, focus, width, and scroll bookkeeping
+- follow-up cleanup on 2026-04-20 also keeps transient drag, mouse-selection, and window-focus
+  interaction state outside `ProjectSurfaceState`, so project switches clear in-flight gestures
+  instead of restoring stale interaction state from another project
 - follow-up cleanup on 2026-04-19 also moves menu-bar, anchored-menu, and tree-context popup
   state behind a dedicated `MenuSurfaceState` on the shell instead of flattening that popup state
   into the generic `SurfaceState`
