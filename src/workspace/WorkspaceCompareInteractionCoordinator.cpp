@@ -4,27 +4,30 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "project/GitCompareService.h"
+#include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 
-CompareInteractionCoordinator::CompareInteractionCoordinator(WorkspaceShell& shell)
-    : shell_(shell) {}
+CompareInteractionCoordinator::CompareInteractionCoordinator(ProjectWorkspaceState& state,
+                                                             Operations operations)
+    : state_(state), operations_(std::move(operations)) {}
 
 void CompareInteractionCoordinator::OpenPicker() {
-  if (!shell_.sidebar_state_.visible || shell_.ActiveSidebarMode() != SidebarMode::Tree) {
+  if (!state_.sidebar.visible || operations_.active_sidebar_mode() != SidebarMode::Tree) {
     return;
   }
 
-  const auto& entries = shell_.directory_tree_.entries();
-  if (shell_.directory_tree_.selected_index() >= entries.size()) {
+  const auto& entries = state_.directory_tree.entries();
+  if (state_.directory_tree.selected_index() >= entries.size()) {
     return;
   }
 
-  const auto& entry = entries[shell_.directory_tree_.selected_index()];
+  const auto& entry = entries[state_.directory_tree.selected_index()];
   if (entry.is_directory) {
     return;
   }
@@ -35,24 +38,24 @@ void CompareInteractionCoordinator::OpenPicker() {
 bool CompareInteractionCoordinator::OpenPickerForPath(
     const std::filesystem::path& path,
     std::string_view commit_spec) {
-  if (shell_.project_root_.empty() || path.empty()) {
+  if (state_.root.empty() || path.empty()) {
     return false;
   }
 
-  shell_.overlay_workflow_.compare_picker.path = path.lexically_normal();
-  shell_.overlay_workflow_.compare_picker.query.clear();
-  shell_.overlay_workflow_.compare_picker.commits =
-      project::CollectGitFileHistory(shell_.project_root_, shell_.overlay_workflow_.compare_picker.path);
+  state_.overlay.workflow.compare_picker.path = path.lexically_normal();
+  state_.overlay.workflow.compare_picker.query.clear();
+  state_.overlay.workflow.compare_picker.commits =
+      project::CollectGitFileHistory(state_.root, state_.overlay.workflow.compare_picker.path);
   RefreshPicker();
-  if (shell_.overlay_workflow_.compare_picker.matches.empty()) {
+  if (state_.overlay.workflow.compare_picker.matches.empty()) {
     return false;
   }
 
   if (!commit_spec.empty()) {
     const std::string lowered_commit_spec = ToLower(commit_spec);
     std::vector<std::size_t> matching_indices;
-    for (std::size_t i = 0; i < shell_.overlay_workflow_.compare_picker.matches.size(); ++i) {
-      const auto& commit = shell_.overlay_workflow_.compare_picker.matches[i];
+    for (std::size_t i = 0; i < state_.overlay.workflow.compare_picker.matches.size(); ++i) {
+      const auto& commit = state_.overlay.workflow.compare_picker.matches[i];
       const std::string lowered_hash = ToLower(commit.hash);
       const std::string lowered_short_hash = ToLower(commit.short_hash);
       if (StartsWith(lowered_hash, lowered_commit_spec) ||
@@ -65,64 +68,62 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
       return false;
     }
 
-    shell_.overlay_workflow_.compare_picker.selected_index = matching_indices.front();
+    state_.overlay.workflow.compare_picker.selected_index = matching_indices.front();
     OpenSelectedCommit();
     return true;
   }
 
-  shell_.ShowOverlay(WorkspaceShell::OverlayMode::CommitPicker);
+  operations_.show_compare_picker_overlay();
   return true;
 }
 
 void CompareInteractionCoordinator::RefreshPicker() {
-  shell_.overlay_workflow_.compare_picker.matches.clear();
-  shell_.overlay_workflow_.compare_picker.selected_index = 0;
+  state_.overlay.workflow.compare_picker.matches.clear();
+  state_.overlay.workflow.compare_picker.selected_index = 0;
 
-  const std::string lowered_query = ToLower(shell_.overlay_workflow_.compare_picker.query);
-  for (const auto& commit : shell_.overlay_workflow_.compare_picker.commits) {
+  const std::string lowered_query = ToLower(state_.overlay.workflow.compare_picker.query);
+  for (const auto& commit : state_.overlay.workflow.compare_picker.commits) {
     if (!lowered_query.empty()) {
       const std::string text = ToLower(commit.short_hash + " " + commit.subject);
       if (text.find(lowered_query) == std::string::npos) {
         continue;
       }
     }
-    shell_.overlay_workflow_.compare_picker.matches.push_back(commit);
+    state_.overlay.workflow.compare_picker.matches.push_back(commit);
   }
-  shell_.ResetOverlayScroll();
-  shell_.RequestOverlayRedraw();
+  operations_.reset_overlay_scroll();
+  operations_.request_overlay_redraw();
 }
 
 void CompareInteractionCoordinator::MovePickerSelection(int delta) {
-  if (shell_.overlay_workflow_.compare_picker.matches.empty() || delta == 0) {
+  if (state_.overlay.workflow.compare_picker.matches.empty() || delta == 0) {
     return;
   }
 
-  const int current = static_cast<int>(shell_.overlay_workflow_.compare_picker.selected_index);
+  const int current = static_cast<int>(state_.overlay.workflow.compare_picker.selected_index);
   const int max_index =
-      static_cast<int>(shell_.overlay_workflow_.compare_picker.matches.size()) - 1;
-  shell_.overlay_workflow_.compare_picker.selected_index =
+      static_cast<int>(state_.overlay.workflow.compare_picker.matches.size()) - 1;
+  state_.overlay.workflow.compare_picker.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (shell_.overlay_state_.visible) {
-    if (const auto layout = shell_.CurrentWorkspaceLayout(); layout.has_value()) {
-      shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout->editor_area));
-    }
+  if (state_.overlay.visible) {
+    operations_.reveal_compare_picker_selection();
   }
-  shell_.RequestOverlayRedraw();
+  operations_.request_overlay_redraw();
 }
 
 void CompareInteractionCoordinator::OpenSelectedCommit() {
-  if (shell_.overlay_workflow_.compare_picker.matches.empty() ||
-      shell_.overlay_workflow_.compare_picker.selected_index >=
-          shell_.overlay_workflow_.compare_picker.matches.size()) {
+  if (state_.overlay.workflow.compare_picker.matches.empty() ||
+      state_.overlay.workflow.compare_picker.selected_index >=
+          state_.overlay.workflow.compare_picker.matches.size()) {
     return;
   }
 
-  shell_.OpenComparison(
-      shell_.overlay_workflow_.compare_picker.matches[shell_.overlay_workflow_.compare_picker.selected_index]);
+  operations_.open_comparison(
+      state_.overlay.workflow.compare_picker.matches[state_.overlay.workflow.compare_picker.selected_index]);
 }
 
 void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
-  const WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  const CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab == nullptr || compare_tab->model.rows.empty()) {
     return;
   }
@@ -146,24 +147,24 @@ void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
     }
   }
 
-  shell_.OpenFile(compare_tab->path);
+  operations_.open_file(compare_tab->path);
   if (target_line > 0) {
-    if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+    if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
       viewport->MoveCursorTo(static_cast<std::size_t>(target_line - 1), 0);
     }
   }
 }
 
 void CompareInteractionCoordinator::OpenMergeResultFile() {
-  const WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  const MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr || merge_tab->output_path.empty()) {
     return;
   }
-  shell_.OpenFile(merge_tab->output_path);
+  operations_.open_file(merge_tab->output_path);
 }
 
 void CompareInteractionCoordinator::MoveCompareSelection(int delta) {
-  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab == nullptr || compare_tab->model.rows.empty() || delta == 0) {
     return;
   }
@@ -173,13 +174,13 @@ void CompareInteractionCoordinator::MoveCompareSelection(int delta) {
   const int max_index = static_cast<int>(compare_tab->model.rows.size()) - 1;
   compare_tab->selected_row =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  shell_.RevealActiveCompareSelection();
-  shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
-  shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+  operations_.reveal_active_compare_selection();
+  operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
+  operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);
 }
 
 void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
-  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab == nullptr || compare_tab->model.hunks.empty()) {
     return;
   }
@@ -196,58 +197,31 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
   target = std::clamp(target + delta, 0, static_cast<int>(compare_tab->model.hunks.size()) - 1);
   compare_tab->selected_row = static_cast<std::size_t>(
       compare_tab->model.hunks[static_cast<std::size_t>(target)].start_row);
-  shell_.RevealActiveCompareSelection();
-  shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
-  shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+  operations_.reveal_active_compare_selection();
+  operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
+  operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);
 }
 
 void CompareInteractionCoordinator::ScrollCompareRows(int delta) {
-  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab == nullptr || delta == 0) {
     return;
   }
-
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  const WorkspaceShell::CompareSurfaceLayout surface_layout =
-      shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-  const auto scroll_layout =
-      shell_.ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
-  compare_tab->scroll_row =
-      std::clamp(scroll_layout.vertical_scroll + delta, 0, scroll_layout.max_vertical_scroll);
-  shell_.SyncCompareViewportScroll(*compare_tab);
-  shell_.RequestEditorSurfaceRedraw();
+  operations_.scroll_compare_rows(*compare_tab, delta);
+  operations_.request_editor_surface_redraw();
 }
 
 void CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
-  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab == nullptr || delta == 0) {
     return;
   }
-
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  const WorkspaceShell::CompareSurfaceLayout surface_layout =
-      shell_.ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
-  const auto scroll_layout =
-      shell_.ComputeCompareScrollLayout(layout.editor_surface, surface_layout, *compare_tab);
-  const long long target_scroll =
-      static_cast<long long>(scroll_layout.horizontal_scroll) + static_cast<long long>(delta);
-  compare_tab->horizontal_scroll = static_cast<std::size_t>(
-      std::clamp(target_scroll, 0LL,
-                 static_cast<long long>(scroll_layout.max_horizontal_scroll)));
-  shell_.SyncCompareViewportScroll(*compare_tab);
-  shell_.RequestEditorSurfaceRedraw();
+  operations_.scroll_compare_columns(*compare_tab, delta);
+  operations_.request_editor_surface_redraw();
 }
 
 void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
-  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr || merge_tab->conflicts.empty() || delta == 0) {
     return;
   }
@@ -257,38 +231,22 @@ void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
   const int max_index = static_cast<int>(merge_tab->conflicts.size()) - 1;
   merge_tab->selected_hunk =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  shell_.RevealActiveMergeSelection();
-  shell_.RequestMergeConflictRedraw(previous_selected_hunk);
-  shell_.RequestMergeConflictRedraw(merge_tab->selected_hunk);
+  operations_.reveal_active_merge_selection();
+  operations_.request_merge_conflict_redraw(previous_selected_hunk);
+  operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
 }
 
 void CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
-  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr || delta == 0) {
     return;
   }
-
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  const WorkspaceShell::MergeSurfaceLayout surface_layout =
-      shell_.ComputeMergeSurfaceLayout(layout.editor_surface, *merge_tab);
-  const auto scroll_layout =
-      shell_.ComputeMergeScrollLayout(layout.editor_surface, surface_layout, *merge_tab);
-  const long long target_scroll =
-      static_cast<long long>(scroll_layout.horizontal_scroll) + static_cast<long long>(delta);
-  merge_tab->horizontal_scroll = static_cast<std::size_t>(
-      std::clamp(target_scroll, 0LL,
-                 static_cast<long long>(scroll_layout.max_horizontal_scroll)));
-  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
-  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-  shell_.RequestEditorSurfaceRedraw();
+  operations_.scroll_merge_columns(*merge_tab, delta);
+  operations_.request_editor_surface_redraw();
 }
 
 void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice) {
-  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
     return;
   }
@@ -322,74 +280,166 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
     merge_tab->conflicts[i].end_line = static_cast<std::size_t>(
         static_cast<long long>(merge_tab->conflicts[i].end_line) + line_delta);
   }
-  shell_.UpdateMergeMaxVisualColumns(*merge_tab, replacement_lines);
+  operations_.update_merge_max_visual_columns(*merge_tab, replacement_lines);
   merge_tab->hover_state.reset();
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
-  shell_.RevealActiveMergeSelection();
-  shell_.RequestMergeResultLineToBottomRedraw(conflict.start_line);
+  operations_.reveal_active_merge_selection();
+  operations_.request_merge_result_line_to_bottom_redraw(conflict.start_line);
   if (merge_tab->result_viewport.dirty() != was_dirty) {
-    shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                        merge_tab->result_viewport.cursor_line());
-    shell_.RequestTabStripRedraw();
+    operations_.request_active_editable_blame_neighborhood_redraw(
+        cursor_before_line, merge_tab->result_viewport.cursor_line());
+    operations_.request_tab_strip_redraw();
   }
 }
 
+CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator() {
+  return CompareInteractionCoordinator(
+      current_project_state_,
+      CompareInteractionCoordinator::Operations{
+          .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
+          .show_compare_picker_overlay = [this]() { ShowOverlay(OverlayMode::CommitPicker); },
+          .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
+          .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
+          .reveal_compare_picker_selection =
+              [this]() {
+                if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+                  RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+                }
+              },
+          .open_comparison = [this](const project::GitCommitEntry& commit) { OpenComparison(commit); },
+          .active_compare_tab = [this]() { return ActiveCompareTab(); },
+          .active_merge_tab = [this]() { return ActiveMergeTab(); },
+          .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
+          .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
+          .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
+          .request_compare_row_range_redraw =
+              [this](std::size_t start, std::size_t end) {
+                RequestCompareRowRangeRedraw(start, end);
+              },
+          .sync_compare_viewport_scroll =
+              [this](CompareTabState& compare_tab) { SyncCompareViewportScroll(compare_tab); },
+          .scroll_compare_rows =
+              [this](CompareTabState& compare_tab, int delta) {
+                if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
+                  const WorkspaceLayout layout = *layout_state;
+                  const auto surface_layout =
+                      ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
+                  const auto scroll_layout =
+                      ComputeCompareScrollLayout(layout.editor_surface, surface_layout, compare_tab);
+                  compare_tab.scroll_row = std::clamp(scroll_layout.vertical_scroll + delta, 0,
+                                                      scroll_layout.max_vertical_scroll);
+                  SyncCompareViewportScroll(compare_tab);
+                }
+              },
+          .scroll_compare_columns =
+              [this](CompareTabState& compare_tab, int delta) {
+                if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
+                  const WorkspaceLayout layout = *layout_state;
+                  const auto surface_layout =
+                      ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
+                  const auto scroll_layout =
+                      ComputeCompareScrollLayout(layout.editor_surface, surface_layout, compare_tab);
+                  const long long target_scroll =
+                      static_cast<long long>(scroll_layout.horizontal_scroll) +
+                      static_cast<long long>(delta);
+                  compare_tab.horizontal_scroll = static_cast<std::size_t>(std::clamp(
+                      target_scroll, 0LL,
+                      static_cast<long long>(scroll_layout.max_horizontal_scroll)));
+                  SyncCompareViewportScroll(compare_tab);
+                }
+              },
+          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
+          .request_merge_conflict_redraw =
+              [this](std::size_t conflict_index) { RequestMergeConflictRedraw(conflict_index); },
+          .scroll_merge_columns =
+              [this](MergeTabState& merge_tab, int delta) {
+                if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
+                  const WorkspaceLayout layout = *layout_state;
+                  const auto surface_layout =
+                      ComputeMergeSurfaceLayout(layout.editor_surface, merge_tab);
+                  const auto scroll_layout =
+                      ComputeMergeScrollLayout(layout.editor_surface, surface_layout, merge_tab);
+                  const long long target_scroll =
+                      static_cast<long long>(scroll_layout.horizontal_scroll) +
+                      static_cast<long long>(delta);
+                  merge_tab.horizontal_scroll = static_cast<std::size_t>(std::clamp(
+                      target_scroll, 0LL,
+                      static_cast<long long>(scroll_layout.max_horizontal_scroll)));
+                  merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
+                  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
+                }
+              },
+          .update_merge_max_visual_columns =
+              [this](MergeTabState& merge_tab, const std::vector<std::string>& replacement_lines) {
+                UpdateMergeMaxVisualColumns(merge_tab, replacement_lines);
+              },
+          .request_merge_result_line_to_bottom_redraw =
+              [this](std::size_t start_line) { RequestMergeResultLineToBottomRedraw(start_line); },
+          .request_active_editable_blame_neighborhood_redraw =
+              [this](std::size_t before, std::size_t after) {
+                RequestActiveEditableBlameNeighborhoodRedraw(before, after);
+              },
+          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+      });
+}
+
 void WorkspaceShell::OpenComparePicker() {
-  CompareInteractionCoordinator(*this).OpenPicker();
+  MakeCompareInteractionCoordinator().OpenPicker();
 }
 
 bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
                                               std::string_view commit_spec) {
-  return CompareInteractionCoordinator(*this).OpenPickerForPath(path, commit_spec);
+  return MakeCompareInteractionCoordinator().OpenPickerForPath(path, commit_spec);
 }
 
 void WorkspaceShell::RefreshComparePicker() {
-  CompareInteractionCoordinator(*this).RefreshPicker();
+  MakeCompareInteractionCoordinator().RefreshPicker();
 }
 
 void WorkspaceShell::MoveComparePickerSelection(int delta) {
-  CompareInteractionCoordinator(*this).MovePickerSelection(delta);
+  MakeCompareInteractionCoordinator().MovePickerSelection(delta);
 }
 
 void WorkspaceShell::OpenSelectedCompareCommit() {
-  CompareInteractionCoordinator(*this).OpenSelectedCommit();
+  MakeCompareInteractionCoordinator().OpenSelectedCommit();
 }
 
 void WorkspaceShell::OpenWorkingFileFromCompare() {
-  CompareInteractionCoordinator(*this).OpenWorkingFileFromCompare();
+  MakeCompareInteractionCoordinator().OpenWorkingFileFromCompare();
 }
 
 void WorkspaceShell::OpenMergeResultFile() {
-  CompareInteractionCoordinator(*this).OpenMergeResultFile();
+  MakeCompareInteractionCoordinator().OpenMergeResultFile();
 }
 
 void WorkspaceShell::MoveCompareSelection(int delta) {
-  CompareInteractionCoordinator(*this).MoveCompareSelection(delta);
+  MakeCompareInteractionCoordinator().MoveCompareSelection(delta);
 }
 
 void WorkspaceShell::JumpCompareHunk(int delta) {
-  CompareInteractionCoordinator(*this).JumpCompareHunk(delta);
+  MakeCompareInteractionCoordinator().JumpCompareHunk(delta);
 }
 
 void WorkspaceShell::ScrollCompareRows(int delta) {
-  CompareInteractionCoordinator(*this).ScrollCompareRows(delta);
+  MakeCompareInteractionCoordinator().ScrollCompareRows(delta);
 }
 
 void WorkspaceShell::ScrollCompareColumns(int delta) {
-  CompareInteractionCoordinator(*this).ScrollCompareColumns(delta);
+  MakeCompareInteractionCoordinator().ScrollCompareColumns(delta);
 }
 
 void WorkspaceShell::MoveMergeSelection(int delta) {
-  CompareInteractionCoordinator(*this).MoveMergeSelection(delta);
+  MakeCompareInteractionCoordinator().MoveMergeSelection(delta);
 }
 
 void WorkspaceShell::ScrollMergeColumns(int delta) {
-  CompareInteractionCoordinator(*this).ScrollMergeColumns(delta);
+  MakeCompareInteractionCoordinator().ScrollMergeColumns(delta);
 }
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
-  CompareInteractionCoordinator(*this).ApplyMergeChoice(choice);
+  MakeCompareInteractionCoordinator().ApplyMergeChoice(choice);
 }
 
 }  // namespace microide::workspace

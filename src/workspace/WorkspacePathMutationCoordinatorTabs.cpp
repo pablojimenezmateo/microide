@@ -14,18 +14,19 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     const std::filesystem::path& old_path,
     const std::filesystem::path& new_path,
     bool preserve_unsaved_state) {
-  if (shell_.ActiveTabIsEditor()) {
-    shell_.SyncActiveEditorTab();
+  auto& state = CurrentProjectState();
+  if (operations_.active_tab_is_editor()) {
+    operations_.sync_active_editor_tab();
   }
 
   std::vector<std::size_t> special_tabs_to_close;
-  for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    WorkspaceShell::TabEntry& tab = shell_.open_tabs_[i];
-    if (tab.kind == WorkspaceShell::TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
+    TabEntry& tab = state.open_tabs[i];
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       bool retargeted = false;
       bool close_tab = false;
       for (auto& view : tab.editor_state->views) {
-        const std::filesystem::path current_path = shell_.EditorViewPath(view);
+        const std::filesystem::path current_path = operations_.editor_view_path(view);
         if (current_path.empty() || !PathEqualsOrWithin(current_path, old_path)) {
           continue;
         }
@@ -42,7 +43,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
             close_tab = true;
             break;
           }
-          shell_.ApplyEditorPreferences(reopened_view);
+          operations_.apply_editor_preferences(reopened_view);
           reopened_view.MoveCursorTo(cursor_line, cursor_column);
           reopened_view.SetScrollLine(scroll_line);
           reopened_view.SetHorizontalScroll(horizontal_scroll);
@@ -68,25 +69,25 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       }
 
       if (retargeted) {
-        if (i == shell_.active_tab_index_) {
-          if (const auto* active_view =
-                  shell_.FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
+        if (i == state.active_tab_index) {
+          if (auto* active_view =
+                  operations_.find_editor_view_state(*tab.editor_state, tab.editor_state->active_leaf_id);
               active_view != nullptr && !active_view->needs_restore) {
-            shell_.text_viewport_ = active_view->viewport;
-            shell_.ApplyEditorPreferences(shell_.text_viewport_);
+            state.text_viewport = active_view->viewport;
+            operations_.apply_editor_preferences(state.text_viewport);
           }
-          shell_.SyncActiveEditorTabMetadata();
-        } else if (const auto* active_view =
-                       shell_.FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
+          operations_.sync_active_editor_tab_metadata();
+        } else if (auto* active_view =
+                       operations_.find_editor_view_state(*tab.editor_state, tab.editor_state->active_leaf_id);
                    active_view != nullptr) {
-          tab.path = shell_.EditorViewPath(*active_view);
+          tab.path = operations_.editor_view_path(*active_view);
           tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
         }
       }
       continue;
     }
 
-    if (tab.kind == WorkspaceShell::TabEntry::Kind::Compare && tab.compare.has_value() &&
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
       const std::filesystem::path updated_path =
           ReplacePathPrefix(tab.compare->path, old_path, new_path);
@@ -100,20 +101,27 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
           tab.compare->right_viewport.SetPath(tab.compare->right_path);
         }
         tab.compare->title = "compare: " + tab.compare->path.filename().string();
-        shell_.RefreshCompareTabDerivedState(*tab.compare);
-        shell_.SyncCompareSelectionFromViewport(*tab.compare, false);
+        // Keep selection and syntax-derived state aligned after retargeting a dirty compare tab.
+        auto rebuilt = operations_.build_compare_tab_entry(tab.compare->path, *tab.compare);
+        if (rebuilt.has_value() && rebuilt->compare.has_value()) {
+          rebuilt->compare->right_viewport = tab.compare->right_viewport;
+          rebuilt->compare->right_editable = tab.compare->right_editable;
+          rebuilt->compare->right_view_active = tab.compare->right_view_active;
+          rebuilt->compare->persistable = tab.compare->persistable;
+          tab = std::move(*rebuilt);
+        }
         tab.path = tab.compare->path;
         tab.title = tab.compare->title;
         continue;
       }
-      WorkspaceShell::CompareTabState updated_compare = *tab.compare;
+      CompareTabState updated_compare = *tab.compare;
       updated_compare.path = updated_path.lexically_normal();
       if (updated_compare.right_ref == "WORKTREE" &&
           PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
         updated_compare.right_path =
             ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
       }
-      auto rebuilt = shell_.BuildCompareTabEntry(updated_path, updated_compare);
+      auto rebuilt = operations_.build_compare_tab_entry(updated_path, updated_compare);
       if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
         special_tabs_to_close.push_back(i);
         continue;
@@ -122,7 +130,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       continue;
     }
 
-    if (tab.kind != WorkspaceShell::TabEntry::Kind::Merge || !tab.merge.has_value()) {
+    if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
 
@@ -145,7 +153,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
 
     if (!preserve_unsaved_state) {
       auto rebuilt =
-          shell_.BuildMergeTabEntry(updated_base, updated_incoming, updated_current, updated_output);
+          operations_.build_merge_tab_entry(updated_base, updated_incoming, updated_current, updated_output);
       if (!rebuilt.has_value() || !rebuilt->merge.has_value()) {
         special_tabs_to_close.push_back(i);
         continue;
@@ -174,9 +182,9 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     tab.merge->current_path = updated_current;
     tab.merge->output_path = updated_output;
     tab.merge->title = "merge: " + updated_output.filename().string();
-    tab.merge->incoming_label = RelativePathLabel(shell_.project_root_, updated_incoming);
-    tab.merge->result_label = RelativePathLabel(shell_.project_root_, updated_output);
-    tab.merge->current_label = RelativePathLabel(shell_.project_root_, updated_current);
+    tab.merge->incoming_label = RelativePathLabel(state.root, updated_incoming);
+    tab.merge->result_label = RelativePathLabel(state.root, updated_output);
+    tab.merge->current_label = RelativePathLabel(state.root, updated_current);
     tab.merge->result_viewport.SetPath(updated_output);
     tab.merge->incoming_initial_syntax_state =
         editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.incoming_lines);
@@ -201,36 +209,36 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
 
   std::sort(special_tabs_to_close.rbegin(), special_tabs_to_close.rend());
   for (std::size_t index : special_tabs_to_close) {
-    shell_.CloseTab(index);
+    operations_.close_tab(index);
   }
 
-  if (!shell_.overlay_workflow_.compare_picker.path.empty() &&
-      PathEqualsOrWithin(shell_.overlay_workflow_.compare_picker.path, old_path)) {
-    shell_.overlay_workflow_.compare_picker.path =
-        ReplacePathPrefix(shell_.overlay_workflow_.compare_picker.path, old_path, new_path);
-    if (shell_.overlay_state_.visible &&
-        shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
-      shell_.overlay_state_.visible = false;
+  if (!state.overlay.workflow.compare_picker.path.empty() &&
+      PathEqualsOrWithin(state.overlay.workflow.compare_picker.path, old_path)) {
+    state.overlay.workflow.compare_picker.path =
+        ReplacePathPrefix(state.overlay.workflow.compare_picker.path, old_path, new_path);
+    if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
+      state.overlay.visible = false;
     }
   }
 }
 
 void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& path) {
-  if (shell_.ActiveTabIsEditor()) {
-    shell_.SyncActiveEditorTab();
+  auto& state = CurrentProjectState();
+  if (operations_.active_tab_is_editor()) {
+    operations_.sync_active_editor_tab();
   }
 
   const std::filesystem::path normalized_path = path.lexically_normal();
   std::vector<std::size_t> indices;
-  for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
-    auto& tab = shell_.open_tabs_[i];
-    if (tab.kind != WorkspaceShell::TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
+    auto& tab = state.open_tabs[i];
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
       continue;
     }
 
     std::vector<std::size_t> removed_leaf_ids;
     for (const auto& view : tab.editor_state->views) {
-      const std::filesystem::path current_path = shell_.EditorViewPath(view);
+      const std::filesystem::path current_path = operations_.editor_view_path(view);
       if (!current_path.empty() && PathEqualsOrWithin(current_path, normalized_path)) {
         removed_leaf_ids.push_back(view.leaf_id);
       }
@@ -250,7 +258,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
         tab.editor_state->views.end());
 
     const auto prune_node = [&](auto&& self,
-                                std::unique_ptr<WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode>& node)
+                                std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>& node)
         -> void {
       if (node == nullptr) {
         return;
@@ -284,9 +292,9 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
       continue;
     }
 
-    shell_.NormalizeEditorSplitTree(*tab.editor_state);
+    operations_.normalize_editor_split_tree(*tab.editor_state);
     if (leaf_removed(tab.editor_state->active_leaf_id)) {
-      const std::vector<std::size_t> leaf_order = shell_.EditorLeafOrder(*tab.editor_state);
+      const std::vector<std::size_t> leaf_order = operations_.editor_leaf_order(*tab.editor_state);
       if (!leaf_order.empty()) {
         tab.editor_state->active_leaf_id = leaf_order.front();
       } else {
@@ -294,19 +302,19 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
       }
     }
 
-    if (i == shell_.active_tab_index_) {
-      if (auto* active_view =
-              shell_.FindEditorView(*tab.editor_state, tab.editor_state->active_leaf_id);
+    if (i == state.active_tab_index) {
+      if (const auto* active_view =
+              operations_.find_editor_view(*tab.editor_state, tab.editor_state->active_leaf_id);
           active_view != nullptr) {
-        shell_.text_viewport_ = *active_view;
-        shell_.ApplyEditorPreferences(shell_.text_viewport_);
+        state.text_viewport = *active_view;
+        operations_.apply_editor_preferences(state.text_viewport);
       }
-      shell_.SyncActiveEditorTabMetadata();
-      shell_.ResetCaretBlink();
-    } else if (const auto* active_view =
-                   shell_.FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
+      operations_.sync_active_editor_tab_metadata();
+      operations_.reset_caret_blink();
+    } else if (auto* active_view =
+                   operations_.find_editor_view_state(*tab.editor_state, tab.editor_state->active_leaf_id);
                active_view != nullptr) {
-      tab.path = shell_.EditorViewPath(*active_view);
+      tab.path = operations_.editor_view_path(*active_view);
       tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
     }
   }
@@ -319,18 +327,17 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   std::sort(indices.rbegin(), indices.rend());
   for (std::size_t index : indices) {
-    shell_.CloseTab(index);
+    operations_.close_tab(index);
   }
 
-  if (!shell_.overlay_workflow_.compare_picker.path.empty() &&
-      PathEqualsOrWithin(shell_.overlay_workflow_.compare_picker.path, path)) {
-    shell_.overlay_workflow_.compare_picker.path.clear();
-    shell_.overlay_workflow_.compare_picker.query.clear();
-    shell_.overlay_workflow_.compare_picker.commits.clear();
-    shell_.overlay_workflow_.compare_picker.matches.clear();
-    if (shell_.overlay_state_.visible &&
-        shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
-      shell_.overlay_state_.visible = false;
+  if (!state.overlay.workflow.compare_picker.path.empty() &&
+      PathEqualsOrWithin(state.overlay.workflow.compare_picker.path, path)) {
+    state.overlay.workflow.compare_picker.path.clear();
+    state.overlay.workflow.compare_picker.query.clear();
+    state.overlay.workflow.compare_picker.commits.clear();
+    state.overlay.workflow.compare_picker.matches.clear();
+    if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
+      state.overlay.visible = false;
     }
   }
 }

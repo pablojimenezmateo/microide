@@ -2,17 +2,56 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceProjectState.h"
 
 namespace microide::workspace {
 
 class DiffTabCoordinator {
  public:
-  explicit DiffTabCoordinator(WorkspaceShell& shell);
+  struct Operations {
+    std::function<void()> sync_active_editor_tab;
+    std::function<void()> reveal_active_compare_selection;
+    std::function<void()> reveal_active_merge_selection;
+    std::function<void()> ensure_active_tab_visible;
+    std::function<void(bool)> dismiss_overlay;
+    std::function<void(bool)> request_active_tab_redraw;
+    std::function<std::optional<TabEntry>(const std::filesystem::path&,
+                                          const project::GitCommitEntry&,
+                                          std::size_t)>
+        build_compare_tab_entry;
+    std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&)>
+        rebuild_compare_tab_entry;
+    std::function<std::optional<TabEntry>(const std::filesystem::path&,
+                                          const std::string&,
+                                          const std::string&,
+                                          const std::string&,
+                                          const std::string&,
+                                          std::size_t,
+                                          bool)>
+        build_compare_tab_from_buffers;
+    std::function<std::optional<TabEntry>(const std::filesystem::path&,
+                                          const std::filesystem::path&,
+                                          const std::filesystem::path&,
+                                          const std::filesystem::path&)>
+        build_merge_tab_entry;
+    std::function<std::optional<TabEntry>(const std::filesystem::path&,
+                                          const std::string&,
+                                          const std::string&,
+                                          const std::string&,
+                                          const std::string&,
+                                          const std::string&,
+                                          const std::string&,
+                                          std::size_t,
+                                          bool)>
+        build_merge_tab_from_buffers;
+  };
+
+  DiffTabCoordinator(ProjectWorkspaceState& state, Operations operations);
 
   std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,
                                                      std::string_view left_ref,
@@ -39,10 +78,11 @@ class DiffTabCoordinator {
   void RefreshExistingCompareTab(std::size_t index,
                                  const std::filesystem::path& normalized_path,
                                  bool only_when_clean);
-  static void RestoreMergeViewState(WorkspaceShell::MergeTabState& rebuilt_merge,
-                                    const WorkspaceShell::MergeTabState& previous_merge);
+  static void RestoreMergeViewState(MergeTabState& rebuilt_merge,
+                                    const MergeTabState& previous_merge);
 
-  WorkspaceShell& shell_;
+  ProjectWorkspaceState& state_;
+  Operations operations_;
 };
 
 }  // namespace microide::workspace

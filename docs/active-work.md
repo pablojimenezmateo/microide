@@ -197,6 +197,19 @@ Current state:
 - command-prompt input, history, completion, and command execution now run through a
   `WorkspaceCommandPromptCoordinator` that depends on project command state plus explicit
   callbacks for action dispatch, plugin command execution, sidebar-view enumeration, and bottom-panel redraw instead of `WorkspaceShell&`
+- compare-tab reuse or merge-tab reuse plus working-tree, branch-head, and conflict-open flows now
+  run through a `WorkspaceDiffTabCoordinator` that depends on project tab or overlay state plus
+  explicit callbacks for compare or merge tab construction, active-tab synchronization, overlay
+  dismissal, and redraw instead of `WorkspaceShell&`
+- compare-picker, compare selection, compare scrolling, merge selection, merge scrolling, and
+  merge-choice application now run through a `WorkspaceCompareInteractionCoordinator` that depends
+  on project compare-picker or compare-tab or merge-tab state plus explicit callbacks for overlay,
+  compare, merge, editor-open, and redraw behavior instead of `WorkspaceShell&`
+- prompt-driven create, rename, delete, dirty-path resolution, tab retargeting, and
+  diagnostic-refresh flows now run through a `WorkspacePathMutationCoordinator` that depends on
+  workspace prompt state plus project tab or diagnostics state and explicit callbacks for prompt
+  dismissal, editor-tab helpers, compare or merge tab rebuilds, and redraw instead of
+  `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

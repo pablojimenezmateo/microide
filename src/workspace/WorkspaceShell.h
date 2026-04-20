@@ -84,6 +84,7 @@ class WorkspaceShell {
   using ProblemsSidebarState = workspace::ProblemsSidebarState;
   using PluginSidebarState = workspace::PluginSidebarState;
   using SidebarState = workspace::SidebarState;
+  using DirtyPathResolution = workspace::DirtyPathResolution;
 
   enum class WindowAction {
     None,
@@ -382,12 +383,6 @@ class WorkspaceShell {
     std::optional<SDL_FRect> primary_action_rect;
   };
 
-  enum class DirtyPathResolution {
-    RequirePrompt,
-    Save,
-    Discard,
-  };
-
   enum class ProjectOpenDialogLaunchResult {
     Launched,
     AlreadyOpen,
@@ -414,9 +409,6 @@ class WorkspaceShell {
   friend class KeyInputCoordinator;
   friend class TextInputCoordinator;
   friend class TabCoordinator;
-  friend class PathMutationCoordinator;
-  friend class CompareInteractionCoordinator;
-  friend class DiffTabCoordinator;
   friend class SidebarCoordinator;
   friend class ChromeMouseCoordinator;
   friend class EditorMouseCoordinator;
@@ -480,6 +472,9 @@ class WorkspaceShell {
   MenuCoordinator MakeMenuCoordinator();
   CommandPromptCoordinator MakeCommandPromptCoordinator();
   DirtyPromptCoordinator MakeDirtyPromptCoordinator();
+  CompareInteractionCoordinator MakeCompareInteractionCoordinator();
+  PathMutationCoordinator MakePathMutationCoordinator();
+  DiffTabCoordinator MakeDiffTabCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();

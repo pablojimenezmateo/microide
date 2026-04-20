@@ -8,6 +8,12 @@
 
 namespace microide::workspace {
 
+enum class DirtyPathResolution {
+  RequirePrompt,
+  Save,
+  Discard,
+};
+
 struct DirtyPromptState {
   enum class Kind {
     CloseTab,

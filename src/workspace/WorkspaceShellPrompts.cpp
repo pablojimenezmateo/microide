@@ -285,16 +285,16 @@ std::filesystem::path WorkspaceShell::TreeMutationBasePath(ActionSource source) 
 
 bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                                std::string* blocking_label) const {
-  return PathMutationCoordinator(*const_cast<WorkspaceShell*>(this))
-      .HasDirtyEditorTabsForPath(path, blocking_label);
+  return const_cast<WorkspaceShell*>(this)->MakePathMutationCoordinator().HasDirtyEditorTabsForPath(
+      path, blocking_label);
 }
 
 void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
-  PathMutationCoordinator(*this).CloseOpenTabsForPath(path);
+  MakePathMutationCoordinator().CloseOpenTabsForPath(path);
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
-  PathMutationCoordinator(*this).ConfirmPromptSurface(resolution);
+  MakePathMutationCoordinator().ConfirmPromptSurface(resolution);
 }
 
 }  // namespace microide::workspace
