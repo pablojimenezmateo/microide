@@ -321,7 +321,7 @@ struct WorkspaceShellTestAccess {
     return shell.OpenFileInNewTab(path);
   }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
-    return CommandPromptCoordinator(shell).ExecuteCommandLine(command_line);
+    return shell.MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
   }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Messages();
@@ -999,7 +999,7 @@ struct WorkspaceShellTestAccess {
   static bool CommandMode(const WorkspaceShell& shell) { return shell.panel_state_.command_mode; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
-    return CommandPromptCoordinator::PromptStatusText(shell);
+    return CommandPromptCoordinator::PromptStatusText(shell.command_);
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.overlay_workflow_.project_search.query;

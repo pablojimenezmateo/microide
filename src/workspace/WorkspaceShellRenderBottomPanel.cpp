@@ -210,7 +210,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
     DrawTextOn(text_renderer_, renderer, command_area.x + 12.0f, status_y, theme_.text_muted,
                theme_.surface_raised,
-               TruncateLabel(CommandPromptCoordinator::PromptStatusText(*this),
+               TruncateLabel(CommandPromptCoordinator::PromptStatusText(command_),
                              command_area.w - 24.0f));
 
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);

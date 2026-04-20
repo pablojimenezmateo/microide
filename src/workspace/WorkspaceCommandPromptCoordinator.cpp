@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -11,24 +12,31 @@
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
+#include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 
-CommandPromptCoordinator::CommandPromptCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+CommandPromptCoordinator::CommandPromptCoordinator(
+    ProjectWorkspaceState& state,
+    std::vector<std::string>& available_colorscheme_names,
+    Operations operations)
+    : state_(state),
+      available_colorscheme_names_(available_colorscheme_names),
+      operations_(std::move(operations)) {}
 
 void CommandPromptCoordinator::ResetSessionState() {
-  shell_.command_.history_index.reset();
-  shell_.command_.history_pending_input.clear();
+  state_.panel.command.history_index.reset();
+  state_.panel.command.history_pending_input.clear();
   ClearFeedback();
 }
 
 void CommandPromptCoordinator::ClearFeedback() {
-  shell_.command_.feedback_text.clear();
+  state_.panel.command.feedback_text.clear();
 }
 
 void CommandPromptCoordinator::SetFeedback(std::string feedback) {
-  shell_.command_.feedback_text = std::move(feedback);
+  state_.panel.command.feedback_text = std::move(feedback);
 }
 
 bool CommandPromptCoordinator::RejectAction(ActionSource source, std::string feedback) {
@@ -40,9 +48,9 @@ bool CommandPromptCoordinator::RejectAction(ActionSource source, std::string fee
 }
 
 void CommandPromptCoordinator::AppendInput(std::string_view input) {
-  shell_.command_.input.append(input);
-  shell_.command_.history_index.reset();
-  shell_.command_.history_pending_input.clear();
+  state_.panel.command.input.append(input);
+  state_.panel.command.history_index.reset();
+  state_.panel.command.history_pending_input.clear();
   ClearFeedback();
 }
 
@@ -50,47 +58,48 @@ void CommandPromptCoordinator::PushHistory(std::string command_line) {
   if (command_line.empty()) {
     return;
   }
-  if (!shell_.command_.history.empty() && shell_.command_.history.back() == command_line) {
+  if (!state_.panel.command.history.empty() &&
+      state_.panel.command.history.back() == command_line) {
     return;
   }
 
-  shell_.command_.history.push_back(std::move(command_line));
-  if (shell_.command_.history.size() > 64) {
-    shell_.command_.history.erase(shell_.command_.history.begin());
+  state_.panel.command.history.push_back(std::move(command_line));
+  if (state_.panel.command.history.size() > 64) {
+    state_.panel.command.history.erase(state_.panel.command.history.begin());
   }
 }
 
 void CommandPromptCoordinator::StepHistory(int delta) {
-  if (delta == 0 || shell_.command_.history.empty()) {
+  if (delta == 0 || state_.panel.command.history.empty()) {
     return;
   }
 
-  if (!shell_.command_.history_index.has_value()) {
+  if (!state_.panel.command.history_index.has_value()) {
     if (delta > 0) {
       return;
     }
-    shell_.command_.history_pending_input = shell_.command_.input;
-    shell_.command_.history_index = shell_.command_.history.size() - 1;
+    state_.panel.command.history_pending_input = state_.panel.command.input;
+    state_.panel.command.history_index = state_.panel.command.history.size() - 1;
   } else if (delta < 0) {
-    if (*shell_.command_.history_index > 0) {
-      --(*shell_.command_.history_index);
+    if (*state_.panel.command.history_index > 0) {
+      --(*state_.panel.command.history_index);
     }
-  } else if (*shell_.command_.history_index + 1 < shell_.command_.history.size()) {
-    ++(*shell_.command_.history_index);
+  } else if (*state_.panel.command.history_index + 1 < state_.panel.command.history.size()) {
+    ++(*state_.panel.command.history_index);
   } else {
-    shell_.command_.history_index.reset();
-    shell_.command_.input = shell_.command_.history_pending_input;
-    shell_.command_.history_pending_input.clear();
+    state_.panel.command.history_index.reset();
+    state_.panel.command.input = state_.panel.command.history_pending_input;
+    state_.panel.command.history_pending_input.clear();
     ClearFeedback();
     return;
   }
 
-  shell_.command_.input = shell_.command_.history[*shell_.command_.history_index];
+  state_.panel.command.input = state_.panel.command.history[*state_.panel.command.history_index];
   ClearFeedback();
 }
 
 void CommandPromptCoordinator::CompleteInput() {
-  const ParsedCommandLine parsed = ParseCommandLine(shell_.command_.input);
+  const ParsedCommandLine parsed = ParseCommandLine(state_.panel.command.input);
   if (parsed.dangling_escape) {
     SetFeedback("Command completion stopped at a trailing escape");
     return;
@@ -105,19 +114,19 @@ void CommandPromptCoordinator::CompleteInput() {
   const std::string active_prefix =
       starts_new_token || parsed.tokens.empty() ? std::string{} : parsed.tokens.back().text;
   const std::size_t replace_start = starts_new_token || parsed.tokens.empty()
-                                        ? shell_.command_.input.size()
+                                        ? state_.panel.command.input.size()
                                         : parsed.tokens.back().start;
   const std::filesystem::path completion_root =
-      shell_.project_root_.empty() ? std::filesystem::current_path() : shell_.project_root_;
+      state_.root.empty() ? std::filesystem::current_path() : state_.root;
   std::vector<std::string> command_names = WorkspaceCommandNames();
-  const auto& plugin_command_names = shell_.plugin_runtime_.Host().CommandNames();
+  const auto plugin_command_names = operations_.plugin_command_names();
   command_names.insert(command_names.end(), plugin_command_names.begin(), plugin_command_names.end());
 
   std::vector<CommandCompletionCandidate> candidates;
   if (active_index == 0) {
     candidates = CompleteFromValues(active_prefix, command_names);
   } else if (command == "colorscheme" && active_index == 1) {
-    candidates = CompleteFromValues(active_prefix, shell_.available_colorscheme_names_);
+    candidates = CompleteFromValues(active_prefix, available_colorscheme_names_);
     if (StartsWith("list", active_prefix)) {
       candidates.push_back(CommandCompletionCandidate{"list", true});
     }
@@ -146,16 +155,16 @@ void CommandPromptCoordinator::CompleteInput() {
       candidates.push_back(CommandCompletionCandidate{std::move(value), true});
     };
 
-    for (std::size_t i = 0; i < shell_.open_tabs_.size(); ++i) {
+    for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
       add_candidate(std::to_string(i + 1));
-      add_candidate(shell_.open_tabs_[i].title);
-      add_candidate(RelativePathLabel(shell_.project_root_, shell_.open_tabs_[i].path));
+      add_candidate(state_.open_tabs[i].title);
+      add_candidate(RelativePathLabel(state_.root, state_.open_tabs[i].path));
     }
   } else if (command == "tree" || command == "files") {
     candidates = CompletePath(completion_root, active_prefix, true);
   } else if (command == "sidebar-show" || command == "sidebar-toggle") {
     if (active_index == 1) {
-      std::vector<std::string> sidebar_names = SidebarViewIds(shell_.plugin_runtime_.Host());
+      std::vector<std::string> sidebar_names = operations_.sidebar_view_ids();
       candidates = CompleteFromValues(active_prefix, sidebar_names);
     } else if (parsed.tokens.size() >= 2 && parsed.tokens[1].text == "tree" &&
                active_index == 2) {
@@ -179,8 +188,8 @@ void CommandPromptCoordinator::CompleteInput() {
         candidates.size() == 1 ? candidates.front()
                                : CommandCompletionCandidate{common_prefix, false};
     const std::string replacement = FormatCommandCompletionToken(candidate);
-    shell_.command_.input.erase(replace_start);
-    shell_.command_.input += replacement;
+    state_.panel.command.input.erase(replace_start);
+    state_.panel.command.input += replacement;
   }
 
   if (candidates.size() == 1) {
@@ -203,27 +212,27 @@ void CommandPromptCoordinator::CompleteInput() {
 bool CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   switch (event.key) {
     case SDLK_ESCAPE: {
-      const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-      shell_.panel_state_.command_mode = false;
-      shell_.command_.input.clear();
+      const bool bottom_panel_was_visible = operations_.bottom_panel_visible();
+      state_.panel.command_mode = false;
+      state_.panel.command.input.clear();
       ResetSessionState();
-      shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+      operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
       return true;
     }
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      if (shell_.command_.input.empty() || ExecuteCommandLine(shell_.command_.input)) {
-        const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-        shell_.panel_state_.command_mode = false;
-        shell_.command_.input.clear();
+      if (state_.panel.command.input.empty() || ExecuteCommandLine(state_.panel.command.input)) {
+        const bool bottom_panel_was_visible = operations_.bottom_panel_visible();
+        state_.panel.command_mode = false;
+        state_.panel.command.input.clear();
         ResetSessionState();
-        shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+        operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
       }
       return true;
     case SDLK_BACKSPACE:
-      RemoveLastUtf8Codepoint(&shell_.command_.input);
-      shell_.command_.history_index.reset();
-      shell_.command_.history_pending_input.clear();
+      RemoveLastUtf8Codepoint(&state_.panel.command.input);
+      state_.panel.command.history_index.reset();
+      state_.panel.command.history_pending_input.clear();
       ClearFeedback();
       return true;
     case SDLK_UP:
@@ -240,13 +249,13 @@ bool CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   }
 }
 
-std::string CommandPromptCoordinator::PromptStatusText(const WorkspaceShell& shell) {
-  if (!shell.command_.feedback_text.empty()) {
-    return shell.command_.feedback_text;
+std::string CommandPromptCoordinator::PromptStatusText(const CommandState& command) {
+  if (!command.feedback_text.empty()) {
+    return command.feedback_text;
   }
-  if (shell.command_.history_index.has_value()) {
-    return "History " + std::to_string(*shell.command_.history_index + 1) + " / " +
-           std::to_string(shell.command_.history.size()) +
+  if (command.history_index.has_value()) {
+    return "History " + std::to_string(*command.history_index + 1) + " / " +
+           std::to_string(command.history.size()) +
            "  |  Enter run  Esc cancel  Tab complete";
   }
   return "Enter run  Esc cancel  Up/Down history  Tab complete";
@@ -278,24 +287,61 @@ bool CommandPromptCoordinator::ExecuteCommandLine(const std::string& command_lin
 
   const ActionSpec* action = FindWorkspaceActionByCommand(command);
   if (action != nullptr) {
-    return ActionCoordinator(shell_).Execute(action->id, args, ActionSource::Command);
+    return operations_.execute_action(action->id, args, ActionSource::Command);
   }
 
-  const std::size_t message_count_before = shell_.plugin_runtime_.Host().Messages().size();
-  std::string plugin_error;
-  if (shell_.plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error)) {
-    if (shell_.plugin_runtime_.Host().Messages().size() > message_count_before) {
-      SetFeedback(shell_.plugin_runtime_.Host().Messages().back());
+  const auto plugin_result = operations_.execute_plugin_command(command, args);
+  if (plugin_result.handled) {
+    if (!plugin_result.feedback.empty()) {
+      SetFeedback(plugin_result.feedback);
     }
     return true;
   }
-  if (!plugin_error.empty()) {
-    SetFeedback(std::move(plugin_error));
+  if (!plugin_result.error.empty()) {
+    SetFeedback(plugin_result.error);
     return false;
   }
 
   SetFeedback("Unknown command: " + command);
   return false;
+}
+
+CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
+  return CommandPromptCoordinator(
+      current_project_state_,
+      available_colorscheme_names_,
+      CommandPromptCoordinator::Operations{
+          .execute_action =
+              [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
+                return ActionCoordinator(*this).Execute(id, args, source);
+              },
+          .plugin_command_names =
+              [this]() {
+                const auto& names = plugin_runtime_.Host().CommandNames();
+                return std::vector<std::string>(names.begin(), names.end());
+              },
+          .sidebar_view_ids = [this]() { return SidebarViewIds(plugin_runtime_.Host()); },
+          .execute_plugin_command =
+              [this](const std::string& command, const std::vector<std::string>& args) {
+                CommandPromptCoordinator::PluginCommandResult result;
+                const std::size_t message_count_before = plugin_runtime_.Host().Messages().size();
+                std::string plugin_error;
+                result.handled = plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error);
+                if (result.handled) {
+                  if (plugin_runtime_.Host().Messages().size() > message_count_before) {
+                    result.feedback = plugin_runtime_.Host().Messages().back();
+                  }
+                  return result;
+                }
+                result.error = std::move(plugin_error);
+                return result;
+              },
+          .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
+          .request_command_mode_transition_redraw =
+              [this](bool bottom_panel_was_visible) {
+                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+              },
+      });
 }
 
 }  // namespace microide::workspace

@@ -136,7 +136,7 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
   if (shell_.panel_state_.command_mode) {
-    CommandPromptCoordinator(shell_).AppendInput(input);
+    shell_.MakeCommandPromptCoordinator().AppendInput(input);
     shell_.RequestBottomPanelCommandRedraw();
     return true;
   }

@@ -194,6 +194,9 @@ Current state:
   `WorkspaceMenuCoordinator` that depends on `MenuSurfaceState` plus explicit callbacks for menu
   item resolution, popup geometry, action dispatch, and chrome redraw instead of
   `WorkspaceShell&`
+- command-prompt input, history, completion, and command execution now run through a
+  `WorkspaceCommandPromptCoordinator` that depends on project command state plus explicit
+  callbacks for action dispatch, plugin command execution, sidebar-view enumeration, and bottom-panel redraw instead of `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

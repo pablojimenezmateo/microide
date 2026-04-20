@@ -55,7 +55,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return true;
   }
   if (shell_.panel_state_.command_mode) {
-    const bool handled = CommandPromptCoordinator(shell_).HandleKeyDown(event);
+    const bool handled = shell_.MakeCommandPromptCoordinator().HandleKeyDown(event);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestBottomPanelCommandRedraw(); });
     }

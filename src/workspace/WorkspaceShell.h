@@ -411,7 +411,6 @@ class WorkspaceShell {
   };
 
   friend class WorkspaceActionContext;
-  friend class CommandPromptCoordinator;
   friend class KeyInputCoordinator;
   friend class TextInputCoordinator;
   friend class TabCoordinator;
@@ -479,6 +478,7 @@ class WorkspaceShell {
   ProjectCatalogCoordinator MakeProjectCatalogCoordinator();
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
+  CommandPromptCoordinator MakeCommandPromptCoordinator();
   DirtyPromptCoordinator MakeDirtyPromptCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   void ResetLifecycleStartupState();

@@ -24,7 +24,7 @@ void WorkspaceActionContext::PrepareForAction(ActionSource source) {
 }
 
 bool WorkspaceActionContext::RejectAction(ActionSource source, std::string feedback) {
-  return CommandPromptCoordinator(shell_).RejectAction(source, std::move(feedback));
+  return shell_.MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
 }
 
 SidebarViewRequest WorkspaceActionContext::ParseSidebarViewRequest(
@@ -674,7 +674,7 @@ void WorkspaceActionContext::OpenCommandPrompt(std::string input) {
   shell_.panel_state_.command_mode = true;
   shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
   shell_.command_.input = std::move(input);
-  CommandPromptCoordinator(shell_).ResetSessionState();
+  shell_.MakeCommandPromptCoordinator().ResetSessionState();
   shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
 }
 
@@ -684,7 +684,7 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
   shell_.ReloadPluginsForCurrentProject();
-  CommandPromptCoordinator(shell_).SetFeedback(shell_.PluginRuntimeReloadSummary());
+  shell_.MakeCommandPromptCoordinator().SetFeedback(shell_.PluginRuntimeReloadSummary());
 }
 
 void WorkspaceActionContext::RequestQuit() {
