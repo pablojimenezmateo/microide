@@ -86,6 +86,14 @@ bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state)
       if (const auto scale = ParseUiScaleValue(tokens[1].text); scale.has_value()) {
         state->ui_scale = *scale;
       }
+      continue;
+    }
+    if (command == "setting" && tokens.size() == 3) {
+      state->settings.emplace_back(tokens[1].text, tokens[2].text);
+      continue;
+    }
+    if (command == "keybinding-disabled" && tokens.size() == 2) {
+      state->disabled_keybinding_ids.push_back(tokens[1].text);
     }
   }
 
@@ -96,6 +104,12 @@ std::string SerializeUserConfig(const PersistedUserConfigState& state) {
   std::ostringstream stream;
   stream << "version 1\n";
   stream << "ui-scale " << state.ui_scale << '\n';
+  for (const auto& [id, value] : state.settings) {
+    stream << "setting " << QuoteCommandArg(id) << ' ' << QuoteCommandArg(value) << '\n';
+  }
+  for (const auto& id : state.disabled_keybinding_ids) {
+    stream << "keybinding-disabled " << QuoteCommandArg(id) << '\n';
+  }
   return stream.str();
 }
 
@@ -147,6 +161,26 @@ bool ParseProjectConfigText(std::string_view text, PersistedProjectConfigState* 
     }
     if (command == "project-base-color" && tokens.size() == 2) {
       state->project_base_color = ParseProjectColor(tokens[1].text);
+      continue;
+    }
+    if (command == "setting" && tokens.size() == 3) {
+      state->settings.emplace_back(tokens[1].text, tokens[2].text);
+      continue;
+    }
+    if (command == "sidebar-view-policy" && tokens.size() >= 2) {
+      PersistedSidebarViewPolicy policy;
+      policy.view_id = tokens[1].text;
+      for (std::size_t i = 2; i < tokens.size(); ++i) {
+        if (tokens[i].text == "hidden") {
+          policy.hidden = true;
+        } else if (tokens[i].text.starts_with("order=")) {
+          try {
+            policy.order = std::stoi(tokens[i].text.substr(6));
+          } catch (...) {
+          }
+        }
+      }
+      state->sidebar_policies.push_back(std::move(policy));
     }
   }
 
@@ -163,6 +197,19 @@ std::string SerializeProjectConfig(const PersistedProjectConfigState& state) {
   if (state.project_base_color.has_value()) {
     stream << "project-base-color "
            << QuoteCommandArg(FormatProjectColor(*state.project_base_color)) << '\n';
+  }
+  for (const auto& [id, value] : state.settings) {
+    stream << "setting " << QuoteCommandArg(id) << ' ' << QuoteCommandArg(value) << '\n';
+  }
+  for (const auto& policy : state.sidebar_policies) {
+    stream << "sidebar-view-policy " << QuoteCommandArg(policy.view_id);
+    if (policy.hidden) {
+      stream << " hidden";
+    }
+    if (policy.order != 0) {
+      stream << " order=" << policy.order;
+    }
+    stream << '\n';
   }
   return stream.str();
 }

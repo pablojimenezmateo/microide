@@ -3,9 +3,15 @@
 #include <array>
 #include <cstddef>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "workspace/WorkspaceActionTypes.h"
+
+namespace microide::plugin {
+class PluginHost;
+}  // namespace microide::plugin
 
 namespace microide::workspace {
 
@@ -51,5 +57,24 @@ struct MenuSpec {
 std::span<const MenuSpec> WorkspaceMenuSpecs();
 const MenuSpec* FindWorkspaceMenuSpec(MenuId id);
 std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKind target);
+
+// Map a plugin menu string ("file", "edit", "view", "search") to a MenuId.
+// Returns MenuId::None for unrecognised values.
+MenuId ParseMenuId(std::string_view name);
+
+// Dynamic menu items contributed by plugins for a given menu.
+// Returned items use owning strings because plugin data is not static.
+struct ContributedMenuItemView {
+  std::string id;
+  std::string action;      // command name (plugin or built-in)
+  std::string label;
+  std::string accelerator;
+  bool separator_before = false;
+  std::string plugin_id;
+};
+
+std::vector<ContributedMenuItemView> ContributedMenuItems(
+    MenuId menu_id,
+    const plugin::PluginHost& plugin_host);
 
 }  // namespace microide::workspace

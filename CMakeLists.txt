@@ -240,6 +240,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
+  src/workspace/WorkspaceKeybindingRegistry.cpp
+  src/workspace/WorkspaceSettingsRegistry.cpp
+  src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
@@ -332,6 +335,7 @@ add_executable(microide_tests
   tests/WorkspaceShellSharedSearchTests.cpp
   tests/WorkspaceShellSharedTerminalTests.cpp
   tests/WorkspaceShellTerminalTests.cpp
+  tests/ContributionRegistryTests.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")

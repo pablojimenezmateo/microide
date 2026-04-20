@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 
 #include "workspace/WorkspaceCommandParsing.h"
 
@@ -118,6 +119,37 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
   }
 
   return request;
+}
+
+std::vector<SidebarViewInfo> OrderedSidebarViews(
+    const plugin::PluginHost& plugin_host,
+    const std::vector<SidebarViewPolicy>& policies) {
+  std::vector<SidebarViewInfo> all = SidebarViews(plugin_host);
+
+  // Remove hidden views.
+  all.erase(std::remove_if(all.begin(), all.end(),
+                            [&](const SidebarViewInfo& info) {
+                              return EffectiveSidebarViewPolicy(info.id, policies).hidden;
+                            }),
+            all.end());
+
+  // Stable-sort by policy order (views with no explicit entry get order = INT_MAX).
+  std::stable_sort(all.begin(), all.end(),
+                   [&](const SidebarViewInfo& a, const SidebarViewInfo& b) {
+                     return EffectiveSidebarViewPolicy(a.id, policies).order <
+                            EffectiveSidebarViewPolicy(b.id, policies).order;
+                   });
+  return all;
+}
+
+SidebarViewPolicy EffectiveSidebarViewPolicy(std::string_view view_id,
+                                              const std::vector<SidebarViewPolicy>& policies) {
+  for (const SidebarViewPolicy& p : policies) {
+    if (p.view_id == view_id) {
+      return p;
+    }
+  }
+  return SidebarViewPolicy{std::string(view_id), false, std::numeric_limits<int>::max()};
 }
 
 }  // namespace microide::workspace

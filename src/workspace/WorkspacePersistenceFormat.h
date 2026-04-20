@@ -60,6 +60,14 @@ struct PersistedEditorTabState {
 
 struct PersistedUserConfigState {
   float ui_scale = 1.0f;
+  std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
+  std::vector<std::string> disabled_keybinding_ids;
+};
+
+struct PersistedSidebarViewPolicy {
+  std::string view_id;
+  bool hidden = false;
+  int order = 0;
 };
 
 struct PersistedProjectConfigState {
@@ -68,6 +76,8 @@ struct PersistedProjectConfigState {
   bool editor_soft_tabs = false;
   std::string colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
+  std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
+  std::vector<PersistedSidebarViewPolicy> sidebar_policies;
 };
 
 struct PersistedProjectSessionState {

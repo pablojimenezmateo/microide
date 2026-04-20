@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 
+#include "plugin/PluginHost.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -151,6 +153,35 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
     default:
       return {};
   }
+}
+
+MenuId ParseMenuId(std::string_view name) {
+  if (name == "file") return MenuId::File;
+  if (name == "edit") return MenuId::Edit;
+  if (name == "view") return MenuId::View;
+  if (name == "search") return MenuId::Search;
+  if (name == "terminal") return MenuId::Terminal;
+  return MenuId::None;
+}
+
+std::vector<ContributedMenuItemView> ContributedMenuItems(
+    MenuId menu_id,
+    const plugin::PluginHost& plugin_host) {
+  std::vector<ContributedMenuItemView> result;
+  for (const auto& entry : plugin_host.ContributedMenuEntries()) {
+    if (ParseMenuId(entry.menu) != menu_id) {
+      continue;
+    }
+    result.push_back(ContributedMenuItemView{
+        .id = entry.id,
+        .action = entry.action,
+        .label = entry.label,
+        .accelerator = entry.accelerator,
+        .separator_before = entry.separator_before,
+        .plugin_id = entry.plugin_id,
+    });
+  }
+  return result;
 }
 
 }  // namespace microide::workspace
