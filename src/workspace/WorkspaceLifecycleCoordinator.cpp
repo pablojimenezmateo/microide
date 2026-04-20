@@ -1,169 +1,201 @@
 #include "workspace/WorkspaceLifecycleCoordinator.h"
 
 #include <filesystem>
+#include <utility>
 
 #include "util/StartupTrace.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
+#include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
-LifecycleCoordinator::LifecycleCoordinator(WorkspaceShell& shell) : shell_(shell) {}
-
-void LifecycleCoordinator::ResetStartupState() {
-  shell_.caret_blink_epoch_ms_ = SDL_GetTicks();
-  shell_.cursor_kind_ = WorkspaceShell::CursorKind::Default;
-  shell_.last_mouse_position_valid_ = false;
-  shell_.quit_requested_ = false;
-  shell_.prompts_.dirty_visible = false;
-  shell_.project_catalog_.entries.clear();
-  shell_.project_catalog_.active_index = 0;
-  shell_.project_catalog_.tab_scroll_index = 0;
-}
-
-void LifecycleCoordinator::RegisterWakeEvents() {
-  const Uint32 plugin_asset_event_type = SDL_RegisterEvents(1);
-  shell_.plugin_runtime_.SetWakeEventType(
-      plugin_asset_event_type != static_cast<Uint32>(-1) ? plugin_asset_event_type : 0);
-
-  shell_.git_blame_event_type_ = SDL_RegisterEvents(1);
-  if (shell_.git_blame_event_type_ != static_cast<Uint32>(-1)) {
-    shell_.git_blame_service_.SetWakeEventType(shell_.git_blame_event_type_);
-  } else {
-    shell_.git_blame_event_type_ = 0;
-  }
-
-  shell_.terminal_event_type_ = SDL_RegisterEvents(1);
-  if (shell_.terminal_event_type_ == static_cast<Uint32>(-1)) {
-    shell_.terminal_event_type_ = 0;
-  }
-
-  shell_.project_open_dialog_event_type_ = SDL_RegisterEvents(1);
-  if (shell_.project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
-    shell_.project_open_dialog_event_type_ = 0;
-  }
-}
-
-void LifecycleCoordinator::DestroyCursors() {
-  if (SDL_Cursor* default_cursor = SDL_GetDefaultCursor(); default_cursor != nullptr) {
-    SDL_SetCursor(default_cursor);
-  }
-
-  if (shell_.text_cursor_ != nullptr) {
-    SDL_DestroyCursor(shell_.text_cursor_);
-    shell_.text_cursor_ = nullptr;
-  }
-  if (shell_.pointer_cursor_ != nullptr) {
-    SDL_DestroyCursor(shell_.pointer_cursor_);
-    shell_.pointer_cursor_ = nullptr;
-  }
-  if (shell_.ew_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(shell_.ew_resize_cursor_);
-    shell_.ew_resize_cursor_ = nullptr;
-  }
-  if (shell_.ns_resize_cursor_ != nullptr) {
-    SDL_DestroyCursor(shell_.ns_resize_cursor_);
-    shell_.ns_resize_cursor_ = nullptr;
-  }
-
-  shell_.cursor_kind_ = WorkspaceShell::CursorKind::Default;
-  shell_.last_mouse_position_valid_ = false;
-}
-
-std::size_t LifecycleCoordinator::DirtyProjectTabCount() const {
-  std::size_t dirty_count = shell_.DirtyEditorTabIndices().size();
-  for (std::size_t i = 0; i < shell_.project_catalog_.entries.size(); ++i) {
-    if (shell_.HasActiveProjectCatalogEntry() && i == shell_.project_catalog_.active_index) {
-      continue;
-    }
-    dirty_count += shell_.DirtyEditorTabIndicesForProject(i).size();
-  }
-  return dirty_count;
-}
+LifecycleCoordinator::LifecycleCoordinator(WorkspaceContext& context,
+                                           bool& quit_requested,
+                                           Operations operations)
+    : context_(context),
+      quit_requested_(quit_requested),
+      operations_(std::move(operations)) {}
 
 bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::Initialize");
-  PersistenceCoordinator persistence(shell_);
-  ResetStartupState();
+  operations_.reset_startup_state();
 
-  shell_.project_search_runtime_.Initialize();
-  RegisterWakeEvents();
+  operations_.initialize_project_search_runtime();
+  operations_.register_wake_events();
 
   {
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");
-    persistence.RestoreUserConfig();
+    operations_.restore_user_config();
   }
   {
     util::StartupTrace::Scope refresh_colors_scope(
         "WorkspaceShell::RefreshAvailableColorschemeNames");
-    persistence.RefreshAvailableColorschemeNames();
+    operations_.refresh_available_colorscheme_names();
   }
   {
     util::StartupTrace::Scope reset_state_scope("WorkspaceShell::ResetProjectScopedState");
-    shell_.ResetProjectScopedState(true);
+    operations_.reset_project_scoped_state(true);
   }
 
   {
     util::StartupTrace::Scope restore_workspace_scope("WorkspaceShell::RestoreWorkspaceSession");
-    if (persistence.RestoreWorkspaceSession()) {
+    if (operations_.restore_workspace_session()) {
       return true;
     }
   }
 
   if (project_root.empty()) {
-    shell_.ReloadPluginsForCurrentProject();
+    operations_.reload_plugins_for_current_project();
     return true;
   }
 
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
-  return shell_.OpenProjectTab(project_root, true, true);
+  return operations_.open_project_tab(project_root, true, true);
 }
 
 void LifecycleCoordinator::Shutdown() {
-  PersistenceCoordinator persistence(shell_);
-  shell_.plugin_runtime_.Shutdown();
-  persistence.SaveUserConfig();
-  shell_.git_blame_service_.Stop();
-
-  if (shell_.HasActiveProjectCatalogEntry()) {
-    shell_.MakeProjectCatalogCoordinator().PersistActiveEntry();
-  }
-  shell_.MakeProjectCatalogCoordinator().PersistInactiveEntriesForShutdown();
-  persistence.SaveWorkspaceSession();
-
-  shell_.project_search_runtime_.Shutdown();
-  shell_.terminal_tabs_.clear();
-  DestroyCursors();
+  operations_.shutdown_plugin_runtime();
+  operations_.save_user_config();
+  operations_.stop_git_blame_service();
+  operations_.persist_active_project();
+  operations_.persist_inactive_projects_for_shutdown();
+  operations_.save_workspace_session();
+  operations_.shutdown_project_search_runtime();
+  operations_.clear_terminal_tabs();
+  operations_.destroy_cursors();
 }
 
 void LifecycleCoordinator::RequestQuit() {
-  if (shell_.prompts_.dirty_visible) {
-    shell_.surface_.focus = WorkspaceShell::FocusTarget::Overlay;
+  if (context_.prompts.dirty_visible) {
+    context_.current_project_state.surface.focus = FocusTarget::Overlay;
     return;
   }
-  shell_.quit_requested_ = true;
+  quit_requested_ = true;
 }
 
 bool LifecycleCoordinator::ConsumeQuitRequested() {
-  const bool requested = shell_.quit_requested_;
-  shell_.quit_requested_ = false;
+  const bool requested = quit_requested_;
+  quit_requested_ = false;
   return requested;
 }
 
+void WorkspaceShell::ResetLifecycleStartupState() {
+  caret_blink_epoch_ms_ = SDL_GetTicks();
+  cursor_kind_ = CursorKind::Default;
+  last_mouse_position_valid_ = false;
+  quit_requested_ = false;
+  prompts_.dirty_visible = false;
+  project_catalog_.entries.clear();
+  project_catalog_.active_index = 0;
+  project_catalog_.tab_scroll_index = 0;
+}
+
+void WorkspaceShell::RegisterLifecycleWakeEvents() {
+  const Uint32 plugin_asset_event_type = SDL_RegisterEvents(1);
+  plugin_runtime_.SetWakeEventType(
+      plugin_asset_event_type != static_cast<Uint32>(-1) ? plugin_asset_event_type : 0);
+
+  git_blame_event_type_ = SDL_RegisterEvents(1);
+  if (git_blame_event_type_ != static_cast<Uint32>(-1)) {
+    git_blame_service_.SetWakeEventType(git_blame_event_type_);
+  } else {
+    git_blame_event_type_ = 0;
+  }
+
+  terminal_event_type_ = SDL_RegisterEvents(1);
+  if (terminal_event_type_ == static_cast<Uint32>(-1)) {
+    terminal_event_type_ = 0;
+  }
+
+  project_open_dialog_event_type_ = SDL_RegisterEvents(1);
+  if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
+    project_open_dialog_event_type_ = 0;
+  }
+}
+
+void WorkspaceShell::DestroyLifecycleCursors() {
+  if (SDL_Cursor* default_cursor = SDL_GetDefaultCursor(); default_cursor != nullptr) {
+    SDL_SetCursor(default_cursor);
+  }
+
+  if (text_cursor_ != nullptr) {
+    SDL_DestroyCursor(text_cursor_);
+    text_cursor_ = nullptr;
+  }
+  if (pointer_cursor_ != nullptr) {
+    SDL_DestroyCursor(pointer_cursor_);
+    pointer_cursor_ = nullptr;
+  }
+  if (ew_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(ew_resize_cursor_);
+    ew_resize_cursor_ = nullptr;
+  }
+  if (ns_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(ns_resize_cursor_);
+    ns_resize_cursor_ = nullptr;
+  }
+
+  cursor_kind_ = CursorKind::Default;
+  last_mouse_position_valid_ = false;
+}
+
+LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
+  return LifecycleCoordinator(
+      context_,
+      quit_requested_,
+      LifecycleCoordinator::Operations{
+          .reset_startup_state = [this]() { ResetLifecycleStartupState(); },
+          .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
+          .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
+          .restore_user_config = [this]() { PersistenceCoordinator(*this).RestoreUserConfig(); },
+          .refresh_available_colorscheme_names =
+              [this]() { PersistenceCoordinator(*this).RefreshAvailableColorschemeNames(); },
+          .reset_project_scoped_state = [this](bool show_welcome) {
+            ResetProjectScopedState(show_welcome);
+          },
+          .restore_workspace_session =
+              [this]() { return PersistenceCoordinator(*this).RestoreWorkspaceSession(); },
+          .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
+          .open_project_tab =
+              [this](const std::filesystem::path& project_root,
+                     bool restore_persistence,
+                     bool log_feedback) {
+                return OpenProjectTab(project_root, restore_persistence, log_feedback);
+              },
+          .shutdown_plugin_runtime = [this]() { plugin_runtime_.Shutdown(); },
+          .save_user_config = [this]() { PersistenceCoordinator(*this).SaveUserConfig(); },
+          .stop_git_blame_service = [this]() { git_blame_service_.Stop(); },
+          .persist_active_project =
+              [this]() {
+                if (HasActiveProjectCatalogEntry()) {
+                  MakeProjectCatalogCoordinator().PersistActiveEntry();
+                }
+              },
+          .persist_inactive_projects_for_shutdown =
+              [this]() { MakeProjectCatalogCoordinator().PersistInactiveEntriesForShutdown(); },
+          .save_workspace_session =
+              [this]() { PersistenceCoordinator(*this).SaveWorkspaceSession(); },
+          .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
+          .clear_terminal_tabs = [this]() { terminal_tabs_.clear(); },
+          .destroy_cursors = [this]() { DestroyLifecycleCursors(); },
+      });
+}
+
 bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
-  return LifecycleCoordinator(*this).Initialize(project_root);
+  return MakeLifecycleCoordinator().Initialize(project_root);
 }
 
 void WorkspaceShell::Shutdown() {
-  LifecycleCoordinator(*this).Shutdown();
+  MakeLifecycleCoordinator().Shutdown();
 }
 
 void WorkspaceShell::RequestQuit() {
-  LifecycleCoordinator(*this).RequestQuit();
+  MakeLifecycleCoordinator().RequestQuit();
 }
 
 bool WorkspaceShell::ConsumeQuitRequested() {
-  return LifecycleCoordinator(*this).ConsumeQuitRequested();
+  return MakeLifecycleCoordinator().ConsumeQuitRequested();
 }
 
 }  // namespace microide::workspace

@@ -180,6 +180,9 @@ Current state:
   top-level `WorkspaceProjectCatalogCoordinator` now depends on `WorkspaceContext` plus explicit
   shell callbacks for project activation, persistence saves, plugin-host shutdown, redraw, and
   welcome-state fallback instead of reaching into shell-private fields directly
+- lifecycle init, shutdown, quit-request handling, wake-event registration, and cursor teardown now
+  run through a `WorkspaceLifecycleCoordinator` that depends on `WorkspaceContext`, a quit flag,
+  and explicit lifecycle callbacks instead of `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

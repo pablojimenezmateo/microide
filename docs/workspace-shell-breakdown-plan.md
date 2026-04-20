@@ -41,12 +41,13 @@ Evidence from the current codebase:
   it through alias members such as `project_root_`, `directory_tree_`, `open_tabs_`, `surface_`,
   `sidebar_state_`, `overlay_state_`, `panel_state_`, `terminal_tabs_`, `diagnostics_store_`,
   `active_colorscheme_name_`, and `editor_preferences_`.
-- `WorkspaceShell` still declares 20 `friend class` relationships so coordinators can reach into
+- `WorkspaceShell` still declares 19 `friend class` relationships so coordinators can reach into
   private shell state directly.
 - `WorkspaceContext` now owns project catalog, active project, prompt, menu, and interaction
   state, but most top-level coordinators still take `WorkspaceShell&` and therefore still depend
-  on the full shell rather than on narrow APIs. `WorkspaceProjectCatalogCoordinator` is the first
-  exception: it now depends on `WorkspaceContext` plus explicit callbacks.
+  on the full shell rather than on narrow APIs. `WorkspaceProjectCatalogCoordinator` and
+  `WorkspaceLifecycleCoordinator` are the first exceptions: they now depend on `WorkspaceContext`
+  plus explicit callbacks instead of `WorkspaceShell&`.
 - `WorkspaceActionContext` is still a shell proxy. It exposes a cleaner file boundary than the old
   nested action coordinator, but it still mostly forwards into private shell state and shell
   helpers.
@@ -335,8 +336,8 @@ This work should land in coherent slices rather than one giant branch:
    and interaction state.
 2. Add `WorkspaceContext` and make the shell delegate state ownership to it.
    Status: in progress on 2026-04-20. `WorkspaceContext` now owns the shell's core workspace
-   state, and `WorkspaceProjectCatalogCoordinator` now consumes that context plus explicit
-   callbacks instead of `WorkspaceShell&`.
+   state, and `WorkspaceProjectCatalogCoordinator` plus `WorkspaceLifecycleCoordinator` now
+   consume that context plus explicit callbacks instead of `WorkspaceShell&`.
 3. Migrate the least UI-coupled controllers first: project catalog, persistence, lifecycle.
 4. Migrate action handling so new controllers stop needing shell reach-through.
 5. Migrate sidebar, tabs, prompts, and overlays onto explicit controller APIs.
