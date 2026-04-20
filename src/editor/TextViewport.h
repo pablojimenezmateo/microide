@@ -122,17 +122,23 @@ class TextViewport {
   void InvalidateSyntaxHighlighting();
 
  private:
-  struct HistoryEntry {
-    std::vector<std::string> lines;
+  struct ViewState {
     std::size_t cursor_line = 0;
     std::size_t cursor_column = 0;
     std::size_t preferred_column = 0;
     std::size_t scroll_line = 0;
     std::size_t horizontal_scroll = 0;
     std::optional<TextPosition> selection_anchor;
-    TextEncoding encoding = TextEncoding::ASCII;
     bool placeholder = false;
     bool dirty = false;
+  };
+
+  struct HistoryEntry {
+    std::size_t start_line = 0;
+    std::vector<std::string> before_lines;
+    std::vector<std::string> after_lines;
+    ViewState before_state;
+    ViewState after_state;
   };
 
   struct DocumentState {
@@ -171,7 +177,13 @@ class TextViewport {
     std::vector<SyntaxTokenKind> tokens;
   };
 
-  void MarkDirty();
+  void ResetState(std::vector<std::string> lines,
+                  const std::filesystem::path& path,
+                  LineEnding line_ending,
+                  bool mixed_line_endings,
+                  TextEncoding encoding,
+                  bool placeholder,
+                  bool dirty);
   void InvalidateLayoutCaches();
   void RefreshEncoding();
   void EnsureInitialHighlightState() const;
@@ -182,15 +194,34 @@ class TextViewport {
   void EnsureCursorVisible();
   void BeginSelectionIfNeeded(bool extend_selection);
   bool DeleteSelection();
-  void SaveUndoSnapshot();
-  void RestoreSnapshot(const HistoryEntry& snapshot);
+  ViewState CaptureViewState() const;
+  void RestoreViewState(const ViewState& state);
+  void PushHistoryEntry(HistoryEntry entry);
+  void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
+  std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
+                                                     std::string_view replacement) const;
+  HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
+                                     std::size_t end_line,
+                                     const std::vector<std::string>& replacement) const;
+  static HistoryEntry BuildHistoryEntryForDocumentChange(const std::vector<std::string>& before_lines,
+                                                         const ViewState& before_state,
+                                                         const std::vector<std::string>& after_lines,
+                                                         const ViewState& after_state);
+  bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo);
+  bool ApplyLineEdit(std::size_t start_line,
+                     std::size_t end_line,
+                     const std::vector<std::string>& replacement,
+                     bool record_undo);
   std::size_t MaxVisualColumns() const;
   void EnsureDocument();
   static DecodedDocument DecodeDocument(std::string_view content);
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(const std::vector<std::string>& lines);
   static bool IsValidUtf8(std::string_view content);
-  static std::vector<std::string> SplitLines(const std::string& content);
+  static std::vector<std::string> SliceLines(const std::vector<std::string>& lines,
+                                             std::size_t start_line,
+                                             std::size_t end_line);
+  static SelectionRange NormalizeRange(const SelectionRange& range);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
   std::shared_ptr<DocumentState> document_;

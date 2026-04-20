@@ -42,21 +42,11 @@ std::vector<std::string> SplitSyntaxLines(std::string_view text) {
 
 std::string SerializeLines(const std::vector<std::string>& lines,
                            editor::TextViewport::LineEnding line_ending) {
-  std::string separator = "\n";
-  if (line_ending == editor::TextViewport::LineEnding::CRLF) {
-    separator = "\r\n";
-  } else if (line_ending == editor::TextViewport::LineEnding::CR) {
-    separator = "\r";
-  }
-
-  std::string text;
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (i > 0) {
-      text += separator;
-    }
-    text += lines[i];
-  }
-  return text;
+  const std::string_view separator =
+      line_ending == editor::TextViewport::LineEnding::CRLF ? std::string_view{"\r\n"}
+      : line_ending == editor::TextViewport::LineEnding::CR   ? std::string_view{"\r"}
+                                                              : std::string_view{"\n"};
+  return util::JoinLines(lines, separator);
 }
 
 editor::TextViewport::LineEnding DetectLineEnding(std::string_view text) {

@@ -17,29 +17,72 @@ namespace {
 
 #if defined(__unix__) || defined(__APPLE__)
 
-void CloseIfValid(int fd) {
-  if (fd >= 0) {
-    close(fd);
-  }
-}
+class UniqueFd {
+ public:
+  UniqueFd() = default;
+  explicit UniqueFd(int fd) : fd_(fd) {}
 
-bool OpenPipe(bool enabled, int (&pipe_fds)[2]) {
-  pipe_fds[0] = -1;
-  pipe_fds[1] = -1;
+  UniqueFd(const UniqueFd&) = delete;
+  UniqueFd& operator=(const UniqueFd&) = delete;
+
+  UniqueFd(UniqueFd&& other) noexcept : fd_(other.Release()) {}
+
+  UniqueFd& operator=(UniqueFd&& other) noexcept {
+    if (this != &other) {
+      Reset(other.Release());
+    }
+    return *this;
+  }
+
+  ~UniqueFd() { Reset(); }
+
+  int Get() const { return fd_; }
+  bool IsValid() const { return fd_ >= 0; }
+
+  int Release() {
+    const int fd = fd_;
+    fd_ = -1;
+    return fd;
+  }
+
+  void Reset(int fd = -1) {
+    if (fd_ >= 0) {
+      close(fd_);
+    }
+    fd_ = fd;
+  }
+
+ private:
+  int fd_ = -1;
+};
+
+bool OpenPipe(bool enabled, std::array<UniqueFd, 2>* pipe_fds) {
+  if (pipe_fds == nullptr) {
+    return false;
+  }
+  (*pipe_fds)[0].Reset();
+  (*pipe_fds)[1].Reset();
   if (!enabled) {
     return true;
   }
-  return pipe(pipe_fds) == 0;
+
+  int raw_pipe[2] = {-1, -1};
+  if (pipe(raw_pipe) != 0) {
+    return false;
+  }
+  (*pipe_fds)[0].Reset(raw_pipe[0]);
+  (*pipe_fds)[1].Reset(raw_pipe[1]);
+  return true;
 }
 
-void DrainReadyPipe(int* fd, std::string* output) {
-  if (fd == nullptr || *fd < 0 || output == nullptr) {
+void DrainReadyPipe(UniqueFd* fd, std::string* output) {
+  if (fd == nullptr || !fd->IsValid() || output == nullptr) {
     return;
   }
 
   std::array<char, 4096> buffer{};
   while (true) {
-    const ssize_t bytes_read = read(*fd, buffer.data(), buffer.size());
+    const ssize_t bytes_read = read(fd->Get(), buffer.data(), buffer.size());
     if (bytes_read > 0) {
       output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
       if (bytes_read == static_cast<ssize_t>(buffer.size())) {
@@ -48,31 +91,32 @@ void DrainReadyPipe(int* fd, std::string* output) {
       return;
     }
     if (bytes_read == 0) {
-      CloseIfValid(*fd);
-      *fd = -1;
+      fd->Reset();
       return;
     }
     if (errno == EINTR) {
       continue;
     }
-    CloseIfValid(*fd);
-    *fd = -1;
+    fd->Reset();
     return;
   }
 }
 
-void DrainCapturedPipes(int* stdout_fd,
+void DrainCapturedPipes(UniqueFd* stdout_fd,
                         std::string* stdout_text,
-                        int* stderr_fd,
+                        UniqueFd* stderr_fd,
                         std::string* stderr_text) {
-  while ((stdout_fd != nullptr && *stdout_fd >= 0) || (stderr_fd != nullptr && *stderr_fd >= 0)) {
+  while ((stdout_fd != nullptr && stdout_fd->IsValid()) ||
+         (stderr_fd != nullptr && stderr_fd->IsValid())) {
     std::array<pollfd, 2> poll_fds{};
     nfds_t count = 0;
-    if (stdout_fd != nullptr && *stdout_fd >= 0) {
-      poll_fds[count++] = pollfd{.fd = *stdout_fd, .events = POLLIN | POLLHUP, .revents = 0};
+    if (stdout_fd != nullptr && stdout_fd->IsValid()) {
+      poll_fds[count++] =
+          pollfd{.fd = stdout_fd->Get(), .events = POLLIN | POLLHUP, .revents = 0};
     }
-    if (stderr_fd != nullptr && *stderr_fd >= 0) {
-      poll_fds[count++] = pollfd{.fd = *stderr_fd, .events = POLLIN | POLLHUP, .revents = 0};
+    if (stderr_fd != nullptr && stderr_fd->IsValid()) {
+      poll_fds[count++] =
+          pollfd{.fd = stderr_fd->Get(), .events = POLLIN | POLLHUP, .revents = 0};
     }
 
     if (count == 0) {
@@ -91,11 +135,13 @@ void DrainCapturedPipes(int* stdout_fd,
       if ((poll_fds[index].revents & (POLLIN | POLLHUP)) == 0) {
         continue;
       }
-      if (stdout_fd != nullptr && poll_fds[index].fd == *stdout_fd) {
+      if (stdout_fd != nullptr && stdout_fd->IsValid() &&
+          poll_fds[index].fd == stdout_fd->Get()) {
         DrainReadyPipe(stdout_fd, stdout_text);
         continue;
       }
-      if (stderr_fd != nullptr && poll_fds[index].fd == *stderr_fd) {
+      if (stderr_fd != nullptr && stderr_fd->IsValid() &&
+          poll_fds[index].fd == stderr_fd->Get()) {
         DrainReadyPipe(stderr_fd, stderr_text);
       }
     }
@@ -148,56 +194,43 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   result.stderr_text = "Subprocess execution is not implemented on this platform";
   return result;
 #else
-  int stdout_pipe[2] = {-1, -1};
-  int stderr_pipe[2] = {-1, -1};
-  int stdin_pipe[2] = {-1, -1};
+  std::array<UniqueFd, 2> stdout_pipe;
+  std::array<UniqueFd, 2> stderr_pipe;
+  std::array<UniqueFd, 2> stdin_pipe;
 
   const bool needs_stdin = !options.stdin_text.empty();
-  if (!OpenPipe(options.capture_stdout, stdout_pipe) || !OpenPipe(options.capture_stderr, stderr_pipe) ||
-      !OpenPipe(needs_stdin, stdin_pipe)) {
-    CloseIfValid(stdout_pipe[0]);
-    CloseIfValid(stdout_pipe[1]);
-    CloseIfValid(stderr_pipe[0]);
-    CloseIfValid(stderr_pipe[1]);
-    CloseIfValid(stdin_pipe[0]);
-    CloseIfValid(stdin_pipe[1]);
+  if (!OpenPipe(options.capture_stdout, &stdout_pipe) ||
+      !OpenPipe(options.capture_stderr, &stderr_pipe) || !OpenPipe(needs_stdin, &stdin_pipe)) {
     return result;
   }
 
   const pid_t pid = fork();
   if (pid < 0) {
-    CloseIfValid(stdout_pipe[0]);
-    CloseIfValid(stdout_pipe[1]);
-    CloseIfValid(stderr_pipe[0]);
-    CloseIfValid(stderr_pipe[1]);
-    CloseIfValid(stdin_pipe[0]);
-    CloseIfValid(stdin_pipe[1]);
     return result;
   }
 
   if (pid == 0) {
     if (options.capture_stdout) {
-      dup2(stdout_pipe[1], STDOUT_FILENO);
+      dup2(stdout_pipe[1].Get(), STDOUT_FILENO);
     }
     if (options.capture_stderr) {
-      dup2(stderr_pipe[1], STDERR_FILENO);
+      dup2(stderr_pipe[1].Get(), STDERR_FILENO);
     } else if (options.silence_stderr) {
-      const int devnull = open("/dev/null", O_WRONLY);
-      if (devnull >= 0) {
-        dup2(devnull, STDERR_FILENO);
-        close(devnull);
+      UniqueFd devnull(open("/dev/null", O_WRONLY));
+      if (devnull.IsValid()) {
+        dup2(devnull.Get(), STDERR_FILENO);
       }
     }
     if (needs_stdin) {
-      dup2(stdin_pipe[0], STDIN_FILENO);
+      dup2(stdin_pipe[0].Get(), STDIN_FILENO);
     }
 
-    CloseIfValid(stdout_pipe[0]);
-    CloseIfValid(stdout_pipe[1]);
-    CloseIfValid(stderr_pipe[0]);
-    CloseIfValid(stderr_pipe[1]);
-    CloseIfValid(stdin_pipe[0]);
-    CloseIfValid(stdin_pipe[1]);
+    stdout_pipe[0].Reset();
+    stdout_pipe[1].Reset();
+    stderr_pipe[0].Reset();
+    stderr_pipe[1].Reset();
+    stdin_pipe[0].Reset();
+    stdin_pipe[1].Reset();
 
     if (!options.cwd.empty()) {
       (void)chdir(options.cwd.string().c_str());
@@ -214,18 +247,18 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     _exit(errno == ENOENT ? 127 : 126);
   }
 
-  CloseIfValid(stdout_pipe[1]);
-  CloseIfValid(stderr_pipe[1]);
-  CloseIfValid(stdin_pipe[0]);
+  stdout_pipe[1].Reset();
+  stderr_pipe[1].Reset();
+  stdin_pipe[0].Reset();
   if (needs_stdin) {
-    WriteAllToPipe(stdin_pipe[1], options.stdin_text);
-    CloseIfValid(stdin_pipe[1]);
+    WriteAllToPipe(stdin_pipe[1].Get(), options.stdin_text);
+    stdin_pipe[1].Reset();
   }
 
   DrainCapturedPipes(options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
                      options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text);
-  CloseIfValid(stdout_pipe[0]);
-  CloseIfValid(stderr_pipe[0]);
+  stdout_pipe[0].Reset();
+  stderr_pipe[0].Reset();
 
   int status = 0;
   while (waitpid(pid, &status, 0) < 0) {

@@ -109,6 +109,10 @@ The codebase is organized by responsibility:
 and rendering work should continue to move into narrower subsystems rather than accrete more
 logic in one file.
 
+Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
+but file I/O now routes through the shared text-file helper and undo or redo now stores changed
+line ranges plus view state instead of whole-buffer snapshots.
+
 ## External Tool Boundary
 
 Two current implementation details matter for future work:

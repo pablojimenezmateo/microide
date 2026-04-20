@@ -112,15 +112,7 @@ std::optional<std::string> GitRepository::ReadFileAtRevision(
 }
 
 std::optional<std::string> GitRepository::ResolveHeadId() const {
-  const auto result = Execute({"rev-parse", "--verify", "HEAD"});
-  if (!result.success() || result.output.empty()) {
-    return std::nullopt;
-  }
-  std::string id = result.output;
-  while (!id.empty() && (id.back() == '\n' || id.back() == '\r')) {
-    id.pop_back();
-  }
-  return id;
+  return gitutil::ResolveHeadId(root_);
 }
 
 bool GitRepository::HasHeadCommit() const {

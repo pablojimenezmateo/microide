@@ -18,6 +18,7 @@ bool HasGitMarker(const std::filesystem::path& root);
 std::optional<std::filesystem::path> AbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path);
+std::optional<std::string> ResolveHeadId(const std::filesystem::path& root);
 CommandResult ReadCommandOutput(const std::vector<std::string>& command,
                                 bool silence_stderr = true);
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,

@@ -46,6 +46,9 @@ Evidence:
 - Dirty-path detection or save resolution and rename-or-delete tab retargeting now live across
   `WorkspacePathMutationCoordinator.cpp`, `WorkspacePathMutationCoordinatorDirty.cpp`, and
   `WorkspacePathMutationCoordinatorTabs.cpp` instead of one catch-all path-mutation coordinator.
+- Native project-picker callback, pending-result, and launch bookkeeping now lives in
+  `WorkspaceProjectDialogState.h` plus `WorkspaceProjectDialogCoordinator.cpp` instead of more
+  flattened dialog state fields on `WorkspaceShell`.
 - Key-input dispatch still targets the shell, but modal or menu, surface, and editor-domain
   handling now live in dedicated `WorkspaceKeyInputCoordinator*` translation units instead of one
   monolithic coordinator file.
@@ -73,9 +76,8 @@ Evidence:
   merge, persistence, and terminal behavior.
 
 References:
-- `src/workspace/WorkspaceShell.h:35`
-- `src/workspace/WorkspaceShell.h:636`
-- `src/workspace/WorkspaceShell.h:1446`
+- `src/workspace/WorkspaceShell.h`
+- `src/workspace/WorkspaceProjectDialogState.h`
 - `src/workspace/WorkspaceShellRedraw.cpp`
 - `src/workspace/WorkspaceShellInteraction.cpp`
 - `src/workspace/WorkspaceShellCursor.cpp`
@@ -227,6 +229,8 @@ Impact:
 Evidence:
 - `GitCommandUtil.cpp` now owns git command execution and delegates to the host subprocess
   service in `platform/Subprocess.*`.
+- `platform/Subprocess.cpp` now keeps pipe file-descriptor ownership behind a small RAII wrapper
+  instead of repeating manual close bookkeeping at each error path.
 
 References:
 - `src/project/GitCommandUtil.cpp`

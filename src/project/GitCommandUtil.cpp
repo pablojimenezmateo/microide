@@ -24,6 +24,19 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
   return relative.lexically_normal();
 }
 
+std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
+  const auto result = ReadGitCommandOutput(root, {"rev-parse", "--verify", "HEAD"});
+  if (!result.success() || result.output.empty()) {
+    return std::nullopt;
+  }
+
+  std::string head_id = result.output;
+  while (!head_id.empty() && (head_id.back() == '\n' || head_id.back() == '\r')) {
+    head_id.pop_back();
+  }
+  return head_id.empty() ? std::nullopt : std::make_optional(std::move(head_id));
+}
+
 CommandResult ReadCommandOutput(const std::vector<std::string>& command, bool silence_stderr) {
   platform::SubprocessOptions options;
   options.capture_stdout = true;

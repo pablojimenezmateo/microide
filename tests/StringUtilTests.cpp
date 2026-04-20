@@ -9,6 +9,7 @@ namespace microide::tests {
 namespace {
 
 using microide::util::IsValidUtf8;
+using microide::util::JoinLines;
 using microide::util::SplitLines;
 using microide::util::Utf8SequenceLength;
 
@@ -46,6 +47,14 @@ void TestStringUtilSplitLinesNormalizesMixedLineEndings() {
          "line splitting should normalize CRLF, CR, and LF separators consistently");
 }
 
+void TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput() {
+  const std::vector<std::string> lines = {"alpha", "beta", "gamma"};
+  Expect(JoinLines(lines, "::") == "alpha::beta::gamma",
+         "join lines should place the requested separator between every line");
+  Expect(JoinLines({}, "\n").empty(),
+         "join lines should keep empty inputs empty");
+}
+
 void TestCompareModelHandlesCrLfInputViaSharedSplitter() {
   const auto model =
       microide::compare::BuildCompareModel("alpha\r\nbeta\r\n", "alpha\r\nbeta\r\ngamma\r\n");
@@ -69,6 +78,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestStringUtilUtf8ValidationRejectsBrokenSequences);
   AddTest(tests, "StringUtil/SplitLinesNormalizesMixedLineEndings",
           TestStringUtilSplitLinesNormalizesMixedLineEndings);
+  AddTest(tests, "StringUtil/JoinLinesHonorsSeparatorsAndEmptyInput",
+          TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput);
   AddTest(tests, "StringUtil/CompareModelHandlesCrLfInputViaSharedSplitter",
           TestCompareModelHandlesCrLfInputViaSharedSplitter);
 }

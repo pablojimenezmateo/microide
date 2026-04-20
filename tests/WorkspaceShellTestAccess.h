@@ -278,12 +278,12 @@ struct WorkspaceShellTestAccess {
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
-    shell.project_open_dialog_launcher_ = std::move(launcher);
+    shell.project_dialog_state_.launcher = std::move(launcher);
   }
   static void QueueProjectOpenDialogSelection(WorkspaceShell& shell,
                                               const std::filesystem::path& path) {
-    std::lock_guard<std::mutex> lock(shell.project_open_dialog_mutex_);
-    shell.pending_project_open_dialog_result_ = WorkspaceShell::PendingProjectOpenDialogResult{
+    std::lock_guard<std::mutex> lock(shell.project_dialog_state_.mutex);
+    shell.project_dialog_state_.pending_result = microide::workspace::PendingProjectOpenDialogResult{
         .ready = true,
         .cancelled = false,
         .selected_path = path.lexically_normal(),
@@ -291,8 +291,8 @@ struct WorkspaceShellTestAccess {
     };
   }
   static void QueueProjectOpenDialogCancel(WorkspaceShell& shell) {
-    std::lock_guard<std::mutex> lock(shell.project_open_dialog_mutex_);
-    shell.pending_project_open_dialog_result_ = WorkspaceShell::PendingProjectOpenDialogResult{
+    std::lock_guard<std::mutex> lock(shell.project_dialog_state_.mutex);
+    shell.project_dialog_state_.pending_result = microide::workspace::PendingProjectOpenDialogResult{
         .ready = true,
         .cancelled = true,
         .selected_path = {},
@@ -987,7 +987,7 @@ struct WorkspaceShellTestAccess {
     return shell.overlay_workflow_.project_search.error;
   }
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
-    return shell.project_open_dialog_active_;
+    return shell.project_dialog_state_.active;
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.panel_state_.command_mode; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }

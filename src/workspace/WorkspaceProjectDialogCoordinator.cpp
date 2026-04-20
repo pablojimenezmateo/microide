@@ -7,7 +7,7 @@ namespace microide::workspace {
 
 WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectPicker(
     std::string* error_message) {
-  if (project_open_dialog_active_) {
+  if (project_dialog_state_.active) {
     if (error_message != nullptr) {
       *error_message = "Project picker already open";
     }
@@ -20,10 +20,10 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectP
   const std::filesystem::path normalized_default = error ? std::filesystem::path{}
                                                          : default_location.lexically_normal();
 
-  project_open_dialog_active_ = true;
-  if (project_open_dialog_launcher_) {
-    if (!project_open_dialog_launcher_(*this, normalized_default)) {
-      project_open_dialog_active_ = false;
+  project_dialog_state_.active = true;
+  if (project_dialog_state_.launcher) {
+    if (!project_dialog_state_.launcher(*this, normalized_default)) {
+      project_dialog_state_.active = false;
       if (error_message != nullptr) {
         *error_message = "Native dialog backend unavailable";
       }
@@ -40,7 +40,7 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectP
                            false);
   const std::string dialog_error = SDL_GetError();
   if (!dialog_error.empty()) {
-    project_open_dialog_active_ = false;
+    project_dialog_state_.active = false;
     if (error_message != nullptr) {
       *error_message = dialog_error;
     }
@@ -69,8 +69,8 @@ void SDLCALL WorkspaceShell::OnProjectOpenDialogComplete(void* userdata,
   }
 
   {
-    std::lock_guard<std::mutex> lock(shell->project_open_dialog_mutex_);
-    shell->pending_project_open_dialog_result_ = std::move(pending);
+    std::lock_guard<std::mutex> lock(shell->project_dialog_state_.mutex);
+    shell->project_dialog_state_.pending_result = std::move(pending);
   }
 
   if (shell->project_open_dialog_event_type_ != 0) {
@@ -83,15 +83,15 @@ void SDLCALL WorkspaceShell::OnProjectOpenDialogComplete(void* userdata,
 void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
   PendingProjectOpenDialogResult pending;
   {
-    std::lock_guard<std::mutex> lock(project_open_dialog_mutex_);
-    if (!pending_project_open_dialog_result_.ready) {
+    std::lock_guard<std::mutex> lock(project_dialog_state_.mutex);
+    if (!project_dialog_state_.pending_result.ready) {
       return;
     }
-    pending = std::move(pending_project_open_dialog_result_);
-    pending_project_open_dialog_result_ = PendingProjectOpenDialogResult{};
+    pending = std::move(project_dialog_state_.pending_result);
+    project_dialog_state_.pending_result = PendingProjectOpenDialogResult{};
   }
 
-  project_open_dialog_active_ = false;
+  project_dialog_state_.active = false;
   if (!pending.error_message.empty()) {
     return;
   }

@@ -104,4 +104,26 @@ std::vector<std::string> SplitLines(std::string_view content) {
   return lines;
 }
 
+std::string JoinLines(std::span<const std::string> lines, std::string_view separator) {
+  if (lines.empty()) {
+    return {};
+  }
+
+  std::size_t size = 0;
+  for (const std::string& line : lines) {
+    size += line.size();
+  }
+  size += separator.size() * (lines.size() - 1);
+
+  std::string joined;
+  joined.reserve(size);
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i > 0) {
+      joined += separator;
+    }
+    joined += lines[i];
+  }
+  return joined;
+}
+
 }  // namespace microide::util

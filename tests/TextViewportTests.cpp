@@ -130,6 +130,49 @@ void TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits() {
          "viewport cache stats should treat a repeated highlight lookup as a hit");
 }
 
+void TestTextViewportUndoRedoPreservesLatestViewState() {
+  TextViewport viewport;
+  viewport.LoadContent("zero\none\ntwo\nthree\nfour\nfive\nsix\nseven\n", "/tmp/history.cpp");
+  viewport.SetViewportSize(8, 12);
+
+  viewport.MoveCursorTo(4, 4);
+  viewport.InsertText("!\nmore");
+  viewport.MoveCursorTo(5, 2);
+  viewport.SetScrollLine(2);
+
+  Expect(viewport.Undo(), "undo should succeed after a multiline insertion");
+  Expect(viewport.lines().size() == 9 && viewport.lines()[4] == "four" &&
+             viewport.lines()[5] == "five",
+         "undo should restore the original document text");
+  Expect(viewport.cursor_line() == 4 && viewport.cursor_column() == 4,
+         "undo should restore the pre-edit cursor position");
+
+  Expect(viewport.Redo(), "redo should succeed after undoing a multiline insertion");
+  Expect(viewport.lines().size() == 10 && viewport.lines()[4] == "four!" &&
+             viewport.lines()[5] == "more",
+         "redo should restore the edited document text");
+  Expect(viewport.cursor_line() == 5 && viewport.cursor_column() == 2,
+         "redo should restore the latest cursor position from before undo");
+  Expect(viewport.scroll_line() == 2,
+         "redo should restore the latest scroll position from before undo");
+}
+
+void TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta", "/tmp/replace-lines.txt");
+
+  Expect(viewport.ReplaceLines(viewport.line_count(), viewport.line_count(), {"tail"}),
+         "replace lines should allow appending at the end of the buffer");
+  Expect(viewport.line_count() == 3 && viewport.lines()[2] == "tail",
+         "replace lines append should add the replacement line at the end");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "replace lines append should move the cursor to the inserted block");
+
+  Expect(viewport.Undo(), "undo should succeed after an appended line replacement");
+  Expect(viewport.line_count() == 2 && viewport.lines()[1] == "beta",
+         "undo should remove the appended replacement block");
+}
+
 void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -198,6 +241,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/CacheStatsTrackWarmLayoutAndHighlightHits",
           TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits);
+  AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",
+          TestTextViewportUndoRedoPreservesLatestViewState);
+  AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",
+          TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
 }

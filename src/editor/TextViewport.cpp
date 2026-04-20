@@ -2,11 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
-#include <ostream>
-#include <sstream>
 
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 namespace microide::editor {
 
@@ -26,6 +24,29 @@ std::string ToLower(std::string_view text) {
   return lowered;
 }
 
+std::string NormalizeLineEndings(std::string_view text) {
+  std::string normalized;
+  normalized.reserve(text.size());
+  for (char character : text) {
+    if (character != '\r') {
+      normalized.push_back(character);
+    }
+  }
+  return normalized;
+}
+
+std::string_view LineEndingText(TextViewport::LineEnding line_ending) {
+  switch (line_ending) {
+    case TextViewport::LineEnding::CRLF:
+      return "\r\n";
+    case TextViewport::LineEnding::CR:
+      return "\r";
+    case TextViewport::LineEnding::LF:
+    default:
+      return "\n";
+  }
+}
+
 }  // namespace
 
 TextViewport::TextViewport() {
@@ -39,33 +60,14 @@ TextViewport::TextViewport() {
 
 bool TextViewport::OpenFile(const std::filesystem::path& path) {
   EnsureDocument();
-  std::ifstream file(path, std::ios::binary);
-  if (!file) {
+  const std::optional<std::string> content = util::ReadTextFile(path);
+  if (!content.has_value()) {
     return false;
   }
 
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  const std::string content = buffer.str();
-  const DecodedDocument decoded = DecodeDocument(content);
-
-  document_->path = path;
-  document_->lines = decoded.lines;
-  document_->line_ending = decoded.line_ending;
-  document_->mixed_line_endings = decoded.mixed_line_endings;
-  document_->encoding = decoded.encoding;
-  cursor_line_ = 0;
-  cursor_column_ = 0;
-  preferred_column_ = 0;
-  scroll_line_ = 0;
-  horizontal_scroll_ = 0;
-  selection_anchor_.reset();
-  document_->undo_stack.clear();
-  document_->redo_stack.clear();
-  document_->placeholder = false;
-  document_->dirty = false;
-  InvalidateLayoutCaches();
-  EnsureCursorVisible();
+  const DecodedDocument decoded = DecodeDocument(*content);
+  ResetState(decoded.lines, path, decoded.line_ending, decoded.mixed_line_endings,
+             decoded.encoding, false, false);
   return true;
 }
 
@@ -75,24 +77,9 @@ bool TextViewport::Save() {
     return false;
   }
 
-  std::ofstream file(document_->path, std::ios::binary | std::ios::trunc);
-  if (!file) {
-    return false;
-  }
-
-  const std::string newline =
-      document_->line_ending == LineEnding::CRLF ? "\r\n"
-      : document_->line_ending == LineEnding::CR ? "\r"
-                                                 : "\n";
-  for (std::size_t i = 0; i < document_->lines.size(); ++i) {
-    if (i > 0) {
-      file.write(newline.data(), static_cast<std::streamsize>(newline.size()));
-    }
-    file.write(document_->lines[i].data(),
-               static_cast<std::streamsize>(document_->lines[i].size()));
-  }
-
-  if (!file.good()) {
+  const std::string text =
+      util::JoinLines(document_->lines, LineEndingText(document_->line_ending));
+  if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
   }
 
@@ -106,24 +93,9 @@ void TextViewport::LoadContent(std::string_view content,
                                std::optional<LineEnding> line_ending) {
   EnsureDocument();
   const DecodedDocument decoded = DecodeDocument(content);
-
-  document_->path = path;
-  document_->lines = decoded.lines;
-  document_->line_ending = line_ending.value_or(decoded.line_ending);
-  document_->mixed_line_endings = line_ending.has_value() ? false : decoded.mixed_line_endings;
-  document_->encoding = decoded.encoding;
-  cursor_line_ = 0;
-  cursor_column_ = 0;
-  preferred_column_ = 0;
-  scroll_line_ = 0;
-  horizontal_scroll_ = 0;
-  selection_anchor_.reset();
-  document_->undo_stack.clear();
-  document_->redo_stack.clear();
-  document_->placeholder = false;
-  document_->dirty = false;
-  InvalidateLayoutCaches();
-  EnsureCursorVisible();
+  ResetState(decoded.lines, path, line_ending.value_or(decoded.line_ending),
+             line_ending.has_value() ? false : decoded.mixed_line_endings, decoded.encoding,
+             false, false);
 }
 
 void TextViewport::SetPath(const std::filesystem::path& path) {
@@ -141,42 +113,12 @@ void TextViewport::SetDirty(bool dirty) {
 
 void TextViewport::SetPlaceholderText(std::string text) {
   EnsureDocument();
-  document_->path.clear();
-  document_->lines = SplitLines(text);
-  document_->line_ending = LineEnding::LF;
-  document_->mixed_line_endings = false;
-  document_->encoding = DetectEncoding(text);
-  cursor_line_ = 0;
-  cursor_column_ = 0;
-  preferred_column_ = 0;
-  scroll_line_ = 0;
-  horizontal_scroll_ = 0;
-  selection_anchor_.reset();
-  document_->undo_stack.clear();
-  document_->redo_stack.clear();
-  document_->placeholder = true;
-  document_->dirty = false;
-  InvalidateLayoutCaches();
+  ResetState(util::SplitLines(text), {}, LineEnding::LF, false, DetectEncoding(text), true, false);
 }
 
 void TextViewport::SetUntitledBuffer() {
   EnsureDocument();
-  document_->path.clear();
-  document_->lines = {""};
-  document_->line_ending = LineEnding::LF;
-  document_->mixed_line_endings = false;
-  document_->encoding = TextEncoding::ASCII;
-  cursor_line_ = 0;
-  cursor_column_ = 0;
-  preferred_column_ = 0;
-  scroll_line_ = 0;
-  horizontal_scroll_ = 0;
-  selection_anchor_.reset();
-  document_->undo_stack.clear();
-  document_->redo_stack.clear();
-  document_->placeholder = false;
-  document_->dirty = false;
-  InvalidateLayoutCaches();
+  ResetState({""}, {}, LineEnding::LF, false, TextEncoding::ASCII, false, false);
 }
 
 void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visible_columns) {
@@ -315,19 +257,11 @@ void TextViewport::Page(int direction) {
 }
 
 void TextViewport::InsertCharacter(char character) {
-  if (document_->lines.empty()) {
-    document_->lines.push_back("");
-  }
-
-  SaveUndoSnapshot();
-  DeleteSelection();
-  auto& line = document_->lines[cursor_line_];
-  line.insert(line.begin() + static_cast<std::ptrdiff_t>(cursor_column_), character);
-  ++cursor_column_;
-  RefreshEncoding();
-  preferred_column_ = cursor_visual_column();
-  MarkDirty();
-  EnsureCursorVisible();
+  const SelectionRange range = selection_range().value_or(
+      SelectionRange{TextPosition{cursor_line_, cursor_column_},
+                     TextPosition{cursor_line_, cursor_column_}});
+  const std::string text(1, character);
+  (void)ApplyRangeEdit(range, text, true);
 }
 
 void TextViewport::InsertText(std::string_view text, bool record_undo) {
@@ -335,69 +269,17 @@ void TextViewport::InsertText(std::string_view text, bool record_undo) {
     return;
   }
 
-  if (record_undo) {
-    SaveUndoSnapshot();
-  }
-  DeleteSelection();
-
-  std::string normalized;
-  normalized.reserve(text.size());
-  for (char character : text) {
-    if (character != '\r') {
-      normalized.push_back(character);
-    }
-  }
-
-  auto inserted_lines = SplitLines(normalized);
-  if (inserted_lines.empty()) {
-    return;
-  }
-
-  if (document_->lines.empty()) {
-    document_->lines.push_back("");
-  }
-
-  std::string remainder = document_->lines[cursor_line_].substr(cursor_column_);
-  document_->lines[cursor_line_].erase(cursor_column_);
-
-  if (inserted_lines.size() == 1) {
-    document_->lines[cursor_line_] += inserted_lines.front();
-    document_->lines[cursor_line_] += remainder;
-    cursor_column_ = document_->lines[cursor_line_].size() - remainder.size();
-  } else {
-    document_->lines[cursor_line_] += inserted_lines.front();
-    const std::size_t insertion_index = cursor_line_ + 1;
-    document_->lines.insert(document_->lines.begin() + static_cast<std::ptrdiff_t>(insertion_index),
-                            inserted_lines.begin() + 1, inserted_lines.end());
-    cursor_line_ += inserted_lines.size() - 1;
-    document_->lines[cursor_line_] += remainder;
-    cursor_column_ = document_->lines[cursor_line_].size() - remainder.size();
-  }
-
-  RefreshEncoding();
-  preferred_column_ = cursor_visual_column();
-  MarkDirty();
-  EnsureCursorVisible();
+  const SelectionRange range = selection_range().value_or(
+      SelectionRange{TextPosition{cursor_line_, cursor_column_},
+                     TextPosition{cursor_line_, cursor_column_}});
+  (void)ApplyRangeEdit(range, text, record_undo);
 }
 
 void TextViewport::InsertNewline() {
-  if (document_->lines.empty()) {
-    document_->lines.push_back("");
-  }
-
-  SaveUndoSnapshot();
-  DeleteSelection();
-  auto& line = document_->lines[cursor_line_];
-  std::string remainder = line.substr(cursor_column_);
-  line.erase(cursor_column_);
-  document_->lines.insert(document_->lines.begin() + static_cast<std::ptrdiff_t>(cursor_line_ + 1),
-                          remainder);
-  ++cursor_line_;
-  cursor_column_ = 0;
-  preferred_column_ = 0;
-  RefreshEncoding();
-  MarkDirty();
-  EnsureCursorVisible();
+  const SelectionRange range = selection_range().value_or(
+      SelectionRange{TextPosition{cursor_line_, cursor_column_},
+                     TextPosition{cursor_line_, cursor_column_}});
+  (void)ApplyRangeEdit(range, "\n", true);
 }
 
 void TextViewport::InsertTab() {
@@ -419,37 +301,33 @@ void TextViewport::Backspace() {
     return;
   }
 
-  SaveUndoSnapshot();
-  if (DeleteSelection()) {
+  if (const auto selected = selection_range(); selected.has_value()) {
+    (void)ApplyRangeEdit(*selected, "", true);
     return;
   }
 
   if (cursor_column_ > 0) {
-    auto& line = document_->lines[cursor_line_];
-    const std::size_t erase_start = TextLayout::PreviousTextColumn(line, cursor_column_);
-    line.erase(erase_start, cursor_column_ - erase_start);
-    cursor_column_ = erase_start;
-    RefreshEncoding();
-    preferred_column_ = cursor_visual_column();
-    MarkDirty();
-    EnsureCursorVisible();
+    const std::size_t erase_start =
+        TextLayout::PreviousTextColumn(document_->lines[cursor_line_], cursor_column_);
+    (void)ApplyRangeEdit(
+        SelectionRange{
+            .start = TextPosition{cursor_line_, erase_start},
+            .end = TextPosition{cursor_line_, cursor_column_},
+        },
+        "", true);
     return;
   }
 
   if (cursor_line_ == 0) {
-    document_->undo_stack.pop_back();
     return;
   }
 
-  const std::size_t previous_length = document_->lines[cursor_line_ - 1].size();
-  document_->lines[cursor_line_ - 1] += document_->lines[cursor_line_];
-  document_->lines.erase(document_->lines.begin() + static_cast<std::ptrdiff_t>(cursor_line_));
-  --cursor_line_;
-  cursor_column_ = previous_length;
-  RefreshEncoding();
-  preferred_column_ = cursor_visual_column();
-  MarkDirty();
-  EnsureCursorVisible();
+  (void)ApplyRangeEdit(
+      SelectionRange{
+          .start = TextPosition{cursor_line_ - 1, document_->lines[cursor_line_ - 1].size()},
+          .end = TextPosition{cursor_line_, 0},
+      },
+      "", true);
 }
 
 void TextViewport::DeleteForward() {
@@ -457,33 +335,33 @@ void TextViewport::DeleteForward() {
     return;
   }
 
-  SaveUndoSnapshot();
-  if (DeleteSelection()) {
+  if (const auto selected = selection_range(); selected.has_value()) {
+    (void)ApplyRangeEdit(*selected, "", true);
     return;
   }
 
-  auto& line = document_->lines[cursor_line_];
+  const std::string& line = document_->lines[cursor_line_];
   if (cursor_column_ < line.size()) {
     const std::size_t erase_end = TextLayout::NextTextColumn(line, cursor_column_);
-    line.erase(cursor_column_, erase_end - cursor_column_);
-    RefreshEncoding();
-    preferred_column_ = cursor_visual_column();
-    MarkDirty();
-    EnsureCursorVisible();
+    (void)ApplyRangeEdit(
+        SelectionRange{
+            .start = TextPosition{cursor_line_, cursor_column_},
+            .end = TextPosition{cursor_line_, erase_end},
+        },
+        "", true);
     return;
   }
 
   if (cursor_line_ + 1 >= document_->lines.size()) {
-    document_->undo_stack.pop_back();
     return;
   }
 
-  line += document_->lines[cursor_line_ + 1];
-  document_->lines.erase(document_->lines.begin() + static_cast<std::ptrdiff_t>(cursor_line_ + 1));
-  RefreshEncoding();
-  preferred_column_ = cursor_visual_column();
-  MarkDirty();
-  EnsureCursorVisible();
+  (void)ApplyRangeEdit(
+      SelectionRange{
+          .start = TextPosition{cursor_line_, cursor_column_},
+          .end = TextPosition{cursor_line_ + 1, 0},
+      },
+      "", true);
 }
 
 bool TextViewport::Undo() {
@@ -491,20 +369,11 @@ bool TextViewport::Undo() {
     return false;
   }
 
-  document_->redo_stack.push_back(HistoryEntry{
-      .lines = document_->lines,
-      .cursor_line = cursor_line_,
-      .cursor_column = cursor_column_,
-      .preferred_column = preferred_column_,
-      .scroll_line = scroll_line_,
-      .horizontal_scroll = horizontal_scroll_,
-      .selection_anchor = selection_anchor_,
-      .encoding = document_->encoding,
-      .placeholder = document_->placeholder,
-      .dirty = document_->dirty,
-  });
-  RestoreSnapshot(document_->undo_stack.back());
+  HistoryEntry entry = std::move(document_->undo_stack.back());
   document_->undo_stack.pop_back();
+  entry.after_state = CaptureViewState();
+  ApplyHistoryEntry(entry, false);
+  document_->redo_stack.push_back(std::move(entry));
   return true;
 }
 
@@ -513,88 +382,25 @@ bool TextViewport::Redo() {
     return false;
   }
 
-  document_->undo_stack.push_back(HistoryEntry{
-      .lines = document_->lines,
-      .cursor_line = cursor_line_,
-      .cursor_column = cursor_column_,
-      .preferred_column = preferred_column_,
-      .scroll_line = scroll_line_,
-      .horizontal_scroll = horizontal_scroll_,
-      .selection_anchor = selection_anchor_,
-      .encoding = document_->encoding,
-      .placeholder = document_->placeholder,
-      .dirty = document_->dirty,
-  });
-  RestoreSnapshot(document_->redo_stack.back());
+  HistoryEntry entry = std::move(document_->redo_stack.back());
   document_->redo_stack.pop_back();
+  entry.before_state = CaptureViewState();
+  ApplyHistoryEntry(entry, true);
+  document_->undo_stack.push_back(std::move(entry));
   return true;
 }
 
 bool TextViewport::ReplaceRange(const SelectionRange& range,
                                 std::string_view replacement,
                                 bool record_undo) {
-  if (document_->lines.empty()) {
-    return false;
-  }
-
-  if (record_undo) {
-    SaveUndoSnapshot();
-  }
-
-  selection_anchor_ = range.start;
-  cursor_line_ = range.end.line;
-  cursor_column_ = range.end.column;
-  preferred_column_ = cursor_visual_column();
-  if (!DeleteSelection()) {
-    if (record_undo && !document_->undo_stack.empty()) {
-      document_->undo_stack.pop_back();
-    }
-    return false;
-  }
-
-  InsertText(replacement, false);
-  return true;
+  return ApplyRangeEdit(range, replacement, record_undo);
 }
 
 bool TextViewport::ReplaceLines(std::size_t start_line,
                                 std::size_t end_line,
                                 const std::vector<std::string>& replacement,
                                 bool record_undo) {
-  EnsureDocument();
-  const std::size_t line_count = document_->lines.size();
-  if (line_count == 0) {
-    document_->lines.push_back("");
-  }
-
-  const std::size_t clamped_start = std::min(start_line, document_->lines.size());
-  const std::size_t clamped_end = std::clamp(end_line, clamped_start, document_->lines.size());
-  if (record_undo) {
-    SaveUndoSnapshot();
-  }
-
-  std::vector<std::string> updated_lines;
-  updated_lines.reserve(clamped_start + replacement.size() +
-                        (document_->lines.size() - clamped_end));
-  updated_lines.insert(updated_lines.end(), document_->lines.begin(),
-                       document_->lines.begin() + static_cast<std::ptrdiff_t>(clamped_start));
-  updated_lines.insert(updated_lines.end(), replacement.begin(), replacement.end());
-  updated_lines.insert(updated_lines.end(),
-                       document_->lines.begin() + static_cast<std::ptrdiff_t>(clamped_end),
-                       document_->lines.end());
-  if (updated_lines.empty()) {
-    updated_lines.push_back("");
-  }
-
-  document_->lines = std::move(updated_lines);
-  const std::size_t cursor_line = std::min(clamped_start, document_->lines.size() - 1);
-  cursor_line_ = cursor_line;
-  cursor_column_ = 0;
-  preferred_column_ = cursor_visual_column();
-  selection_anchor_.reset();
-  RefreshEncoding();
-  MarkDirty();
-  EnsureCursorVisible();
-  return true;
+  return ApplyLineEdit(start_line, end_line, replacement, record_undo);
 }
 
 std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view replacement) {
@@ -602,23 +408,20 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     return 0;
   }
 
+  const std::vector<std::string> before_lines = document_->lines;
+  const ViewState before_state = CaptureViewState();
   const std::string lowered_needle = ToLower(needle);
   std::size_t replacements = 0;
-  bool snapshot_saved = false;
 
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
     std::string lowered_line = ToLower(document_->lines[line_index]);
     std::size_t offset = lowered_line.find(lowered_needle);
     while (offset != std::string::npos) {
-      if (!snapshot_saved) {
-        SaveUndoSnapshot();
-        snapshot_saved = true;
-      }
       const SelectionRange range{
           .start = TextPosition{line_index, offset},
           .end = TextPosition{line_index, offset + needle.size()},
       };
-      ReplaceRange(range, replacement, false);
+      (void)ApplyRangeEdit(range, replacement, false);
       ++replacements;
       lowered_line = ToLower(document_->lines[line_index]);
       offset = lowered_line.find(lowered_needle,
@@ -626,10 +429,10 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     }
   }
 
-  if (!snapshot_saved) {
-    return 0;
+  if (replacements > 0) {
+    PushHistoryEntry(BuildHistoryEntryForDocumentChange(
+        before_lines, before_state, document_->lines, CaptureViewState()));
   }
-
   return replacements;
 }
 
@@ -838,10 +641,31 @@ void TextViewport::SelectAll() {
   EnsureCursorVisible();
 }
 
-void TextViewport::MarkDirty() {
+void TextViewport::ResetState(std::vector<std::string> lines,
+                              const std::filesystem::path& path,
+                              LineEnding line_ending,
+                              bool mixed_line_endings,
+                              TextEncoding encoding,
+                              bool placeholder,
+                              bool dirty) {
+  EnsureDocument();
+  document_->path = path;
+  document_->lines = lines.empty() ? std::vector<std::string>{""} : std::move(lines);
+  document_->line_ending = line_ending;
+  document_->mixed_line_endings = mixed_line_endings;
+  document_->encoding = encoding;
+  cursor_line_ = 0;
+  cursor_column_ = 0;
+  preferred_column_ = 0;
+  scroll_line_ = 0;
+  horizontal_scroll_ = 0;
+  selection_anchor_.reset();
+  document_->undo_stack.clear();
+  document_->redo_stack.clear();
+  document_->placeholder = placeholder;
+  document_->dirty = dirty;
   InvalidateLayoutCaches();
-  document_->placeholder = false;
-  document_->dirty = true;
+  EnsureCursorVisible();
 }
 
 void TextViewport::EnsureInitialHighlightState() const {
@@ -924,65 +748,223 @@ bool TextViewport::DeleteSelection() {
   if (!range.has_value()) {
     return false;
   }
-
-  const auto& start = range->start;
-  const auto& end = range->end;
-  if (start.line == end.line) {
-    document_->lines[start.line].erase(start.column, end.column - start.column);
-  } else {
-    document_->lines[start.line] =
-        document_->lines[start.line].substr(0, start.column) +
-        document_->lines[end.line].substr(end.column);
-    document_->lines.erase(document_->lines.begin() + static_cast<std::ptrdiff_t>(start.line + 1),
-                           document_->lines.begin() + static_cast<std::ptrdiff_t>(end.line + 1));
-  }
-
-  if (document_->lines.empty()) {
-    document_->lines.push_back("");
-  }
-
-  cursor_line_ = start.line;
-  cursor_column_ = start.column;
-  RefreshEncoding();
-  preferred_column_ = cursor_visual_column();
-  selection_anchor_.reset();
-  MarkDirty();
-  EnsureCursorVisible();
-  return true;
+  return ApplyRangeEdit(*range, "", true);
 }
 
-void TextViewport::SaveUndoSnapshot() {
-  document_->redo_stack.clear();
-  document_->undo_stack.push_back(HistoryEntry{
-      .lines = document_->lines,
+TextViewport::ViewState TextViewport::CaptureViewState() const {
+  return ViewState{
       .cursor_line = cursor_line_,
       .cursor_column = cursor_column_,
       .preferred_column = preferred_column_,
       .scroll_line = scroll_line_,
       .horizontal_scroll = horizontal_scroll_,
       .selection_anchor = selection_anchor_,
-      .encoding = document_->encoding,
       .placeholder = document_->placeholder,
       .dirty = document_->dirty,
-  });
+  };
+}
+
+void TextViewport::RestoreViewState(const ViewState& state) {
+  cursor_line_ = state.cursor_line;
+  cursor_column_ = state.cursor_column;
+  preferred_column_ = state.preferred_column;
+  scroll_line_ = state.scroll_line;
+  horizontal_scroll_ = state.horizontal_scroll;
+  selection_anchor_ = state.selection_anchor;
+  document_->placeholder = state.placeholder;
+  document_->dirty = state.dirty;
+}
+
+void TextViewport::PushHistoryEntry(HistoryEntry entry) {
+  document_->redo_stack.clear();
+  document_->undo_stack.push_back(std::move(entry));
   if (document_->undo_stack.size() > kMaxHistoryEntries) {
     document_->undo_stack.erase(document_->undo_stack.begin());
   }
 }
 
-void TextViewport::RestoreSnapshot(const HistoryEntry& snapshot) {
-  document_->lines = snapshot.lines;
-  cursor_line_ = snapshot.cursor_line;
-  cursor_column_ = snapshot.cursor_column;
-  preferred_column_ = snapshot.preferred_column;
-  scroll_line_ = snapshot.scroll_line;
-  horizontal_scroll_ = snapshot.horizontal_scroll;
-  selection_anchor_ = snapshot.selection_anchor;
-  document_->encoding = snapshot.encoding;
-  document_->placeholder = snapshot.placeholder;
-  document_->dirty = snapshot.dirty;
+void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
+  const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
+  const std::size_t remove_count = forward ? entry.before_lines.size() : entry.after_lines.size();
+  const auto erase_begin =
+      document_->lines.begin() + static_cast<std::ptrdiff_t>(start_line);
+  const auto erase_end =
+      erase_begin + static_cast<std::ptrdiff_t>(std::min(remove_count, document_->lines.size() - start_line));
+  document_->lines.erase(erase_begin, erase_end);
+
+  const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
+  document_->lines.insert(document_->lines.begin() + static_cast<std::ptrdiff_t>(start_line),
+                          inserted_lines.begin(), inserted_lines.end());
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  RestoreViewState(forward ? entry.after_state : entry.before_state);
+  RefreshEncoding();
   InvalidateLayoutCaches();
   EnsureCursorVisible();
+}
+
+std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
+    const SelectionRange& range,
+    std::string_view replacement) const {
+  if (document_->lines.empty()) {
+    return std::nullopt;
+  }
+
+  const SelectionRange normalized = NormalizeRange(range);
+  const auto clamp_position = [&](TextPosition position) {
+    const std::size_t line = std::min(position.line, document_->lines.size() - 1);
+    return TextPosition{
+        .line = line,
+        .column = TextLayout::ClampTextColumn(document_->lines[line], position.column),
+    };
+  };
+
+  const TextPosition start = clamp_position(normalized.start);
+  const TextPosition end = clamp_position(normalized.end);
+  if (start.line == end.line && start.column == end.column && replacement.empty()) {
+    return std::nullopt;
+  }
+
+  const std::vector<std::string> before_lines =
+      SliceLines(document_->lines, start.line, end.line + 1);
+  const std::vector<std::string> replacement_lines = util::SplitLines(NormalizeLineEndings(replacement));
+
+  std::vector<std::string> after_lines;
+  after_lines.reserve(std::max<std::size_t>(1, replacement_lines.size()));
+  const std::string prefix = document_->lines[start.line].substr(0, start.column);
+  const std::string suffix = document_->lines[end.line].substr(end.column);
+  if (replacement_lines.size() == 1) {
+    after_lines.push_back(prefix + replacement_lines.front() + suffix);
+  } else {
+    after_lines.push_back(prefix + replacement_lines.front());
+    after_lines.insert(after_lines.end(), replacement_lines.begin() + 1, replacement_lines.end() - 1);
+    after_lines.push_back(replacement_lines.back() + suffix);
+  }
+
+  ViewState after_state = CaptureViewState();
+  after_state.cursor_line = start.line + after_lines.size() - 1;
+  after_state.cursor_column =
+      after_lines.size() == 1 ? prefix.size() + replacement_lines.front().size()
+                              : replacement_lines.back().size();
+  after_state.preferred_column = TextLayout::VisualColumnForTextColumn(
+      after_lines.back(), after_state.cursor_column, tab_size_);
+  after_state.selection_anchor.reset();
+  after_state.placeholder = false;
+  after_state.dirty = true;
+
+  return HistoryEntry{
+      .start_line = start.line,
+      .before_lines = before_lines,
+      .after_lines = std::move(after_lines),
+      .before_state = CaptureViewState(),
+      .after_state = after_state,
+  };
+}
+
+TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
+    std::size_t start_line,
+    std::size_t end_line,
+    const std::vector<std::string>& replacement) const {
+  const std::size_t clamped_start = std::min(start_line, document_->lines.size());
+  const std::size_t clamped_end = std::clamp(end_line, clamped_start, document_->lines.size());
+
+  std::vector<std::string> after_lines = replacement;
+  if (after_lines.empty()) {
+    after_lines.push_back("");
+  }
+
+  ViewState after_state = CaptureViewState();
+  const std::size_t total_after_lines =
+      document_->lines.size() - (clamped_end - clamped_start) + after_lines.size();
+  after_state.cursor_line = std::min(clamped_start, total_after_lines - 1);
+  after_state.cursor_column = 0;
+  after_state.preferred_column = 0;
+  after_state.selection_anchor.reset();
+  after_state.placeholder = false;
+  after_state.dirty = true;
+
+  return HistoryEntry{
+      .start_line = clamped_start,
+      .before_lines = SliceLines(document_->lines, clamped_start, clamped_end),
+      .after_lines = std::move(after_lines),
+      .before_state = CaptureViewState(),
+      .after_state = after_state,
+  };
+}
+
+TextViewport::HistoryEntry TextViewport::BuildHistoryEntryForDocumentChange(
+    const std::vector<std::string>& before_lines,
+    const ViewState& before_state,
+    const std::vector<std::string>& after_lines,
+    const ViewState& after_state) {
+  std::size_t prefix = 0;
+  while (prefix < before_lines.size() && prefix < after_lines.size() &&
+         before_lines[prefix] == after_lines[prefix]) {
+    ++prefix;
+  }
+
+  std::size_t before_end = before_lines.size();
+  std::size_t after_end = after_lines.size();
+  while (before_end > prefix && after_end > prefix &&
+         before_lines[before_end - 1] == after_lines[after_end - 1]) {
+    --before_end;
+    --after_end;
+  }
+
+  return HistoryEntry{
+      .start_line = prefix,
+      .before_lines = SliceLines(before_lines, prefix, before_end),
+      .after_lines = SliceLines(after_lines, prefix, after_end),
+      .before_state = before_state,
+      .after_state = after_state,
+  };
+}
+
+bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
+                                  std::string_view replacement,
+                                  bool record_undo) {
+  EnsureDocument();
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
+  if (!entry.has_value()) {
+    return false;
+  }
+
+  ApplyHistoryEntry(*entry, true);
+  if (record_undo) {
+    HistoryEntry saved_entry = *entry;
+    saved_entry.after_state = CaptureViewState();
+    PushHistoryEntry(std::move(saved_entry));
+  } else {
+    document_->redo_stack.clear();
+  }
+  return true;
+}
+
+bool TextViewport::ApplyLineEdit(std::size_t start_line,
+                                 std::size_t end_line,
+                                 const std::vector<std::string>& replacement,
+                                 bool record_undo) {
+  EnsureDocument();
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  const HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
+  ApplyHistoryEntry(entry, true);
+  if (record_undo) {
+    HistoryEntry saved_entry = entry;
+    saved_entry.after_state = CaptureViewState();
+    PushHistoryEntry(std::move(saved_entry));
+  } else {
+    document_->redo_stack.clear();
+  }
+  return true;
 }
 
 std::size_t TextViewport::CurrentLineLength() const {
@@ -1164,8 +1146,17 @@ bool TextViewport::IsValidUtf8(std::string_view content) {
   return util::IsValidUtf8(content);
 }
 
-std::vector<std::string> TextViewport::SplitLines(const std::string& content) {
-  return util::SplitLines(content);
+std::vector<std::string> TextViewport::SliceLines(const std::vector<std::string>& lines,
+                                                  std::size_t start_line,
+                                                  std::size_t end_line) {
+  const std::size_t clamped_start = std::min(start_line, lines.size());
+  const std::size_t clamped_end = std::clamp(end_line, clamped_start, lines.size());
+  return std::vector<std::string>(lines.begin() + static_cast<std::ptrdiff_t>(clamped_start),
+                                  lines.begin() + static_cast<std::ptrdiff_t>(clamped_end));
+}
+
+SelectionRange TextViewport::NormalizeRange(const SelectionRange& range) {
+  return IsBefore(range.start, range.end) ? range : SelectionRange{range.end, range.start};
 }
 
 bool TextViewport::IsBefore(const TextPosition& lhs, const TextPosition& rhs) {

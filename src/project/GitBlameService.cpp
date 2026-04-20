@@ -88,20 +88,6 @@ bool IsHexCommitPrefix(std::string_view line) {
   return line.size() == 40 || line[40] == ' ';
 }
 
-std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
-  const auto output =
-      gitutil::ReadGitCommandOutput(root, {"rev-parse", "--verify", "HEAD"});
-  if (!output.success() || output.output.empty()) {
-    return std::nullopt;
-  }
-
-  std::string head = output.output;
-  while (!head.empty() && (head.back() == '\n' || head.back() == '\r')) {
-    head.pop_back();
-  }
-  return head.empty() ? std::nullopt : std::make_optional(std::move(head));
-}
-
 bool FileIsTracked(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
   return gitutil::GitCommandSucceeds(
       root, {"ls-files", "--error-unmatch", "--", relative_path.generic_string()});
@@ -642,7 +628,7 @@ struct GitBlameService::Impl {
       return;
     }
 
-    const auto head_id = ResolveHeadId(request.request.root);
+    const auto head_id = gitutil::ResolveHeadId(request.request.root);
     const auto stamp = ReadFileStamp(request.request.absolute_path);
     if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;

@@ -1,7 +1,6 @@
 #include "util/TextFileIO.h"
 
 #include <fstream>
-#include <sstream>
 #include <system_error>
 
 namespace microide::util {
@@ -12,9 +11,21 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
     return std::nullopt;
   }
 
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  return buffer.str();
+  file.seekg(0, std::ios::end);
+  const std::streamoff size = file.tellg();
+  if (size < 0) {
+    return std::nullopt;
+  }
+  file.seekg(0, std::ios::beg);
+
+  std::string content(static_cast<std::size_t>(size), '\0');
+  if (!content.empty()) {
+    file.read(content.data(), static_cast<std::streamsize>(content.size()));
+    if (!file) {
+      return std::nullopt;
+    }
+  }
+  return content;
 }
 
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {

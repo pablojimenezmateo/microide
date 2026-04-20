@@ -34,6 +34,7 @@ These are implemented and should not be treated as open migration work:
 - project-local workspace state plus app-level restore of open project tabs
 - normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
 - editor open/save/reopen, selection, clipboard, undo/redo, line numbers, horizontal scrolling, dirty tracking, IME hooks, and project-local preferences
+- editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
 - filesystem tree with `.gitignore` handling, git markers, refresh, and trash-backed create/rename/delete flows
 - file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project for literal mode, capped-result feedback, and a standalone benchmark tool
 - git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
@@ -174,6 +175,8 @@ Current state:
   surface bag, so project switching no longer hand-copy duplicated sidebar, overlay,
   command-prompt, focus, width, height, or scroll fields between active and persisted UI state
   models
+- native project-picker launch, pending-result, and callback bookkeeping now live in a dedicated
+  `WorkspaceProjectDialogState` model instead of more flattened dialog state on `WorkspaceShell`
 - transient drag, mouse-selection, and window-focus interaction state now lives outside
   `ProjectSurfaceState`, so project switches clear in-flight gestures instead of leaking stale
   interaction state across projects
@@ -235,6 +238,10 @@ Current state:
 
 - the editor is functionally strong, but the text model is still byte-oriented
 - large-file mode, blame shadow text, and retained redraw are shipped
+- undo and redo now store line-range patches plus cursor and scroll state instead of full
+  document snapshots, which removes the worst buffer-history memory blow-up on large files
+- file open and save now run through the shared text-file helper, so the viewport no longer does
+  its own stream-buffer file I/O
 
 Open work:
 
@@ -252,11 +259,14 @@ Current state:
 - search and blame now share a cancellable background task executor instead of bespoke worker-thread ownership
 - plugin and syntax asset reload now flow through a host-owned tree watcher instead of only a
   manual reload command
+- subprocess fd ownership is now RAII-backed inside `platform/Subprocess.*` instead of depending
+  on repeated manual close paths
 
 Open work:
 
 - keep external tool usage behind `src/project/*` service boundaries
-- tighten subprocess handling and error reporting around the system `git` path
+- keep tightening subprocess error reporting and higher-level git command behavior around the
+  system `git` path
 - move avoidable filesystem and git refresh work off latency-sensitive UI paths
 - keep new plugin-facing capabilities layered on structured services rather than letting UI code or plugin glue parse command output directly
 

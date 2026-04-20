@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -33,6 +32,7 @@
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspacePluginRuntime.h"
+#include "workspace/WorkspaceProjectDialogState.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -566,13 +566,6 @@ class WorkspaceShell {
     Launched,
     AlreadyOpen,
     Unavailable,
-  };
-
-  struct PendingProjectOpenDialogResult {
-    bool ready = false;
-    bool cancelled = false;
-    std::filesystem::path selected_path;
-    std::string error_message;
   };
 
   struct TerminalSelectionPosition {
@@ -1476,16 +1469,13 @@ class WorkspaceShell {
   std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;
   bool editor_hover_refresh_pending_ = false;
-  std::function<bool(WorkspaceShell&, const std::filesystem::path&)> project_open_dialog_launcher_;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
   std::function<bool(std::string_view)> clipboard_text_writer_;
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
   std::function<bool(std::string_view)> external_url_opener_;
   SDL_Window* dialog_window_ = nullptr;
-  bool project_open_dialog_active_ = false;
-  std::mutex project_open_dialog_mutex_;
-  PendingProjectOpenDialogResult pending_project_open_dialog_result_;
+  ProjectDialogState project_dialog_state_;
   PromptState prompts_;
   bool quit_requested_ = false;
   CommandState& command_ = panel_state_.command;

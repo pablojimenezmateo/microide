@@ -2,10 +2,11 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "util/StringUtil.h"
 
 namespace microide::compare {
 
@@ -37,41 +38,6 @@ struct TaggedChange {
   MergeSide side = MergeSide::Incoming;
   SideChange change;
 };
-
-std::vector<std::string> SplitMergeLines(std::string_view content) {
-  std::vector<std::string> lines;
-  std::size_t line_start = 0;
-  for (std::size_t i = 0; i < content.size(); ++i) {
-    if (content[i] != '\r' && content[i] != '\n') {
-      continue;
-    }
-
-    lines.emplace_back(content.substr(line_start, i - line_start));
-    if (content[i] == '\r' && i + 1 < content.size() && content[i + 1] == '\n') {
-      ++i;
-    }
-    line_start = i + 1;
-  }
-
-  if (line_start <= content.size()) {
-    lines.emplace_back(content.substr(line_start));
-  }
-  if (lines.empty()) {
-    lines.push_back("");
-  }
-  return lines;
-}
-
-std::string JoinMergeLines(const std::vector<std::string>& lines) {
-  std::ostringstream buffer;
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (i > 0) {
-      buffer << '\n';
-    }
-    buffer << lines[i];
-  }
-  return buffer.str();
-}
 
 std::vector<DiffOp> BuildDiffOps(const std::vector<std::string>& base_lines,
                                  const std::vector<std::string>& variant_lines) {
@@ -210,9 +176,9 @@ MergeModel BuildMergeModel(const std::string& base,
                            const std::string& incoming,
                            const std::string& current) {
   MergeModel model;
-  model.base_lines = SplitMergeLines(base);
-  model.incoming_lines = SplitMergeLines(incoming);
-  model.current_lines = SplitMergeLines(current);
+  model.base_lines = util::SplitLines(base);
+  model.incoming_lines = util::SplitLines(incoming);
+  model.current_lines = util::SplitLines(current);
 
   const std::vector<SideChange> incoming_changes =
       BuildSideChanges(model.base_lines, model.incoming_lines);
@@ -367,7 +333,7 @@ std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model) {
 }
 
 std::string BootstrapMergeResultText(const MergeModel& model) {
-  return JoinMergeLines(BootstrapMergeResultLines(model));
+  return util::JoinLines(BootstrapMergeResultLines(model), "\n");
 }
 
 std::vector<std::string> MergeResultLines(const MergeModel& model) {
@@ -391,7 +357,7 @@ std::vector<std::string> MergeResultLines(const MergeModel& model) {
 }
 
 std::string MergeResultText(const MergeModel& model) {
-  return JoinMergeLines(MergeResultLines(model));
+  return util::JoinLines(MergeResultLines(model), "\n");
 }
 
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
