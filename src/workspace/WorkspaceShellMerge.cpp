@@ -33,23 +33,23 @@ std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs, const 
 }  // namespace
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
-  return active_tab_index_ < open_tabs_.size() &&
-         open_tabs_[active_tab_index_].kind == TabEntry::Kind::Merge &&
-         open_tabs_[active_tab_index_].merge.has_value();
+  return context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() &&
+         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].kind == TabEntry::Kind::Merge &&
+         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].merge.has_value();
 }
 
 WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() {
   if (!ActiveTabIsMerge()) {
     return nullptr;
   }
-  return &open_tabs_[active_tab_index_].merge.value();
+  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].merge.value();
 }
 
 const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
   if (!ActiveTabIsMerge()) {
     return nullptr;
   }
-  return &open_tabs_[active_tab_index_].merge.value();
+  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].merge.value();
 }
 
 WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(

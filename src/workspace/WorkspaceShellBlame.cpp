@@ -52,7 +52,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
     editor::TextViewport& viewport,
     const SDL_FRect& rect,
     float minimum_pane_width) {
-  if (project_root_.empty() || viewport.is_placeholder() || viewport.path().empty() ||
+  if (context_.current_project_state.root.empty() || viewport.is_placeholder() || viewport.path().empty() ||
       viewport.dirty() ||
       !EditorBlameFitsPane(viewport, rect, minimum_pane_width)) {
     return std::nullopt;
@@ -60,7 +60,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
 
   std::error_code error;
   const auto relative_path = std::filesystem::relative(
-      viewport.path().lexically_normal(), project_root_.lexically_normal(), error);
+      viewport.path().lexically_normal(), context_.current_project_state.root.lexically_normal(), error);
   if (error || relative_path.empty() || relative_path.native().rfind("..", 0) == 0) {
     return std::nullopt;
   }
@@ -69,7 +69,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
       editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, rect);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const project::GitBlameRequest request{
-      .root = project_root_,
+      .root = context_.current_project_state.root,
       .absolute_path = viewport.path(),
       .visible_start_line = viewport.scroll_line(),
       .visible_line_count = metrics.visible_rows,
@@ -143,7 +143,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverl
   const SDL_FRect pane_rect =
       MakeRect(surface.right_x, rect.y, surface.gutter_width + surface.right_width,
                std::max(0.0f, rect.h - bottom_reserved));
-  if (project_root_.empty() || compare_tab.right_viewport.is_placeholder() ||
+  if (context_.current_project_state.root.empty() || compare_tab.right_viewport.is_placeholder() ||
       compare_tab.right_viewport.path().empty() || compare_tab.right_viewport.dirty() ||
       !EditorBlameFitsPane(compare_tab.right_viewport, pane_rect, 320.0f)) {
     return std::nullopt;
@@ -151,7 +151,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverl
 
   std::error_code error;
   const auto relative_path = std::filesystem::relative(
-      compare_tab.right_viewport.path().lexically_normal(), project_root_.lexically_normal(), error);
+      compare_tab.right_viewport.path().lexically_normal(), context_.current_project_state.root.lexically_normal(), error);
   if (error || relative_path.empty() || relative_path.native().rfind("..", 0) == 0) {
     return std::nullopt;
   }
@@ -159,7 +159,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverl
   compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface.visible_rows),
                                              surface.visible_columns);
   const project::GitBlameRequest request{
-      .root = project_root_,
+      .root = context_.current_project_state.root,
       .absolute_path = compare_tab.right_viewport.path(),
       .visible_start_line = compare_tab.right_viewport.scroll_line(),
       .visible_line_count = static_cast<std::size_t>(surface.visible_rows),
@@ -263,10 +263,10 @@ const editor::EditorBlameLine* WorkspaceShell::EditorBlameLineAtPosition(float x
 }
 
 void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path) {
-  if (project_root_.empty() || path.empty()) {
+  if (context_.current_project_state.root.empty() || path.empty()) {
     return;
   }
-  git_blame_service_.InvalidatePath(project_root_, path.lexically_normal());
+  git_blame_service_.InvalidatePath(context_.current_project_state.root, path.lexically_normal());
 }
 
 void WorkspaceShell::ClearEditorBlame() {

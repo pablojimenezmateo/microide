@@ -235,7 +235,7 @@ class WorkspaceActionContext {
   void OpenCommandPrompt(std::string input = {});
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
- void RequestQuit();
+  void RequestQuit();
 
  private:
   ProjectCatalogState& project_catalog_;

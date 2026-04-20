@@ -82,13 +82,13 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
     return false;
   }
 
-  if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
+  if (context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
     return false;
   }
 
   const WorkspaceLayout layout =
-      ComputeLayout(window_width, window_height, sidebar_state_.visible, BottomPanelVisible(),
-                    sidebar_state_.width, panel_state_.height);
+      ComputeLayout(window_width, window_height, context_.current_project_state.sidebar.visible, BottomPanelVisible(),
+                    context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }
@@ -115,7 +115,7 @@ WorkspaceShell::WindowAction WorkspaceShell::ConsumeWindowAction() {
 }
 
 WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float y) const {
-  switch (interaction_state_.drag_target) {
+  switch (context_.interaction_state.drag_target) {
     case DragTarget::SidebarDivider:
       return CursorKind::EwResize;
     case DragTarget::BottomPanelDivider:
@@ -124,7 +124,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const auto* editor_tab = ActiveEditorTab();
       const auto* split_node = editor_tab != nullptr
                                    ? FindEditorSplitNode(editor_tab->split_root.get(),
-                                                         interaction_state_.drag_editor_split_path)
+                                                         context_.interaction_state.drag_editor_split_path)
                                    : nullptr;
       return split_node != nullptr &&
                      split_node->orientation == EditorSplitOrientation::Horizontal
@@ -140,7 +140,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (prompts_.dirty_visible) {
+  if (context_.prompts.dirty_visible) {
     const auto buttons = ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(*window_rect));
     for (const SDL_FRect& button : buttons) {
       if (Contains(button, x, y)) {
@@ -150,14 +150,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (prompts_.surface_visible) {
+  if (context_.prompts.surface_visible) {
     const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
     for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(dialog)) {
       if (Contains(button, x, y)) {
         return CursorKind::Pointer;
       }
     }
-    if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput &&
+    if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput &&
         Contains(ComputePromptSurfaceInputRect(dialog), x, y)) {
       return CursorKind::Text;
     }
@@ -170,12 +170,12 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
   const WorkspaceLayout layout = *layout_state;
 
-  if (menu_state_.tree_context_menu.open) {
+  if (context_.menu_state.tree_context_menu.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect();
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(TreeContextMenuItems(menu_state_.tree_context_menu.target),
-                                        menu_state_.tree_context_menu.active_item_index,
+           ComputeVisiblePopupMenuItems(TreeContextMenuItems(context_.menu_state.tree_context_menu.target),
+                                        context_.menu_state.tree_context_menu.active_item_index,
                                         *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
@@ -185,21 +185,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
-  if (menu_state_.menu_bar_open) {
+  if (context_.menu_state.menu_bar_open) {
     if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(menu_state_.active_submenu_id, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(context_.menu_state.active_submenu_id, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
       }
       return CursorKind::Default;
     }
-    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, menu_state_.active_menu_id);
+    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, x, y)) {
       for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(menu_state_.active_menu_id, *popup_rect)) {
+           ComputeVisiblePopupMenuItems(context_.menu_state.active_menu_id, *popup_rect)) {
         if (Contains(item.rect, x, y)) {
           return item.separator ? CursorKind::Default : CursorKind::Pointer;
         }
@@ -223,7 +223,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (overlay_state_.visible) {
+  if (context_.current_project_state.overlay.visible) {
     const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
     if (!Contains(overlay, x, y)) {
       return CursorKind::Default;
@@ -240,11 +240,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
 
-    if (overlay_state_.mode == OverlayMode::BufferReplace) {
+    if (context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
       return y >= overlay.y + 40.0f && y < overlay.y + 82.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
-    if (overlay_state_.mode == OverlayMode::CommitPicker) {
+    if (context_.current_project_state.overlay.mode == OverlayMode::CommitPicker) {
       return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
@@ -252,7 +252,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                                                             : CursorKind::Default;
   }
 
-  if (sidebar_state_.visible && Contains(SidebarResizeHandleRect(layout), x, y)) {
+  if (context_.current_project_state.sidebar.visible && Contains(SidebarResizeHandleRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
   if (BottomPanelVisible() && Contains(BottomPanelResizeHandleRect(layout), x, y)) {
@@ -269,10 +269,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (Contains(layout.tab_strip, x, y)) {
-    if (project_root_.empty()) {
+    if (context_.current_project_state.root.empty()) {
       return CursorKind::Default;
     }
-    if (open_tabs_.empty()) {
+    if (context_.current_project_state.open_tabs.empty()) {
       return Contains(MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
                                std::max(22.0f, layout.tab_strip.h - 2.0f)),
                       x, y)
@@ -287,7 +287,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (sidebar_state_.visible && Contains(layout.sidebar, x, y)) {
+  if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
     const SidebarMode sidebar_mode = ActiveSidebarMode();
     if (Contains(SidebarModeControlRect(layout.sidebar), x, y)) {
       return CursorKind::Pointer;
@@ -344,7 +344,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return CursorKind::Default;
       }
-      const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
+      const auto& entry = context_.current_project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
       const GitSidebarEntryActionLayout actions =
           ComputeGitSidebarEntryActionLayout(row_rect, entry);
       if ((actions.primary_rect.has_value() && Contains(*actions.primary_rect, x, y)) ||
@@ -355,10 +355,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     if (sidebar_mode == SidebarMode::Problems) {
       const auto list_layout =
-          ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
+          ComputeProblemsSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.problems.entries.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
       if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(problems_sidebar_.entries.size())) {
+          *line_index >= static_cast<int>(context_.current_project_state.sidebar.problems.entries.size())) {
         return CursorKind::Default;
       }
       const SDL_FRect row_rect =
@@ -367,10 +367,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     if (sidebar_mode == SidebarMode::Plugin) {
       const auto list_layout =
-          ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
+          ComputePluginSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.plugin.items.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
       if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(plugin_sidebar_.items.size())) {
+          *line_index >= static_cast<int>(context_.current_project_state.sidebar.plugin.items.size())) {
         return CursorKind::Default;
       }
       const SDL_FRect row_rect =
@@ -379,7 +379,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
 
     if (Contains(TreeSidebarCollapseButtonRect(layout.sidebar), x, y) &&
-        directory_tree_.CanCollapseAll()) {
+        context_.current_project_state.directory_tree.CanCollapseAll()) {
       return CursorKind::Pointer;
     }
 
@@ -387,7 +387,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
 
-    const auto& entries = directory_tree_.entries();
+    const auto& entries = context_.current_project_state.directory_tree.entries();
     const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
     const auto entry_index = ScrollableListIndexAtY(list_layout, y);
     if (entry_index.has_value() && *entry_index >= 0 &&
@@ -423,7 +423,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Default;
       }
     }
-    if (panel_state_.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
+    if (context_.current_project_state.panel.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }
     if (ActiveTerminalTab() != nullptr &&
@@ -573,7 +573,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* viewport =
-      pane_it->active ? &text_viewport_
+      pane_it->active ? &context_.current_project_state.text_viewport
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane_it->leaf_id)
                                                : nullptr);
   if (viewport == nullptr || viewport->is_placeholder()) {

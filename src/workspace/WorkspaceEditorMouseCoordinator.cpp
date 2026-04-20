@@ -294,7 +294,7 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
 
 EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
   return EditorMouseCoordinator(
-      current_project_state_,
+      context_.current_project_state,
       context_.interaction_state,
       text_renderer_,
       EditorMouseCoordinator::Operations{

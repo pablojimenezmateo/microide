@@ -306,7 +306,7 @@ void TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
 TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
   return TabMouseCoordinator(
       context_.project_catalog,
-      current_project_state_,
+      context_.current_project_state,
       context_.interaction_state.tab_drag,
       TabMouseCoordinator::Operations{
           .compute_visible_project_tabs =

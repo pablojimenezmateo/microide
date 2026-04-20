@@ -21,7 +21,7 @@ WorkspaceShell::SidebarMode WorkspaceShell::SidebarModeForViewId(std::string_vie
 }
 
 WorkspaceShell::SidebarMode WorkspaceShell::ActiveSidebarMode() const {
-  return SidebarModeForViewId(sidebar_state_.view_id);
+  return SidebarModeForViewId(context_.current_project_state.sidebar.view_id);
 }
 
 const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionSpec(ActionId id) {
@@ -54,40 +54,40 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::SidebarToggle:
       return true;
     case ActionId::CloseActiveTab:
-      return !open_tabs_.empty();
+      return !context_.current_project_state.open_tabs.empty();
     case ActionId::CloseAllTabs:
-      return !open_tabs_.empty();
+      return !context_.current_project_state.open_tabs.empty();
     case ActionId::CloseOtherTabs:
-      return open_tabs_.size() > 1;
+      return context_.current_project_state.open_tabs.size() > 1;
     case ActionId::CloseTabsToRight:
-      return !open_tabs_.empty() && active_tab_index_ + 1 < open_tabs_.size();
+      return !context_.current_project_state.open_tabs.empty() && context_.current_project_state.active_tab_index + 1 < context_.current_project_state.open_tabs.size();
     case ActionId::CloseTabsToLeft:
-      return !open_tabs_.empty() && active_tab_index_ > 0;
+      return !context_.current_project_state.open_tabs.empty() && context_.current_project_state.active_tab_index > 0;
     case ActionId::CompareHead:
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
-      return !project_root_.empty() &&
-             (menu_state_.tree_context_menu.open ? menu_state_.tree_context_menu.target
+      return !context_.current_project_state.root.empty() &&
+             (context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
                                                  : SelectedTreeTargetKind()) ==
                  TreeContextTargetKind::File;
     case ActionId::CreateDirectory:
     case ActionId::CreateFile: {
-      if (project_root_.empty()) {
+      if (context_.current_project_state.root.empty()) {
         return false;
       }
       const TreeContextTargetKind target =
-          menu_state_.tree_context_menu.open ? menu_state_.tree_context_menu.target
+          context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
                                              : SelectedTreeTargetKind();
       return target == TreeContextTargetKind::Directory || target == TreeContextTargetKind::Root ||
              target == TreeContextTargetKind::Background;
     }
     case ActionId::DeletePath:
     case ActionId::RenamePath: {
-      if (project_root_.empty()) {
+      if (context_.current_project_state.root.empty()) {
         return false;
       }
       const TreeContextTargetKind target =
-          menu_state_.tree_context_menu.open ? menu_state_.tree_context_menu.target
+          context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
                                              : SelectedTreeTargetKind();
       return target == TreeContextTargetKind::File || target == TreeContextTargetKind::Directory;
     }
@@ -102,14 +102,14 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
     case ActionId::Term:
     case ActionId::Tree:
     case ActionId::TreeRefresh:
-      return !project_root_.empty();
+      return !context_.current_project_state.root.empty();
     case ActionId::CopyLastTerminalCommand:
       return ActiveTerminalTab() != nullptr && LastTerminalCommandText().has_value();
     case ActionId::CopySelectionWithContext:
       return ActiveEditableViewport() != nullptr && ActiveEditableViewport()->has_selection();
     case ActionId::CopySelection:
       return (ActiveEditableViewport() != nullptr && ActiveEditableViewport()->has_selection()) ||
-             (surface_.focus == FocusTarget::Panel && TerminalHasSelection());
+             (context_.current_project_state.surface.focus == FocusTarget::Panel && TerminalHasSelection());
     case ActionId::CutSelection:
     case ActionId::Redo:
     case ActionId::SelectAll:
@@ -117,7 +117,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return ActiveEditableViewport() != nullptr;
     case ActionId::PasteClipboard:
       return ActiveEditableViewport() != nullptr ||
-             (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr);
+             (context_.current_project_state.surface.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr);
     case ActionId::Goto:
     case ActionId::Jump:
     case ActionId::ReplaceInBuffer:
@@ -141,7 +141,7 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return !ResolveTreeActionPath(ActionSource::ContextMenu).empty();
     case ActionId::CopyRelativePath: {
       const std::filesystem::path path = ResolveTreeActionPath(ActionSource::ContextMenu);
-      return !project_root_.empty() && !path.empty() && path != project_root_;
+      return !context_.current_project_state.root.empty() && !path.empty() && path != context_.current_project_state.root;
     }
     case ActionId::SidebarWidth:
     case ActionId::SoftTabs:
@@ -150,10 +150,10 @@ bool WorkspaceShell::IsActionEnabled(ActionId id) const {
       return true;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev:
-      return !project_root_.empty() && project_catalog_.entries.size() > 1;
+      return !context_.current_project_state.root.empty() && context_.project_catalog.entries.size() > 1;
     case ActionId::TabMove:
     case ActionId::TabSwitch:
-      return !project_root_.empty() && !open_tabs_.empty();
+      return !context_.current_project_state.root.empty() && !context_.current_project_state.open_tabs.empty();
   }
 
   return true;
@@ -202,11 +202,11 @@ const project::TreeEntry* WorkspaceShell::SelectedTreeEntry() const {
   if (ActiveSidebarMode() != SidebarMode::Tree) {
     return nullptr;
   }
-  const auto& entries = directory_tree_.entries();
-  if (directory_tree_.selected_index() >= entries.size()) {
+  const auto& entries = context_.current_project_state.directory_tree.entries();
+  if (context_.current_project_state.directory_tree.selected_index() >= entries.size()) {
     return nullptr;
   }
-  return &entries[directory_tree_.selected_index()];
+  return &entries[context_.current_project_state.directory_tree.selected_index()];
 }
 
 WorkspaceShell::TreeContextTargetKind WorkspaceShell::SelectedTreeTargetKind() const {
@@ -217,7 +217,7 @@ WorkspaceShell::TreeContextTargetKind WorkspaceShell::SelectedTreeTargetKind() c
   if (!entry->is_directory) {
     return TreeContextTargetKind::File;
   }
-  return entry->path == project_root_ ? TreeContextTargetKind::Root
+  return entry->path == context_.current_project_state.root ? TreeContextTargetKind::Root
                                       : TreeContextTargetKind::Directory;
 }
 

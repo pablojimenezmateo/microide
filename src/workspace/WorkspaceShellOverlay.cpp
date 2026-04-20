@@ -5,62 +5,62 @@
 namespace microide::workspace {
 
 WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
-  return sidebar_state_.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+  return context_.current_project_state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
 }
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   RequestOverlayRedraw();
-  overlay_state_.visible = true;
-  overlay_state_.mode = mode;
-  surface_.focus = FocusTarget::Overlay;
+  context_.current_project_state.overlay.visible = true;
+  context_.current_project_state.overlay.mode = mode;
+  context_.current_project_state.surface.focus = FocusTarget::Overlay;
   ResetOverlayScroll();
   RequestOverlayRedraw();
 }
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestOverlayRedraw();
-  overlay_state_.visible = false;
-  surface_.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
+  context_.current_project_state.overlay.visible = false;
+  context_.current_project_state.surface.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
   RequestOverlayRedraw();
 }
 
 void WorkspaceShell::OpenBufferSearch() {
   ShowOverlay(OverlayMode::BufferSearch);
-  overlay_state_.buffer_search_field = BufferSearchField::Search;
-  overlay_workflow_.buffer_search.query.clear();
-  overlay_workflow_.buffer_search.replace_text.clear();
-  overlay_workflow_.buffer_search.matches.clear();
-  overlay_workflow_.buffer_search.selected_index = 0;
+  context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
+  context_.current_project_state.overlay.workflow.buffer_search.query.clear();
+  context_.current_project_state.overlay.workflow.buffer_search.replace_text.clear();
+  context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
+  context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
 }
 
 void WorkspaceShell::OpenBufferReplace() {
   ShowOverlay(OverlayMode::BufferReplace);
-  overlay_state_.buffer_search_field = BufferSearchField::Search;
-  overlay_workflow_.buffer_search.query.clear();
-  overlay_workflow_.buffer_search.replace_text.clear();
-  overlay_workflow_.buffer_search.matches.clear();
-  overlay_workflow_.buffer_search.selected_index = 0;
+  context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
+  context_.current_project_state.overlay.workflow.buffer_search.query.clear();
+  context_.current_project_state.overlay.workflow.buffer_search.replace_text.clear();
+  context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
+  context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
 }
 
 void WorkspaceShell::OpenProjectSearch() {
-  if (project_root_.empty()) {
+  if (context_.current_project_state.root.empty()) {
     return;
   }
-  overlay_workflow_.project_search.query.clear();
-  overlay_workflow_.project_search.results.clear();
-  overlay_workflow_.project_search.selected_index = 0;
-  overlay_workflow_.project_search.replace_text.clear();
+  context_.current_project_state.overlay.workflow.project_search.query.clear();
+  context_.current_project_state.overlay.workflow.project_search.results.clear();
+  context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
+  context_.current_project_state.overlay.workflow.project_search.replace_text.clear();
   ResetOverlayScroll();
   ShowSearchSidebar("", true);
 }
 
 void WorkspaceShell::ResetOverlayScroll() {
-  overlay_state_.scroll_row = 0;
+  context_.current_project_state.overlay.scroll_row = 0;
   RequestOverlayRedraw();
 }
 
 float WorkspaceShell::OverlayListStartOffset() const {
-  switch (overlay_state_.mode) {
+  switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::FileFinder:
       return 74.0f;
     case OverlayMode::BufferReplace:
@@ -75,7 +75,7 @@ float WorkspaceShell::OverlayListStartOffset() const {
 
 ScrollableListLayout WorkspaceShell::ComputeOverlayListLayout(const SDL_FRect& overlay) const {
   return ComputeScrollableListLayout(overlay, overlay.y + OverlayListStartOffset(),
-                                     OverlayItemCount(), overlay_state_.scroll_row, 18.0f,
+                                     OverlayItemCount(), context_.current_project_state.overlay.scroll_row, 18.0f,
                                      22.0f, 18.0f, 16.0f, 8.0f);
 }
 
@@ -84,32 +84,32 @@ int WorkspaceShell::OverlayVisibleRows(const SDL_FRect& overlay) const {
 }
 
 std::size_t WorkspaceShell::OverlayItemCount() const {
-  switch (overlay_state_.mode) {
+  switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
-      return overlay_workflow_.compare_picker.matches.size();
+      return context_.current_project_state.overlay.workflow.compare_picker.matches.size();
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
-      return overlay_workflow_.buffer_search.matches.size();
+      return context_.current_project_state.overlay.workflow.buffer_search.matches.size();
     case OverlayMode::ProjectSearch:
-      return overlay_workflow_.project_search.results.size();
+      return context_.current_project_state.overlay.workflow.project_search.results.size();
     case OverlayMode::FileFinder:
     default:
-      return file_finder_.results().size();
+      return context_.current_project_state.file_finder.results().size();
   }
 }
 
 std::size_t WorkspaceShell::OverlaySelectedIndex() const {
-  switch (overlay_state_.mode) {
+  switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
-      return overlay_workflow_.compare_picker.selected_index;
+      return context_.current_project_state.overlay.workflow.compare_picker.selected_index;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
-      return overlay_workflow_.buffer_search.selected_index;
+      return context_.current_project_state.overlay.workflow.buffer_search.selected_index;
     case OverlayMode::ProjectSearch:
-      return overlay_workflow_.project_search.selected_index;
+      return context_.current_project_state.overlay.workflow.project_search.selected_index;
     case OverlayMode::FileFinder:
     default:
-      return file_finder_.selected_index();
+      return context_.current_project_state.file_finder.selected_index();
   }
 }
 
@@ -119,39 +119,39 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
     return;
   }
   const std::size_t clamped_index = std::min(index, item_count - 1);
-  switch (overlay_state_.mode) {
+  switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
-      overlay_workflow_.compare_picker.selected_index = clamped_index;
+      context_.current_project_state.overlay.workflow.compare_picker.selected_index = clamped_index;
       break;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
-      overlay_workflow_.buffer_search.selected_index = clamped_index;
-      if (!overlay_workflow_.buffer_search.matches.empty()) {
-        const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
+      context_.current_project_state.overlay.workflow.buffer_search.selected_index = clamped_index;
+      if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {
+        const auto& match = context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
         if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
           viewport->MoveCursorTo(match.start.line, match.start.column);
         }
       }
       break;
     case OverlayMode::ProjectSearch:
-      overlay_workflow_.project_search.selected_index = clamped_index;
+      context_.current_project_state.overlay.workflow.project_search.selected_index = clamped_index;
       break;
     case OverlayMode::FileFinder:
     default: {
-      const std::size_t current_index = file_finder_.selected_index();
-      file_finder_.MoveSelection(static_cast<int>(clamped_index) - static_cast<int>(current_index));
+      const std::size_t current_index = context_.current_project_state.file_finder.selected_index();
+      context_.current_project_state.file_finder.MoveSelection(static_cast<int>(clamped_index) - static_cast<int>(current_index));
       break;
     }
   }
   RequestOverlayRedraw();
-  if (overlay_state_.mode == OverlayMode::BufferSearch ||
-      overlay_state_.mode == OverlayMode::BufferReplace) {
+  if (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
+      context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
     RequestEditorSurfaceRedraw();
   }
 }
 
 void WorkspaceShell::ClampOverlayScrollRow(const SDL_FRect& overlay) {
-  overlay_state_.scroll_row = ComputeOverlayListLayout(overlay).scroll_row;
+  context_.current_project_state.overlay.scroll_row = ComputeOverlayListLayout(overlay).scroll_row;
 }
 
 void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
@@ -162,18 +162,18 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
 
   const auto layout = ComputeOverlayListLayout(overlay);
   const int selected = static_cast<int>(std::min(OverlaySelectedIndex(), OverlayItemCount() - 1));
-  overlay_state_.scroll_row = RevealScrollableListIndex(layout, selected);
+  context_.current_project_state.overlay.scroll_row = RevealScrollableListIndex(layout, selected);
   RequestOverlayRedraw();
 }
 
 bool WorkspaceShell::ActivateOverlaySelection() {
-  switch (overlay_state_.mode) {
+  switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       OpenSelectedCompareCommit();
       return true;
     case OverlayMode::BufferSearch:
-      if (!overlay_workflow_.buffer_search.matches.empty()) {
-        const auto& match = overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
+      if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {
+        const auto& match = context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
         if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
           viewport->MoveCursorTo(match.start.line, match.start.column);
         }
@@ -184,12 +184,12 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       ReplaceCurrentBufferSearchMatch();
       return true;
     case OverlayMode::ProjectSearch:
-      if (!overlay_workflow_.project_search.results.empty() &&
-          overlay_workflow_.project_search.selected_index <
-              overlay_workflow_.project_search.results.size()) {
+      if (!context_.current_project_state.overlay.workflow.project_search.results.empty() &&
+          context_.current_project_state.overlay.workflow.project_search.selected_index <
+              context_.current_project_state.overlay.workflow.project_search.results.size()) {
         const auto& result =
-            overlay_workflow_.project_search.results[overlay_workflow_.project_search.selected_index];
-        OpenFile(project_root_ / result.relative_path);
+            context_.current_project_state.overlay.workflow.project_search.results[context_.current_project_state.overlay.workflow.project_search.selected_index];
+        OpenFile(context_.current_project_state.root / result.relative_path);
         if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
           viewport->MoveCursorTo(result.line, result.column);
         }
@@ -198,8 +198,8 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       return true;
     case OverlayMode::FileFinder:
     default:
-      if (const auto selected = file_finder_.SelectedPath(); selected.has_value()) {
-        OpenFile(project_root_ / *selected);
+      if (const auto selected = context_.current_project_state.file_finder.SelectedPath(); selected.has_value()) {
+        OpenFile(context_.current_project_state.root / *selected);
       }
       DismissOverlay(true);
       return true;

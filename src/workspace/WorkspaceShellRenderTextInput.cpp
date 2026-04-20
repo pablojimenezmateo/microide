@@ -64,7 +64,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       const float text_x = prompt_rect.x + 6.0f;
       const float text_y = prompt_rect.y + 4.0f;
-      const float cursor_x = text_x + text_renderer_.MeasureWidth("> " + command_.input);
+      const float cursor_x = text_x + text_renderer_.MeasureWidth("> " + context_.current_project_state.panel.command.input);
       return TextInputVisual{
           .surface = surface,
           .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f), line_height),
@@ -80,7 +80,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       const float text_x = input_rect.x + 6.0f;
       const float text_y = input_rect.y + 4.0f;
-      const float cursor_x = text_x + text_renderer_.MeasureWidth(prompts_.surface.input);
+      const float cursor_x = text_x + text_renderer_.MeasureWidth(context_.prompts.surface.input);
       return TextInputVisual{
           .surface = surface,
           .area = MakeRect(text_x, text_y, std::max(1.0f, input_rect.w - 12.0f), line_height),
@@ -97,7 +97,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker: {
-      if (!overlay_state_.visible) {
+      if (!context_.current_project_state.overlay.visible) {
         return std::nullopt;
       }
       const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
@@ -107,25 +107,25 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       std::string prefix = "> ";
       switch (surface) {
         case TextInputSurface::BufferSearch:
-          prefix += overlay_workflow_.buffer_search.query;
+          prefix += context_.current_project_state.overlay.workflow.buffer_search.query;
           break;
         case TextInputSurface::BufferReplaceSearch:
-          prefix = "find: " + overlay_workflow_.buffer_search.query;
+          prefix = "find: " + context_.current_project_state.overlay.workflow.buffer_search.query;
           break;
         case TextInputSurface::BufferReplaceReplace:
           text_y = overlay.y + 62.0f;
-          prefix = "replace: " + overlay_workflow_.buffer_search.replace_text;
+          prefix = "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text;
           break;
         case TextInputSurface::ProjectSearchOverlay:
-          prefix += overlay_workflow_.project_search.query;
+          prefix += context_.current_project_state.overlay.workflow.project_search.query;
           break;
         case TextInputSurface::CommitPicker:
           text_y = overlay.y + 62.0f;
-          prefix += overlay_workflow_.compare_picker.query;
+          prefix += context_.current_project_state.overlay.workflow.compare_picker.query;
           break;
         case TextInputSurface::FileFinder:
         default:
-          prefix += file_finder_.query();
+          prefix += context_.current_project_state.file_finder.query();
           break;
       }
       const float cursor_x = text_x + text_renderer_.MeasureWidth(prefix);
@@ -141,8 +141,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     }
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
-      if (!sidebar_state_.visible || ActiveSidebarMode() != SidebarMode::Search ||
-          !overlay_workflow_.project_search.editing) {
+      if (!context_.current_project_state.sidebar.visible || ActiveSidebarMode() != SidebarMode::Search ||
+          !context_.current_project_state.overlay.workflow.project_search.editing) {
         return std::nullopt;
       }
       const float text_x = layout.sidebar.x + kSidebarInset;
@@ -152,8 +152,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
                                 : kProjectSearchReplaceTop);
       const std::string prefix =
           surface == TextInputSurface::SidebarSearchQuery
-              ? "search> " + overlay_workflow_.project_search.edit_buffer
-              : "replace> " + overlay_workflow_.project_search.edit_buffer;
+              ? "search> " + context_.current_project_state.overlay.workflow.project_search.edit_buffer
+              : "replace> " + context_.current_project_state.overlay.workflow.project_search.edit_buffer;
       const float cursor_x = text_x + text_renderer_.MeasureWidth(prefix);
       return TextInputVisual{
           .surface = surface,
@@ -329,24 +329,24 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
 void WorkspaceShell::RenderTextComposition(
     SDL_Renderer* renderer,
     const std::optional<TextInputVisual>& visual) const {
-  if (!visual.has_value() || text_composition_.text.empty() ||
-      text_composition_.surface != visual->surface) {
+  if (!visual.has_value() || context_.text_input.composition.text.empty() ||
+      context_.text_input.composition.surface != visual->surface) {
     return;
   }
 
-  const std::string_view composition = text_composition_.text;
+  const std::string_view composition = context_.text_input.composition.text;
   const std::size_t total_codepoints = Utf8CodepointCount(composition);
   const std::size_t selection_start_codepoints =
-      text_composition_.start < 0
+      context_.text_input.composition.start < 0
           ? total_codepoints
-          : std::min<std::size_t>(static_cast<std::size_t>(text_composition_.start),
+          : std::min<std::size_t>(static_cast<std::size_t>(context_.text_input.composition.start),
                                   total_codepoints);
   const std::size_t selection_end_codepoints =
-      text_composition_.length <= 0
+      context_.text_input.composition.length <= 0
           ? selection_start_codepoints
           : std::min(total_codepoints,
                      selection_start_codepoints +
-                         static_cast<std::size_t>(text_composition_.length));
+                         static_cast<std::size_t>(context_.text_input.composition.length));
   const std::size_t selection_start =
       Utf8ByteOffsetForCodepointCount(composition, selection_start_codepoints);
   const std::size_t selection_end =

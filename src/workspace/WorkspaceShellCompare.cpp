@@ -32,7 +32,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const project::GitCommitEntry& commit,
     std::size_t selected_row) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  const auto content = project::ReadGitFileAtCommit(project_root_, normalized_path, commit.hash);
+  const auto content = project::ReadGitFileAtCommit(context_.current_project_state.root, normalized_path, commit.hash);
   if (!content.has_value()) {
     return std::nullopt;
   }
@@ -61,7 +61,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   const std::filesystem::path right_source_path =
       (compare_tab.right_path.empty() ? normalized_path : compare_tab.right_path).lexically_normal();
   const auto left_content =
-      project::ReadGitFileAtCommit(project_root_, left_source_path, compare_tab.commit_hash);
+      project::ReadGitFileAtCommit(context_.current_project_state.root, left_source_path, compare_tab.commit_hash);
   if (!left_content.has_value()) {
     return std::nullopt;
   }
@@ -74,7 +74,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
                         : util::ReadTextFile(right_source_path).value_or("");
   } else {
     const auto right_commit_content =
-        project::ReadGitFileAtCommit(project_root_, right_source_path, compare_tab.right_ref);
+        project::ReadGitFileAtCommit(context_.current_project_state.root, right_source_path, compare_tab.right_ref);
     if (!right_commit_content.has_value()) {
       return std::nullopt;
     }
@@ -159,23 +159,23 @@ SDL_FRect WorkspaceShell::CompareDividerHitRect(const SDL_FRect& editor_surface,
 }
 
 bool WorkspaceShell::ActiveTabIsCompare() const {
-  return active_tab_index_ < open_tabs_.size() &&
-         open_tabs_[active_tab_index_].kind == TabEntry::Kind::Compare &&
-         open_tabs_[active_tab_index_].compare.has_value();
+  return context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() &&
+         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].kind == TabEntry::Kind::Compare &&
+         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].compare.has_value();
 }
 
 WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() {
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &open_tabs_[active_tab_index_].compare.value();
+  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].compare.value();
 }
 
 const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const {
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &open_tabs_[active_tab_index_].compare.value();
+  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].compare.value();
 }
 
 WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(

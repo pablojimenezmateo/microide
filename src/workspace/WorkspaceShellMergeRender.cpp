@@ -197,13 +197,13 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
     DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs);
     DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
     DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar);
+                       context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  interaction_state_.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
 }
 
@@ -305,11 +305,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
                  theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.center_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 interaction_state_.drag_target == DragTarget::MergeLeftDivider ? theme_.accent
+                 context_.interaction_state.drag_target == DragTarget::MergeLeftDivider ? theme_.accent
                                                                                 : theme_.border);
   DrawFilledRect(renderer,
                  MakeRect(surface.right_x - surface.divider_width * 0.5f, rect.y, 1.0f, content_height),
-                 interaction_state_.drag_target == DragTarget::MergeRightDivider ? theme_.accent
+                 context_.interaction_state.drag_target == DragTarget::MergeRightDivider ? theme_.accent
                                                                                  : theme_.border);
 
   text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
@@ -397,11 +397,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   visible_editor_blame_overlay_ = merge_blame_overlay;
   const auto* merge_diagnostics =
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
-          ? diagnostics_store_.FindByPath(merge_tab->result_viewport.path())
+          ? context_.current_project_state.diagnostics_store.FindByPath(merge_tab->result_viewport.path())
           : nullptr;
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
-                               surface_.focus == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
+                               context_.current_project_state.surface.focus == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
                                merge_blame_overlay,
                                merge_diagnostics != nullptr
                                    ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)

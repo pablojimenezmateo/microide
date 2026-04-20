@@ -98,6 +98,8 @@ Current state:
 - the top-level action coordinator now routes project, sidebar, search, tab, edit, and global
   execution through a dedicated `WorkspaceActionContext*` facade instead of keeping action
   behavior on a nested shell-owned `WorkspaceShell::ActionCoordinator` with broad private access
+- `WorkspaceActionCoordinator` now executes from a value `WorkspaceActionContext` instead of
+  taking `WorkspaceShell&`
 - project-catalog mutation, project or workspace session persistence, command-prompt feedback,
   and menu-surface transitions now use top-level `WorkspaceProjectCatalogCoordinator`,
   `WorkspacePersistenceCoordinator`, `WorkspaceCommandPromptCoordinator`, and
@@ -173,8 +175,8 @@ Current state:
   nested inside `WorkspaceShell.h`; ownership migration is still incomplete, but the shell no
   longer defines those models inline
 - `WorkspaceContext` now owns the project catalog, active project state, prompt state, menu state,
-  and transient interaction state, with `WorkspaceShell` rebinding its legacy aliases onto that
-  context while the remaining controller migrations continue
+  and transient interaction state, and `WorkspaceShell` now reaches that state directly instead of
+  keeping its old active-project reference-alias member block
 - project-catalog mutation is the first controller path moved off `WorkspaceShell&`: the
   top-level `WorkspaceProjectCatalogCoordinator` now depends on `WorkspaceContext` plus explicit
   shell callbacks for project activation, persistence saves, plugin-host shutdown, redraw, and
@@ -216,6 +218,9 @@ Current state:
   `WorkspaceTextInputCoordinator` that depend on project or prompt or menu or text-input state
   plus explicit callbacks for action dispatch, menu transitions, command prompt, compare or merge
   editing, terminal I/O, and redraw behavior instead of `WorkspaceShell&`
+- `WorkspaceShell` still needs more dissolution work around render composition, action enablement,
+  and test seams; the current state should be treated as an intermediate shell-facade cleanup, not
+  the final endpoint
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,

@@ -1088,32 +1088,7 @@ class WorkspaceShell {
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
-  ProjectCatalogState& project_catalog_ = context_.project_catalog;
-  // Keep the active workspace, including its project-scoped surface state, in the same container
-  // used by project-catalog entries so activation, persistence, and reset paths do not copy it.
-  ProjectWorkspaceState& current_project_state_ = context_.current_project_state;
-  std::filesystem::path& project_root_ = current_project_state_.root;
-  project::DirectoryTree& directory_tree_ = current_project_state_.directory_tree;
-  project::FileIndex& file_index_ = current_project_state_.file_index;
-  project::FileFinder& file_finder_ = current_project_state_.file_finder;
-  editor::TextViewport& text_viewport_ = current_project_state_.text_viewport;
-  std::vector<TabEntry>& open_tabs_ = current_project_state_.open_tabs;
-  std::size_t& active_tab_index_ = current_project_state_.active_tab_index;
-  int& tab_scroll_index_ = current_project_state_.tab_scroll_index;
-  ProjectSurfaceState& surface_ = current_project_state_.surface;
-  SidebarState& sidebar_state_ = current_project_state_.sidebar;
-  OverlayState& overlay_state_ = current_project_state_.overlay;
-  PanelState& panel_state_ = current_project_state_.panel;
-  InteractionState& interaction_state_ = context_.interaction_state;
-  MenuSurfaceState& menu_state_ = context_.menu_state;
-  std::vector<std::unique_ptr<TerminalTabState>>& terminal_tabs_ = current_project_state_.terminal_tabs;
-  std::size_t& active_terminal_tab_index_ = current_project_state_.active_terminal_tab_index;
   WindowPresentationState window_presentation_;
-  OverlayWorkflowState& overlay_workflow_ = overlay_state_.workflow;
-  GitSidebarState& git_sidebar_ = sidebar_state_.git;
-  ProblemsSidebarState& problems_sidebar_ = sidebar_state_.problems;
-  PluginSidebarState& plugin_sidebar_ = sidebar_state_.plugin;
-  editor::DiagnosticsStore& diagnostics_store_ = current_project_state_.diagnostics_store;
   struct SidebarModeMenuEntry {
     std::string label;
     std::string id;
@@ -1136,24 +1111,15 @@ class WorkspaceShell {
   std::function<bool(std::string_view)> external_url_opener_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
-  PromptState& prompts_ = context_.prompts;
   bool quit_requested_ = false;
-  CommandState& command_ = panel_state_.command;
   std::vector<std::string> available_colorscheme_names_;
-  std::string& active_colorscheme_name_ = current_project_state_.active_colorscheme_name;
-  std::optional<SDL_Color>& project_base_color_ = current_project_state_.project_base_color;
-  EditorPreferences& editor_preferences_ = current_project_state_.editor_preferences;
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   WindowAction pending_window_action_ = WindowAction::None;
-  TextInputState& text_input_state_ = context_.text_input;
-  TextInputSurface& active_text_input_surface_ = text_input_state_.active_surface;
-  TextCompositionState& text_composition_ = text_input_state_.composition;
   Uint64 caret_blink_epoch_ms_ = 0;
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;
-  TabDragState& tab_drag_state_ = interaction_state_.tab_drag;
   CursorKind cursor_kind_ = CursorKind::Default;
   SDL_Cursor* text_cursor_ = nullptr;
   SDL_Cursor* pointer_cursor_ = nullptr;

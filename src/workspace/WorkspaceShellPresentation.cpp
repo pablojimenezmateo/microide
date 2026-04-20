@@ -12,7 +12,7 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
     if (compare_tab == nullptr) {
       return "compare";
     }
-    return BuildCompareBreadcrumbLabel(project_root_, compare_tab->path, compare_tab->left_label,
+    return BuildCompareBreadcrumbLabel(context_.current_project_state.root, compare_tab->path, compare_tab->left_label,
                                        compare_tab->right_label);
   }
   if (ActiveTabIsMerge()) {
@@ -20,17 +20,17 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
     if (merge_tab == nullptr) {
       return "merge";
     }
-    return BuildMergeBreadcrumbLabel(project_root_, merge_tab->output_path,
+    return BuildMergeBreadcrumbLabel(context_.current_project_state.root, merge_tab->output_path,
                                      merge_tab->incoming_label, merge_tab->current_label);
   }
   const editor::TextViewport* viewport = ActiveEditorViewport();
-  return BuildEditorBreadcrumbLabel(project_root_, viewport != nullptr ? viewport->path()
+  return BuildEditorBreadcrumbLabel(context_.current_project_state.root, viewport != nullptr ? viewport->path()
                                                                        : std::filesystem::path{},
                                     viewport != nullptr && viewport->is_placeholder());
 }
 
 std::string WorkspaceShell::ProjectLabel() const {
-  return project_root_.empty() ? "microide" : ProjectLabelForRoot(project_root_);
+  return context_.current_project_state.root.empty() ? "microide" : ProjectLabelForRoot(context_.current_project_state.root);
 }
 
 std::string WorkspaceShell::ProjectLabelForRoot(const std::filesystem::path& root) const {
@@ -42,7 +42,7 @@ std::string WorkspaceShell::ProjectLabelForRoot(const std::filesystem::path& roo
 }
 
 std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
-  if (index >= project_catalog_.entries.size()) {
+  if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
   const std::filesystem::path root = ProjectCatalogRoot(index);
@@ -51,7 +51,7 @@ std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
 }
 
 std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const {
-  if (!last_mouse_position_valid_ || project_root_.empty()) {
+  if (!last_mouse_position_valid_ || context_.current_project_state.root.empty()) {
     return {};
   }
   if (!Contains(tab_strip, last_mouse_x_, last_mouse_y_)) {

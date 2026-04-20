@@ -268,7 +268,7 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
 
 KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
   return KeyInputCoordinator(
-      current_project_state_, prompts_, menu_state_,
+      context_.current_project_state, context_.prompts, context_.menu_state,
       KeyInputCoordinator::Operations{
           .has_pending_redraw = [this]() { return pending_render_invalidation_.HasAnyRedraw(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
@@ -320,7 +320,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .confirm_prompt_surface = [this]() { ConfirmPromptSurface(); },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
-                return ActionCoordinator(*this).Execute(id, args, source);
+                return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .open_untitled_tab = [this]() { return OpenUntitledTab(); },
           .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
@@ -405,7 +405,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this](std::size_t first_row, std::size_t last_row) {
                 RequestCompareRowRangeRedraw(first_row, last_row);
               },
-          .request_close_active_tab = [this]() { RequestCloseTab(active_tab_index_); },
+          .request_close_active_tab =
+              [this]() { RequestCloseTab(context_.current_project_state.active_tab_index); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =

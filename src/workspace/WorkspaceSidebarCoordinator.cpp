@@ -196,7 +196,8 @@ void SidebarCoordinator::RefreshProjectFiles() {
 
 SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
   return SidebarCoordinator(
-      current_project_state_, prompts_, menu_state_, project_root_, plugin_runtime_,
+      context_.current_project_state, context_.prompts, context_.menu_state,
+      context_.current_project_state.root, plugin_runtime_,
       SidebarCoordinator::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .open_project_tab =

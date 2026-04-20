@@ -286,7 +286,7 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
 
 SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
   return SidebarMouseCoordinator(
-      current_project_state_, interaction_state_,
+      context_.current_project_state, context_.interaction_state,
       SidebarMouseCoordinator::Operations{
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .begin_project_search_edit =
@@ -325,7 +325,7 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const SDL_FRect& rect) { return GitSidebarRefreshButtonRect(rect); },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
-                return ActionCoordinator(*this).Execute(id, args, source);
+                return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .git_sidebar_list_top = [this](const SDL_FRect& rect) { return GitSidebarListTop(rect); },
           .build_git_sidebar_lines = [this]() { return BuildGitSidebarLines(); },
@@ -356,10 +356,14 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               },
           .reveal_selected_plugin_sidebar_line = [this]() { RevealSelectedPluginSidebarLine(); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
-          .can_collapse_tree = [this]() { return directory_tree_.CanCollapseAll(); },
+          .can_collapse_tree =
+              [this]() {
+                return context_.current_project_state.directory_tree.CanCollapseAll();
+              },
           .tree_sidebar_collapse_button_rect =
               [this](const SDL_FRect& rect) { return TreeSidebarCollapseButtonRect(rect); },
-          .collapse_all_tree = [this]() { directory_tree_.CollapseAll(); },
+          .collapse_all_tree =
+              [this]() { context_.current_project_state.directory_tree.CollapseAll(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .tree_sidebar_refresh_button_rect =
               [this](const SDL_FRect& rect) { return TreeSidebarRefreshButtonRect(rect); },

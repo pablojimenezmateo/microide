@@ -256,7 +256,7 @@ MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
               },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
-                return ActionCoordinator(*this).Execute(id, args, source);
+                return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
       });
 }

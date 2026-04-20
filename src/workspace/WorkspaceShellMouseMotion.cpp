@@ -33,11 +33,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                            previous_action_hovered != current_action_hovered;
   }
 
-  if (prompts_.dirty_visible) {
+  if (context_.prompts.dirty_visible) {
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
-  if (prompts_.surface_visible) {
+  if (context_.prompts.surface_visible) {
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
@@ -52,7 +52,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return true;
   }
 
-  if (tab_drag_state_.kind != TabDragKind::None) {
+  if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
     const bool handled = MakeTabMouseCoordinator().HandleMotion(event);
     if (handled) {
       ensure_redraw([this]() { RequestWindowRedraw(); });
@@ -60,7 +60,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return handled;
   }
 
-  if (interaction_state_.drag_target != DragTarget::None) {
+  if (context_.interaction_state.drag_target != DragTarget::None) {
     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
       ClearDragState();
       UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
@@ -69,14 +69,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     const WorkspaceLayout drag_layout = layout;
 
-    if (interaction_state_.drag_target == DragTarget::SidebarDivider) {
+    if (context_.interaction_state.drag_target == DragTarget::SidebarDivider) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
-      sidebar_state_.width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
+      context_.current_project_state.sidebar.width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
       RequestSidebarLayoutChangeRedraw(drag_layout);
       return true;
     }
 
-    if (interaction_state_.drag_target == DragTarget::BottomPanelDivider) {
+    if (context_.interaction_state.drag_target == DragTarget::BottomPanelDivider) {
       if (MakePanelMouseCoordinator().HandleDrag(event, drag_layout)) {
         RequestBottomPanelLayoutChangeRedraw(drag_layout);
         return true;
@@ -93,7 +93,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (interaction_state_.drag_target == DragTarget::SidebarScrollbar) {
+    if (context_.interaction_state.drag_target == DragTarget::SidebarScrollbar) {
       const bool handled = MakeSidebarMouseCoordinator().HandleDrag(event, drag_layout);
       if (handled) {
         ensure_redraw([this]() { RequestSidebarRedraw(); });
@@ -101,20 +101,20 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return handled;
     }
 
-    if (interaction_state_.drag_target == DragTarget::OverlayScrollbar && overlay_state_.visible) {
+    if (context_.interaction_state.drag_target == DragTarget::OverlayScrollbar && context_.current_project_state.overlay.visible) {
       const SDL_FRect overlay = ComputeOverlayRect(drag_layout.editor_area);
       const auto list_layout = ComputeOverlayListLayout(overlay);
       if (!list_layout.scrollbar.has_value()) {
         ClearDragState();
         return false;
       }
-      overlay_state_.scroll_row =
+      context_.current_project_state.overlay.scroll_row =
           std::clamp(static_cast<int>(std::lround(
                          ScrollUnitsForPointer(*list_layout.scrollbar,
                                               static_cast<float>(event.motion.y),
-                                              interaction_state_.drag_scrollbar_offset))),
+                                              context_.interaction_state.drag_scrollbar_offset))),
                      0, list_layout.max_scroll);
-      surface_.focus = FocusTarget::Overlay;
+      context_.current_project_state.surface.focus = FocusTarget::Overlay;
       ensure_redraw([this]() { RequestOverlayRedraw(); });
       return true;
     }
@@ -148,7 +148,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
 
-  if (!interaction_state_.mouse_selecting || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
+  if (!context_.interaction_state.mouse_selecting || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
     return hover_visual_changed;
   }
 
@@ -185,16 +185,16 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       request_redraw();
     }
   };
-  if (prompts_.dirty_visible) {
+  if (context_.prompts.dirty_visible) {
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
-  if (prompts_.surface_visible) {
+  if (context_.prompts.surface_visible) {
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
-  if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
+  if (context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
     ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;
   }

@@ -331,7 +331,7 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
 
 PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
   return PanelMouseCoordinator(
-      current_project_state_, menu_state_, interaction_state_,
+      context_.current_project_state, context_.menu_state, context_.interaction_state,
       PanelMouseCoordinator::Operations{
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_resize_handle_rect =

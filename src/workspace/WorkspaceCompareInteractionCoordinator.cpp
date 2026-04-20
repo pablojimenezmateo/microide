@@ -295,7 +295,7 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
 
 CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator() {
   return CompareInteractionCoordinator(
-      current_project_state_,
+      context_.current_project_state,
       CompareInteractionCoordinator::Operations{
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .show_compare_picker_overlay = [this]() { ShowOverlay(OverlayMode::CommitPicker); },

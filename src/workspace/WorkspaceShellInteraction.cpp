@@ -8,8 +8,8 @@
 namespace microide::workspace {
 
 void WorkspaceShell::MoveFileFinderSelection(int delta) {
-  file_finder_.MoveSelection(delta);
-  if (overlay_state_.visible) {
+  context_.current_project_state.file_finder.MoveSelection(delta);
+  if (context_.current_project_state.overlay.visible) {
     const auto layout = CurrentWorkspaceLayout();
     if (!layout.has_value()) {
       return;
@@ -20,30 +20,30 @@ void WorkspaceShell::MoveFileFinderSelection(int delta) {
 }
 
 WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const {
-  if (prompts_.dirty_visible) {
+  if (context_.prompts.dirty_visible) {
     return TextInputSurface::None;
   }
 
-  if (prompts_.surface_visible) {
-    return prompts_.surface.kind == PromptSurfaceState::Kind::TextInput
+  if (context_.prompts.surface_visible) {
+    return context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput
                ? TextInputSurface::PromptInput
                : TextInputSurface::None;
   }
 
-  if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
+  if (context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
     return TextInputSurface::None;
   }
 
-  if (panel_state_.command_mode) {
+  if (context_.current_project_state.panel.command_mode) {
     return TextInputSurface::Command;
   }
 
-  if (overlay_state_.visible) {
-    switch (overlay_state_.mode) {
+  if (context_.current_project_state.overlay.visible) {
+    switch (context_.current_project_state.overlay.mode) {
       case OverlayMode::BufferSearch:
         return TextInputSurface::BufferSearch;
       case OverlayMode::BufferReplace:
-        return overlay_state_.buffer_search_field == BufferSearchField::Search
+        return context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Search
                    ? TextInputSurface::BufferReplaceSearch
                    : TextInputSurface::BufferReplaceReplace;
       case OverlayMode::ProjectSearch:
@@ -56,19 +56,19 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     }
   }
 
-  if (surface_.focus == FocusTarget::Sidebar && sidebar_state_.visible &&
+  if (context_.current_project_state.surface.focus == FocusTarget::Sidebar && context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Search &&
-      overlay_workflow_.project_search.editing) {
-    return overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
+      context_.current_project_state.overlay.workflow.project_search.editing) {
+    return context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
                ? TextInputSurface::SidebarSearchQuery
                : TextInputSurface::SidebarSearchReplace;
   }
 
-  if (surface_.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
+  if (context_.current_project_state.surface.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
     return TextInputSurface::Editor;
   }
 
-  if (surface_.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
+  if (context_.current_project_state.surface.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
     return TextInputSurface::Terminal;
   }
 
@@ -166,9 +166,9 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
 
   const std::filesystem::path path = viewport->path().lexically_normal();
   std::string path_label;
-  if (!project_root_.empty() && !path.empty()) {
+  if (!context_.current_project_state.root.empty() && !path.empty()) {
     std::error_code error;
-    const std::filesystem::path relative = std::filesystem::relative(path, project_root_, error);
+    const std::filesystem::path relative = std::filesystem::relative(path, context_.current_project_state.root, error);
     if (!error && !relative.empty() && relative.native().rfind("..", 0) != 0) {
       path_label = relative.generic_string();
     }

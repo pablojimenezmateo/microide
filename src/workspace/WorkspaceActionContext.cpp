@@ -695,7 +695,7 @@ void WorkspaceActionContext::RequestQuit() {
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
   return WorkspaceActionContext(
       context_.project_catalog,
-      current_project_state_,
+      context_.current_project_state,
       ui_scale_,
       WorkspaceActionContext::Operations{
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },

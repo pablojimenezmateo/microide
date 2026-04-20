@@ -427,7 +427,7 @@ bool TabCoordinator::ReopenActive() {
 TabCoordinator WorkspaceShell::MakeTabCoordinator() {
   return TabCoordinator(
       context_.project_catalog,
-      current_project_state_,
+      context_.current_project_state,
       TabCoordinator::Operations{
           .invalidate_editor_blame_path =
               [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
@@ -469,33 +469,33 @@ bool WorkspaceShell::TabIsDirty(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
-  if (index >= open_tabs_.size()) {
+  if (index >= context_.current_project_state.open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = open_tabs_[index];
+  const TabEntry& tab = context_.current_project_state.open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  return BuildWorkspaceTabTextModel(project_root_, path, tab.title, TabIsDirty(index)).display_title;
+  return BuildWorkspaceTabTextModel(context_.current_project_state.root, path, tab.title, TabIsDirty(index)).display_title;
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
-  if (index >= open_tabs_.size()) {
+  if (index >= context_.current_project_state.open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = open_tabs_[index];
+  const TabEntry& tab = context_.current_project_state.open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  return BuildWorkspaceTabTextModel(project_root_, path, tab.title, TabIsDirty(index)).tooltip_label;
+  return BuildWorkspaceTabTextModel(context_.current_project_state.root, path, tab.title, TabIsDirty(index)).tooltip_label;
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {

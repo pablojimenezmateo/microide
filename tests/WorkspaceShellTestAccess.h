@@ -22,13 +22,13 @@ namespace microide::workspace {
 
 struct WorkspaceShellTestAccess {
   static void SetProjectRoot(WorkspaceShell& shell, const std::filesystem::path& root) {
-    shell.project_root_ = root.lexically_normal();
-    shell.directory_tree_.SetRoot(shell.project_root_);
-    shell.file_index_.SetRoot(shell.project_root_);
-    shell.file_finder_.SetIndex(&shell.file_index_);
-    shell.sidebar_state_.visible = true;
-    shell.sidebar_state_.view_id = "tree";
-    shell.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
+    shell.context_.current_project_state.root = root.lexically_normal();
+    shell.context_.current_project_state.directory_tree.SetRoot(shell.context_.current_project_state.root);
+    shell.context_.current_project_state.file_index.SetRoot(shell.context_.current_project_state.root);
+    shell.context_.current_project_state.file_finder.SetIndex(&shell.context_.current_project_state.file_index);
+    shell.context_.current_project_state.sidebar.visible = true;
+    shell.context_.current_project_state.sidebar.view_id = "tree";
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Sidebar;
   }
 
   static void OpenSingleEditorTab(WorkspaceShell& shell, const std::filesystem::path& path) {
@@ -37,8 +37,8 @@ struct WorkspaceShellTestAccess {
       throw std::runtime_error("failed to open editor fixture: " + path.string());
     }
     shell.ApplyEditorPreferences(opened_view);
-    shell.text_viewport_ = opened_view;
-    shell.open_tabs_.push_back(WorkspaceShell::TabEntry{
+    shell.context_.current_project_state.text_viewport = opened_view;
+    shell.context_.current_project_state.open_tabs.push_back(WorkspaceShell::TabEntry{
         .kind = WorkspaceShell::TabEntry::Kind::Editor,
         .path = path.lexically_normal(),
         .title = path.filename().string(),
@@ -46,8 +46,8 @@ struct WorkspaceShellTestAccess {
         .compare = std::nullopt,
         .merge = std::nullopt,
     });
-    shell.active_tab_index_ = 0;
-    shell.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+    shell.context_.current_project_state.active_tab_index = 0;
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
 
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) {
@@ -61,18 +61,18 @@ struct WorkspaceShellTestAccess {
     return shell.ActiveEditorViewport()->SelectedText();
   }
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
-    return shell.open_tabs_[shell.active_tab_index_].compare.value();
+    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].compare.value();
   }
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
-    return shell.open_tabs_[shell.active_tab_index_].merge.value();
+    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge.value();
   }
   static bool ActiveMergeHasSelection(const WorkspaceShell& shell) {
-    return shell.open_tabs_[shell.active_tab_index_]
+    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index]
         .merge->result_viewport.selection_range()
         .has_value();
   }
   static std::string ActiveMergeSelectedText(WorkspaceShell& shell) {
-    return shell.open_tabs_[shell.active_tab_index_].merge->result_viewport.SelectedText();
+    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->result_viewport.SelectedText();
   }
   static void ApplyMergeChoice(WorkspaceShell& shell, microide::compare::MergeChoice choice) {
     shell.ApplyMergeChoice(choice);
@@ -82,15 +82,15 @@ struct WorkspaceShellTestAccess {
   }
   static const std::optional<WorkspaceShell::MergeHoverState>& ActiveMergeHoverState(
       const WorkspaceShell& shell) {
-    return shell.open_tabs_[shell.active_tab_index_].merge->hover_state;
+    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state;
   }
   static bool ActiveMergeHoverIsIncomingConflict(const WorkspaceShell& shell) {
-    return shell.open_tabs_[shell.active_tab_index_].merge->hover_state.has_value() &&
-           shell.open_tabs_[shell.active_tab_index_].merge->hover_state->kind ==
+    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state.has_value() &&
+           shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state->kind ==
                WorkspaceShell::MergeHoverState::Kind::IncomingConflict;
   }
   static microide::compare::MergeChoice ActiveMergeHoverPreviewChoice(const WorkspaceShell& shell) {
-    const auto& hover = shell.open_tabs_[shell.active_tab_index_].merge->hover_state;
+    const auto& hover = shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state;
     return hover.has_value() ? hover->preview_choice : microide::compare::MergeChoice::Base;
   }
   static WorkspaceLayout CurrentLayout(WorkspaceShell& shell) {
@@ -241,18 +241,18 @@ struct WorkspaceShellTestAccess {
                  shell.window_presentation_.logical_height);
   }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteProjectOpenFromCommand(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Command);
   }
   static void ResetProjectScopedState(WorkspaceShell& shell, bool show_welcome) {
     shell.ResetProjectScopedState(show_welcome);
   }
   static bool ExecuteFilesFromShortcut(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(WorkspaceShell::ActionId::Files, {},
+    return ActionCoordinator(shell.MakeActionContext()).Execute(WorkspaceShell::ActionId::Files, {},
                                             WorkspaceShell::ActionSource::Shortcut);
   }
   static void SetClipboardTextReader(
@@ -346,62 +346,62 @@ struct WorkspaceShellTestAccess {
   static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
       const WorkspaceShell& shell,
       const std::filesystem::path& path) {
-    return shell.diagnostics_store_.FindByPath(path);
+    return shell.context_.current_project_state.diagnostics_store.FindByPath(path);
   }
   static bool PublishDiagnostics(WorkspaceShell& shell,
                                  std::string_view owner,
                                  const std::filesystem::path& path,
                                  std::vector<editor::Diagnostic> diagnostics) {
-    return shell.diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
+    return shell.context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
   }
   static bool ExecuteCopySelectionWithContext(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CopySelectionWithContext, {},
         WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCopyLastTerminalCommand(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CopyLastTerminalCommand, {},
         WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseAllTabs(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CloseAllTabs, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseOtherTabs(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CloseOtherTabs, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseTabsToRight(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CloseTabsToRight, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteCloseTabsToLeft(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CloseTabsToLeft, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteTreeRefresh(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::TreeRefresh, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteGitRefresh(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::GitRefresh, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteShowGitSidebar(WorkspaceShell& shell) {
-    return ActionCoordinator(shell).Execute(
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::SidebarShow, {"git"}, WorkspaceShell::ActionSource::Menu);
   }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
-    return shell.directory_tree_.SelectPath(path);
+    return shell.context_.current_project_state.directory_tree.SelectPath(path);
   }
-  static void CollapseTreeSelection(WorkspaceShell& shell) { shell.directory_tree_.CollapseSelection(); }
+  static void CollapseTreeSelection(WorkspaceShell& shell) { shell.context_.current_project_state.directory_tree.CollapseSelection(); }
   static void ShowSearchSidebar(WorkspaceShell& shell,
                                 std::string query,
                                 bool temporary = false) {
@@ -415,11 +415,11 @@ struct WorkspaceShellTestAccess {
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
   static const std::vector<WorkspaceShell::ProblemsSidebarEntry>& ProblemsSidebarEntries(
       const WorkspaceShell& shell) {
-    return shell.problems_sidebar_.entries;
+    return shell.context_.current_project_state.sidebar.problems.entries;
   }
   static const std::vector<WorkspaceShell::GitSidebarEntry>& GitSidebarEntries(
       const WorkspaceShell& shell) {
-    return shell.git_sidebar_.entries;
+    return shell.context_.current_project_state.sidebar.git.entries;
   }
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();
@@ -434,34 +434,34 @@ struct WorkspaceShellTestAccess {
     shell.ToggleProjectSearchHiddenFiles();
   }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
-    if (shell.terminal_tabs_.empty()) {
-      shell.terminal_tabs_.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
+    if (shell.context_.current_project_state.terminal_tabs.empty()) {
+      shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
     }
-    shell.active_terminal_tab_index_ = shell.terminal_tabs_.size() - 1;
-    shell.surface_.focus = WorkspaceShell::FocusTarget::Panel;
+    shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
   static void AddTerminalTab(WorkspaceShell& shell) {
-    shell.terminal_tabs_.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
-    shell.active_terminal_tab_index_ = shell.terminal_tabs_.size() - 1;
-    shell.surface_.focus = WorkspaceShell::FocusTarget::Panel;
+    shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
+    shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
   static void ConsumeTerminalSessionUpdates(WorkspaceShell& shell) {
     shell.ConsumeTerminalSessionUpdates();
   }
   static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
-    return shell.terminal_tabs_[shell.active_terminal_tab_index_]->session;
+    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->session;
   }
   static void SetActiveTerminalFollowTail(WorkspaceShell& shell, bool follow_tail) {
-    shell.terminal_tabs_[shell.active_terminal_tab_index_]->follow_tail = follow_tail;
+    shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->follow_tail = follow_tail;
   }
   static bool ActiveTerminalFollowTail(const WorkspaceShell& shell) {
-    return shell.terminal_tabs_[shell.active_terminal_tab_index_]->follow_tail;
+    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->follow_tail;
   }
   static void SetActiveTerminalScrollRow(WorkspaceShell& shell, int scroll_row) {
-    shell.terminal_tabs_[shell.active_terminal_tab_index_]->scroll_row = scroll_row;
+    shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->scroll_row = scroll_row;
   }
   static int ActiveTerminalScrollRow(const WorkspaceShell& shell) {
-    return shell.terminal_tabs_[shell.active_terminal_tab_index_]->scroll_row;
+    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->scroll_row;
   }
   static bool HandleTerminalKeyDown(WorkspaceShell& shell,
                                     SDL_Keycode key,
@@ -541,12 +541,12 @@ struct WorkspaceShellTestAccess {
     return shell.HandleEvent(event).handled;
   }
   static int ProjectTabScrollIndex(const WorkspaceShell& shell) {
-    return shell.project_catalog_.tab_scroll_index;
+    return shell.context_.project_catalog.tab_scroll_index;
   }
-  static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.tab_scroll_index_; }
+  static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.tab_scroll_index; }
   static SDL_FRect BottomPanelContentRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return microide::workspace::BottomPanelContentRect(layout, shell.panel_state_.command_mode);
+    return microide::workspace::BottomPanelContentRect(layout, shell.context_.current_project_state.panel.command_mode);
   }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,
@@ -636,7 +636,7 @@ struct WorkspaceShellTestAccess {
       const SDL_FRect row_rect = ScrollableListRowRect(
           list_layout, static_cast<int>(i) - list_layout.scroll_row);
       const auto actions = shell.ComputeGitSidebarEntryActionLayout(
-          row_rect, shell.git_sidebar_.entries[entry_index]);
+          row_rect, shell.context_.current_project_state.sidebar.git.entries[entry_index]);
       return {actions.primary_rect.value_or(SDL_FRect{}),
               actions.discard_rect.value_or(SDL_FRect{})};
     }
@@ -810,7 +810,7 @@ struct WorkspaceShellTestAccess {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
     for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
-      if (tab.index == shell.active_terminal_tab_index_) {
+      if (tab.index == shell.context_.current_project_state.active_terminal_tab_index) {
         return tab.rect;
       }
     }
@@ -846,7 +846,7 @@ struct WorkspaceShellTestAccess {
   }
 
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
-    shell.prompts_.dirty.selected_action = selected_action;
+    shell.context_.prompts.dirty.selected_action = selected_action;
     shell.ConfirmDirtyPrompt();
   }
   static bool StageAllGitSidebarEntries(WorkspaceShell& shell) {
@@ -856,12 +856,12 @@ struct WorkspaceShellTestAccess {
     return shell.DiscardAllGitSidebarEntries();
   }
 
-  static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.prompts_.dirty_visible; }
+  static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.context_.prompts.dirty_visible; }
   static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
     return shell.DirtyPromptMessage();
   }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
-    return shell.prompts_.surface_visible;
+    return shell.context_.prompts.surface_visible;
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
     return shell.PromptSurfaceTitle();
@@ -870,24 +870,24 @@ struct WorkspaceShellTestAccess {
     return shell.PromptSurfaceMessage();
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
-    return shell.open_tabs_;
+    return shell.context_.current_project_state.open_tabs;
   }
-  static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.active_tab_index_; }
+  static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.active_tab_index; }
   static std::size_t ActiveTerminalTabIndex(const WorkspaceShell& shell) {
-    return shell.active_terminal_tab_index_;
+    return shell.context_.current_project_state.active_terminal_tab_index;
   }
   static std::vector<std::filesystem::path> ProjectRoots(const WorkspaceShell& shell) {
     std::vector<std::filesystem::path> roots;
-    roots.reserve(shell.project_catalog_.entries.size());
-    for (std::size_t i = 0; i < shell.project_catalog_.entries.size(); ++i) {
+    roots.reserve(shell.context_.project_catalog.entries.size());
+    for (std::size_t i = 0; i < shell.context_.project_catalog.entries.size(); ++i) {
       roots.push_back(shell.ProjectCatalogRoot(i));
     }
     return roots;
   }
   static std::vector<std::string> TerminalLaunchLabels(WorkspaceShell& shell) {
     std::vector<std::string> labels;
-    labels.reserve(shell.terminal_tabs_.size());
-    for (const auto& terminal_tab : shell.terminal_tabs_) {
+    labels.reserve(shell.context_.current_project_state.terminal_tabs.size());
+    for (const auto& terminal_tab : shell.context_.current_project_state.terminal_tabs) {
       labels.push_back(terminal_tab == nullptr ? std::string{} : terminal_tab->session.LaunchLabel());
     }
     return labels;
@@ -965,48 +965,48 @@ struct WorkspaceShellTestAccess {
   }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
-    return shell.directory_tree_.entries();
+    return shell.context_.current_project_state.directory_tree.entries();
   }
   static std::filesystem::path SelectedTreePath(const WorkspaceShell& shell) {
     return shell.SelectedTreePath();
   }
   static int SidebarScrollRow(const WorkspaceShell& shell) {
-    return shell.sidebar_state_.scroll_row;
+    return shell.context_.current_project_state.sidebar.scroll_row;
   }
-  static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.project_catalog_.entries.size(); }
+  static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.context_.project_catalog.entries.size(); }
   static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {
-    return shell.project_catalog_.active_index;
+    return shell.context_.project_catalog.active_index;
   }
   static const std::filesystem::path& ProjectRoot(const WorkspaceShell& shell) {
-    return shell.project_root_;
+    return shell.context_.current_project_state.root;
   }
   static const std::vector<project::ProjectSearchResult>& ProjectSearchResults(
       const WorkspaceShell& shell) {
-    return shell.overlay_workflow_.project_search.results;
+    return shell.context_.current_project_state.overlay.workflow.project_search.results;
   }
   static bool ProjectSearchRunning(const WorkspaceShell& shell) {
-    return shell.overlay_workflow_.project_search.running;
+    return shell.context_.current_project_state.overlay.workflow.project_search.running;
   }
   static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
-    return shell.overlay_workflow_.project_search.truncated;
+    return shell.context_.current_project_state.overlay.workflow.project_search.truncated;
   }
   static const std::string& ProjectSearchError(const WorkspaceShell& shell) {
-    return shell.overlay_workflow_.project_search.error;
+    return shell.context_.current_project_state.overlay.workflow.project_search.error;
   }
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_dialog_state_.active;
   }
-  static bool CommandMode(const WorkspaceShell& shell) { return shell.panel_state_.command_mode; }
-  static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }
+  static bool CommandMode(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command_mode; }
+  static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command.input; }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
-    return CommandPromptCoordinator::PromptStatusText(shell.command_);
+    return CommandPromptCoordinator::PromptStatusText(shell.context_.current_project_state.panel.command);
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
-    return shell.overlay_workflow_.project_search.query;
+    return shell.context_.current_project_state.overlay.workflow.project_search.query;
   }
-  static bool OverlayVisible(const WorkspaceShell& shell) { return shell.overlay_state_.visible; }
+  static bool OverlayVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.overlay.visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
-    return shell.overlay_state_.mode == WorkspaceShell::OverlayMode::FileFinder;
+    return shell.context_.current_project_state.overlay.mode == WorkspaceShell::OverlayMode::FileFinder;
   }
   static bool TextInputSurfaceIsEditor(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::Editor;
@@ -1017,51 +1017,51 @@ struct WorkspaceShellTestAccess {
   static bool TextInputSurfaceIsPromptInput(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::PromptInput;
   }
-  static bool SidebarVisible(const WorkspaceShell& shell) { return shell.sidebar_state_.visible; }
+  static bool SidebarVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.visible; }
   static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
     return shell.ActiveSidebarMode();
   }
   static const std::string& SidebarViewId(const WorkspaceShell& shell) {
-    return shell.sidebar_state_.view_id;
+    return shell.context_.current_project_state.sidebar.view_id;
   }
   static std::size_t ProblemsSidebarSelectedIndex(const WorkspaceShell& shell) {
-    return shell.problems_sidebar_.selected_index;
+    return shell.context_.current_project_state.sidebar.problems.selected_index;
   }
   static const std::vector<plugin::PluginHost::SidebarItem>& PluginSidebarItems(
       const WorkspaceShell& shell) {
-    return shell.plugin_sidebar_.items;
+    return shell.context_.current_project_state.sidebar.plugin.items;
   }
   static const std::string& PluginSidebarError(const WorkspaceShell& shell) {
-    return shell.plugin_sidebar_.error;
+    return shell.context_.current_project_state.sidebar.plugin.error;
   }
-  static float SidebarWidth(const WorkspaceShell& shell) { return shell.sidebar_state_.width; }
+  static float SidebarWidth(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.width; }
   static float UiScale(const WorkspaceShell& shell) { return shell.UiScale(); }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
-    return shell.editor_preferences_.soft_tabs;
+    return shell.context_.current_project_state.editor_preferences.soft_tabs;
   }
   static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
-    shell.interaction_state_.drag_target = WorkspaceShell::DragTarget::SidebarDivider;
+    shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::SidebarDivider;
   }
   static void SetTransientDragTargetBottomPanelScrollbar(WorkspaceShell& shell) {
-    shell.interaction_state_.drag_target = WorkspaceShell::DragTarget::BottomPanelScrollbar;
+    shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::BottomPanelScrollbar;
   }
   static bool TransientDragTargetIsNone(const WorkspaceShell& shell) {
-    return shell.interaction_state_.drag_target == WorkspaceShell::DragTarget::None;
+    return shell.context_.interaction_state.drag_target == WorkspaceShell::DragTarget::None;
   }
   static void SetTransientMouseSelecting(WorkspaceShell& shell, bool selecting) {
-    shell.interaction_state_.mouse_selecting = selecting;
+    shell.context_.interaction_state.mouse_selecting = selecting;
   }
   static bool TransientMouseSelecting(const WorkspaceShell& shell) {
-    return shell.interaction_state_.mouse_selecting;
+    return shell.context_.interaction_state.mouse_selecting;
   }
   static bool FocusIsEditor(const WorkspaceShell& shell) {
-    return shell.surface_.focus == WorkspaceShell::FocusTarget::Editor;
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Editor;
   }
   static bool FocusIsSidebar(const WorkspaceShell& shell) {
-    return shell.surface_.focus == WorkspaceShell::FocusTarget::Sidebar;
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Sidebar;
   }
   static bool FocusIsPanel(const WorkspaceShell& shell) {
-    return shell.surface_.focus == WorkspaceShell::FocusTarget::Panel;
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Panel;
   }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
   static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
@@ -1078,32 +1078,32 @@ struct WorkspaceShellTestAccess {
   static void MoveCompareSelection(WorkspaceShell& shell, int delta) { shell.MoveCompareSelection(delta); }
   static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {
-    return shell.surface_.focus == WorkspaceShell::FocusTarget::Overlay;
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Overlay;
   }
-  static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.menu_state_.menu_bar_open; }
+  static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.context_.menu_state.menu_bar_open; }
   static bool EditMenuOpen(const WorkspaceShell& shell) {
-    return shell.menu_state_.menu_bar_open &&
-           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::Edit;
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::Edit;
   }
   static bool FileMenuOpen(const WorkspaceShell& shell) {
-    return shell.menu_state_.menu_bar_open &&
-           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::File;
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::File;
   }
   static bool EditorTabContextMenuOpen(const WorkspaceShell& shell) {
-    return shell.menu_state_.menu_bar_open &&
-           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::EditorTabContext;
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::EditorTabContext;
   }
   static bool SidebarModeMenuOpen(const WorkspaceShell& shell) {
-    return shell.menu_state_.menu_bar_open &&
-           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::SidebarMode;
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::SidebarMode;
   }
   static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
-    return shell.menu_state_.menu_bar_open &&
-           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
   }
   static bool TerminalContextMenuOpen(const WorkspaceShell& shell) {
-    return shell.menu_state_.menu_bar_open &&
-           shell.menu_state_.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
   }
 };
 

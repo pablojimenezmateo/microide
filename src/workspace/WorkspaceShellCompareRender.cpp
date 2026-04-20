@@ -180,8 +180,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   const TextGridInteractionLayout right_interaction =
       BuildCompareRightInteractionLayout(surface, *compare_tab);
   const bool draw_compare_caret =
-      surface_.focus == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
-      !(CurrentTextInputSurface() == TextInputSurface::Editor && !text_composition_.text.empty());
+      context_.current_project_state.surface.focus == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
+      !(CurrentTextInputSurface() == TextInputSurface::Editor && !context_.text_input.composition.text.empty());
   const std::optional<editor::SelectionRange> right_selection =
       compare_tab->right_editable ? compare_tab->right_viewport.selection_range() : std::nullopt;
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
@@ -191,7 +191,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   const auto* right_diagnostics =
       compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
               !compare_tab->right_viewport.dirty()
-          ? diagnostics_store_.FindByPath(compare_tab->right_viewport.path())
+          ? context_.current_project_state.diagnostics_store.FindByPath(compare_tab->right_viewport.path())
           : nullptr;
   visible_editor_blame_overlay_ = blame_overlay;
   const float bottom_reserved =
@@ -497,13 +497,13 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_F
     DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
     DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
     DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
-                       interaction_state_.drag_target == DragTarget::CompareVerticalScrollbar);
+                       context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
     DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
-                  interaction_state_.drag_target == DragTarget::CompareHorizontalScrollbar);
+                  context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
 }
 

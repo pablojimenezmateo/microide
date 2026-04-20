@@ -98,13 +98,13 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
-  sidebar_state_.width = ClampSidebarWidth(sidebar_state_.width, static_cast<float>(width));
-  panel_state_.height =
-      ClampBottomPanelHeight(panel_state_.height, static_cast<float>(height));
+  context_.current_project_state.sidebar.width = ClampSidebarWidth(context_.current_project_state.sidebar.width, static_cast<float>(width));
+  context_.current_project_state.panel.height =
+      ClampBottomPanelHeight(context_.current_project_state.panel.height, static_cast<float>(height));
 
   const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_state_.visible,
-                    BottomPanelVisible(), sidebar_state_.width, panel_state_.height);
+      ComputeLayout(static_cast<float>(width), static_cast<float>(height), context_.current_project_state.sidebar.visible,
+                    BottomPanelVisible(), context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
@@ -152,12 +152,12 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
                           layout.breadcrumb.w, kWorkspaceDividerThickness),
                  theme_.border);
 
-  if (sidebar_state_.visible) {
+  if (context_.current_project_state.sidebar.visible) {
     DrawFilledRect(renderer, layout.sidebar, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
                             kWorkspaceDividerThickness, layout.sidebar.h),
-                   interaction_state_.drag_target == DragTarget::SidebarDivider ? theme_.accent
+                   context_.interaction_state.drag_target == DragTarget::SidebarDivider ? theme_.accent
                                                                       : theme_.border);
     const SDL_FRect sidebar_header =
         MakeRect(layout.sidebar.x, layout.sidebar.y, layout.sidebar.w, kSidebarHeaderHeight);
@@ -174,7 +174,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
     DrawFilledRect(renderer,
                    MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                             kWorkspaceDividerThickness),
-                   interaction_state_.drag_target == DragTarget::BottomPanelDivider ? theme_.accent
+                   context_.interaction_state.drag_target == DragTarget::BottomPanelDivider ? theme_.accent
                                                                           : theme_.border);
     const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
                                             layout.bottom_panel.w,
@@ -204,7 +204,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (viewport.path().empty() || viewport.dirty()) {
         return {};
       }
-      const auto* diagnostics = diagnostics_store_.FindByPath(viewport.path());
+      const auto* diagnostics = context_.current_project_state.diagnostics_store.FindByPath(viewport.path());
       return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
@@ -238,9 +238,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active &&
-                                           (overlay_state_.mode == OverlayMode::BufferSearch ||
-                                            overlay_state_.mode == OverlayMode::BufferReplace)
-                                       ? overlay_workflow_.buffer_search.query
+                                           (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
+                                            context_.current_project_state.overlay.mode == OverlayMode::BufferReplace)
+                                       ? context_.current_project_state.overlay.workflow.buffer_search.query
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport));
@@ -271,21 +271,21 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track,
                       scroll_layout.vertical_scrollbar->thumb,
                       pane.active &&
-                         interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar);
+                         context_.interaction_state.drag_target == DragTarget::EditorVerticalScrollbar);
       }
       if (scroll_layout.horizontal_scrollbar.has_value()) {
         DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                       scroll_layout.horizontal_scrollbar->thumb,
                       pane.active &&
-                         interaction_state_.drag_target == DragTarget::EditorHorizontalScrollbar);
+                         context_.interaction_state.drag_target == DragTarget::EditorHorizontalScrollbar);
       }
     }
     for (const EditorSplitDividerLayout& divider :
          ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
       const bool divider_active =
-          interaction_state_.drag_target == DragTarget::EditorSplitDivider &&
-          divider.divider_index == interaction_state_.drag_editor_split_divider_index &&
-          divider.node_path == interaction_state_.drag_editor_split_path;
+          context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
+          divider.divider_index == context_.interaction_state.drag_editor_split_divider_index &&
+          divider.node_path == context_.interaction_state.drag_editor_split_path;
       DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
     }
   }

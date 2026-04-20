@@ -73,11 +73,11 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     case SDL_EVENT_TEXT_INPUT:
       return finish(text_input.HandleTextInput(event.text));
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
-      interaction_state_.window_has_input_focus = true;
+      context_.interaction_state.window_has_input_focus = true;
       RequestWindowRedraw();
       return finish(true);
     case SDL_EVENT_WINDOW_FOCUS_LOST:
-      interaction_state_.window_has_input_focus = false;
+      context_.interaction_state.window_has_input_focus = false;
       RequestWindowRedraw();
       return finish(true);
     case SDL_EVENT_KEY_DOWN:

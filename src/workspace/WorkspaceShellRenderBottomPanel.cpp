@@ -106,7 +106,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   if (terminal_panel) {
     for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
       const auto* terminal_tab =
-          tab.index < terminal_tabs_.size() ? terminal_tabs_[tab.index].get() : nullptr;
+          tab.index < context_.current_project_state.terminal_tabs.size() ? context_.current_project_state.terminal_tabs[tab.index].get() : nullptr;
       if (terminal_tab == nullptr) {
         continue;
       }
@@ -168,7 +168,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           cursor_row <
               static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
                                        panel_layout.scroll.visible_rows) &&
-          (surface_.focus != FocusTarget::Panel || CaretVisibleNow())) {
+          (context_.current_project_state.surface.focus != FocusTarget::Panel || CaretVisibleNow())) {
         const float char_width = std::max(1.0f, text_renderer_.CharWidth());
         const float cursor_x = panel_layout.text_x + static_cast<float>(cursor_column) * char_width;
         const float cursor_y =
@@ -199,7 +199,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
-  if (panel_state_.command_mode) {
+  if (context_.current_project_state.panel.command_mode) {
     const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
     DrawFilledRect(renderer, command_area, theme_.surface_raised);
     DrawFilledRect(renderer,
@@ -210,20 +210,20 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
     DrawTextOn(text_renderer_, renderer, command_area.x + 12.0f, status_y, theme_.text_muted,
                theme_.surface_raised,
-               TruncateLabel(CommandPromptCoordinator::PromptStatusText(command_),
+               TruncateLabel(CommandPromptCoordinator::PromptStatusText(context_.current_project_state.panel.command),
                              command_area.w - 24.0f));
 
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
     DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
     DrawVCenteredTextOn(text_renderer_, renderer, prompt_rect, 6.0f,
                         theme_.chrome_active_text, theme_.chrome_active,
-                        "> " + command_.input);
+                        "> " + context_.current_project_state.panel.command.input);
   }
 
   if (panel_layout.scroll.vertical_scrollbar.has_value()) {
     DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
                   panel_layout.scroll.vertical_scrollbar->thumb,
-                 interaction_state_.drag_target == DragTarget::BottomPanelScrollbar);
+                 context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
   }
 }
 

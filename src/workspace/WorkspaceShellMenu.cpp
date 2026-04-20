@@ -34,7 +34,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
     items.push_back(VisibleMenuBarItem{
         .id = spec.id,
         .rect = MakeRect(x, y, width, height),
-        .active = menu_state_.menu_bar_open && spec.id == menu_state_.active_menu_id,
+        .active = context_.menu_state.menu_bar_open && spec.id == context_.menu_state.active_menu_id,
     });
     x += width + 4.0f;
   }
@@ -117,8 +117,8 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
 
   const SDL_FRect bounds = CurrentWindowRect().value_or(
       MakeRect(0.0f, 0.0f, menu_bar.w, std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h)));
-  if (menu_state_.active_menu_anchor_rect.has_value() && id == menu_state_.active_menu_id) {
-    return ComputePopupMenuRect(*menu_state_.active_menu_anchor_rect, items, bounds);
+  if (context_.menu_state.active_menu_anchor_rect.has_value() && id == context_.menu_state.active_menu_id) {
+    return ComputePopupMenuRect(*context_.menu_state.active_menu_anchor_rect, items, bounds);
   }
 
   const auto menu_bar_items = ComputeVisibleMenuBarItems(menu_bar);
@@ -161,7 +161,7 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
     const SDL_FRect& popup_rect) const {
   const auto items = MenuItems(id);
   return items.empty() ? std::vector<VisiblePopupMenuItem>{}
-                       : ComputeVisiblePopupMenuItems(items, menu_state_.active_menu_item_index,
+                       : ComputeVisiblePopupMenuItems(items, context_.menu_state.active_menu_item_index,
                                                       popup_rect);
 }
 
@@ -200,21 +200,21 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
   }
 
   if (item.action == ActionId::Files) {
-    return !project_root_.empty();
+    return !context_.current_project_state.root.empty();
   }
   if (item.action == ActionId::Focus && item.arg_count > 0) {
     if (item.args[0] == "sidebar") {
-      return sidebar_state_.visible;
+      return context_.current_project_state.sidebar.visible;
     }
     if (item.args[0] == "panel") {
-      return panel_state_.command_mode || ActiveTerminalTab() != nullptr;
+      return context_.current_project_state.panel.command_mode || ActiveTerminalTab() != nullptr;
     }
     return true;
   }
   if ((item.action == ActionId::SidebarShow || item.action == ActionId::SidebarToggle) &&
       item.arg_count > 0) {
     if (FindBuiltinSidebarView(item.args[0]) != nullptr) {
-      return !project_root_.empty();
+      return !context_.current_project_state.root.empty();
     }
     return FindSidebarView(item.args[0], plugin_runtime_.Host()).has_value();
   }
@@ -228,33 +228,33 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   }
 
   if (item.action == ActionId::SidebarToggle) {
-    return sidebar_state_.visible;
+    return context_.current_project_state.sidebar.visible;
   }
   if (item.action == ActionId::SidebarShow && item.arg_count > 0) {
     const std::optional<SidebarViewInfo> view = FindSidebarView(item.args[0], plugin_runtime_.Host());
     if (view.has_value()) {
-      if (view->mode == SidebarMode::Search && sidebar_state_.temporary) {
+      if (view->mode == SidebarMode::Search && context_.current_project_state.sidebar.temporary) {
         return false;
       }
-      return sidebar_state_.visible && sidebar_state_.view_id == view->id;
+      return context_.current_project_state.sidebar.visible && context_.current_project_state.sidebar.view_id == view->id;
     }
   }
   return false;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ActiveSubmenuRect(const SDL_FRect& menu_bar) const {
-  if (menu_state_.active_submenu_id == MenuId::None ||
-      !menu_state_.active_submenu_anchor_rect.has_value()) {
+  if (context_.menu_state.active_submenu_id == MenuId::None ||
+      !context_.menu_state.active_submenu_anchor_rect.has_value()) {
     return std::nullopt;
   }
-  const MenuSpec* submenu = FindMenuSpec(menu_state_.active_submenu_id);
+  const MenuSpec* submenu = FindMenuSpec(context_.menu_state.active_submenu_id);
   if (submenu == nullptr) {
     return std::nullopt;
   }
-  const auto submenu_items = MenuItems(menu_state_.active_submenu_id);
+  const auto submenu_items = MenuItems(context_.menu_state.active_submenu_id);
   const SDL_FRect bounds = CurrentWindowRect().value_or(
       MakeRect(0.0f, 0.0f, menu_bar.w, std::max(menu_bar.y + menu_bar.h + 320.0f, menu_bar.h)));
-  SDL_FRect anchor = *menu_state_.active_submenu_anchor_rect;
+  SDL_FRect anchor = *context_.menu_state.active_submenu_anchor_rect;
   anchor.x += anchor.w - 1.0f;
   return ComputePopupMenuRect(anchor, submenu_items, bounds);
 }
@@ -265,20 +265,20 @@ std::filesystem::path WorkspaceShell::SelectedTreePath() const {
 }
 
 std::filesystem::path WorkspaceShell::ResolveTreeActionPath(ActionSource source) const {
-  if (source == ActionSource::ContextMenu && menu_state_.tree_context_menu.open &&
-      !menu_state_.tree_context_menu.path.empty()) {
-    return menu_state_.tree_context_menu.path.lexically_normal();
+  if (source == ActionSource::ContextMenu && context_.menu_state.tree_context_menu.open &&
+      !context_.menu_state.tree_context_menu.path.empty()) {
+    return context_.menu_state.tree_context_menu.path.lexically_normal();
   }
   return SelectedTreePath();
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
   const auto window_rect = CurrentWindowRect();
-  if (!menu_state_.tree_context_menu.open || !window_rect.has_value()) {
+  if (!context_.menu_state.tree_context_menu.open || !window_rect.has_value()) {
     return std::nullopt;
   }
-  return ComputePopupMenuRect(menu_state_.tree_context_menu.anchor_rect,
-                              TreeContextMenuItems(menu_state_.tree_context_menu.target),
+  return ComputePopupMenuRect(context_.menu_state.tree_context_menu.anchor_rect,
+                              TreeContextMenuItems(context_.menu_state.tree_context_menu.target),
                               *window_rect);
 }
 

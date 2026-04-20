@@ -6,10 +6,10 @@ namespace microide::workspace {
 
 void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
   (void) log_feedback;
-  if (project_root_.empty()) {
+  if (context_.current_project_state.root.empty()) {
     return;
   }
-  const std::filesystem::path working_directory = project_root_;
+  const std::filesystem::path working_directory = context_.current_project_state.root;
   auto terminal_tab = std::make_unique<TerminalTabState>();
   if (terminal_event_type_ != 0) {
     terminal_tab->session.SetWakeEventType(terminal_event_type_);
@@ -18,41 +18,41 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
     return;
   }
 
-  terminal_tabs_.push_back(std::move(terminal_tab));
-  active_terminal_tab_index_ = terminal_tabs_.size() - 1;
+  context_.current_project_state.terminal_tabs.push_back(std::move(terminal_tab));
+  context_.current_project_state.active_terminal_tab_index = context_.current_project_state.terminal_tabs.size() - 1;
   if (focus_terminal) {
-    surface_.focus = FocusTarget::Panel;
+    context_.current_project_state.surface.focus = FocusTarget::Panel;
   }
 }
 
 WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() {
-  if (active_terminal_tab_index_ >= terminal_tabs_.size()) {
+  if (context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size()) {
     return nullptr;
   }
-  return terminal_tabs_[active_terminal_tab_index_].get();
+  return context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index].get();
 }
 
 const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() const {
-  if (active_terminal_tab_index_ >= terminal_tabs_.size()) {
+  if (context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size()) {
     return nullptr;
   }
-  return terminal_tabs_[active_terminal_tab_index_].get();
+  return context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index].get();
 }
 
 std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {
-  if (!interaction_state_.window_has_input_focus ||
+  if (!context_.interaction_state.window_has_input_focus ||
       CurrentTextInputSurface() != TextInputSurface::Terminal ||
-      active_terminal_tab_index_ >= terminal_tabs_.size() ||
-      terminal_tabs_[active_terminal_tab_index_] == nullptr) {
+      context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size() ||
+      context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index] == nullptr) {
     return std::nullopt;
   }
-  return active_terminal_tab_index_;
+  return context_.current_project_state.active_terminal_tab_index;
 }
 
 void WorkspaceShell::SyncTerminalFocusState() {
   const std::optional<std::size_t> focused_index = FocusedTerminalTabIndex();
-  for (std::size_t index = 0; index < terminal_tabs_.size(); ++index) {
-    auto* terminal_tab = terminal_tabs_[index].get();
+  for (std::size_t index = 0; index < context_.current_project_state.terminal_tabs.size(); ++index) {
+    auto* terminal_tab = context_.current_project_state.terminal_tabs[index].get();
     if (terminal_tab == nullptr) {
       continue;
     }
@@ -69,48 +69,48 @@ void WorkspaceShell::SyncTerminalFocusState() {
 }
 
 bool WorkspaceShell::MoveActiveTerminalTabTo(std::size_t index) {
-  if (active_terminal_tab_index_ >= terminal_tabs_.size() || index >= terminal_tabs_.size()) {
+  if (context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size() || index >= context_.current_project_state.terminal_tabs.size()) {
     return false;
   }
-  if (active_terminal_tab_index_ == index) {
+  if (context_.current_project_state.active_terminal_tab_index == index) {
     return true;
   }
 
   std::unique_ptr<TerminalTabState> moved_tab =
-      std::move(terminal_tabs_[active_terminal_tab_index_]);
-  terminal_tabs_.erase(
-      terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(active_terminal_tab_index_));
-  terminal_tabs_.insert(terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(index),
+      std::move(context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index]);
+  context_.current_project_state.terminal_tabs.erase(
+      context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(context_.current_project_state.active_terminal_tab_index));
+  context_.current_project_state.terminal_tabs.insert(context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(index),
                         std::move(moved_tab));
-  active_terminal_tab_index_ = index;
-  surface_.focus = FocusTarget::Panel;
+  context_.current_project_state.active_terminal_tab_index = index;
+  context_.current_project_state.surface.focus = FocusTarget::Panel;
   return true;
 }
 
 void WorkspaceShell::CloseTerminalTab(std::size_t index) {
-  if (index >= terminal_tabs_.size()) {
+  if (index >= context_.current_project_state.terminal_tabs.size()) {
     return;
   }
 
-  terminal_tabs_.erase(terminal_tabs_.begin() + static_cast<std::ptrdiff_t>(index));
-  if (terminal_tabs_.empty()) {
-    active_terminal_tab_index_ = 0;
+  context_.current_project_state.terminal_tabs.erase(context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+  if (context_.current_project_state.terminal_tabs.empty()) {
+    context_.current_project_state.active_terminal_tab_index = 0;
     ClearTerminalSelection();
-    if (surface_.focus == FocusTarget::Panel && !panel_state_.command_mode) {
-      surface_.focus = FocusTarget::Editor;
+    if (context_.current_project_state.surface.focus == FocusTarget::Panel && !context_.current_project_state.panel.command_mode) {
+      context_.current_project_state.surface.focus = FocusTarget::Editor;
     }
     return;
   }
 
-  active_terminal_tab_index_ =
-      std::min(active_terminal_tab_index_ > index ? active_terminal_tab_index_ - 1
-                                                  : active_terminal_tab_index_,
-               terminal_tabs_.size() - 1);
+  context_.current_project_state.active_terminal_tab_index =
+      std::min(context_.current_project_state.active_terminal_tab_index > index ? context_.current_project_state.active_terminal_tab_index - 1
+                                                  : context_.current_project_state.active_terminal_tab_index,
+               context_.current_project_state.terminal_tabs.size() - 1);
 }
 
 void WorkspaceShell::ReapExitedTerminalTabs() {
-  for (std::size_t i = 0; i < terminal_tabs_.size();) {
-    if (terminal_tabs_[i] != nullptr && !terminal_tabs_[i]->session.running()) {
+  for (std::size_t i = 0; i < context_.current_project_state.terminal_tabs.size();) {
+    if (context_.current_project_state.terminal_tabs[i] != nullptr && !context_.current_project_state.terminal_tabs[i]->session.running()) {
       CloseTerminalTab(i);
       continue;
     }
@@ -120,8 +120,8 @@ void WorkspaceShell::ReapExitedTerminalTabs() {
 
 void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   const bool panel_visible_before = BottomPanelVisible();
-  const std::size_t tab_count_before = terminal_tabs_.size();
-  for (const auto& terminal_tab : terminal_tabs_) {
+  const std::size_t tab_count_before = context_.current_project_state.terminal_tabs.size();
+  for (const auto& terminal_tab : context_.current_project_state.terminal_tabs) {
     if (terminal_tab == nullptr) {
       continue;
     }
@@ -134,7 +134,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   }
   ReapExitedTerminalTabs();
   SyncTerminalFocusState();
-  if (BottomPanelVisible() != panel_visible_before || terminal_tabs_.size() != tab_count_before) {
+  if (BottomPanelVisible() != panel_visible_before || context_.current_project_state.terminal_tabs.size() != tab_count_before) {
     RequestWindowRedraw();
   } else if (panel_visible_before) {
     RequestBottomPanelRedraw();

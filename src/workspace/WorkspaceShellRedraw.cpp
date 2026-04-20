@@ -71,9 +71,9 @@ std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
     return std::nullopt;
   }
 
-  return ComputeLayout(window_rect->w, window_rect->h, sidebar_state_.visible,
-                       BottomPanelVisible(), sidebar_state_.width,
-                       panel_state_.height);
+  return ComputeLayout(window_rect->w, window_rect->h, context_.current_project_state.sidebar.visible,
+                       BottomPanelVisible(), context_.current_project_state.sidebar.width,
+                       context_.current_project_state.panel.height);
 }
 
 const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeState() const {
@@ -117,7 +117,7 @@ void WorkspaceShell::RequestChromeRedraw() {
 }
 
 void WorkspaceShell::RequestSidebarRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && sidebar_state_.visible) {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && context_.current_project_state.sidebar.visible) {
     RequestRedrawRect(layout->sidebar);
     return;
   }
@@ -170,7 +170,7 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
   RequestBreadcrumbRedraw();
   RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
-  if (include_tree_sidebar && sidebar_state_.visible && ActiveSidebarMode() == SidebarMode::Tree) {
+  if (include_tree_sidebar && context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tree) {
     RequestSidebarRedraw();
   }
 }
@@ -393,8 +393,8 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
   }
 
   std::optional<SDL_FRect> rect = layout->menu_bar;
-  if (menu_state_.menu_bar_open) {
-    if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, menu_state_.active_menu_id);
+  if (context_.menu_state.menu_bar_open) {
+    if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, context_.menu_state.active_menu_id);
         popup_rect.has_value()) {
       rect = UnionRects(rect, *popup_rect);
     }
@@ -403,7 +403,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
       rect = UnionRects(rect, *submenu_rect);
     }
   }
-  if (menu_state_.tree_context_menu.open) {
+  if (context_.menu_state.tree_context_menu.open) {
     if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {
       rect = UnionRects(rect, *tree_menu_rect);
     }
@@ -506,12 +506,12 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
   if (!layout.has_value() || !BottomPanelVisible()) {
     return std::nullopt;
   }
-  return BottomPanelContentRect(*layout, panel_state_.command_mode);
+  return BottomPanelContentRect(*layout, context_.current_project_state.panel.command_mode);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !panel_state_.command_mode) {
+  if (!layout.has_value() || !context_.current_project_state.panel.command_mode) {
     return std::nullopt;
   }
   return BottomPanelCommandAreaRect(*layout);
@@ -519,7 +519,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() c
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !overlay_state_.visible) {
+  if (!layout.has_value() || !context_.current_project_state.overlay.visible) {
     return std::nullopt;
   }
   return ComputeOverlayRect(layout->editor_area);
@@ -532,10 +532,10 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
   }
 
   std::optional<SDL_FRect> rect;
-  if (prompts_.dirty_visible) {
+  if (context_.prompts.dirty_visible) {
     rect = ComputeDirtyPromptRect(*window_rect);
   }
-  if (prompts_.surface_visible) {
+  if (context_.prompts.surface_visible) {
     rect = UnionRects(rect, ComputePromptSurfaceRect(*window_rect));
   }
   return rect;
@@ -636,17 +636,17 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  if (panel_state_.command_mode || prompts_.dirty_visible || prompts_.surface_visible ||
-      overlay_state_.visible || menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
+  if (context_.current_project_state.panel.command_mode || context_.prompts.dirty_visible || context_.prompts.surface_visible ||
+      context_.current_project_state.overlay.visible || context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
     return false;
   }
 
-  if (surface_.focus == FocusTarget::Editor) {
+  if (context_.current_project_state.surface.focus == FocusTarget::Editor) {
     const editor::TextViewport* viewport = ActiveEditableViewport();
     return viewport != nullptr && !viewport->is_placeholder();
   }
 
-  if (surface_.focus == FocusTarget::Panel) {
+  if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
     return ActiveTerminalTab() != nullptr;
   }
 
@@ -672,10 +672,10 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
     return std::nullopt;
   }
 
-  if (surface_.focus == FocusTarget::Editor) {
+  if (context_.current_project_state.surface.focus == FocusTarget::Editor) {
     return ActiveEditorCaretRect(*layout);
   }
-  if (surface_.focus == FocusTarget::Panel) {
+  if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
     return ActiveTerminalCaretRect(*layout);
   }
   return std::nullopt;
@@ -695,20 +695,20 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(const WorkspaceLa
   auto pane_it = std::find_if(panes.begin(), panes.end(),
                               [](const EditorPaneLayout& pane) { return pane.active; });
   if (pane_it == panes.end()) {
-    return text_viewport_.is_placeholder() ? std::optional<SDL_FRect>(layout.editor_surface)
+    return context_.current_project_state.text_viewport.is_placeholder() ? std::optional<SDL_FRect>(layout.editor_surface)
                                            : std::nullopt;
   }
 
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, text_viewport_, pane_it->rect);
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, context_.current_project_state.text_viewport, pane_it->rect);
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
   const float cursor_x =
       metrics.text_x +
-      static_cast<float>(text_viewport_.cursor_visual_column() - text_viewport_.horizontal_scroll()) *
+      static_cast<float>(context_.current_project_state.text_viewport.cursor_visual_column() - context_.current_project_state.text_viewport.horizontal_scroll()) *
           char_width;
   const float cursor_y =
       metrics.first_line_y +
-      static_cast<float>(text_viewport_.cursor_line() - text_viewport_.scroll_line()) *
+      static_cast<float>(context_.current_project_state.text_viewport.cursor_line() - context_.current_project_state.text_viewport.scroll_line()) *
           metrics.line_height;
   return MakeRect(cursor_x, cursor_y - 1.0f, char_width, metrics.line_height);
 }

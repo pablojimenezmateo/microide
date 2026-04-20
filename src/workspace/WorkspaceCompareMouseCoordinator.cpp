@@ -284,7 +284,7 @@ bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
 
 CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
   return CompareMouseCoordinator(
-      current_project_state_,
+      context_.current_project_state,
       context_.interaction_state,
       CompareMouseCoordinator::Operations{
           .compute_compare_surface_layout =

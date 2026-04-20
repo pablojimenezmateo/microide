@@ -36,15 +36,15 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
 }
 
 void WorkspaceShell::ClearDragState() {
-  interaction_state_.drag_target = DragTarget::None;
-  interaction_state_.drag_scrollbar_offset = 0.0f;
-  interaction_state_.drag_editor_split_path.clear();
-  interaction_state_.drag_editor_split_divider_index = 0;
+  context_.interaction_state.drag_target = DragTarget::None;
+  context_.interaction_state.drag_scrollbar_offset = 0.0f;
+  context_.interaction_state.drag_editor_split_path.clear();
+  context_.interaction_state.drag_editor_split_divider_index = 0;
 }
 
 void WorkspaceShell::ResetTransientInteractionState() {
   ClearDragState();
-  interaction_state_.mouse_selecting = false;
+  context_.interaction_state.mouse_selecting = false;
 }
 
 void WorkspaceShell::ResetCurrentProjectStateStorage() {
@@ -65,7 +65,7 @@ std::filesystem::path WorkspaceShell::ResolveProjectRootInput(
   }
 
   const std::filesystem::path base_root =
-      project_root_.empty() ? std::filesystem::current_path(error) : project_root_;
+      context_.current_project_state.root.empty() ? std::filesystem::current_path(error) : context_.current_project_state.root;
   if (error || base_root.empty()) {
     return {};
   }
@@ -75,11 +75,11 @@ std::filesystem::path WorkspaceShell::ResolveProjectRootInput(
 }
 
 void WorkspaceShell::SetWelcomePlaceholder() {
-  text_viewport_.SetPlaceholderText(
+  context_.current_project_state.text_viewport.SetPlaceholderText(
       "microide\n\n"
       "Welcome.\n"
       "Use File > New Project Tab... or run project-open.\n");
-  ApplyEditorPreferences(text_viewport_);
+  ApplyEditorPreferences(context_.current_project_state.text_viewport);
 }
 
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
@@ -90,11 +90,11 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
 
   ResetCurrentProjectStateStorage();
 
-  sidebar_state_.visible = !show_welcome;
-  surface_.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
-  tab_drag_state_ = TabDragState{};
-  persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
-  ApplyEditorPreferences(text_viewport_);
+  context_.current_project_state.sidebar.visible = !show_welcome;
+  context_.current_project_state.surface.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
+  context_.interaction_state.tab_drag = TabDragState{};
+  persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
+  ApplyEditorPreferences(context_.current_project_state.text_viewport);
   if (show_welcome) {
     SetWelcomePlaceholder();
   }
@@ -115,16 +115,16 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     }
   }
 
-  project_base_color_ = DefaultProjectBaseColor(project_root_);
+  context_.current_project_state.project_base_color = DefaultProjectBaseColor(context_.current_project_state.root);
 
-  persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
-  ApplyEditorPreferences(text_viewport_);
+  persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
+  ApplyEditorPreferences(context_.current_project_state.text_viewport);
   if (restore_persistence) {
     persistence.RestoreConfigState();
   }
 
   if (restore_persistence && persistence.RestoreSessionState()) {
-    if (terminal_tabs_.empty()) {
+    if (context_.current_project_state.terminal_tabs.empty()) {
       OpenTerminal({}, false, false);
     }
     ApplyEditorPreferencesToAllTabs();
@@ -136,18 +136,18 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   }
 
   const std::vector<std::filesystem::path> preferred_files = {
-      project_root_ / "docs" / "implementation-guide.md",
-      project_root_ / "README.md",
+      context_.current_project_state.root / "docs" / "implementation-guide.md",
+      context_.current_project_state.root / "README.md",
   };
 
   for (const auto& candidate : preferred_files) {
     editor::TextViewport startup_view;
     if (std::filesystem::exists(candidate) && startup_view.OpenFile(candidate)) {
       ApplyEditorPreferences(startup_view);
-      text_viewport_ = startup_view;
-      directory_tree_.SelectPath(candidate);
+      context_.current_project_state.text_viewport = startup_view;
+      context_.current_project_state.directory_tree.SelectPath(candidate);
       RevealSelectedTreeSidebarLine();
-      open_tabs_.push_back(TabEntry{
+      context_.current_project_state.open_tabs.push_back(TabEntry{
           .kind = TabEntry::Kind::Editor,
           .path = candidate,
           .title = candidate.filename().string(),
@@ -155,8 +155,8 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
           .compare = std::nullopt,
           .merge = std::nullopt,
       });
-      active_tab_index_ = 0;
-      if (terminal_tabs_.empty()) {
+      context_.current_project_state.active_tab_index = 0;
+      if (context_.current_project_state.terminal_tabs.empty()) {
         OpenTerminal({}, false, false);
       }
       ReloadPluginsForCurrentProject();
@@ -164,12 +164,12 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     }
   }
 
-  text_viewport_.SetPlaceholderText(
+  context_.current_project_state.text_viewport.SetPlaceholderText(
       "microide\n\n"
       "Project loaded.\n"
       "Use the sidebar to open files.\n");
-  ApplyEditorPreferences(text_viewport_);
-  if (terminal_tabs_.empty()) {
+  ApplyEditorPreferences(context_.current_project_state.text_viewport);
+  if (context_.current_project_state.terminal_tabs.empty()) {
     OpenTerminal({}, false, false);
   }
   ReloadPluginsForCurrentProject();
@@ -201,10 +201,10 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   StopProjectSearch();
   MakeMenuCoordinator().CloseTreeContextMenu();
 
-  current_project_state_.initialized = true;
-  current_project_state_.restore_persistence_on_activate = false;
-  current_project_state_.overlay.workflow.project_search.running = false;
-  state = std::move(current_project_state_);
+  context_.current_project_state.initialized = true;
+  context_.current_project_state.restore_persistence_on_activate = false;
+  context_.current_project_state.overlay.workflow.project_search.running = false;
+  state = std::move(context_.current_project_state);
   RebindProjectState(state);
   ResetCurrentProjectStateStorage();
 }
@@ -215,21 +215,21 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
 
-  current_project_state_ = std::move(state);
-  current_project_state_.overlay.workflow.project_search.running = false;
-  RebindProjectState(current_project_state_);
+  context_.current_project_state = std::move(state);
+  context_.current_project_state.overlay.workflow.project_search.running = false;
+  RebindProjectState(context_.current_project_state);
   ResetTransientInteractionState();
 
   state = ProjectWorkspaceState{};
-  state.root = project_root_;
+  state.root = context_.current_project_state.root;
   state.initialized = true;
   state.restore_persistence_on_activate = false;
-  persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
+  persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
   ApplyEditorPreferencesToAllTabs();
-  if (text_viewport_.is_placeholder()) {
-    ApplyEditorPreferences(text_viewport_);
+  if (context_.current_project_state.text_viewport.is_placeholder()) {
+    ApplyEditorPreferences(context_.current_project_state.text_viewport);
   }
-  if (!project_root_.empty() && terminal_tabs_.empty()) {
+  if (!context_.current_project_state.root.empty() && context_.current_project_state.terminal_tabs.empty()) {
     OpenTerminal({}, false, false);
   }
 }
@@ -242,33 +242,33 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
 
   StopProjectSearch();
-  project_root_ = absolute_root.lexically_normal();
+  context_.current_project_state.root = absolute_root.lexically_normal();
   {
     util::StartupTrace::Scope tree_scope("DirectoryTree::SetRoot");
-    if (!directory_tree_.SetRoot(project_root_)) {
+    if (!context_.current_project_state.directory_tree.SetRoot(context_.current_project_state.root)) {
       return false;
     }
   }
   {
     util::StartupTrace::Scope index_scope("FileIndex::SetRoot");
-    if (!file_index_.SetRoot(project_root_)) {
+    if (!context_.current_project_state.file_index.SetRoot(context_.current_project_state.root)) {
       return false;
     }
   }
-  file_finder_.SetIndex(&file_index_);
-  sidebar_state_.scroll_row = 0;
+  context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
+  context_.current_project_state.sidebar.scroll_row = 0;
   RefreshGitSidebar();
   RefreshProblemsSidebar();
 
   if (ActiveSidebarMode() == SidebarMode::Search &&
-      !overlay_workflow_.project_search.query.empty()) {
+      !context_.current_project_state.overlay.workflow.project_search.query.empty()) {
     RefreshProjectSearch();
   }
   return true;
 }
 
 std::filesystem::path WorkspaceShell::ConfigStatePath() const {
-  return project_root_.empty() ? std::filesystem::path{} : ProjectStateDirectory() / "config";
+  return context_.current_project_state.root.empty() ? std::filesystem::path{} : ProjectStateDirectory() / "config";
 }
 
 std::filesystem::path WorkspaceShell::UserConfigPath() const {
@@ -278,10 +278,10 @@ std::filesystem::path WorkspaceShell::UserConfigPath() const {
 }
 
 std::filesystem::path WorkspaceShell::ProjectStateDirectory() const {
-  if (project_root_.empty()) {
+  if (context_.current_project_state.root.empty()) {
     return {};
   }
-  const std::string directory_name = ProjectStateDirectoryName(project_root_);
+  const std::string directory_name = ProjectStateDirectoryName(context_.current_project_state.root);
   const std::filesystem::path state_root =
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
   return state_root.empty() ? std::filesystem::path{} : state_root / "projects" / directory_name;

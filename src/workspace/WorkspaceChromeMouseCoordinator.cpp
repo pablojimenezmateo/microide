@@ -359,7 +359,7 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuMotion(const SDL_Event& event)
 
 ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
   return ChromeMouseCoordinator(
-      current_project_state_, menu_state_, interaction_state_,
+      context_.current_project_state, context_.menu_state, context_.interaction_state,
       ChromeMouseCoordinator::Operations{
           .close_menu_bar = [this]() { MakeMenuCoordinator().CloseMenuBar(); },
           .open_anchored_menu =

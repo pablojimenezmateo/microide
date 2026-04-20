@@ -83,7 +83,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                           tab.active ? theme_.chrome_active_text : theme_.surface_text);
   }
 
-  if (!project_root_.empty() && open_tabs_.empty()) {
+  if (!context_.current_project_state.root.empty() && context_.current_project_state.open_tabs.empty()) {
     const SDL_FRect placeholder_tab =
         MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
                  std::max(22.0f, layout.tab_strip.h - 2.0f));
@@ -92,7 +92,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                    theme_.accent);
     DrawVCenteredTextOn(text_renderer_, renderer, placeholder_tab, 10.0f,
                         theme_.chrome_active_text, theme_.chrome_active, "welcome");
-  } else if (!project_root_.empty()) {
+  } else if (!context_.current_project_state.root.empty()) {
     for (const VisibleStripTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
       DrawFilledRect(renderer, tab.rect,
                      tab.active ? theme_.chrome_active : theme_.surface_raised);

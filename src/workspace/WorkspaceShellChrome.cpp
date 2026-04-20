@@ -46,7 +46,7 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::BuildVisibleStripTa
 }
 
 float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
-  if (index >= project_catalog_.entries.size()) {
+  if (index >= context_.project_catalog.entries.size()) {
     return 156.0f;
   }
   return std::clamp(text_renderer_.MeasureWidth(ProjectTabDisplayTitle(index)) + 58.0f, 156.0f,
@@ -54,14 +54,14 @@ float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
 }
 
 void WorkspaceShell::EnsureActiveProjectVisible() {
-  if (project_catalog_.entries.empty()) {
-    project_catalog_.tab_scroll_index = 0;
+  if (context_.project_catalog.entries.empty()) {
+    context_.project_catalog.tab_scroll_index = 0;
     return;
   }
 
   std::vector<float> widths;
-  widths.reserve(project_catalog_.entries.size());
-  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+  widths.reserve(context_.project_catalog.entries.size());
+  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     widths.push_back(ProjectTabWidthForIndex(i));
   }
 
@@ -69,25 +69,25 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
   const float start_x = 12.0f;
   const float gap = 1.0f;
   const float max_tab_x = std::max(start_x + 120.0f, strip_width - 12.0f);
-  project_catalog_.tab_scroll_index =
+  context_.project_catalog.tab_scroll_index =
       static_cast<int>(EnsureVisibleStripIndex(widths, start_x, gap, max_tab_x,
-                                               static_cast<std::size_t>(std::max(0, project_catalog_.tab_scroll_index)),
-                                               project_catalog_.active_index));
+                                               static_cast<std::size_t>(std::max(0, context_.project_catalog.tab_scroll_index)),
+                                               context_.project_catalog.active_index));
 }
 
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProjectTabs(
     const SDL_FRect& project_tab_strip) const {
-  if (project_catalog_.entries.empty()) {
+  if (context_.project_catalog.entries.empty()) {
     return {};
   }
 
   std::vector<float> widths;
   std::vector<std::string> display_titles;
   std::vector<std::string> tooltip_labels;
-  widths.reserve(project_catalog_.entries.size());
-  display_titles.reserve(project_catalog_.entries.size());
-  tooltip_labels.reserve(project_catalog_.entries.size());
-  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+  widths.reserve(context_.project_catalog.entries.size());
+  display_titles.reserve(context_.project_catalog.entries.size());
+  tooltip_labels.reserve(context_.project_catalog.entries.size());
+  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     const std::filesystem::path root = ProjectCatalogRoot(i);
     display_titles.push_back(ProjectTabDisplayTitle(i));
     tooltip_labels.push_back(root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string());
@@ -103,27 +103,27 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
       std::max(start_x + 120.0f, project_tab_strip.x + project_tab_strip.w - 12.0f);
   return BuildVisibleStripTabs(
       widths, start_x, gap, max_tab_x,
-      static_cast<std::size_t>(std::clamp(project_catalog_.tab_scroll_index, 0,
-                                          std::max(0, static_cast<int>(project_catalog_.entries.size()) - 1))),
-      tab_y, tab_height, {}, project_catalog_.active_index, display_titles, tooltip_labels);
+      static_cast<std::size_t>(std::clamp(context_.project_catalog.tab_scroll_index, 0,
+                                          std::max(0, static_cast<int>(context_.project_catalog.entries.size()) - 1))),
+      tab_y, tab_height, {}, context_.project_catalog.active_index, display_titles, tooltip_labels);
 }
 
 float WorkspaceShell::TabWidthForIndex(std::size_t index) const {
-  if (index >= open_tabs_.size()) {
+  if (index >= context_.current_project_state.open_tabs.size()) {
     return 132.0f;
   }
   return std::clamp(text_renderer_.MeasureWidth(TabDisplayTitle(index)) + 58.0f, 132.0f, 220.0f);
 }
 
 void WorkspaceShell::EnsureActiveTabVisible() {
-  if (open_tabs_.empty()) {
-    tab_scroll_index_ = 0;
+  if (context_.current_project_state.open_tabs.empty()) {
+    context_.current_project_state.tab_scroll_index = 0;
     return;
   }
 
   std::vector<float> widths;
-  widths.reserve(open_tabs_.size());
-  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+  widths.reserve(context_.current_project_state.open_tabs.size());
+  for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
     widths.push_back(TabWidthForIndex(i));
   }
 
@@ -133,25 +133,25 @@ void WorkspaceShell::EnsureActiveTabVisible() {
   const float gap = 1.0f;
   const float right_reserve = std::clamp(tab_strip_width * 0.22f, 160.0f, 240.0f);
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip_width - right_reserve);
-  tab_scroll_index_ =
+  context_.current_project_state.tab_scroll_index =
       static_cast<int>(EnsureVisibleStripIndex(widths, start_x, gap, max_tab_x,
-                                               static_cast<std::size_t>(std::max(0, tab_scroll_index_)),
-                                               active_tab_index_));
+                                               static_cast<std::size_t>(std::max(0, context_.current_project_state.tab_scroll_index)),
+                                               context_.current_project_state.active_tab_index));
 }
 
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
     const SDL_FRect& tab_strip) const {
-  if (open_tabs_.empty()) {
+  if (context_.current_project_state.open_tabs.empty()) {
     return {};
   }
 
   std::vector<float> widths;
   std::vector<std::string> display_titles;
   std::vector<std::string> tooltip_labels;
-  widths.reserve(open_tabs_.size());
-  display_titles.reserve(open_tabs_.size());
-  tooltip_labels.reserve(open_tabs_.size());
-  for (std::size_t i = 0; i < open_tabs_.size(); ++i) {
+  widths.reserve(context_.current_project_state.open_tabs.size());
+  display_titles.reserve(context_.current_project_state.open_tabs.size());
+  tooltip_labels.reserve(context_.current_project_state.open_tabs.size());
+  for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
     display_titles.push_back(TabDisplayTitle(i));
     tooltip_labels.push_back(TabTooltipLabel(i));
     widths.push_back(
@@ -166,14 +166,14 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve);
   return BuildVisibleStripTabs(
       widths, start_x, gap, max_tab_x,
-      static_cast<std::size_t>(std::clamp(tab_scroll_index_, 0,
-                                          std::max(0, static_cast<int>(open_tabs_.size()) - 1))),
-      tab_y, tab_height, {}, active_tab_index_, display_titles, tooltip_labels);
+      static_cast<std::size_t>(std::clamp(context_.current_project_state.tab_scroll_index, 0,
+                                          std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1))),
+      tab_y, tab_height, {}, context_.current_project_state.active_tab_index, display_titles, tooltip_labels);
 }
 
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTerminalTabs(
     const SDL_FRect& panel_header) const {
-  if (terminal_tabs_.empty()) {
+  if (context_.current_project_state.terminal_tabs.empty()) {
     return {};
   }
 
@@ -181,12 +181,12 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTermi
   std::vector<float> widths;
   std::vector<std::string> display_titles;
   std::vector<std::string> tooltip_labels;
-  terminal_indices.reserve(terminal_tabs_.size());
-  widths.reserve(terminal_tabs_.size());
-  display_titles.reserve(terminal_tabs_.size());
-  tooltip_labels.reserve(terminal_tabs_.size());
-  for (std::size_t i = 0; i < terminal_tabs_.size(); ++i) {
-    const TerminalTabState* terminal_tab = terminal_tabs_[i].get();
+  terminal_indices.reserve(context_.current_project_state.terminal_tabs.size());
+  widths.reserve(context_.current_project_state.terminal_tabs.size());
+  display_titles.reserve(context_.current_project_state.terminal_tabs.size());
+  tooltip_labels.reserve(context_.current_project_state.terminal_tabs.size());
+  for (std::size_t i = 0; i < context_.current_project_state.terminal_tabs.size(); ++i) {
+    const TerminalTabState* terminal_tab = context_.current_project_state.terminal_tabs[i].get();
     if (terminal_tab == nullptr) {
       continue;
     }
@@ -209,12 +209,12 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTermi
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
   const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
   return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, 0, tab_y, tab_height,
-                               terminal_indices, active_terminal_tab_index_, display_titles,
+                               terminal_indices, context_.current_project_state.active_terminal_tab_index, display_titles,
                                tooltip_labels);
 }
 
 void WorkspaceShell::ClearTabDrag() {
-  tab_drag_state_ = TabDragState{};
+  context_.interaction_state.tab_drag = TabDragState{};
 }
 
 SDL_FRect WorkspaceShell::BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const {

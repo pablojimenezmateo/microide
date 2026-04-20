@@ -280,7 +280,7 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
 
 DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
   return DiffTabCoordinator(
-      current_project_state_,
+      context_.current_project_state,
       DiffTabCoordinator::Operations{
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },

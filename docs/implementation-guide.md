@@ -108,13 +108,14 @@ The codebase is organized by responsibility:
 
 `WorkspaceShell` is still the app-facing facade, but its core workspace state now lives under a
 dedicated `WorkspaceContext`, and project, tab, prompt, menu, interaction, and text-input models
-live in dedicated workspace headers instead of being defined inline on the shell. Project
-catalog, persistence, lifecycle, dirty-prompt, menu, command-prompt, diff-tab,
-compare-interaction, path-mutation, action-context, tab, key-input, text-input, and mouse
-coordination now bind through explicit context-or-state plus callback dependencies rather than
-taking `WorkspaceShell&`, and ordinary production friend-class access on the shell is gone.
-Plugin runtime, project, terminal, compare, and rendering work should continue to move into
-narrower subsystems rather than accrete more logic in one file.
+live in dedicated workspace headers instead of being defined inline on the shell. The shell no
+longer keeps the old active-project reference-alias member block. Project catalog, persistence,
+lifecycle, dirty-prompt, menu, command-prompt, diff-tab, compare-interaction, path-mutation,
+action-context, action dispatch, tab, key-input, text-input, and mouse coordination now bind
+through explicit context-or-state plus callback dependencies rather than taking `WorkspaceShell&`,
+and ordinary production friend-class access on the shell is gone. Plugin runtime, project,
+terminal, compare, and rendering work should continue to move into narrower subsystems rather than
+accrete more logic in one file.
 
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed
@@ -135,8 +136,8 @@ whether the backend is external or built in.
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
 - `docs/plugin-runtime-research.md`: plugin architecture notes and external references
-- `docs/workspace-shell-breakdown-plan.md`: plan to dissolve `WorkspaceShell` into narrower
-  context, service, controller, and view ownership
+- `docs/workspace-shell-breakdown-plan.md`: current progress and remaining work for dissolving
+  `WorkspaceShell` into narrower context, service, controller, and eventual view ownership
 - `docs/diff-editor-merge-rewrite-plan.md`: targeted diff and merge rewrite plan
 - `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
 - `docs/performance-findings.md`: shipped performance work worth preserving

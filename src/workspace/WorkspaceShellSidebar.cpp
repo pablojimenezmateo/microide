@@ -90,21 +90,21 @@ ScrollableListLayout WorkspaceShell::ComputeProjectSearchSidebarListLayout(
     const SDL_FRect& sidebar_rect,
     std::size_t line_count) const {
   return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kProjectSearchResultsTop,
-                                     line_count, sidebar_state_.scroll_row, kSidebarInset,
+                                     line_count, context_.current_project_state.sidebar.scroll_row, kSidebarInset,
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
 ScrollableListLayout WorkspaceShell::ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                  std::size_t line_count) const {
   return ComputeScrollableListLayout(sidebar_rect, GitSidebarListTop(sidebar_rect), line_count,
-                                     sidebar_state_.scroll_row, kSidebarInset, kSidebarRowHeight,
+                                     context_.current_project_state.sidebar.scroll_row, kSidebarInset, kSidebarRowHeight,
                                      kSidebarRowHeight - 2.0f, 0.0f, 0.0f, true);
 }
 
 ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                   std::size_t line_count) const {
   return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kSidebarHeaderHeight + 6.0f,
-                                     line_count, sidebar_state_.scroll_row, kSidebarInset,
+                                     line_count, context_.current_project_state.sidebar.scroll_row, kSidebarInset,
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
@@ -142,7 +142,7 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
   if (const std::optional<SidebarViewInfo> view =
-          FindSidebarView(sidebar_state_.view_id, plugin_runtime_.Host());
+          FindSidebarView(context_.current_project_state.sidebar.view_id, plugin_runtime_.Host());
       view.has_value()) {
     return std::string(view->label);
   }
@@ -165,7 +165,7 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 }
 
 std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {
-  if (!last_mouse_position_valid_ || !sidebar_state_.visible ||
+  if (!last_mouse_position_valid_ || !context_.current_project_state.sidebar.visible ||
       ActiveSidebarMode() != SidebarMode::Git ||
       !Contains(sidebar_rect, last_mouse_x_, last_mouse_y_)) {
     return {};
@@ -180,7 +180,7 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
   for (std::size_t i = 0; i < lines.size(); ++i) {
     const auto& line = lines[i];
     if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0 ||
-        static_cast<std::size_t>(line.entry_index) >= git_sidebar_.entries.size()) {
+        static_cast<std::size_t>(line.entry_index) >= context_.current_project_state.sidebar.git.entries.size()) {
       continue;
     }
 
@@ -189,7 +189,7 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
       continue;
     }
 
-    const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
+    const auto& entry = context_.current_project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
     const SDL_FRect row_rect = ScrollableListRowRect(list_layout, visible_row);
     const GitSidebarEntryActionLayout actions = ComputeGitSidebarEntryActionLayout(row_rect, entry);
     if (actions.primary_rect.has_value() &&
@@ -208,15 +208,15 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
   std::vector<GitSidebarSection> sections;
-  sections.reserve(git_sidebar_.entries.size());
-  for (const auto& entry : git_sidebar_.entries) {
+  sections.reserve(context_.current_project_state.sidebar.git.entries.size());
+  for (const auto& entry : context_.current_project_state.sidebar.git.entries) {
     sections.push_back(entry.section == GitSidebarEntry::Section::Modified
                            ? GitSidebarSection::Modified
                            : GitSidebarSection::Outgoing);
   }
 
   const auto specs =
-      BuildGitSidebarLineSpecs(sections, git_sidebar_.repo_available, git_sidebar_.base_ref, git_sidebar_.base_label);
+      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available, context_.current_project_state.sidebar.git.base_ref, context_.current_project_state.sidebar.git.base_label);
   std::vector<GitSidebarLine> lines;
   lines.reserve(specs.size());
   for (const GitSidebarLineSpec& spec : specs) {
@@ -261,27 +261,27 @@ WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEnt
 }
 
 std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
-  if (git_sidebar_.selected_index >= git_sidebar_.entries.size()) {
+  if (context_.current_project_state.sidebar.git.selected_index >= context_.current_project_state.sidebar.git.entries.size()) {
     return std::nullopt;
   }
 
   std::vector<GitSidebarSection> sections;
-  sections.reserve(git_sidebar_.entries.size());
-  for (const auto& entry : git_sidebar_.entries) {
+  sections.reserve(context_.current_project_state.sidebar.git.entries.size());
+  for (const auto& entry : context_.current_project_state.sidebar.git.entries) {
     sections.push_back(entry.section == GitSidebarEntry::Section::Modified
                            ? GitSidebarSection::Modified
                            : GitSidebarSection::Outgoing);
   }
   const auto specs =
-      BuildGitSidebarLineSpecs(sections, git_sidebar_.repo_available, git_sidebar_.base_ref, git_sidebar_.base_label);
-  return FindSelectedGitSidebarLineIndex(specs, git_sidebar_.selected_index);
+      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available, context_.current_project_state.sidebar.git.base_ref, context_.current_project_state.sidebar.git.base_label);
+  return FindSelectedGitSidebarLineIndex(specs, context_.current_project_state.sidebar.git.selected_index);
 }
 
 const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry() const {
-  if (git_sidebar_.selected_index >= git_sidebar_.entries.size()) {
+  if (context_.current_project_state.sidebar.git.selected_index >= context_.current_project_state.sidebar.git.entries.size()) {
     return nullptr;
   }
-  return &git_sidebar_.entries[git_sidebar_.selected_index];
+  return &context_.current_project_state.sidebar.git.entries[context_.current_project_state.sidebar.git.selected_index];
 }
 
 }  // namespace microide::workspace

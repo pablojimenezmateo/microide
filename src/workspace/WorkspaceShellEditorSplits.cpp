@@ -163,17 +163,17 @@ void WorkspaceShell::SetActiveEditorSplit(std::size_t index) {
   NormalizeEditorSplitTree(*editor_tab);
   if (auto* current_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
       current_view != nullptr) {
-    *current_view = text_viewport_;
+    *current_view = context_.current_project_state.text_viewport;
   }
 
   if (auto* target_view = FindEditorView(*editor_tab, index); target_view != nullptr) {
     editor_tab->active_leaf_id = index;
-    text_viewport_ = *target_view;
+    context_.current_project_state.text_viewport = *target_view;
     SyncActiveEditorTabMetadata();
     ResetCaretBlink();
   }
-  surface_.focus = FocusTarget::Editor;
-  RequestActiveTabRedraw(!text_viewport_.path().empty());
+  context_.current_project_state.surface.focus = FocusTarget::Editor;
+  RequestActiveTabRedraw(!context_.current_project_state.text_viewport.path().empty());
 }
 
 bool WorkspaceShell::ActivateOrderedEditorSplit(std::size_t order_index) {
@@ -199,7 +199,7 @@ bool WorkspaceShell::SplitActiveEditor(EditorSplitOrientation orientation) {
   }
 
   if (editor_tab->views.empty()) {
-    *editor_tab = MakeEditorTabState(text_viewport_);
+    *editor_tab = MakeEditorTabState(context_.current_project_state.text_viewport);
   }
 
   NormalizeEditorSplitTree(*editor_tab);
@@ -249,9 +249,9 @@ bool WorkspaceShell::SplitActiveEditor(EditorSplitOrientation orientation) {
   NormalizeEditorSplitTree(*editor_tab);
   editor_tab->active_leaf_id = new_leaf_id;
   if (auto* new_view = FindEditorView(*editor_tab, new_leaf_id); new_view != nullptr) {
-    text_viewport_ = *new_view;
+    context_.current_project_state.text_viewport = *new_view;
   }
-  surface_.focus = FocusTarget::Editor;
+  context_.current_project_state.surface.focus = FocusTarget::Editor;
   ResetCaretBlink();
   RequestEditorSurfaceRedraw();
   return true;
@@ -271,8 +271,8 @@ bool WorkspaceShell::UnsplitActiveEditor() {
 
   const editor::TextViewport preserved_view = *active_view;
   *editor_tab = MakeEditorTabState(preserved_view);
-  text_viewport_ = preserved_view;
-  surface_.focus = FocusTarget::Editor;
+  context_.current_project_state.text_viewport = preserved_view;
+  context_.current_project_state.surface.focus = FocusTarget::Editor;
   ResetCaretBlink();
   RequestEditorSurfaceRedraw();
   return true;

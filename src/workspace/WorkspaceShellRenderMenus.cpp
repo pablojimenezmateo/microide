@@ -6,7 +6,7 @@ using namespace detail;
 
 void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
                                       const WorkspaceLayout& layout) const {
-  if (menu_state_.menu_bar_open) {
+  if (context_.menu_state.menu_bar_open) {
     const auto draw_popup_menu =
         [&](MenuId menu_id, int active_item_index, const std::optional<SDL_FRect>& anchor_rect) {
           const MenuSpec* menu = FindMenuSpec(menu_id);
@@ -64,18 +64,18 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             }
           }
         };
-    draw_popup_menu(menu_state_.active_menu_id, menu_state_.active_menu_item_index, std::nullopt);
-    if (menu_state_.active_submenu_id != MenuId::None) {
-      draw_popup_menu(menu_state_.active_submenu_id, menu_state_.active_submenu_item_index,
-                      menu_state_.active_submenu_anchor_rect);
+    draw_popup_menu(context_.menu_state.active_menu_id, context_.menu_state.active_menu_item_index, std::nullopt);
+    if (context_.menu_state.active_submenu_id != MenuId::None) {
+      draw_popup_menu(context_.menu_state.active_submenu_id, context_.menu_state.active_submenu_item_index,
+                      context_.menu_state.active_submenu_anchor_rect);
     }
   }
 
-  if (!menu_state_.tree_context_menu.open) {
+  if (!context_.menu_state.tree_context_menu.open) {
     return;
   }
 
-  const auto items = TreeContextMenuItems(menu_state_.tree_context_menu.target);
+  const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
   const auto popup_rect = ComputeTreeContextMenuRect();
   if (items.empty() || !popup_rect.has_value()) {
     return;
@@ -84,7 +84,7 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
   DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
   DrawRect(renderer, *popup_rect, theme_.border);
   for (const VisiblePopupMenuItem& item : ComputeVisiblePopupMenuItems(
-           items, menu_state_.tree_context_menu.active_item_index, *popup_rect)) {
+           items, context_.menu_state.tree_context_menu.active_item_index, *popup_rect)) {
     if (item.separator) {
       DrawFilledRect(renderer,
                      MakeRect(item.rect.x + 8.0f, item.rect.y + item.rect.h * 0.5f,

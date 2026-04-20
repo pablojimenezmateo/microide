@@ -41,28 +41,28 @@ WorkspaceShell::WorkspaceShell() {
           },
       .show_sidebar =
           [this](std::string_view id) {
-            return ActionCoordinator(*this).Execute(ActionId::SidebarShow, {std::string(id)},
+            return ActionCoordinator(MakeActionContext()).Execute(ActionId::SidebarShow, {std::string(id)},
                                                     ActionSource::Shortcut);
           },
       .publish_diagnostics =
           [this](std::string_view owner,
                  const std::filesystem::path& path,
                  std::vector<editor::Diagnostic> diagnostics) {
-            if (diagnostics_store_.ReplaceForOwnerFile(owner, path, std::move(diagnostics))) {
+            if (context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics))) {
               RefreshProblemsSidebar();
               RequestEditorSurfaceRedraw();
             }
           },
       .clear_file_diagnostics =
           [this](std::string_view owner, const std::filesystem::path& path) {
-            if (diagnostics_store_.ClearOwnerFile(owner, path)) {
+            if (context_.current_project_state.diagnostics_store.ClearOwnerFile(owner, path)) {
               RefreshProblemsSidebar();
               RequestEditorSurfaceRedraw();
             }
           },
       .clear_owner_diagnostics =
           [this](std::string_view owner) {
-            if (diagnostics_store_.ClearOwner(owner)) {
+            if (context_.current_project_state.diagnostics_store.ClearOwner(owner)) {
               RefreshProblemsSidebar();
               RequestEditorSurfaceRedraw();
             }
@@ -79,7 +79,7 @@ WorkspaceShell::WorkspaceShell() {
 }
 
 bool WorkspaceShell::ReloadPluginsForCurrentProject() {
-  const bool clean_reload = plugin_runtime_.Reload(project_root_);
+  const bool clean_reload = plugin_runtime_.Reload(context_.current_project_state.root);
   InvalidateRuntimeSyntaxStateCaches();
   RefreshPluginSidebar();
   RefreshProblemsSidebar();
@@ -104,7 +104,7 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches() {
     viewport->InvalidateSyntaxHighlighting();
   }
 
-  for (auto& tab : open_tabs_) {
+  for (auto& tab : context_.current_project_state.open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       for (auto& view : tab.editor_state->views) {
         if (!view.needs_restore) {
@@ -144,7 +144,7 @@ void WorkspaceShell::NotifyPluginsAboutOpenBuffers() {
   if (!plugin_runtime_.enabled()) {
     return;
   }
-  for (const auto& tab : open_tabs_) {
+  for (const auto& tab : context_.current_project_state.open_tabs) {
     if (tab.kind != TabEntry::Kind::Editor || tab.path.empty()) {
       continue;
     }

@@ -21,7 +21,7 @@ constexpr float kTreeChevronSlotWidth = 12.0f;
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  if (!sidebar_state_.visible) {
+  if (!context_.current_project_state.sidebar.visible) {
     return;
   }
 
@@ -60,8 +60,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   const bool sidebar_mode_hovered =
       last_mouse_position_valid_ && Contains(sidebar_mode_rect, last_mouse_x_, last_mouse_y_);
   const bool sidebar_mode_open =
-      menu_state_.menu_bar_open && menu_state_.active_menu_id == MenuId::SidebarMode &&
-      menu_state_.active_menu_anchor_rect.has_value();
+      context_.menu_state.menu_bar_open && context_.menu_state.active_menu_id == MenuId::SidebarMode &&
+      context_.menu_state.active_menu_anchor_rect.has_value();
   DrawFilledRect(renderer, sidebar_mode_rect,
                  sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
                                                           : theme_.surface_raised);
@@ -81,19 +81,19 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   const SidebarMode sidebar_mode = ActiveSidebarMode();
   if (sidebar_mode == SidebarMode::Search) {
     const std::string active_query =
-        overlay_workflow_.project_search.editing &&
-                overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
-            ? overlay_workflow_.project_search.edit_buffer
-            : overlay_workflow_.project_search.query;
+        context_.current_project_state.overlay.workflow.project_search.editing &&
+                context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
+            ? context_.current_project_state.overlay.workflow.project_search.edit_buffer
+            : context_.current_project_state.overlay.workflow.project_search.query;
     const std::string active_replace =
-        overlay_workflow_.project_search.editing &&
-                overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Replace
-            ? overlay_workflow_.project_search.edit_buffer
-            : overlay_workflow_.project_search.replace_text;
+        context_.current_project_state.overlay.workflow.project_search.editing &&
+                context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Replace
+            ? context_.current_project_state.overlay.workflow.project_search.edit_buffer
+            : context_.current_project_state.overlay.workflow.project_search.replace_text;
     DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                layout.sidebar.y + 38.0f,
-               overlay_workflow_.project_search.editing &&
-                       overlay_workflow_.project_search.edit_field ==
+               context_.current_project_state.overlay.workflow.project_search.editing &&
+                       context_.current_project_state.overlay.workflow.project_search.edit_field ==
                            ProjectSearchEditField::Query
                    ? theme_.text_primary
                    : theme_.text_secondary,
@@ -101,8 +101,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                TruncateLabel("search> " + active_query, layout.sidebar.w - kSidebarInset * 2.0f));
     DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                layout.sidebar.y + 54.0f,
-               overlay_workflow_.project_search.editing &&
-                       overlay_workflow_.project_search.edit_field ==
+               context_.current_project_state.overlay.workflow.project_search.editing &&
+                       context_.current_project_state.overlay.workflow.project_search.edit_field ==
                            ProjectSearchEditField::Replace
                    ? theme_.text_primary
                    : theme_.text_secondary,
@@ -126,37 +126,37 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     };
 
     draw_search_button(ProjectSearchModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
-                       overlay_workflow_.project_search.options.pattern_mode ==
+                       context_.current_project_state.overlay.workflow.project_search.options.pattern_mode ==
                            project::ProjectSearchPatternMode::Regex);
     draw_search_button(ProjectSearchCaseButtonRect(layout.sidebar), ProjectSearchCaseButtonLabel(),
-                       overlay_workflow_.project_search.options.case_mode !=
+                       context_.current_project_state.overlay.workflow.project_search.options.case_mode !=
                            project::ProjectSearchCaseMode::Smart);
     draw_search_button(ProjectSearchHiddenButtonRect(layout.sidebar),
                        ProjectSearchHiddenButtonLabel(),
-                       overlay_workflow_.project_search.options.show_hidden);
+                       context_.current_project_state.overlay.workflow.project_search.options.show_hidden);
 
     const std::string match_actions =
         ProjectSearchCanReplaceAll() ? "/ query  = replace  r rerun  R replace all"
                                      : "/ query  = replace  r rerun  R needs literal mode";
     const std::string status_text =
-        overlay_workflow_.project_search.editing
-            ? (overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
+        context_.current_project_state.overlay.workflow.project_search.editing
+            ? (context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
                    ? "Editing query  |  Enter apply  Esc cancel"
                    : "Editing replace  |  Enter apply  Esc cancel")
-            : !overlay_workflow_.project_search.error.empty()
+            : !context_.current_project_state.overlay.workflow.project_search.error.empty()
                 ? "Error  |  / query  = replace  r rerun"
-            : overlay_workflow_.project_search.running
+            : context_.current_project_state.overlay.workflow.project_search.running
                 ? "Searching " +
-                      std::to_string(overlay_workflow_.project_search.results.size()) + " matches"
-            : overlay_workflow_.project_search.results.empty()
-                ? (overlay_workflow_.project_search.query.empty()
+                      std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) + " matches"
+            : context_.current_project_state.overlay.workflow.project_search.results.empty()
+                ? (context_.current_project_state.overlay.workflow.project_search.query.empty()
                        ? "/ query  = replace  |  buttons change mode, case, hidden"
                        : "No matches  |  " + match_actions)
-            : overlay_workflow_.project_search.truncated
+            : context_.current_project_state.overlay.workflow.project_search.truncated
                 ? "Showing first " +
-                      std::to_string(overlay_workflow_.project_search.results.size()) +
+                      std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) +
                       " matches  |  " + match_actions
-                : std::to_string(overlay_workflow_.project_search.results.size()) +
+                : std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) +
                       " matches  |  " + match_actions;
     DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                layout.sidebar.y + kProjectSearchStatusTop, theme_.text_muted,
@@ -167,9 +167,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto list_layout = ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
     int scroll_row = list_layout.scroll_row;
     const int selected_line =
-        ProjectSearchLineForResult(overlay_workflow_.project_search.selected_index);
+        ProjectSearchLineForResult(context_.current_project_state.overlay.workflow.project_search.selected_index);
     scroll_row = RevealScrollableListIndex(list_layout, selected_line);
-    sidebar_state_.scroll_row = scroll_row;
+    context_.current_project_state.sidebar.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
@@ -183,7 +183,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         const std::size_t next_result_index = static_cast<std::size_t>(
             std::min(line_index + 1, static_cast<int>(line_map.size()) - 1));
         const auto& file_result =
-            overlay_workflow_.project_search
+            context_.current_project_state.overlay.workflow.project_search
                 .results[static_cast<std::size_t>(line_map[next_result_index])];
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_primary,
                             theme_.surface_background,
@@ -192,10 +192,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
 
       const auto& result =
-          overlay_workflow_.project_search.results[static_cast<std::size_t>(result_index)];
+          context_.current_project_state.overlay.workflow.project_search.results[static_cast<std::size_t>(result_index)];
       const bool selected =
           static_cast<std::size_t>(result_index) ==
-          overlay_workflow_.project_search.selected_index;
+          context_.current_project_state.overlay.workflow.project_search.selected_index;
       if (selected) {
         DrawFilledRect(renderer, row_rect, theme_.row_highlight);
       }
@@ -211,11 +211,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     if (line_map.empty()) {
       const std::string placeholder =
-          !overlay_workflow_.project_search.error.empty()
-              ? "Error: " + overlay_workflow_.project_search.error
-          : overlay_workflow_.project_search.running
+          !context_.current_project_state.overlay.workflow.project_search.error.empty()
+              ? "Error: " + context_.current_project_state.overlay.workflow.project_search.error
+          : context_.current_project_state.overlay.workflow.project_search.running
               ? "Searching..."
-          : overlay_workflow_.project_search.query.empty() ? "Project search is idle"
+          : context_.current_project_state.overlay.workflow.project_search.query.empty() ? "Project search is idle"
                                                            : "No matches";
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
@@ -224,7 +224,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else if (sidebar_mode == SidebarMode::Git) {
     draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
                        CanStageAllGitSidebarEntries());
@@ -235,7 +235,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto lines = BuildGitSidebarLines();
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
-    sidebar_state_.scroll_row = scroll_row;
+    context_.current_project_state.sidebar.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
@@ -259,9 +259,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         continue;
       }
 
-      const auto& entry = git_sidebar_.entries[static_cast<std::size_t>(line.entry_index)];
+      const auto& entry = context_.current_project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
       const bool selected =
-          static_cast<std::size_t>(line.entry_index) == git_sidebar_.selected_index;
+          static_cast<std::size_t>(line.entry_index) == context_.current_project_state.sidebar.git.selected_index;
       if (selected) {
         DrawFilledRect(renderer, row_rect, theme_.row_highlight);
         DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
@@ -327,22 +327,22 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else if (sidebar_mode == SidebarMode::Problems) {
     const auto list_layout =
-        ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
+        ComputeProblemsSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.problems.entries.size());
     const int scroll_row = list_layout.scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int item_index = scroll_row + row;
-      if (item_index >= static_cast<int>(problems_sidebar_.entries.size())) {
+      if (item_index >= static_cast<int>(context_.current_project_state.sidebar.problems.entries.size())) {
         break;
       }
 
-      const auto& item = problems_sidebar_.entries[static_cast<std::size_t>(item_index)];
+      const auto& item = context_.current_project_state.sidebar.problems.entries[static_cast<std::size_t>(item_index)];
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
       const bool selected =
-          static_cast<std::size_t>(item_index) == problems_sidebar_.selected_index;
+          static_cast<std::size_t>(item_index) == context_.current_project_state.sidebar.problems.selected_index;
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
       if (selected) {
@@ -373,31 +373,31 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
     }
 
-    if (problems_sidebar_.entries.empty()) {
+    if (context_.current_project_state.sidebar.problems.entries.empty()) {
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
                  TruncateLabel("No diagnostics", layout.sidebar.w - kSidebarInset * 2.0f));
     }
 
     draw_vertical_scrollbar(list_layout.list_rect,
-                            static_cast<float>(problems_sidebar_.entries.size()),
+                            static_cast<float>(context_.current_project_state.sidebar.problems.entries.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else if (sidebar_mode == SidebarMode::Plugin) {
     const auto list_layout =
-        ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
+        ComputePluginSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.plugin.items.size());
     const int scroll_row = list_layout.scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int item_index = scroll_row + row;
-      if (item_index >= static_cast<int>(plugin_sidebar_.items.size())) {
+      if (item_index >= static_cast<int>(context_.current_project_state.sidebar.plugin.items.size())) {
         break;
       }
 
-      const auto& item = plugin_sidebar_.items[static_cast<std::size_t>(item_index)];
+      const auto& item = context_.current_project_state.sidebar.plugin.items[static_cast<std::size_t>(item_index)];
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
       const bool selected =
-          static_cast<std::size_t>(item_index) == plugin_sidebar_.selected_index;
+          static_cast<std::size_t>(item_index) == context_.current_project_state.sidebar.plugin.selected_index;
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
       if (selected) {
@@ -427,24 +427,24 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     }
 
     const std::string placeholder =
-        !plugin_sidebar_.error.empty()
-            ? "Error: " + plugin_sidebar_.error
-            : plugin_sidebar_.items.empty() ? "No items" : std::string{};
+        !context_.current_project_state.sidebar.plugin.error.empty()
+            ? "Error: " + context_.current_project_state.sidebar.plugin.error
+            : context_.current_project_state.sidebar.plugin.items.empty() ? "No items" : std::string{};
     if (!placeholder.empty()) {
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f,
-                 plugin_sidebar_.error.empty() ? theme_.text_muted : theme_.diff_deleted,
+                 context_.current_project_state.sidebar.plugin.error.empty() ? theme_.text_muted : theme_.diff_deleted,
                  theme_.surface_background,
                  TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
     }
 
-    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(plugin_sidebar_.items.size()),
+    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(context_.current_project_state.sidebar.plugin.items.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else {
     const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
     const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
-    draw_action_button(collapse_rect, "Collapse", directory_tree_.CanCollapseAll());
+    draw_action_button(collapse_rect, "Collapse", context_.current_project_state.directory_tree.CanCollapseAll());
     draw_action_button(refresh_rect, "Refresh", true);
 
     const std::string tree_root_label = ProjectLabel();
@@ -459,7 +459,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                          theme_.chrome_text_secondary, theme_.chrome_background, root_label);
     }
 
-    const auto& entries = directory_tree_.entries();
+    const auto& entries = context_.current_project_state.directory_tree.entries();
     const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
     const int scroll_row = list_layout.scroll_row;
 
@@ -472,7 +472,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const auto& entry = entries[entry_index];
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
       const bool selected =
-          static_cast<std::size_t>(entry_index) == directory_tree_.selected_index();
+          static_cast<std::size_t>(entry_index) == context_.current_project_state.directory_tree.selected_index();
       if (selected) {
         DrawFilledRect(renderer, row_rect, theme_.row_highlight);
         DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
@@ -517,7 +517,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(entries.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
-                            interaction_state_.drag_target == DragTarget::SidebarScrollbar);
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   }
 
   const std::string hovered_git_sidebar_tooltip = HoveredGitSidebarTooltipLabel(layout.sidebar);

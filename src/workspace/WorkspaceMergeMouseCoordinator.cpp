@@ -477,7 +477,7 @@ bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
 
 MergeMouseCoordinator WorkspaceShell::MakeMergeMouseCoordinator() {
   return MergeMouseCoordinator(
-      current_project_state_,
+      context_.current_project_state,
       context_.interaction_state,
       MergeMouseCoordinator::Operations{
           .compute_merge_surface_layout =
@@ -500,7 +500,7 @@ MergeMouseCoordinator WorkspaceShell::MakeMergeMouseCoordinator() {
               },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
-                return ActionCoordinator(*this).Execute(id, args, source);
+                return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .open_merge_result_file = [this]() { OpenMergeResultFile(); },
           .build_merge_source_action_button_rect =

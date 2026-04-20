@@ -16,7 +16,9 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectP
 
   std::error_code error;
   const std::filesystem::path default_location =
-      project_root_.empty() ? std::filesystem::current_path(error) : project_root_;
+      context_.current_project_state.root.empty()
+          ? std::filesystem::current_path(error)
+          : context_.current_project_state.root;
   const std::filesystem::path normalized_default = error ? std::filesystem::path{}
                                                          : default_location.lexically_normal();
 

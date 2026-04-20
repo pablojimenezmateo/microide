@@ -85,10 +85,10 @@ void WorkspaceShell::ResetLifecycleStartupState() {
   cursor_kind_ = CursorKind::Default;
   last_mouse_position_valid_ = false;
   quit_requested_ = false;
-  prompts_.dirty_visible = false;
-  project_catalog_.entries.clear();
-  project_catalog_.active_index = 0;
-  project_catalog_.tab_scroll_index = 0;
+  context_.prompts.dirty_visible = false;
+  context_.project_catalog.entries.clear();
+  context_.project_catalog.active_index = 0;
+  context_.project_catalog.tab_scroll_index = 0;
 }
 
 void WorkspaceShell::RegisterLifecycleWakeEvents() {
@@ -177,7 +177,8 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
-          .clear_terminal_tabs = [this]() { terminal_tabs_.clear(); },
+          .clear_terminal_tabs =
+              [this]() { context_.current_project_state.terminal_tabs.clear(); },
           .destroy_cursors = [this]() { DestroyLifecycleCursors(); },
       });
 }

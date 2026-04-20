@@ -396,7 +396,8 @@ bool TextInputCoordinator::PasteClipboardIntoTerminal() {
 
 TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
   return TextInputCoordinator(
-      current_project_state_, prompts_, menu_state_, text_input_state_,
+      context_.current_project_state, context_.prompts, context_.menu_state,
+      context_.text_input,
       TextInputCoordinator::Operations{
           .current_text_input_surface = [this]() { return CurrentTextInputSurface(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },

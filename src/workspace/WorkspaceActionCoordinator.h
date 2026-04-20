@@ -7,11 +7,9 @@
 
 namespace microide::workspace {
 
-class WorkspaceShell;
-
 class ActionCoordinator {
  public:
-  explicit ActionCoordinator(WorkspaceShell& shell);
+  explicit ActionCoordinator(WorkspaceActionContext context);
 
   bool Execute(ActionId id, const std::vector<std::string>& args, ActionSource source);
 

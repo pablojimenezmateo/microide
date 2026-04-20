@@ -55,8 +55,8 @@ std::filesystem::path WorkspaceShell::ProjectCatalogRoot(std::size_t index) cons
 }
 
 void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
-  project_catalog_.active_index = 0;
-  project_catalog_.tab_scroll_index = 0;
+  context_.project_catalog.active_index = 0;
+  context_.project_catalog.tab_scroll_index = 0;
   ResetProjectScopedState(true);
   ReloadPluginsForCurrentProject();
   RequestWindowRedraw();
@@ -70,12 +70,12 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     return false;
   }
 
-  if (!project_root_.empty() && normalized_root == project_root_) {
+  if (!context_.current_project_state.root.empty() && normalized_root == context_.current_project_state.root) {
     EnsureActiveProjectVisible();
     return true;
   }
 
-  for (std::size_t i = 0; i < project_catalog_.entries.size(); ++i) {
+  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     if (ProjectCatalogRoot(i) == normalized_root) {
       return SwitchProject(i, log_feedback);
     }
@@ -86,11 +86,11 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   (void) log_feedback;
-  if (index >= project_catalog_.entries.size()) {
+  if (index >= context_.project_catalog.entries.size()) {
     return false;
   }
   MakeMenuCoordinator().CloseTreeContextMenu();
-  if (HasActiveProjectCatalogEntry() && index == project_catalog_.active_index) {
+  if (HasActiveProjectCatalogEntry() && index == context_.project_catalog.active_index) {
     EnsureActiveProjectVisible();
     return true;
   }
@@ -99,24 +99,24 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
-  if (project_catalog_.active_index >= project_catalog_.entries.size() || index >= project_catalog_.entries.size()) {
+  if (context_.project_catalog.active_index >= context_.project_catalog.entries.size() || index >= context_.project_catalog.entries.size()) {
     return false;
   }
-  if (project_catalog_.active_index == index) {
+  if (context_.project_catalog.active_index == index) {
     return true;
   }
 
   std::unique_ptr<ProjectWorkspaceState> moved_project =
-      std::move(project_catalog_.entries[project_catalog_.active_index]);
-  project_catalog_.entries.erase(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(project_catalog_.active_index));
-  project_catalog_.entries.insert(project_catalog_.entries.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
-  project_catalog_.active_index = index;
+      std::move(context_.project_catalog.entries[context_.project_catalog.active_index]);
+  context_.project_catalog.entries.erase(context_.project_catalog.entries.begin() + static_cast<std::ptrdiff_t>(context_.project_catalog.active_index));
+  context_.project_catalog.entries.insert(context_.project_catalog.entries.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
+  context_.project_catalog.active_index = index;
   EnsureActiveProjectVisible();
   return true;
 }
 
 void WorkspaceShell::RequestCloseProject(std::size_t index) {
-  if (index >= project_catalog_.entries.size()) {
+  if (index >= context_.project_catalog.entries.size()) {
     return;
   }
   if (!DirtyEditorTabIndicesForProject(index).empty()) {

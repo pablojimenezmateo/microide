@@ -18,8 +18,8 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::Render");
   const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_state_.visible,
-                    BottomPanelVisible(), sidebar_state_.width, panel_state_.height);
+      ComputeLayout(static_cast<float>(width), static_cast<float>(height), context_.current_project_state.sidebar.visible,
+                    BottomPanelVisible(), context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   const std::size_t terminal_line_count =
       ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
@@ -27,7 +27,7 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
   visible_editor_blame_overlay_.reset();
   const bool draw_editor_caret =
       CaretVisibleNow() &&
-      !(CurrentTextInputSurface() == TextInputSurface::Editor && !text_composition_.text.empty());
+      !(CurrentTextInputSurface() == TextInputSurface::Editor && !context_.text_input.composition.text.empty());
 
   RenderFrameBase(renderer, layout);
   RenderActiveWorkspaceSurface(renderer, layout, draw_editor_caret, &active_editor_pane_rect);

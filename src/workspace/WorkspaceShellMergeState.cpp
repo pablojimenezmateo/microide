@@ -571,9 +571,9 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabEntry(
 
   auto merge_tab = BuildMergeTabFromBuffers(
       normalized_output.empty() ? normalized_current : normalized_output, *base_text, *incoming_text,
-      *current_text, RelativePathLabel(project_root_, normalized_incoming),
-      RelativePathLabel(project_root_, normalized_output.empty() ? normalized_current : normalized_output),
-      RelativePathLabel(project_root_, normalized_current), 0, true);
+      *current_text, RelativePathLabel(context_.current_project_state.root, normalized_incoming),
+      RelativePathLabel(context_.current_project_state.root, normalized_output.empty() ? normalized_current : normalized_output),
+      RelativePathLabel(context_.current_project_state.root, normalized_current), 0, true);
   if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
     return std::nullopt;
   }
