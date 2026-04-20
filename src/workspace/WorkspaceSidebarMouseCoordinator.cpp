@@ -242,7 +242,7 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
 
   if (local_y < 0.0f) {
     if (event.button.button == SDL_BUTTON_RIGHT) {
-      MenuCoordinator(shell_).OpenTreeContextMenu(
+      shell_.MakeMenuCoordinator().OpenTreeContextMenu(
           TreeContextTargetKind::Background, {},
           MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                    1.0f));
@@ -265,7 +265,7 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
           !entry.is_directory ? TreeContextTargetKind::File
           : entry.path == shell_.project_root_ ? TreeContextTargetKind::Root
                                                : TreeContextTargetKind::Directory;
-      MenuCoordinator(shell_).OpenTreeContextMenu(
+      shell_.MakeMenuCoordinator().OpenTreeContextMenu(
           target, entry.path,
           MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                    1.0f));
@@ -283,7 +283,7 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
   }
 
   if (event.button.button == SDL_BUTTON_RIGHT) {
-    MenuCoordinator(shell_).OpenTreeContextMenu(
+    shell_.MakeMenuCoordinator().OpenTreeContextMenu(
         TreeContextTargetKind::Background, {},
         MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                  1.0f));

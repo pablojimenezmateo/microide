@@ -113,7 +113,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         };
       } else if (event.button.button == SDL_BUTTON_RIGHT) {
         shell_.ActivateTab(tab.index);
-        MenuCoordinator(shell_).OpenAnchoredMenu(
+        shell_.MakeMenuCoordinator().OpenAnchoredMenu(
             MenuId::EditorTabContext,
             MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                      1.0f));
@@ -162,7 +162,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     } else if (event.button.button == SDL_BUTTON_RIGHT) {
       shell_.active_terminal_tab_index_ = tab.index;
       shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
-      MenuCoordinator(shell_).OpenAnchoredMenu(
+      shell_.MakeMenuCoordinator().OpenAnchoredMenu(
           MenuId::TerminalTabContext,
           MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                    1.0f));

@@ -1,14 +1,28 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
+#include <optional>
+#include <span>
+#include <vector>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceMenuState.h"
 
 namespace microide::workspace {
 
 class MenuCoordinator {
  public:
-  explicit MenuCoordinator(WorkspaceShell& shell);
+  struct Operations {
+    std::function<void()> request_chrome_redraw;
+    std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
+    std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
+    std::function<std::optional<SDL_FRect>(MenuId)> menu_popup_rect;
+    std::function<std::optional<SDL_FRect>(MenuId, std::size_t)> menu_popup_item_rect;
+    std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
+  };
+
+  MenuCoordinator(MenuSurfaceState& menu_state, Operations operations);
 
   int FirstEnabledMenuItemIndex(MenuId id) const;
   int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
@@ -29,7 +43,8 @@ class MenuCoordinator {
   int NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const;
 
  private:
-  WorkspaceShell& shell_;
+  MenuSurfaceState& menu_state_;
+  Operations operations_;
 };
 
 }  // namespace microide::workspace

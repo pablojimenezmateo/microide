@@ -69,7 +69,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (event.button.button == SDL_BUTTON_RIGHT && Contains(panel_content, event.button.x,
                                                             event.button.y)) {
       shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
-      MenuCoordinator(shell_).OpenAnchoredMenu(
+      shell_.MakeMenuCoordinator().OpenAnchoredMenu(
           MenuId::TerminalContext,
           MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                    1.0f));

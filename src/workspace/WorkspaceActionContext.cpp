@@ -19,7 +19,7 @@ WorkspaceActionContext::WorkspaceActionContext(WorkspaceShell& shell) : shell_(s
 
 void WorkspaceActionContext::PrepareForAction(ActionSource source) {
   if (source != ActionSource::ContextMenu) {
-    MenuCoordinator(shell_).CloseTreeContextMenu();
+    shell_.MakeMenuCoordinator().CloseTreeContextMenu();
   }
 }
 

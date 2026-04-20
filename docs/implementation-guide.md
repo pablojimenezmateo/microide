@@ -109,7 +109,7 @@ The codebase is organized by responsibility:
 `WorkspaceShell` is still the main coordinator, but its core workspace state now lives under a
 dedicated `WorkspaceContext`, and project, tab, prompt, menu, and interaction models live in
 dedicated workspace headers instead of being defined inline on the shell. Project catalog,
-persistence, lifecycle, and dirty-prompt coordination now also bind through explicit
+persistence, lifecycle, dirty-prompt, and menu coordination now also bind through explicit
 context-plus-callback dependencies rather than taking `WorkspaceShell&`. Plugin runtime, project,
 terminal, compare, and rendering work should continue to move into narrower subsystems rather
 than accrete more logic in one file.

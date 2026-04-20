@@ -85,7 +85,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
-  MenuCoordinator(*this).CloseTreeContextMenu();
+  MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
 
   ResetCurrentProjectStateStorage();
@@ -199,7 +199,7 @@ bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
 void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   SyncActiveEditorTab();
   StopProjectSearch();
-  MenuCoordinator(*this).CloseTreeContextMenu();
+  MakeMenuCoordinator().CloseTreeContextMenu();
 
   current_project_state_.initialized = true;
   current_project_state_.restore_persistence_on_activate = false;
@@ -212,7 +212,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
-  MenuCoordinator(*this).CloseTreeContextMenu();
+  MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
 
   current_project_state_ = std::move(state);

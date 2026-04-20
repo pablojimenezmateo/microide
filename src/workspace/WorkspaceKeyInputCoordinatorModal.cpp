@@ -49,7 +49,7 @@ bool KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& even
 }
 
 bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event) {
-  MenuCoordinator menu(shell_);
+  auto menu = shell_.MakeMenuCoordinator();
   switch (event.key) {
     case SDLK_ESCAPE:
       menu.CloseTreeContextMenu();
@@ -78,7 +78,7 @@ bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& 
 
 bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
-  MenuCoordinator menu(shell_);
+  auto menu = shell_.MakeMenuCoordinator();
   switch (event.key) {
     case SDLK_ESCAPE:
       menu.CloseMenuBar();

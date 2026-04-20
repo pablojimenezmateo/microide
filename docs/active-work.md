@@ -190,6 +190,10 @@ Current state:
 - dirty-save confirmation now runs through a `WorkspaceDirtyPromptCoordinator` that depends on
   `WorkspaceContext`, the quit-request flag, and explicit callbacks for path-mutation resolution,
   tab saves, project switching, and tab or project closure instead of `WorkspaceShell&`
+- menu-bar, anchored-menu, submenu, and tree-context-menu transitions now run through a
+  `WorkspaceMenuCoordinator` that depends on `MenuSurfaceState` plus explicit callbacks for menu
+  item resolution, popup geometry, action dispatch, and chrome redraw instead of
+  `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

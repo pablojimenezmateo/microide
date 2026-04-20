@@ -1,21 +1,25 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceMenuRegistry.h"
+#include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
-MenuCoordinator::MenuCoordinator(WorkspaceShell& shell) : shell_(shell) {}
+MenuCoordinator::MenuCoordinator(MenuSurfaceState& menu_state, Operations operations)
+    : menu_state_(menu_state), operations_(std::move(operations)) {}
 
 int MenuCoordinator::FirstEnabledMenuItemIndex(MenuId id) const {
-  const auto items = shell_.MenuItems(id);
+  const auto items = operations_.menu_items(id);
   if (items.empty()) {
     return -1;
   }
 
   for (std::size_t i = 0; i < items.size(); ++i) {
-    if (shell_.IsMenuItemEnabled(items[i])) {
+    if (operations_.is_menu_item_enabled(items[i])) {
       return static_cast<int>(i);
     }
   }
@@ -23,7 +27,7 @@ int MenuCoordinator::FirstEnabledMenuItemIndex(MenuId id) const {
 }
 
 int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const {
-  const auto items = shell_.MenuItems(id);
+  const auto items = operations_.menu_items(id);
   if (items.empty() || delta == 0) {
     return -1;
   }
@@ -32,7 +36,7 @@ int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int 
   int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
   for (int step = 0; step < item_count; ++step) {
     index = (index + delta + item_count) % item_count;
-    if (shell_.IsMenuItemEnabled(items[static_cast<std::size_t>(index)])) {
+    if (operations_.is_menu_item_enabled(items[static_cast<std::size_t>(index)])) {
       return index;
     }
   }
@@ -40,84 +44,76 @@ int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int 
 }
 
 void MenuCoordinator::OpenMenuBarMenu(MenuId id) {
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
   if (id == MenuId::None) {
     CloseMenuBar();
     return;
   }
   CloseTreeContextMenu();
-  shell_.menu_state_.menu_bar_open = true;
-  shell_.menu_state_.active_menu_id = id;
-  shell_.menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
-  shell_.menu_state_.active_menu_anchor_rect.reset();
+  menu_state_.menu_bar_open = true;
+  menu_state_.active_menu_id = id;
+  menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
+  menu_state_.active_menu_anchor_rect.reset();
   CloseSubmenu();
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
 }
 
 void MenuCoordinator::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
   if (id == MenuId::None) {
     CloseMenuBar();
     return;
   }
   CloseTreeContextMenu();
-  shell_.menu_state_.menu_bar_open = true;
-  shell_.menu_state_.active_menu_id = id;
-  shell_.menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
-  shell_.menu_state_.active_menu_anchor_rect = anchor_rect;
+  menu_state_.menu_bar_open = true;
+  menu_state_.active_menu_id = id;
+  menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
+  menu_state_.active_menu_anchor_rect = anchor_rect;
   CloseSubmenu();
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
 }
 
 void MenuCoordinator::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
-  shell_.RequestChromeRedraw();
-  shell_.menu_state_.active_submenu_id = id;
-  shell_.menu_state_.active_submenu_item_index = FirstEnabledMenuItemIndex(id);
-  shell_.menu_state_.active_submenu_anchor_rect = anchor_rect;
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
+  menu_state_.active_submenu_id = id;
+  menu_state_.active_submenu_item_index = FirstEnabledMenuItemIndex(id);
+  menu_state_.active_submenu_anchor_rect = anchor_rect;
+  operations_.request_chrome_redraw();
 }
 
 void MenuCoordinator::CloseSubmenu() {
-  shell_.RequestChromeRedraw();
-  shell_.menu_state_.active_submenu_id = MenuId::None;
-  shell_.menu_state_.active_submenu_item_index = -1;
-  shell_.menu_state_.active_submenu_anchor_rect.reset();
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
+  menu_state_.active_submenu_id = MenuId::None;
+  menu_state_.active_submenu_item_index = -1;
+  menu_state_.active_submenu_anchor_rect.reset();
+  operations_.request_chrome_redraw();
 }
 
 void MenuCoordinator::CloseMenuBar() {
-  shell_.RequestChromeRedraw();
-  shell_.menu_state_.menu_bar_open = false;
-  shell_.menu_state_.active_menu_id = MenuId::None;
-  shell_.menu_state_.active_menu_item_index = -1;
-  shell_.menu_state_.active_menu_anchor_rect.reset();
+  operations_.request_chrome_redraw();
+  menu_state_.menu_bar_open = false;
+  menu_state_.active_menu_id = MenuId::None;
+  menu_state_.active_menu_item_index = -1;
+  menu_state_.active_menu_anchor_rect.reset();
   CloseSubmenu();
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
 }
 
 bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
-  const auto items = shell_.MenuItems(menu_id);
+  const auto items = operations_.menu_items(menu_id);
   if (items.empty() || item_index >= items.size()) {
     return false;
   }
 
   const MenuItemSpec& item = items[item_index];
-  if (!shell_.IsMenuItemEnabled(item)) {
+  if (!operations_.is_menu_item_enabled(item)) {
     return true;
   }
   if (item.submenu != MenuId::None) {
-    if (const auto layout = shell_.CurrentWorkspaceLayout(); layout.has_value()) {
-      if (const auto popup_rect = shell_.ComputePopupMenuRect(layout->menu_bar, menu_id);
-          popup_rect.has_value()) {
-        for (const WorkspaceShell::VisiblePopupMenuItem& visible_item :
-             shell_.ComputeVisiblePopupMenuItems(menu_id, *popup_rect)) {
-          if (visible_item.index != item_index) {
-            continue;
-          }
-          OpenSubmenu(item.submenu, visible_item.rect);
-          return true;
-        }
-      }
+    if (const auto item_rect = operations_.menu_popup_item_rect(menu_id, item_index);
+        item_rect.has_value()) {
+      OpenSubmenu(item.submenu, *item_rect);
+      return true;
     }
     CloseSubmenu();
     return true;
@@ -129,18 +125,18 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
     args.emplace_back(item.args[i]);
   }
   CloseMenuBar();
-  return ActionCoordinator(shell_).Execute(item.action, args, ActionSource::Menu);
+  return operations_.execute_action(item.action, args, ActionSource::Menu);
 }
 
 bool MenuCoordinator::SwitchMenuBarMenu(int delta) {
-  const auto menus = WorkspaceShell::MenuSpecs();
-  if (menus.empty() || shell_.menu_state_.active_menu_id == MenuId::None || delta == 0) {
+  const auto menus = WorkspaceMenuSpecs();
+  if (menus.empty() || menu_state_.active_menu_id == MenuId::None || delta == 0) {
     return false;
   }
 
   auto current_it = std::find_if(
       menus.begin(), menus.end(),
-      [this](const MenuSpec& spec) { return spec.id == shell_.menu_state_.active_menu_id; });
+      [this](const MenuSpec& spec) { return spec.id == menu_state_.active_menu_id; });
   if (current_it == menus.end()) {
     return false;
   }
@@ -153,41 +149,41 @@ bool MenuCoordinator::SwitchMenuBarMenu(int delta) {
 }
 
 bool MenuCoordinator::MoveActiveMenuItem(int delta) {
-  if (!shell_.menu_state_.menu_bar_open || shell_.menu_state_.active_menu_id == MenuId::None) {
+  if (!menu_state_.menu_bar_open || menu_state_.active_menu_id == MenuId::None) {
     return false;
   }
-  shell_.menu_state_.active_menu_item_index = NextEnabledMenuItemIndex(
-      shell_.menu_state_.active_menu_id, shell_.menu_state_.active_menu_item_index, delta);
-  return shell_.menu_state_.active_menu_item_index >= 0;
+  menu_state_.active_menu_item_index =
+      NextEnabledMenuItemIndex(menu_state_.active_menu_id, menu_state_.active_menu_item_index, delta);
+  return menu_state_.active_menu_item_index >= 0;
 }
 
 void MenuCoordinator::OpenTreeContextMenu(TreeContextTargetKind target,
                                           const std::filesystem::path& path,
                                           const SDL_FRect& anchor_rect) {
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
   CloseMenuBar();
-  shell_.menu_state_.tree_context_menu.open = true;
-  shell_.menu_state_.tree_context_menu.target = target;
-  shell_.menu_state_.tree_context_menu.path = path.lexically_normal();
-  shell_.menu_state_.tree_context_menu.anchor_rect = anchor_rect;
-  shell_.menu_state_.tree_context_menu.active_item_index = FirstEnabledTreeContextMenuItemIndex();
-  shell_.RequestChromeRedraw();
+  menu_state_.tree_context_menu.open = true;
+  menu_state_.tree_context_menu.target = target;
+  menu_state_.tree_context_menu.path = path.lexically_normal();
+  menu_state_.tree_context_menu.anchor_rect = anchor_rect;
+  menu_state_.tree_context_menu.active_item_index = FirstEnabledTreeContextMenuItemIndex();
+  operations_.request_chrome_redraw();
 }
 
 void MenuCoordinator::CloseTreeContextMenu() {
-  shell_.RequestChromeRedraw();
-  shell_.menu_state_.tree_context_menu = WorkspaceShell::TreeContextMenuState{};
-  shell_.RequestChromeRedraw();
+  operations_.request_chrome_redraw();
+  menu_state_.tree_context_menu = TreeContextMenuState{};
+  operations_.request_chrome_redraw();
 }
 
 bool MenuCoordinator::ExecuteTreeContextMenuItem(std::size_t item_index) {
-  const auto items = WorkspaceShell::TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target);
+  const auto items = WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target);
   if (item_index >= items.size()) {
     return false;
   }
 
   const MenuItemSpec& item = items[item_index];
-  if (!shell_.IsMenuItemEnabled(item)) {
+  if (!operations_.is_menu_item_enabled(item)) {
     return true;
   }
 
@@ -196,16 +192,15 @@ bool MenuCoordinator::ExecuteTreeContextMenuItem(std::size_t item_index) {
   for (std::size_t i = 0; i < item.arg_count; ++i) {
     args.emplace_back(item.args[i]);
   }
-  const bool handled =
-      ActionCoordinator(shell_).Execute(item.action, args, ActionSource::ContextMenu);
+  const bool handled = operations_.execute_action(item.action, args, ActionSource::ContextMenu);
   CloseTreeContextMenu();
   return handled;
 }
 
 int MenuCoordinator::FirstEnabledTreeContextMenuItemIndex() const {
-  const auto items = WorkspaceShell::TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target);
+  const auto items = WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target);
   for (std::size_t i = 0; i < items.size(); ++i) {
-    if (shell_.IsMenuItemEnabled(items[i])) {
+    if (operations_.is_menu_item_enabled(items[i])) {
       return static_cast<int>(i);
     }
   }
@@ -213,7 +208,7 @@ int MenuCoordinator::FirstEnabledTreeContextMenuItemIndex() const {
 }
 
 int MenuCoordinator::NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const {
-  const auto items = WorkspaceShell::TreeContextMenuItems(shell_.menu_state_.tree_context_menu.target);
+  const auto items = WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target);
   if (items.empty() || delta == 0) {
     return -1;
   }
@@ -222,11 +217,48 @@ int MenuCoordinator::NextEnabledTreeContextMenuItemIndex(int current_index, int 
   int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
   for (int step = 0; step < item_count; ++step) {
     index = (index + delta + item_count) % item_count;
-    if (shell_.IsMenuItemEnabled(items[static_cast<std::size_t>(index)])) {
+    if (operations_.is_menu_item_enabled(items[static_cast<std::size_t>(index)])) {
       return index;
     }
   }
   return current_index;
+}
+
+MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
+  return MenuCoordinator(
+      context_.menu_state,
+      MenuCoordinator::Operations{
+          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .menu_items = [this](MenuId id) { return MenuItems(id); },
+          .is_menu_item_enabled =
+              [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
+          .menu_popup_rect =
+              [this](MenuId id) -> std::optional<SDL_FRect> {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value() ? ComputePopupMenuRect(layout->menu_bar, id) : std::nullopt;
+              },
+          .menu_popup_item_rect =
+              [this](MenuId id, std::size_t item_index) -> std::optional<SDL_FRect> {
+                const auto layout = CurrentWorkspaceLayout();
+                if (!layout.has_value()) {
+                  return std::nullopt;
+                }
+                const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, id);
+                if (!popup_rect.has_value()) {
+                  return std::nullopt;
+                }
+                for (const auto& item : ComputeVisiblePopupMenuItems(id, *popup_rect)) {
+                  if (item.index == item_index) {
+                    return item.rect;
+                  }
+                }
+                return std::nullopt;
+              },
+          .execute_action =
+              [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
+                return ActionCoordinator(*this).Execute(id, args, source);
+              },
+      });
 }
 
 }  // namespace microide::workspace

@@ -89,7 +89,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   if (index >= project_catalog_.entries.size()) {
     return false;
   }
-  MenuCoordinator(*this).CloseTreeContextMenu();
+  MakeMenuCoordinator().CloseTreeContextMenu();
   if (HasActiveProjectCatalogEntry() && index == project_catalog_.active_index) {
     EnsureActiveProjectVisible();
     return true;

@@ -15,7 +15,7 @@ void SidebarCoordinator::ShowMode(WorkspaceShell::SidebarMode mode, bool tempora
     return;
   }
   if (mode != WorkspaceShell::SidebarMode::Tree) {
-    MenuCoordinator(shell_).CloseTreeContextMenu();
+    shell_.MakeMenuCoordinator().CloseTreeContextMenu();
   }
 
   if (shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Search &&
@@ -95,7 +95,7 @@ void SidebarCoordinator::Close() {
   if (shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Search) {
     shell_.StopProjectSearch();
   }
-  MenuCoordinator(shell_).CloseTreeContextMenu();
+  shell_.MakeMenuCoordinator().CloseTreeContextMenu();
 
   if (shell_.sidebar_state_.temporary && !shell_.sidebar_state_.prev_view_id.empty()) {
     RestorePrevious();
