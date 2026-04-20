@@ -674,23 +674,41 @@ This is the main structural precondition for everything else.
 
 ### Phase 2. Build the contribution and override model
 
-This is now the active phase.
+Status: substantially complete as of 2026-04-20.
 
-Started on 2026-04-19:
+Shipped:
 
 - left-sidebar built-ins and plugin providers now share stable view IDs through one
   `WorkspaceSidebarRegistry*` path for menu wiring, command parsing or completion, and
-  project-scoped active view persistence
+  project-scoped active view persistence (started 2026-04-19)
+- `WorkspaceKeybindingRegistry*` — named keybinding specs with stable IDs, global / editor /
+  sidebar / terminal context awareness, `ParseKeyChord` / `FormatKeyChord` round-trip utilities,
+  `ResolveKeybindings` merging built-ins with plugin contributions, user-disable override support
+- `WorkspaceSettingsRegistry*` — typed setting specs (bool, int, float, string, enum) with
+  per-scope defaults; `AllSettingInfos` merges built-ins with plugin-declared settings; parse and
+  serialize helpers for round-tripping values
+- `WorkspaceStatusRegistry*` — `ResolveStatusItems` resolves and sorts plugin-contributed compact
+  status items by alignment and priority
+- `WorkspaceMenuRegistry*` extended with `ContributedMenuItems` and `ParseMenuId` so plugin menu
+  entries are queryable alongside the static built-in menu specs
+- `WorkspaceSidebarRegistry*` extended with `SidebarViewPolicy`, `OrderedSidebarViews`, and
+  `EffectiveSidebarViewPolicy` for hide, reorder, and user-policy support
+- `PluginHost` extended with four new Lua contribution tables: `ctx.settings` (declare / get),
+  `ctx.menus` (add), `ctx.keybindings` (add), `ctx.status` (add / update); C++ accessors and
+  `UpdateStatusItem` are available to workspace coordinators; `Callbacks` gains `get_setting`
+  and `request_status_redraw`
+- `PersistedUserConfigState` gains `settings` and `disabled_keybinding_ids`;
+  `PersistedProjectConfigState` gains `settings` and `sidebar_policies`; all new fields
+  round-trip through the existing line-based config serialisation
+- full test coverage in `tests/ContributionRegistryTests.cpp`
 
-Deliverables:
+Remaining wiring (Phase 2 follow-up, not blocking Phase 3):
 
-- general view containers
-- menus and context menus
-- keybinding registry
-- settings registry
-- compact status and notification surfaces
-- built-ins re-registered as contributions with stable IDs
-- user-level enable, disable, hide, and reorder support
+- wire `WorkspaceKeybindingRegistry` into `WorkspaceKeyInputCoordinator` runtime dispatch
+- wire `WorkspaceSettingsRegistry` + persisted settings into `Callbacks::get_setting`
+- wire `WorkspaceStatusRegistry` into the shell render / chrome path
+- wire `ContributedMenuItems` into the menu coordinator runtime
+- wire `SidebarViewPolicy` from persisted project config into `OrderedSidebarViews`
 
 This phase is where `microide` becomes genuinely user-extensible instead of just scriptable.
 

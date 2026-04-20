@@ -47,6 +47,44 @@ class PluginHost {
     bool operator==(const HoverResult&) const = default;
   };
 
+  struct ContributedMenuEntry {
+    std::string id;
+    std::string menu;           // "file", "edit", "view", "search"
+    std::string action;         // built-in command name or plugin command name
+    std::string label;
+    std::string accelerator;
+    bool separator_before = false;
+    std::string plugin_id;
+  };
+
+  struct ContributedKeybinding {
+    std::string id;
+    std::string action;         // command name
+    std::string key_chord;      // "Ctrl+S" format
+    std::string context;        // "global", "editor", "sidebar", "terminal"
+    std::string plugin_id;
+  };
+
+  struct ContributedSettingSpec {
+    std::string id;
+    std::string label;
+    std::string description;
+    std::string type;           // "bool", "int", "float", "string", "enum"
+    std::string scope;          // "user", "project"
+    std::string default_value;  // string-serialised default
+    std::vector<std::string> enum_values;
+    std::string plugin_id;
+  };
+
+  struct ContributedStatusItem {
+    std::string id;
+    std::string text;
+    std::string tooltip;
+    std::string alignment;      // "left", "right"
+    int priority = 0;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -60,6 +98,8 @@ class PluginHost {
     std::function<void(std::string_view)> clear_owner_diagnostics;
     std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
+    std::function<std::optional<std::string>(std::string_view)> get_setting;
+    std::function<void()> request_status_redraw;
   };
 
   PluginHost();
@@ -93,6 +133,11 @@ class PluginHost {
                   HoverResult* result,
                   std::string* error_message = nullptr) const;
   std::vector<std::filesystem::path> DataDirectories(std::string_view subdirectory) const;
+  const std::vector<ContributedMenuEntry>& ContributedMenuEntries() const;
+  const std::vector<ContributedKeybinding>& ContributedKeybindings() const;
+  const std::vector<ContributedSettingSpec>& ContributedSettings() const;
+  const std::vector<ContributedStatusItem>& ContributedStatusItems() const;
+  bool UpdateStatusItem(std::string_view id, std::string text, std::string tooltip = {});
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

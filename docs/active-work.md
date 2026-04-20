@@ -278,24 +278,49 @@ Current state:
   panel, menu, and prompt views instead of acting as a single minimal placeholder seam
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
+- Phase 2 contribution and override model is now shipped:
+  - `WorkspaceKeybindingRegistry*` defines named built-in keybinding specs with stable IDs,
+    context awareness (global / editor / sidebar / terminal), and `ResolveKeybindings` that merges
+    built-ins with plugin contributions and applies user disable overrides
+  - `WorkspaceSettingsRegistry*` defines built-in setting specs with typed defaults (bool, int,
+    float, string, enum), and merges with plugin-declared settings via `AllSettingInfos`
+  - `WorkspaceStatusRegistry*` resolves plugin-contributed status bar items sorted by alignment
+    and priority
+  - `WorkspaceMenuRegistry*` exposes `ContributedMenuItems` to surface plugin menu entries for
+    any `MenuId`, alongside the static built-in menu specs
+  - `WorkspaceSidebarRegistry*` now exposes `OrderedSidebarViews` and `SidebarViewPolicy` so
+    the host can hide or reorder sidebar views based on user-persisted policy
+  - `PluginHost` exposes four new Lua tables: `ctx.settings` (declare / get), `ctx.menus` (add),
+    `ctx.keybindings` (add), and `ctx.status` (add / update); corresponding C++ accessors
+    `ContributedSettings`, `ContributedMenuEntries`, `ContributedKeybindings`, and
+    `ContributedStatusItems` plus `UpdateStatusItem` are available to workspace coordinators
+  - `PluginHost::Callbacks` gains `get_setting` and `request_status_redraw` for the workspace
+    layer to supply setting values and receive status-update redraw signals
+  - `PersistedUserConfigState` now carries `settings` (id→value pairs) and
+    `disabled_keybinding_ids`; `PersistedProjectConfigState` now carries `settings` and
+    `sidebar_policies`; all fields round-trip through the existing line-based serialisation format
+  - all new registries have full test coverage in `tests/ContributionRegistryTests.cpp`
+
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
-- Phase 1 host-service extraction from `docs/vscode-extension-compatibility-plan.md` is complete;
-  Phase 2 contribution and override seams are now active, with unified sidebar view registration
-  landed as the first slice rather than more plugin runtime plumbing; the remaining Phase 1
-  follow-up work is now mostly shell-ownership shaping and opportunistic debt cleanup rather than
-  missing core services
 - validate broader native file-watch coverage beyond the current Linux-backed asset watcher once
   target-host build and runtime validation are available; until then snapshot fallback remains
   the correct baseline for macOS and Windows hosts
-- extend the new sidebar contribution seam with view ordering, hide or disable controls, built-in
-  overrides, and additional host-owned view-container models where plugin pressure justifies it
-- continue moving remaining hardcoded accelerators, menu wiring, and extension points behind
-  stable registries where plugin pressure justifies it
+- wire `WorkspaceKeybindingRegistry` into `WorkspaceKeyInputCoordinator` so plugin-contributed
+  and user-disabled bindings take effect at runtime (currently the registry provides data but
+  the coordinator still uses its own hardcoded key dispatch)
+- wire `WorkspaceSettingsRegistry` and `PersistedUserConfigState.settings` into the persistence
+  coordinator so plugin-declared setting values are read back via `Callbacks::get_setting`
+- wire `WorkspaceStatusRegistry` into the shell render path so status bar items from plugins
+  are displayed in the bottom chrome
+- wire `ContributedMenuItems` into the menu coordinator so plugin menu entries appear in the
+  menu bar at runtime
+- wire `SidebarViewPolicy` from persisted project config into `OrderedSidebarViews` so user hide
+  and reorder choices survive session restarts
 - add async or background plugin task surfaces only if real plugin workloads require them
-- extend the same host-managed runtime-asset model to colorschemes or other non-code assets only if real plugins justify it
-- preserve the rule that editing, compare, merge, search, git, and terminal remain built-in product features even when plugins can extend around them
+- preserve the rule that editing, compare, merge, search, git, and terminal remain built-in
+  product features even when plugins can extend around them
 
 ### 2. Terminal Hardening
 

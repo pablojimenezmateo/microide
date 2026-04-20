@@ -140,6 +140,11 @@ struct PluginHost::Impl {
   std::vector<SidebarProviderInfo> sidebar_providers;
   std::unordered_map<std::string, HoverProvider> hovers;
   std::vector<std::string> hover_provider_order;
+  std::vector<PluginHost::ContributedMenuEntry> menu_entries;
+  std::vector<PluginHost::ContributedKeybinding> keybindings;
+  std::vector<PluginHost::ContributedSettingSpec> settings;
+  std::unordered_map<std::string, PluginHost::ContributedStatusItem> status_items;
+  std::vector<PluginHost::ContributedStatusItem> status_item_order;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -530,6 +535,437 @@ struct PluginHost::Impl {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to register hover provider"
                                               : error_message.c_str());
+    }
+    return 0;
+  }
+
+  bool RegisterMenuEntry(lua_State* state, int table_index, std::string* error_message) {
+    PluginInstance* plugin = FindPluginByState(state);
+    if (plugin == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "menu contribution requires an active plugin state";
+      }
+      return false;
+    }
+
+    const int abs = lua_absindex(state, table_index);
+
+    auto read_string_field = [&](const char* field, bool required) -> std::optional<std::string> {
+      lua_getfield(state, abs, field);
+      if (lua_isstring(state, -1)) {
+        std::string val = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        return val;
+      }
+      lua_pop(state, 1);
+      if (required) {
+        if (error_message != nullptr) {
+          *error_message = std::string("menu entry '") + field + "' must be a string";
+        }
+        return std::nullopt;
+      }
+      return std::string{};
+    };
+
+    auto id_opt = read_string_field("id", true);
+    if (!id_opt.has_value()) {
+      return false;
+    }
+    auto menu_opt = read_string_field("menu", true);
+    if (!menu_opt.has_value()) {
+      return false;
+    }
+    auto action_opt = read_string_field("action", true);
+    if (!action_opt.has_value()) {
+      return false;
+    }
+    auto label_opt = read_string_field("label", true);
+    if (!label_opt.has_value()) {
+      return false;
+    }
+    auto accel_opt = read_string_field("accelerator", false);
+    bool sep_before = false;
+    lua_getfield(state, abs, "separator_before");
+    if (lua_isboolean(state, -1)) {
+      sep_before = lua_toboolean(state, -1) != 0;
+    }
+    lua_pop(state, 1);
+
+    if (!IsValidIdentifier(*id_opt)) {
+      if (error_message != nullptr) {
+        *error_message = "invalid menu entry id: " + *id_opt;
+      }
+      return false;
+    }
+
+    const std::string full_id = plugin->id + "." + *id_opt;
+    for (const auto& existing : menu_entries) {
+      if (existing.id == full_id) {
+        if (error_message != nullptr) {
+          *error_message = "duplicate menu entry: " + full_id;
+        }
+        return false;
+      }
+    }
+
+    menu_entries.push_back(PluginHost::ContributedMenuEntry{
+        .id = full_id,
+        .menu = std::move(*menu_opt),
+        .action = std::move(*action_opt),
+        .label = std::move(*label_opt),
+        .accelerator = std::move(*accel_opt),
+        .separator_before = sep_before,
+        .plugin_id = plugin->id,
+    });
+    return true;
+  }
+
+  static int LuaMenusAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error_message;
+    if (host == nullptr || !host->RegisterMenuEntry(state, 1, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to register menu entry"
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
+  bool RegisterKeybinding(lua_State* state, int table_index, std::string* error_message) {
+    PluginInstance* plugin = FindPluginByState(state);
+    if (plugin == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "keybinding registration requires an active plugin state";
+      }
+      return false;
+    }
+
+    const int abs = lua_absindex(state, table_index);
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, abs, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        if (error_message != nullptr) {
+          *error_message = std::string("keybinding '") + field + "' must be a string";
+        }
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    if (!id_opt.has_value()) {
+      return false;
+    }
+    auto action_opt = read_string("action");
+    if (!action_opt.has_value()) {
+      return false;
+    }
+    auto key_opt = read_string("key");
+    if (!key_opt.has_value()) {
+      return false;
+    }
+    std::string context;
+    lua_getfield(state, abs, "context");
+    if (lua_isstring(state, -1)) {
+      context = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+
+    if (!IsValidIdentifier(*id_opt)) {
+      if (error_message != nullptr) {
+        *error_message = "invalid keybinding id: " + *id_opt;
+      }
+      return false;
+    }
+
+    const std::string full_id = plugin->id + "." + *id_opt;
+    for (const auto& existing : keybindings) {
+      if (existing.id == full_id) {
+        if (error_message != nullptr) {
+          *error_message = "duplicate keybinding: " + full_id;
+        }
+        return false;
+      }
+    }
+
+    keybindings.push_back(PluginHost::ContributedKeybinding{
+        .id = full_id,
+        .action = std::move(*action_opt),
+        .key_chord = std::move(*key_opt),
+        .context = std::move(context),
+        .plugin_id = plugin->id,
+    });
+    return true;
+  }
+
+  static int LuaKeybindingsAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error_message;
+    if (host == nullptr || !host->RegisterKeybinding(state, 1, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to register keybinding"
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
+  bool RegisterSetting(lua_State* state, int table_index, std::string* error_message) {
+    PluginInstance* plugin = FindPluginByState(state);
+    if (plugin == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "setting declaration requires an active plugin state";
+      }
+      return false;
+    }
+
+    const int abs = lua_absindex(state, table_index);
+
+    auto read_string = [&](const char* field, bool required) -> std::optional<std::string> {
+      lua_getfield(state, abs, field);
+      if (lua_isstring(state, -1)) {
+        std::string val = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        return val;
+      }
+      lua_pop(state, 1);
+      if (required) {
+        if (error_message != nullptr) {
+          *error_message = std::string("setting '") + field + "' must be a string";
+        }
+        return std::nullopt;
+      }
+      return std::string{};
+    };
+
+    auto id_opt = read_string("id", true);
+    if (!id_opt.has_value()) {
+      return false;
+    }
+    auto type_opt = read_string("type", true);
+    if (!type_opt.has_value()) {
+      return false;
+    }
+
+    const std::string& type = *type_opt;
+    static const char* const kValidTypes[] = {"bool", "int", "float", "string", "enum"};
+    bool type_valid = false;
+    for (const char* t : kValidTypes) {
+      if (type == t) {
+        type_valid = true;
+        break;
+      }
+    }
+    if (!type_valid) {
+      if (error_message != nullptr) {
+        *error_message = "setting type must be one of: bool, int, float, string, enum";
+      }
+      return false;
+    }
+
+    auto label_opt = read_string("label", false);
+    auto desc_opt = read_string("description", false);
+    auto scope_opt = read_string("scope", false);
+    auto default_opt = read_string("default", false);
+
+    if (!IsValidIdentifier(*id_opt)) {
+      if (error_message != nullptr) {
+        *error_message = "invalid setting id: " + *id_opt;
+      }
+      return false;
+    }
+
+    const std::string full_id = plugin->id + "." + *id_opt;
+    for (const auto& existing : settings) {
+      if (existing.id == full_id) {
+        if (error_message != nullptr) {
+          *error_message = "duplicate setting: " + full_id;
+        }
+        return false;
+      }
+    }
+
+    std::vector<std::string> enum_values;
+    if (type == "enum") {
+      lua_getfield(state, abs, "enum_values");
+      if (lua_istable(state, -1)) {
+        const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(state, -1));
+        for (lua_Integer i = 1; i <= n; ++i) {
+          lua_rawgeti(state, -1, i);
+          if (lua_isstring(state, -1)) {
+            enum_values.emplace_back(lua_tostring(state, -1));
+          }
+          lua_pop(state, 1);
+        }
+      }
+      lua_pop(state, 1);
+    }
+
+    settings.push_back(PluginHost::ContributedSettingSpec{
+        .id = full_id,
+        .label = std::move(*label_opt),
+        .description = std::move(*desc_opt),
+        .type = type,
+        .scope = std::move(*scope_opt),
+        .default_value = std::move(*default_opt),
+        .enum_values = std::move(enum_values),
+        .plugin_id = plugin->id,
+    });
+    return true;
+  }
+
+  static int LuaSettingsDeclare(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error_message;
+    if (host == nullptr || !host->RegisterSetting(state, 1, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to declare setting"
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
+  static int LuaSettingsGet(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* id = luaL_checkstring(state, 1);
+    if (host == nullptr || !host->callbacks.get_setting) {
+      lua_pushnil(state);
+      return 1;
+    }
+    const std::optional<std::string> value = host->callbacks.get_setting(id);
+    if (!value.has_value()) {
+      lua_pushnil(state);
+      return 1;
+    }
+    lua_pushlstring(state, value->c_str(), value->size());
+    return 1;
+  }
+
+  bool RegisterStatusItem(lua_State* state, int table_index, std::string* error_message) {
+    PluginInstance* plugin = FindPluginByState(state);
+    if (plugin == nullptr) {
+      if (error_message != nullptr) {
+        *error_message = "status item registration requires an active plugin state";
+      }
+      return false;
+    }
+
+    const int abs = lua_absindex(state, table_index);
+
+    auto read_string = [&](const char* field, bool required) -> std::optional<std::string> {
+      lua_getfield(state, abs, field);
+      if (lua_isstring(state, -1)) {
+        std::string val = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        return val;
+      }
+      lua_pop(state, 1);
+      if (required) {
+        if (error_message != nullptr) {
+          *error_message = std::string("status item '") + field + "' must be a string";
+        }
+        return std::nullopt;
+      }
+      return std::string{};
+    };
+
+    auto id_opt = read_string("id", true);
+    if (!id_opt.has_value()) {
+      return false;
+    }
+    auto text_opt = read_string("text", false);
+    auto tooltip_opt = read_string("tooltip", false);
+    auto align_opt = read_string("alignment", false);
+
+    int priority = 0;
+    lua_getfield(state, abs, "priority");
+    if (lua_isinteger(state, -1)) {
+      priority = static_cast<int>(lua_tointeger(state, -1));
+    }
+    lua_pop(state, 1);
+
+    if (!IsValidIdentifier(*id_opt)) {
+      if (error_message != nullptr) {
+        *error_message = "invalid status item id: " + *id_opt;
+      }
+      return false;
+    }
+
+    const std::string full_id = plugin->id + "." + *id_opt;
+    if (status_items.contains(full_id)) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate status item: " + full_id;
+      }
+      return false;
+    }
+
+    PluginHost::ContributedStatusItem item{
+        .id = full_id,
+        .text = std::move(*text_opt),
+        .tooltip = std::move(*tooltip_opt),
+        .alignment = std::move(*align_opt),
+        .priority = priority,
+        .plugin_id = plugin->id,
+    };
+    status_item_order.push_back(item);
+    status_items.emplace(full_id, std::move(item));
+    return true;
+  }
+
+  static int LuaStatusAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    std::string error_message;
+    if (host == nullptr || !host->RegisterStatusItem(state, 1, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to register status item"
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
+  static int LuaStatusUpdate(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* id = luaL_checkstring(state, 1);
+    luaL_checktype(state, 2, LUA_TTABLE);
+    if (host == nullptr) {
+      return 0;
+    }
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return 0;
+    }
+    const std::string full_id = plugin->id + "." + std::string(id);
+    auto it = host->status_items.find(full_id);
+    if (it == host->status_items.end()) {
+      return 0;
+    }
+    lua_getfield(state, 2, "text");
+    if (lua_isstring(state, -1)) {
+      it->second.text = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+    lua_getfield(state, 2, "tooltip");
+    if (lua_isstring(state, -1)) {
+      it->second.tooltip = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+    // Sync order vector.
+    for (auto& order_item : host->status_item_order) {
+      if (order_item.id == full_id) {
+        order_item.text = it->second.text;
+        order_item.tooltip = it->second.tooltip;
+        break;
+      }
+    }
+    if (host->callbacks.request_status_redraw) {
+      host->callbacks.request_status_redraw();
     }
     return 0;
   }
@@ -964,7 +1400,7 @@ struct PluginHost::Impl {
   }
 
   void PushPluginContext(lua_State* state) {
-    lua_createtable(state, 0, 7);
+    lua_createtable(state, 0, 11);
 
     lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaLog, 1);
@@ -1029,6 +1465,36 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaHoverAdd, 1);
     lua_setfield(state, -2, "add");
     lua_setfield(state, -2, "hover");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaMenusAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "menus");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaKeybindingsAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "keybindings");
+
+    lua_createtable(state, 0, 2);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaSettingsDeclare, 1);
+    lua_setfield(state, -2, "declare");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaSettingsGet, 1);
+    lua_setfield(state, -2, "get");
+    lua_setfield(state, -2, "settings");
+
+    lua_createtable(state, 0, 2);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaStatusAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaStatusUpdate, 1);
+    lua_setfield(state, -2, "update");
+    lua_setfield(state, -2, "status");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -1397,6 +1863,42 @@ struct PluginHost::Impl {
         std::remove_if(hover_provider_order.begin(), hover_provider_order.end(),
                        [&](std::string_view id) { return !hovers.contains(std::string(id)); }),
         hover_provider_order.end());
+
+    const PluginInstance* plugin = FindPluginByState(state);
+    if (plugin != nullptr) {
+      const std::string plugin_id = plugin->id;
+      menu_entries.erase(
+          std::remove_if(menu_entries.begin(), menu_entries.end(),
+                         [&](const PluginHost::ContributedMenuEntry& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          menu_entries.end());
+      keybindings.erase(
+          std::remove_if(keybindings.begin(), keybindings.end(),
+                         [&](const PluginHost::ContributedKeybinding& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          keybindings.end());
+      settings.erase(
+          std::remove_if(settings.begin(), settings.end(),
+                         [&](const PluginHost::ContributedSettingSpec& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          settings.end());
+      for (auto it = status_items.begin(); it != status_items.end();) {
+        if (it->second.plugin_id == plugin_id) {
+          it = status_items.erase(it);
+        } else {
+          ++it;
+        }
+      }
+      status_item_order.erase(
+          std::remove_if(status_item_order.begin(), status_item_order.end(),
+                         [&](const PluginHost::ContributedStatusItem& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          status_item_order.end());
+    }
   }
 
   void ConfigurePackage(lua_State* state, const std::filesystem::path& plugin_root) {
@@ -1985,6 +2487,44 @@ std::vector<std::filesystem::path> PluginHost::DataDirectories(std::string_view 
   append_matching_directories(true);
   append_matching_directories(false);
   return directories;
+}
+
+const std::vector<PluginHost::ContributedMenuEntry>& PluginHost::ContributedMenuEntries() const {
+  return impl_->menu_entries;
+}
+
+const std::vector<PluginHost::ContributedKeybinding>& PluginHost::ContributedKeybindings() const {
+  return impl_->keybindings;
+}
+
+const std::vector<PluginHost::ContributedSettingSpec>& PluginHost::ContributedSettings() const {
+  return impl_->settings;
+}
+
+const std::vector<PluginHost::ContributedStatusItem>& PluginHost::ContributedStatusItems() const {
+  return impl_->status_item_order;
+}
+
+bool PluginHost::UpdateStatusItem(std::string_view id, std::string text, std::string tooltip) {
+  auto it = impl_->status_items.find(std::string(id));
+  if (it == impl_->status_items.end()) {
+    return false;
+  }
+  it->second.text = std::move(text);
+  if (!tooltip.empty()) {
+    it->second.tooltip = std::move(tooltip);
+  }
+  for (auto& order_item : impl_->status_item_order) {
+    if (order_item.id == it->first) {
+      order_item.text = it->second.text;
+      order_item.tooltip = it->second.tooltip;
+      break;
+    }
+  }
+  if (impl_->callbacks.request_status_redraw) {
+    impl_->callbacks.request_status_redraw();
+  }
+  return true;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {

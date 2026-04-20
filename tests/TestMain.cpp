@@ -40,6 +40,7 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedTerminalTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests);
+void RegisterContributionRegistryTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -78,6 +79,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterGitServiceTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);
+  microide::tests::RegisterContributionRegistryTests(tests);
 
   bool ran_any = false;
   for (const auto& test : tests) {
