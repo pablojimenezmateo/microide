@@ -173,6 +173,13 @@ Current state:
   interaction state models now live in dedicated `Workspace*State.h` headers instead of staying
   nested inside `WorkspaceShell.h`; ownership migration is still incomplete, but the shell no
   longer defines those models inline
+- `WorkspaceContext` now owns the project catalog, active project state, prompt state, menu state,
+  and transient interaction state, with `WorkspaceShell` rebinding its legacy aliases onto that
+  context while the remaining controller migrations continue
+- project-catalog mutation is the first controller path moved off `WorkspaceShell&`: the
+  top-level `WorkspaceProjectCatalogCoordinator` now depends on `WorkspaceContext` plus explicit
+  shell callbacks for project activation, persistence saves, plugin-host shutdown, redraw, and
+  welcome-state fallback instead of reaching into shell-private fields directly
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

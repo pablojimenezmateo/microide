@@ -29,6 +29,7 @@
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceMenuRegistry.h"
@@ -183,6 +184,7 @@ class WorkspaceShell {
   using PanelState = workspace::PanelState;
   using ProjectWorkspaceState = workspace::ProjectWorkspaceState;
   using ProjectCatalogState = workspace::ProjectCatalogState;
+  using WorkspaceContext = workspace::WorkspaceContext;
   using DragTarget = workspace::DragTarget;
   using TabDragKind = workspace::TabDragKind;
   using InteractionState = workspace::InteractionState;
@@ -409,7 +411,6 @@ class WorkspaceShell {
   };
 
   friend class WorkspaceActionContext;
-  friend class ProjectCatalogCoordinator;
   friend class PersistenceCoordinator;
   friend class CommandPromptCoordinator;
   friend class MenuCoordinator;
@@ -479,6 +480,7 @@ class WorkspaceShell {
   bool SetProjectRoot(const std::filesystem::path& project_root);
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
+  ProjectCatalogCoordinator MakeProjectCatalogCoordinator();
   void RebindProjectState(ProjectWorkspaceState& state);
   void ResetCurrentProjectStateStorage();
   void ResetTransientInteractionState();
@@ -1103,10 +1105,11 @@ class WorkspaceShell {
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
-  ProjectCatalogState project_catalog_;
+  WorkspaceContext context_;
+  ProjectCatalogState& project_catalog_ = context_.project_catalog;
   // Keep the active workspace, including its project-scoped surface state, in the same container
   // used by project-catalog entries so activation, persistence, and reset paths do not copy it.
-  ProjectWorkspaceState current_project_state_;
+  ProjectWorkspaceState& current_project_state_ = context_.current_project_state;
   std::filesystem::path& project_root_ = current_project_state_.root;
   project::DirectoryTree& directory_tree_ = current_project_state_.directory_tree;
   project::FileIndex& file_index_ = current_project_state_.file_index;
@@ -1119,8 +1122,8 @@ class WorkspaceShell {
   SidebarState& sidebar_state_ = current_project_state_.sidebar;
   OverlayState& overlay_state_ = current_project_state_.overlay;
   PanelState& panel_state_ = current_project_state_.panel;
-  InteractionState interaction_state_;
-  MenuSurfaceState menu_state_;
+  InteractionState& interaction_state_ = context_.interaction_state;
+  MenuSurfaceState& menu_state_ = context_.menu_state;
   std::vector<std::unique_ptr<TerminalTabState>>& terminal_tabs_ = current_project_state_.terminal_tabs;
   std::size_t& active_terminal_tab_index_ = current_project_state_.active_terminal_tab_index;
   WindowPresentationState window_presentation_;
@@ -1151,7 +1154,7 @@ class WorkspaceShell {
   std::function<bool(std::string_view)> external_url_opener_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
-  PromptState prompts_;
+  PromptState& prompts_ = context_.prompts;
   bool quit_requested_ = false;
   CommandState& command_ = panel_state_.command;
   std::vector<std::string> available_colorscheme_names_;

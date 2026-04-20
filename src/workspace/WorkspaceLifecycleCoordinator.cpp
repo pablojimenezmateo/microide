@@ -126,9 +126,9 @@ void LifecycleCoordinator::Shutdown() {
   shell_.git_blame_service_.Stop();
 
   if (shell_.HasActiveProjectCatalogEntry()) {
-    ProjectCatalogCoordinator(shell_).PersistActiveEntry();
+    shell_.MakeProjectCatalogCoordinator().PersistActiveEntry();
   }
-  ProjectCatalogCoordinator(shell_).PersistInactiveEntriesForShutdown();
+  shell_.MakeProjectCatalogCoordinator().PersistInactiveEntriesForShutdown();
   persistence.SaveWorkspaceSession();
 
   shell_.project_search_runtime_.Shutdown();

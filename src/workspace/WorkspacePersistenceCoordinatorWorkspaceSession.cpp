@@ -59,7 +59,7 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
     return true;
   }
 
-  if (!ProjectCatalogCoordinator(shell_).RestoreAfterRemoval(
+  if (!shell_.MakeProjectCatalogCoordinator().RestoreAfterRemoval(
           std::min(persisted_session.active_project_index,
                    shell_.project_catalog_.entries.size() - 1),
           true)) {

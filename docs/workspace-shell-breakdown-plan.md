@@ -41,10 +41,12 @@ Evidence from the current codebase:
   it through alias members such as `project_root_`, `directory_tree_`, `open_tabs_`, `surface_`,
   `sidebar_state_`, `overlay_state_`, `panel_state_`, `terminal_tabs_`, `diagnostics_store_`,
   `active_colorscheme_name_`, and `editor_preferences_`.
-- `WorkspaceShell` still declares 21 `friend class` relationships so coordinators can reach into
+- `WorkspaceShell` still declares 20 `friend class` relationships so coordinators can reach into
   private shell state directly.
-- Most top-level coordinators still take `WorkspaceShell&` and therefore still depend on the full
-  shell rather than on narrow APIs.
+- `WorkspaceContext` now owns project catalog, active project, prompt, menu, and interaction
+  state, but most top-level coordinators still take `WorkspaceShell&` and therefore still depend
+  on the full shell rather than on narrow APIs. `WorkspaceProjectCatalogCoordinator` is the first
+  exception: it now depends on `WorkspaceContext` plus explicit callbacks.
 - `WorkspaceActionContext` is still a shell proxy. It exposes a cleaner file boundary than the old
   nested action coordinator, but it still mostly forwards into private shell state and shell
   helpers.
@@ -57,8 +59,9 @@ Evidence from the current codebase:
 The current shape is no longer a single translation-unit blob, but it is still a god object.
 
 The first suggested landing-order slice is now complete: workspace state models no longer live
-inline inside `WorkspaceShell.h`. The remaining work is the actual ownership rewrite, friend
-removal, controller migration, view extraction, and test migration.
+inline inside `WorkspaceShell.h`, and the shell now delegates the core workspace-state ownership
+to `WorkspaceContext`. The remaining work is the actual ownership rewrite of more controllers,
+friend removal, view extraction, and test migration.
 
 ## Decision
 
@@ -331,6 +334,9 @@ This work should land in coherent slices rather than one giant branch:
    Status: complete on 2026-04-20 via `Workspace*State.h` headers for project, tab, prompt, menu,
    and interaction state.
 2. Add `WorkspaceContext` and make the shell delegate state ownership to it.
+   Status: in progress on 2026-04-20. `WorkspaceContext` now owns the shell's core workspace
+   state, and `WorkspaceProjectCatalogCoordinator` now consumes that context plus explicit
+   callbacks instead of `WorkspaceShell&`.
 3. Migrate the least UI-coupled controllers first: project catalog, persistence, lifecycle.
 4. Migrate action handling so new controllers stop needing shell reach-through.
 5. Migrate sidebar, tabs, prompts, and overlays onto explicit controller APIs.

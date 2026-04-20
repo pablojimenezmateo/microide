@@ -32,7 +32,7 @@ bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
 }
 
 void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
-  state.file_finder.SetIndex(&state.file_index);
+  WorkspaceContext::RebindProjectState(state);
 }
 
 void WorkspaceShell::ClearDragState() {
@@ -48,8 +48,7 @@ void WorkspaceShell::ResetTransientInteractionState() {
 }
 
 void WorkspaceShell::ResetCurrentProjectStateStorage() {
-  current_project_state_ = ProjectWorkspaceState{};
-  RebindProjectState(current_project_state_);
+  context_.ResetCurrentProjectStateStorage();
   ResetTransientInteractionState();
 }
 

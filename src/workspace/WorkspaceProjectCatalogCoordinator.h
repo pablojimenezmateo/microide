@@ -1,14 +1,29 @@
 #pragma once
 
+#include <functional>
 #include <filesystem>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceContext.h"
 
 namespace microide::workspace {
 
 class ProjectCatalogCoordinator {
  public:
-  explicit ProjectCatalogCoordinator(WorkspaceShell& shell);
+  struct Operations {
+    std::function<bool(const std::filesystem::path&, bool, bool)> initialize_current_project;
+    std::function<bool(ProjectWorkspaceState&, bool)> activate_project_state;
+    std::function<void(ProjectWorkspaceState&)> store_current_project_state;
+    std::function<void(ProjectWorkspaceState&)> load_project_state;
+    std::function<void()> save_config_state;
+    std::function<void()> save_session_state;
+    std::function<void()> save_workspace_session;
+    std::function<void()> shutdown_plugin_host;
+    std::function<void()> reset_project_catalog_to_welcome_state;
+    std::function<void()> ensure_active_project_visible;
+    std::function<void()> request_window_redraw;
+  };
+
+  ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations);
 
   bool Open(const std::filesystem::path& normalized_root,
             bool restore_persistence,
@@ -30,7 +45,8 @@ class ProjectCatalogCoordinator {
   void RestoreActivationCheckpoint(const ActivationCheckpoint& checkpoint);
   void FinalizeMutation();
 
-  WorkspaceShell& shell_;
+  WorkspaceContext& context_;
+  Operations operations_;
 };
 
 }  // namespace microide::workspace

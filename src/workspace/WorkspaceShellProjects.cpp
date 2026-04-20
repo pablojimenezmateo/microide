@@ -3,32 +3,55 @@
 #include <algorithm>
 
 #include "workspace/WorkspaceMenuCoordinator.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 
 namespace microide::workspace {
 
+ProjectCatalogCoordinator WorkspaceShell::MakeProjectCatalogCoordinator() {
+  return ProjectCatalogCoordinator(
+      context_,
+      ProjectCatalogCoordinator::Operations{
+          .initialize_current_project =
+              [this](const std::filesystem::path& project_root,
+                     bool restore_persistence,
+                     bool log_feedback) {
+                return InitializeCurrentProject(project_root, restore_persistence, log_feedback);
+              },
+          .activate_project_state =
+              [this](ProjectWorkspaceState& state, bool activate_restored_tab) {
+                return ActivateProjectState(state, activate_restored_tab);
+              },
+          .store_current_project_state =
+              [this](ProjectWorkspaceState& state) { StoreCurrentProjectState(state); },
+          .load_project_state = [this](ProjectWorkspaceState& state) { LoadProjectState(state); },
+          .save_config_state = [this]() { PersistenceCoordinator(*this).SaveConfigState(); },
+          .save_session_state = [this]() { PersistenceCoordinator(*this).SaveSessionState(); },
+          .save_workspace_session =
+              [this]() { PersistenceCoordinator(*this).SaveWorkspaceSession(); },
+          .shutdown_plugin_host = [this]() { plugin_runtime_.ShutdownHost(); },
+          .reset_project_catalog_to_welcome_state =
+              [this]() { ResetProjectCatalogToWelcomeState(); },
+          .ensure_active_project_visible = [this]() { EnsureActiveProjectVisible(); },
+          .request_window_redraw = [this]() { RequestWindowRedraw(); },
+      });
+}
+
 bool WorkspaceShell::HasActiveProjectCatalogEntry() const {
-  return !project_root_.empty() && project_catalog_.active_index < project_catalog_.entries.size();
+  return context_.HasActiveProjectCatalogEntry();
 }
 
 WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry(std::size_t index) {
-  return index < project_catalog_.entries.size() ? project_catalog_.entries[index].get() : nullptr;
+  return context_.ProjectCatalogEntry(index);
 }
 
 const WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry(
     std::size_t index) const {
-  return index < project_catalog_.entries.size() ? project_catalog_.entries[index].get() : nullptr;
+  return context_.ProjectCatalogEntry(index);
 }
 
 std::filesystem::path WorkspaceShell::ProjectCatalogRoot(std::size_t index) const {
-  if (index >= project_catalog_.entries.size()) {
-    return {};
-  }
-  if (!project_root_.empty() && index == project_catalog_.active_index) {
-    return project_root_;
-  }
-  const auto* state = ProjectCatalogEntry(index);
-  return state != nullptr ? state->root : std::filesystem::path{};
+  return context_.ProjectCatalogRoot(index);
 }
 
 void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
@@ -58,7 +81,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     }
   }
 
-  return ProjectCatalogCoordinator(*this).Open(normalized_root, restore_persistence, log_feedback);
+  return MakeProjectCatalogCoordinator().Open(normalized_root, restore_persistence, log_feedback);
 }
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
@@ -72,7 +95,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
     return true;
   }
 
-  return ProjectCatalogCoordinator(*this).Switch(index);
+  return MakeProjectCatalogCoordinator().Switch(index);
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
@@ -104,7 +127,7 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
-  ProjectCatalogCoordinator(*this).Close(index);
+  MakeProjectCatalogCoordinator().Close(index);
 }
 
 }  // namespace microide::workspace
