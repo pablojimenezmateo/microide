@@ -171,6 +171,8 @@ class WorkspaceShell {
     bool separator = false;
   };
 
+  WorkspaceActionContext MakeActionContext();
+
  private:
   using FocusTarget = workspace::FocusTarget;
   using OverlayMode = workspace::OverlayMode;
@@ -217,6 +219,7 @@ class WorkspaceShell {
     NsResize,
   };
 
+ public:
   struct CompareSurfaceLayout {
     float line_height = 14.0f;
     float gutter_width = 28.0f;
@@ -325,7 +328,6 @@ class WorkspaceShell {
     bool hovered = false;
   };
 
- private:
   struct EditorPaneLayout {
     std::size_t leaf_id = 0;
     SDL_FRect rect{};
@@ -338,6 +340,7 @@ class WorkspaceShell {
     SDL_FRect rect{};
   };
 
+ private:
   struct EditorSplitSlot {
     TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
     std::size_t index = 0;
@@ -387,13 +390,6 @@ class WorkspaceShell {
     AlreadyOpen,
     Unavailable,
   };
-
-  friend class WorkspaceActionContext;
-  friend class TabCoordinator;
-  friend class EditorMouseCoordinator;
-  friend class CompareMouseCoordinator;
-  friend class MergeMouseCoordinator;
-  friend class TabMouseCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -456,7 +452,12 @@ class WorkspaceShell {
   SidebarCoordinator MakeSidebarCoordinator();
   KeyInputCoordinator MakeKeyInputCoordinator();
   TextInputCoordinator MakeTextInputCoordinator();
+  TabCoordinator MakeTabCoordinator();
   ChromeMouseCoordinator MakeChromeMouseCoordinator();
+  EditorMouseCoordinator MakeEditorMouseCoordinator();
+  CompareMouseCoordinator MakeCompareMouseCoordinator();
+  MergeMouseCoordinator MakeMergeMouseCoordinator();
+  TabMouseCoordinator MakeTabMouseCoordinator();
   SidebarMouseCoordinator MakeSidebarMouseCoordinator();
   PanelMouseCoordinator MakePanelMouseCoordinator();
   void ResetLifecycleStartupState();
@@ -1152,7 +1153,7 @@ class WorkspaceShell {
   Uint64 caret_blink_epoch_ms_ = 0;
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;
-  TabDragState tab_drag_state_;
+  TabDragState& tab_drag_state_ = interaction_state_.tab_drag;
   CursorKind cursor_kind_ = CursorKind::Default;
   SDL_Cursor* text_cursor_ = nullptr;
   SDL_Cursor* pointer_cursor_ = nullptr;

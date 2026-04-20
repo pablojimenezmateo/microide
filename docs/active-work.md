@@ -128,8 +128,7 @@ Current state:
   `Workspace*MouseCoordinator` types instead of nested shell-owned coordinator classes
 - compare-tab open or refresh flow and sidebar mode or refresh or action handling now use
   top-level `WorkspaceDiffTabCoordinator` and `WorkspaceSidebarCoordinator` types instead of
-  nested shell-owned coordinator classes, leaving `WorkspaceShell` with friend-based access to
-  top-level coordinators instead of nested coordinator declarations
+  nested shell-owned coordinator classes
 - tab save, reopen, dirty-state, retarget, and project-local dirty-tab enumeration plus
   lifecycle init or shutdown sequencing and prompt-driven path mutation now use top-level
   `WorkspaceTabCoordinator`, `WorkspacePathMutationCoordinator`, and
@@ -221,6 +220,13 @@ Current state:
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
   terminal selection, tree context menus, and redraw behavior instead of `WorkspaceShell&`
+- action-context dispatch, tab save or reopen or retarget flow, and editor or compare or merge
+  or tab-strip mouse routing now run through `WorkspaceActionContext`, `WorkspaceTabCoordinator`,
+  `WorkspaceEditorMouseCoordinator`, `WorkspaceCompareMouseCoordinator`,
+  `WorkspaceMergeMouseCoordinator`, and `WorkspaceTabMouseCoordinator` with explicit state plus
+  callback dependencies instead of `WorkspaceShell&`
+- production `WorkspaceShell` friend-class access is now gone; only the
+  `MICROIDE_TESTING`-guarded `WorkspaceShellTestAccess` friend remains for test fixtures
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

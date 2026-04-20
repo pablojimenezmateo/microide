@@ -6,8 +6,8 @@
 #include <vector>
 
 #include "workspace/WorkspaceCommandParsing.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
@@ -15,96 +15,95 @@
 
 namespace microide::workspace {
 
-WorkspaceActionContext::WorkspaceActionContext(WorkspaceShell& shell) : shell_(shell) {}
+WorkspaceActionContext::WorkspaceActionContext(ProjectCatalogState& project_catalog,
+                                               ProjectWorkspaceState& current_project_state,
+                                               float& ui_scale,
+                                               Operations operations)
+    : project_catalog_(project_catalog),
+      state_(current_project_state),
+      ui_scale_(ui_scale),
+      operations_(std::move(operations)) {}
 
 void WorkspaceActionContext::PrepareForAction(ActionSource source) {
   if (source != ActionSource::ContextMenu) {
-    shell_.MakeMenuCoordinator().CloseTreeContextMenu();
+    operations_.close_tree_context_menu();
   }
 }
 
 bool WorkspaceActionContext::RejectAction(ActionSource source, std::string feedback) {
-  return shell_.MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
+  return operations_.reject_action(source, std::move(feedback));
 }
 
 SidebarViewRequest WorkspaceActionContext::ParseSidebarViewRequest(
     const std::vector<std::string>& args) const {
-  return workspace::ParseSidebarViewRequest(args, shell_.plugin_runtime_.Host());
+  return operations_.parse_sidebar_view_request(args);
 }
 
 bool WorkspaceActionContext::HasProjectRoot() const {
-  return !shell_.project_root_.empty();
+  return !state_.root.empty();
 }
 
 bool WorkspaceActionContext::HasActiveProject() const {
-  return !shell_.project_catalog_.entries.empty() && HasProjectRoot();
+  return !project_catalog_.entries.empty() && HasProjectRoot();
 }
 
 std::size_t WorkspaceActionContext::ProjectCount() const {
-  return shell_.project_catalog_.entries.size();
+  return project_catalog_.entries.size();
 }
 
 std::size_t WorkspaceActionContext::ActiveProjectIndex() const {
-  return shell_.project_catalog_.active_index;
+  return project_catalog_.active_index;
 }
 
 std::filesystem::path WorkspaceActionContext::ProjectRoot() const {
-  return shell_.project_root_;
+  return state_.root;
 }
 
 bool WorkspaceActionContext::OpenProject(const std::filesystem::path& project_root,
                                          bool restore_persistence,
                                          bool log_feedback) {
-  return shell_.OpenProjectTab(project_root, restore_persistence, log_feedback);
+  return operations_.open_project(project_root, restore_persistence, log_feedback);
 }
 
 void WorkspaceActionContext::RequestCloseProject(std::size_t index) {
-  shell_.RequestCloseProject(index);
+  operations_.request_close_project(index);
 }
 
 bool WorkspaceActionContext::SwitchProject(std::size_t index, bool log_feedback) {
-  return shell_.SwitchProject(index, log_feedback);
+  return operations_.switch_project(index, log_feedback);
 }
 
 ProjectOpenPickerResult WorkspaceActionContext::OpenNativeProjectPicker() {
-  switch (shell_.OpenNativeProjectPicker(nullptr)) {
-    case WorkspaceShell::ProjectOpenDialogLaunchResult::Launched:
-      return ProjectOpenPickerResult::Launched;
-    case WorkspaceShell::ProjectOpenDialogLaunchResult::AlreadyOpen:
-      return ProjectOpenPickerResult::AlreadyOpen;
-    case WorkspaceShell::ProjectOpenDialogLaunchResult::Unavailable:
-      return ProjectOpenPickerResult::Unavailable;
-  }
-  return ProjectOpenPickerResult::Unavailable;
+  return operations_.open_native_project_picker();
 }
 
 bool WorkspaceActionContext::SidebarVisible() const {
-  return shell_.sidebar_state_.visible;
+  return state_.sidebar.visible;
 }
 
 bool WorkspaceActionContext::SidebarTemporary() const {
-  return shell_.sidebar_state_.temporary;
+  return state_.sidebar.temporary;
 }
 
 std::string_view WorkspaceActionContext::SidebarViewId() const {
-  return shell_.sidebar_state_.view_id;
+  return state_.sidebar.view_id;
 }
 
 SidebarMode WorkspaceActionContext::ActiveSidebarMode() const {
-  return shell_.ActiveSidebarMode();
+  return operations_.active_sidebar_mode();
 }
 
 void WorkspaceActionContext::ShowSidebarSurface() {
-  shell_.sidebar_state_.visible = true;
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
+  state_.sidebar.visible = true;
+  state_.surface.focus = FocusTarget::Sidebar;
 }
 
 void WorkspaceActionContext::ToggleSidebar() {
-  shell_.ToggleSidebar();
+  operations_.toggle_sidebar();
 }
 
 void WorkspaceActionContext::CloseSidebar() {
-  shell_.CloseSidebar();
+  operations_.close_sidebar();
 }
 
 bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
@@ -112,19 +111,19 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
                                              const std::string& query) {
   switch (view.mode) {
     case SidebarMode::Tree:
-      shell_.ShowTreeSidebar(root);
+      operations_.show_tree_sidebar(root);
       return true;
     case SidebarMode::Search:
-      shell_.ShowSearchSidebar(query, false);
+      operations_.show_search_sidebar(query, false);
       return true;
     case SidebarMode::Problems:
-      shell_.ShowProblemsSidebar();
+      operations_.show_problems_sidebar();
       return true;
     case SidebarMode::Git:
-      shell_.ShowGitSidebar();
+      operations_.show_git_sidebar();
       return true;
     case SidebarMode::Plugin:
-      return shell_.ShowPluginSidebar(view.id, false);
+      return operations_.show_plugin_sidebar(view.id, false);
     case SidebarMode::None:
       return false;
   }
@@ -134,20 +133,20 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
 bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
                                                const std::filesystem::path& root,
                                                const std::string& query) {
-  const bool same_view = shell_.sidebar_state_.visible && shell_.sidebar_state_.view_id == view.id;
+  const bool same_view = state_.sidebar.visible && state_.sidebar.view_id == view.id;
   switch (view.mode) {
     case SidebarMode::Tree:
     case SidebarMode::Problems:
     case SidebarMode::Git:
     case SidebarMode::Plugin:
       if (same_view) {
-        shell_.CloseSidebar();
+        operations_.close_sidebar();
         return true;
       }
       return ShowSidebarView(view, root, query);
     case SidebarMode::Search:
-      if (same_view && !shell_.sidebar_state_.temporary) {
-        shell_.CloseSidebar();
+      if (same_view && !state_.sidebar.temporary) {
+        operations_.close_sidebar();
         return true;
       }
       return ShowSidebarView(view, root, query);
@@ -158,104 +157,106 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
 }
 
 float WorkspaceActionContext::CurrentWindowWidth() const {
-  if (const std::optional<SDL_FRect> rect = shell_.CurrentWindowRect(); rect.has_value()) {
+  if (const std::optional<SDL_FRect> rect = operations_.current_window_rect(); rect.has_value()) {
     return rect->w;
   }
   return 1.0f;
 }
 
 void WorkspaceActionContext::SetSidebarWidth(float width) {
-  shell_.sidebar_state_.width = ClampSidebarWidth(width, std::max(1.0f, CurrentWindowWidth()));
+  state_.sidebar.width = ClampSidebarWidth(width, std::max(1.0f, CurrentWindowWidth()));
 }
 
 void WorkspaceActionContext::RefreshProjectFiles() {
-  shell_.RefreshProjectFiles();
+  operations_.refresh_project_files();
 }
 
 void WorkspaceActionContext::ReloadCleanOpenBuffersFromDisk() {
-  shell_.ReloadCleanOpenBuffersFromDisk();
+  operations_.reload_clean_open_buffers_from_disk();
 }
 
 std::filesystem::path WorkspaceActionContext::TreeMutationBasePath(ActionSource source) const {
-  return shell_.TreeMutationBasePath(source);
+  return operations_.tree_mutation_base_path(source);
 }
 
 std::filesystem::path WorkspaceActionContext::ResolveTreeActionPath(ActionSource source) const {
-  return shell_.ResolveTreeActionPath(source);
+  return operations_.resolve_tree_action_path(source);
 }
 
 void WorkspaceActionContext::OpenCreatePathPrompt(bool directory,
                                                   const std::filesystem::path& base_path) {
-  shell_.OpenPromptSurface(directory ? WorkspaceShell::PromptSurfaceState::Action::CreateDirectory
-                                     : WorkspaceShell::PromptSurfaceState::Action::CreateFile,
-                           WorkspaceShell::PromptSurfaceState::Kind::TextInput, base_path);
+  operations_.open_prompt_surface(directory ? PromptSurfaceState::Action::CreateDirectory
+                                            : PromptSurfaceState::Action::CreateFile,
+                                  PromptSurfaceState::Kind::TextInput, base_path, {});
 }
 
 void WorkspaceActionContext::OpenRenamePathPrompt(const std::filesystem::path& path) {
-  shell_.OpenPromptSurface(WorkspaceShell::PromptSurfaceState::Action::RenamePath,
-                           WorkspaceShell::PromptSurfaceState::Kind::TextInput, path,
-                           path.filename().string());
+  operations_.open_prompt_surface(PromptSurfaceState::Action::RenamePath,
+                                  PromptSurfaceState::Kind::TextInput, path,
+                                  path.filename().string());
 }
 
 void WorkspaceActionContext::OpenDeletePathPrompt(const std::filesystem::path& path) {
-  shell_.OpenPromptSurface(WorkspaceShell::PromptSurfaceState::Action::DeletePath,
-                           WorkspaceShell::PromptSurfaceState::Kind::Confirm, path);
+  operations_.open_prompt_surface(PromptSurfaceState::Action::DeletePath,
+                                  PromptSurfaceState::Kind::Confirm, path, {});
 }
 
 bool WorkspaceActionContext::WriteClipboardText(std::string_view text) const {
-  return shell_.WriteClipboardText(text);
+  return operations_.write_clipboard_text(text);
 }
 
 bool WorkspaceActionContext::WritePrimarySelectionText(std::string_view text) const {
-  return shell_.WritePrimarySelectionText(text);
+  return operations_.write_primary_selection_text(text);
 }
 
 void WorkspaceActionContext::OpenTerminal(std::string command) {
-  shell_.OpenTerminal(std::move(command));
+  operations_.open_terminal(std::move(command));
 }
 
 void WorkspaceActionContext::ShowFileFinderWithQuery(std::string query) {
-  shell_.file_index_.Refresh();
-  shell_.file_finder_.SetIndex(&shell_.file_index_);
-  shell_.file_finder_.SetQuery(std::move(query));
-  shell_.ShowOverlay(WorkspaceShell::OverlayMode::FileFinder);
+  state_.file_index.Refresh();
+  state_.file_finder.SetIndex(&state_.file_index);
+  state_.file_finder.SetQuery(std::move(query));
+  operations_.show_overlay(OverlayMode::FileFinder);
 }
 
 void WorkspaceActionContext::ShowFileFinder() {
-  shell_.ShowOverlay(WorkspaceShell::OverlayMode::FileFinder);
-  shell_.file_index_.Refresh();
-  shell_.file_finder_.SetIndex(&shell_.file_index_);
-  shell_.file_finder_.SetQuery("");
+  operations_.show_overlay(OverlayMode::FileFinder);
+  state_.file_index.Refresh();
+  state_.file_finder.SetIndex(&state_.file_index);
+  state_.file_finder.SetQuery("");
 }
 
 bool WorkspaceActionContext::OverlayVisible() const {
-  return shell_.overlay_state_.visible;
+  return state_.overlay.visible;
 }
 
 void WorkspaceActionContext::DismissOverlay() {
-  shell_.DismissOverlay();
+  operations_.dismiss_overlay();
 }
 
 void WorkspaceActionContext::ShowProjectSearchSidebar(std::string query) {
-  shell_.ShowSearchSidebar(std::move(query), true);
+  operations_.show_search_sidebar(std::move(query), true);
 }
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
-  return shell_.ActiveTabIsCompare();
+  return state_.active_tab_index < state_.open_tabs.size() &&
+         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Compare;
 }
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
-  return shell_.ActiveTabIsMerge();
+  return state_.active_tab_index < state_.open_tabs.size() &&
+         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Merge;
 }
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
-  shell_.OpenBufferSearch();
-  shell_.overlay_workflow_.buffer_search.query = std::move(query);
-  shell_.RefreshBufferSearch();
+  operations_.open_buffer_search();
+  state_.overlay.workflow.buffer_search.query = std::move(query);
+  operations_.refresh_buffer_search();
 }
 
 void WorkspaceActionContext::OpenBufferReplace() {
-  shell_.OpenBufferReplace();
+  operations_.open_buffer_replace();
 }
 
 std::filesystem::path WorkspaceActionContext::ResolveComparePath(
@@ -265,17 +266,17 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
     return requested_path;
   }
   if (source == ActionSource::ContextMenu) {
-    return shell_.ResolveTreeActionPath(source);
+    return operations_.resolve_tree_action_path(source);
   }
-  if (const editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+  if (const editor::TextViewport* viewport = operations_.active_editor_viewport();
       viewport != nullptr && !viewport->path().empty()) {
     return viewport->path().lexically_normal();
   }
-  if (shell_.sidebar_state_.visible && shell_.ActiveSidebarMode() == SidebarMode::Tree) {
-    const auto& entries = shell_.directory_tree_.entries();
-    if (shell_.directory_tree_.selected_index() < entries.size() &&
-        !entries[shell_.directory_tree_.selected_index()].is_directory) {
-      return entries[shell_.directory_tree_.selected_index()].path.lexically_normal();
+  if (state_.sidebar.visible && operations_.active_sidebar_mode() == SidebarMode::Tree) {
+    const auto& entries = state_.directory_tree.entries();
+    if (state_.directory_tree.selected_index() < entries.size() &&
+        !entries[state_.directory_tree.selected_index()].is_directory) {
+      return entries[state_.directory_tree.selected_index()].path.lexically_normal();
     }
   }
   return {};
@@ -283,12 +284,12 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
 
 void WorkspaceActionContext::OpenComparePickerForPath(const std::filesystem::path& path,
                                                       const std::string& commit_spec) {
-  shell_.OpenComparePickerForPath(path, commit_spec);
+  operations_.open_compare_picker_for_path(path, commit_spec);
 }
 
 void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& path) {
-  shell_.overlay_workflow_.compare_picker.path = path.lexically_normal();
-  shell_.OpenComparison(project::GitCommitEntry{
+  state_.overlay.workflow.compare_picker.path = path.lexically_normal();
+  operations_.open_comparison(project::GitCommitEntry{
       .hash = "HEAD",
       .short_hash = "HEAD",
       .subject = "HEAD",
@@ -299,12 +300,12 @@ void WorkspaceActionContext::OpenMergeEditor(const std::filesystem::path& base_p
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,
                                              const std::filesystem::path& output_path) {
-  shell_.OpenMergeEditor(base_path, incoming_path, current_path, output_path);
+  operations_.open_merge_editor(base_path, incoming_path, current_path, output_path);
 }
 
 bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
                                       std::string* error_message) {
-  if (auto* editor_tab = shell_.ActiveEditorTab();
+  if (auto* editor_tab = operations_.active_editor_tab();
       editor_tab != nullptr && editor_tab->views.size() > 1) {
     editor::TextViewport opened_view;
     if (!opened_view.OpenFile(path)) {
@@ -313,7 +314,7 @@ bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
       }
       return false;
     }
-    if (!shell_.ReplaceActiveEditorView(opened_view)) {
+    if (!operations_.replace_active_editor_view(opened_view)) {
       if (error_message != nullptr) {
         *error_message = "Failed to replace the active split with: " + path.string();
       }
@@ -321,54 +322,54 @@ bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
     }
     return true;
   }
-  shell_.OpenFile(path);
+  operations_.open_file(path);
   return true;
 }
 
 bool WorkspaceActionContext::OpenPathInNewTab(const std::filesystem::path& path) {
-  return shell_.OpenFileInNewTab(path);
+  return operations_.open_file_in_new_tab(path);
 }
 
 bool WorkspaceActionContext::OpenUntitledTab() {
-  return shell_.OpenUntitledTab();
+  return operations_.open_untitled_tab();
 }
 
 std::optional<std::size_t> WorkspaceActionContext::FindTabIndexBySpecifier(
     std::string_view specifier,
     std::string* error_message) const {
-  return shell_.FindTabIndexBySpecifier(specifier, error_message);
+  return operations_.find_tab_index_by_specifier(specifier, error_message);
 }
 
 void WorkspaceActionContext::ActivateTab(std::size_t index) {
-  shell_.ActivateTab(index);
+  operations_.activate_tab(index);
 }
 
 bool WorkspaceActionContext::HasOpenTabs() const {
-  return !shell_.open_tabs_.empty();
+  return !state_.open_tabs.empty();
 }
 
 std::size_t WorkspaceActionContext::OpenTabCount() const {
-  return shell_.open_tabs_.size();
+  return state_.open_tabs.size();
 }
 
 std::size_t WorkspaceActionContext::ActiveTabIndex() const {
-  return shell_.active_tab_index_;
+  return state_.active_tab_index;
 }
 
 void WorkspaceActionContext::MoveActiveTabTo(std::size_t index) {
-  shell_.MoveActiveTabTo(index);
+  operations_.move_active_tab_to(index);
 }
 
 void WorkspaceActionContext::ReopenActiveTab() {
-  shell_.ReopenActiveTab();
+  operations_.reopen_active_tab();
 }
 
 bool WorkspaceActionContext::SaveTab(std::size_t index) {
-  return shell_.SaveTab(index);
+  return operations_.save_tab(index);
 }
 
 void WorkspaceActionContext::ResetCaretBlink() {
-  shell_.ResetCaretBlink();
+  operations_.reset_caret_blink();
 }
 
 bool WorkspaceActionContext::OpenVerticalSplitPath(const std::filesystem::path& path,
@@ -380,13 +381,13 @@ bool WorkspaceActionContext::OpenVerticalSplitPath(const std::filesystem::path& 
     }
     return false;
   }
-  if (!shell_.SplitActiveEditor(WorkspaceShell::EditorSplitOrientation::Vertical)) {
+  if (!operations_.split_active_editor(EditorSplitOrientation::Vertical)) {
     if (error_message != nullptr) {
       *error_message = "Failed to split the active editor";
     }
     return false;
   }
-  if (!shell_.ReplaceActiveEditorView(opened_view)) {
+  if (!operations_.replace_active_editor_view(opened_view)) {
     if (error_message != nullptr) {
       *error_message = "Failed to replace the active split with: " + path.string();
     }
@@ -396,41 +397,41 @@ bool WorkspaceActionContext::OpenVerticalSplitPath(const std::filesystem::path& 
 }
 
 void WorkspaceActionContext::SplitActiveEditorVertically() {
-  shell_.SplitActiveEditor(WorkspaceShell::EditorSplitOrientation::Vertical);
+  operations_.split_active_editor(EditorSplitOrientation::Vertical);
 }
 
 void WorkspaceActionContext::UnsplitActiveEditor() {
-  shell_.UnsplitActiveEditor();
+  operations_.unsplit_active_editor();
 }
 
 void WorkspaceActionContext::CycleEditorSplit(int delta) {
-  shell_.CycleEditorSplit(delta);
+  operations_.cycle_editor_split(delta);
 }
 
 void WorkspaceActionContext::ActivateOrderedEditorSplit(std::size_t index) {
-  shell_.ActivateOrderedEditorSplit(index);
+  operations_.activate_ordered_editor_split(index);
 }
 
 std::size_t WorkspaceActionContext::ActiveEditorSplitCount() const {
-  const auto* editor_tab = shell_.ActiveEditorTab();
+  const auto* editor_tab = operations_.active_editor_tab();
   return editor_tab == nullptr ? 0 : editor_tab->views.size();
 }
 
 void WorkspaceActionContext::RequestCloseTab(std::size_t index) {
-  shell_.RequestCloseTab(index);
+  operations_.request_close_tab(index);
 }
 
 void WorkspaceActionContext::RequestCloseTabs(std::vector<std::size_t> indices) {
-  shell_.RequestCloseTabs(std::move(indices));
+  operations_.request_close_tabs(std::move(indices));
 }
 
 void WorkspaceActionContext::CloseAllTabs() {
-  shell_.CloseAllTabs();
+  operations_.close_all_tabs();
 }
 
 bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& request,
                                                    bool relative) {
-  editor::TextViewport* viewport = shell_.ActiveNavigableViewport();
+  editor::TextViewport* viewport = operations_.active_navigable_viewport();
   if (viewport == nullptr) {
     return false;
   }
@@ -450,216 +451,215 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
   }
 
   viewport->MoveCursorTo(line, request.column > 0 ? request.column - 1 : 0);
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
-  shell_.RequestFocusedEditorRedraw();
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.request_focused_editor_redraw();
   return true;
 }
 
 void WorkspaceActionContext::SelectAll() {
-  if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
+  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     viewport->SelectAll();
-    shell_.ResetCaretBlink();
-    shell_.RequestFocusedEditorRedraw();
+    operations_.reset_caret_blink();
+    operations_.request_focused_editor_redraw();
   }
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+  state_.surface.focus = FocusTarget::Editor;
 }
 
 void WorkspaceActionContext::Undo() {
-  if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
+  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::vector<std::string> before_lines = viewport->lines();
     const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
     const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
     if (viewport->Undo()) {
-      if (auto* compare_tab = shell_.ActiveCompareTab();
+      if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        shell_.RefreshCompareTabDerivedState(*compare_tab);
-        shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
+        operations_.refresh_compare_tab_derived_state(*compare_tab);
+        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       }
-      if (auto* merge_tab = shell_.ActiveMergeTab();
+      if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
-                                                    cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                              selection_before, cursor_before);
       }
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveTabRedraw(false);
-      shell_.RequestFocusedEditorRedraw();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_tab_redraw(false);
+      operations_.request_focused_editor_redraw();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
     }
   }
 }
 
 void WorkspaceActionContext::Redo() {
-  if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
+  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::vector<std::string> before_lines = viewport->lines();
     const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
     const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
     if (viewport->Redo()) {
-      if (auto* compare_tab = shell_.ActiveCompareTab();
+      if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        shell_.RefreshCompareTabDerivedState(*compare_tab);
-        shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
+        operations_.refresh_compare_tab_derived_state(*compare_tab);
+        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       }
-      if (auto* merge_tab = shell_.ActiveMergeTab();
+      if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
-                                                    cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                              selection_before, cursor_before);
       }
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveTabRedraw(false);
-      shell_.RequestFocusedEditorRedraw();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_tab_redraw(false);
+      operations_.request_focused_editor_redraw();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
     }
   }
 }
 
 std::string WorkspaceActionContext::CopySelectionText() const {
-  if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel && shell_.TerminalHasSelection()) {
-    return shell_.SelectedTerminalText();
+  if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
+    return operations_.selected_terminal_text();
   }
-  if (const auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
+  if (const auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     return viewport->SelectedText();
   }
   return {};
 }
 
 std::optional<std::string> WorkspaceActionContext::LastTerminalCommandText() const {
-  return shell_.LastTerminalCommandText();
+  return operations_.last_terminal_command_text();
 }
 
 std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() const {
-  return shell_.SelectionTextWithContext();
+  return operations_.selection_text_with_context();
 }
 
 void WorkspaceActionContext::CutSelection() {
-  if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
+  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::string text = viewport->SelectedText();
-    if (!text.empty() && shell_.WriteClipboardText(text)) {
-      shell_.WritePrimarySelectionText(text);
+    if (!text.empty() && operations_.write_clipboard_text(text)) {
+      operations_.write_primary_selection_text(text);
       const std::vector<std::string> before_lines = viewport->lines();
       const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
       const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
       viewport->DeleteSelectedText();
-      if (auto* compare_tab = shell_.ActiveCompareTab();
+      if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        shell_.RefreshCompareTabDerivedState(*compare_tab);
-        shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
+        operations_.refresh_compare_tab_derived_state(*compare_tab);
+        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       }
-      if (auto* merge_tab = shell_.ActiveMergeTab();
+      if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
-                                                    cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                              selection_before, cursor_before);
       }
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveTabRedraw(false);
-      shell_.RequestFocusedEditorRedraw();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_tab_redraw(false);
+      operations_.request_focused_editor_redraw();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
     }
   }
 }
 
 void WorkspaceActionContext::PasteClipboard() {
-  if (const std::optional<std::string> clipboard_text = shell_.ReadClipboardText();
+  if (const std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
       clipboard_text.has_value()) {
-    if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel &&
-        shell_.ActiveTerminalTab() != nullptr) {
-      shell_.MakeTextInputCoordinator().PasteClipboardIntoTerminal();
+    if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
+      operations_.paste_clipboard_into_terminal();
       return;
     }
-    if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {
+    if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
       const bool was_dirty = viewport->dirty();
       const std::vector<std::string> before_lines = viewport->lines();
       const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
       const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
       viewport->InsertText(*clipboard_text);
-      if (auto* compare_tab = shell_.ActiveCompareTab();
+      if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        shell_.RefreshCompareTabDerivedState(*compare_tab);
-        shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
+        operations_.refresh_compare_tab_derived_state(*compare_tab);
+        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       }
-      if (auto* merge_tab = shell_.ActiveMergeTab();
+      if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
-                                                    cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                              selection_before, cursor_before);
       }
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveTabRedraw(false);
-      shell_.RequestFocusedEditorRedraw();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_tab_redraw(false);
+      operations_.request_focused_editor_redraw();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before.line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
     }
   }
 }
 
 void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
-  shell_.MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
+  operations_.refresh_available_colorscheme_names();
 }
 
 void WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
-  shell_.MakePersistenceCoordinator().ApplyColorscheme(name, true, true);
+  operations_.apply_colorscheme(name);
 }
 
 void WorkspaceActionContext::SetTabSize(std::size_t value) {
-  shell_.editor_preferences_.tab_size = value;
-  shell_.ApplyEditorPreferencesToAllTabs();
-  shell_.MakePersistenceCoordinator().SaveConfigState();
+  state_.editor_preferences.tab_size = value;
+  operations_.apply_editor_preferences_to_all_tabs();
+  operations_.save_config_state();
 }
 
 void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
-  shell_.editor_preferences_.indent_width = value;
-  shell_.ApplyEditorPreferencesToAllTabs();
-  shell_.MakePersistenceCoordinator().SaveConfigState();
+  state_.editor_preferences.indent_width = value;
+  operations_.apply_editor_preferences_to_all_tabs();
+  operations_.save_config_state();
 }
 
 float WorkspaceActionContext::UiScale() const {
-  return shell_.ui_scale_;
+  return ui_scale_;
 }
 
 void WorkspaceActionContext::ApplyUiScale(float scale) {
-  shell_.MakePersistenceCoordinator().ApplyUiScale(scale, true, true);
+  operations_.apply_ui_scale(scale);
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {
-  shell_.editor_preferences_.soft_tabs = enabled;
-  shell_.ApplyEditorPreferencesToAllTabs();
-  shell_.MakePersistenceCoordinator().SaveConfigState();
+  state_.editor_preferences.soft_tabs = enabled;
+  operations_.apply_editor_preferences_to_all_tabs();
+  operations_.save_config_state();
 }
 
 bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
   switch (target) {
     case FocusRequestTarget::Sidebar:
-      if (shell_.sidebar_state_.visible) {
-        shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
+      if (state_.sidebar.visible) {
+        state_.surface.focus = FocusTarget::Sidebar;
         return true;
       }
       return false;
     case FocusRequestTarget::Editor:
-      shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+      state_.surface.focus = FocusTarget::Editor;
       return true;
     case FocusRequestTarget::Panel:
-      if (shell_.panel_state_.command_mode || shell_.ActiveTerminalTab() != nullptr) {
-        shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
+      if (state_.panel.command_mode || operations_.active_terminal_tab() != nullptr) {
+        state_.surface.focus = FocusTarget::Panel;
         return true;
       }
       return false;
@@ -670,25 +670,199 @@ bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
 }
 
 void WorkspaceActionContext::OpenCommandPrompt(std::string input) {
-  const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-  shell_.panel_state_.command_mode = true;
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Panel;
-  shell_.command_.input = std::move(input);
-  shell_.MakeCommandPromptCoordinator().ResetSessionState();
-  shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+  const bool bottom_panel_was_visible =
+      state_.panel.command_mode || operations_.active_terminal_tab() != nullptr;
+  state_.panel.command_mode = true;
+  state_.surface.focus = FocusTarget::Panel;
+  state_.panel.command.input = std::move(input);
+  operations_.reset_command_prompt_session();
+  operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
 }
 
 bool WorkspaceActionContext::PluginRuntimeEnabled() const {
-  return shell_.plugin_runtime_.enabled();
+  return operations_.plugin_runtime_enabled();
 }
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
-  shell_.ReloadPluginsForCurrentProject();
-  shell_.MakeCommandPromptCoordinator().SetFeedback(shell_.PluginRuntimeReloadSummary());
+  operations_.reload_plugins_for_current_project();
+  state_.panel.command.feedback_text = operations_.plugin_runtime_reload_summary();
 }
 
 void WorkspaceActionContext::RequestQuit() {
-  shell_.RequestQuit();
+  operations_.request_quit();
+}
+
+WorkspaceActionContext WorkspaceShell::MakeActionContext() {
+  return WorkspaceActionContext(
+      context_.project_catalog,
+      current_project_state_,
+      ui_scale_,
+      WorkspaceActionContext::Operations{
+          .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
+          .reject_action =
+              [this](ActionSource source, std::string feedback) {
+                return MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
+              },
+          .parse_sidebar_view_request =
+              [this](const std::vector<std::string>& args) {
+                return workspace::ParseSidebarViewRequest(args, plugin_runtime_.Host());
+              },
+          .open_project =
+              [this](const std::filesystem::path& root, bool restore, bool log_feedback) {
+                return OpenProjectTab(root, restore, log_feedback);
+              },
+          .request_close_project = [this](std::size_t index) { RequestCloseProject(index); },
+          .switch_project =
+              [this](std::size_t index, bool log_feedback) {
+                return SwitchProject(index, log_feedback);
+              },
+          .open_native_project_picker =
+              [this]() {
+                switch (OpenNativeProjectPicker(nullptr)) {
+                  case ProjectOpenDialogLaunchResult::Launched:
+                    return ProjectOpenPickerResult::Launched;
+                  case ProjectOpenDialogLaunchResult::AlreadyOpen:
+                    return ProjectOpenPickerResult::AlreadyOpen;
+                  case ProjectOpenDialogLaunchResult::Unavailable:
+                    return ProjectOpenPickerResult::Unavailable;
+                }
+                return ProjectOpenPickerResult::Unavailable;
+              },
+          .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
+          .toggle_sidebar = [this]() { ToggleSidebar(); },
+          .close_sidebar = [this]() { CloseSidebar(); },
+          .show_tree_sidebar = [this](const std::filesystem::path& root) { ShowTreeSidebar(root); },
+          .show_search_sidebar =
+              [this](std::string query, bool temporary) {
+                ShowSearchSidebar(std::move(query), temporary);
+              },
+          .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
+          .show_git_sidebar = [this]() { ShowGitSidebar(); },
+          .show_plugin_sidebar =
+              [this](std::string_view id, bool temporary) {
+                return ShowPluginSidebar(id, temporary);
+              },
+          .current_window_rect = [this]() { return CurrentWindowRect(); },
+          .refresh_project_files = [this]() { RefreshProjectFiles(); },
+          .reload_clean_open_buffers_from_disk = [this]() { ReloadCleanOpenBuffersFromDisk(); },
+          .tree_mutation_base_path =
+              [this](ActionSource source) { return TreeMutationBasePath(source); },
+          .resolve_tree_action_path =
+              [this](ActionSource source) { return ResolveTreeActionPath(source); },
+          .open_prompt_surface =
+              [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,
+                     const std::filesystem::path& path, std::string input) {
+                OpenPromptSurface(action, kind, path, std::move(input));
+              },
+          .write_clipboard_text = [this](std::string_view text) { return WriteClipboardText(text); },
+          .write_primary_selection_text =
+              [this](std::string_view text) { return WritePrimarySelectionText(text); },
+          .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
+          .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
+          .dismiss_overlay = [this]() { DismissOverlay(); },
+          .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
+          .open_buffer_search = [this]() { OpenBufferSearch(); },
+          .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
+          .open_buffer_replace = [this]() { OpenBufferReplace(); },
+          .open_compare_picker_for_path =
+              [this](const std::filesystem::path& path, const std::string& commit_spec) {
+                OpenComparePickerForPath(path, commit_spec);
+              },
+          .open_comparison = [this](const project::GitCommitEntry& commit) { OpenComparison(commit); },
+          .open_merge_editor =
+              [this](const std::filesystem::path& base_path,
+                     const std::filesystem::path& incoming_path,
+                     const std::filesystem::path& current_path,
+                     const std::filesystem::path& output_path) {
+                return OpenMergeEditor(base_path, incoming_path, current_path, output_path);
+              },
+          .active_editor_tab = [this]() { return ActiveEditorTab(); },
+          .replace_active_editor_view =
+              [this](const editor::TextViewport& viewport) {
+                return ReplaceActiveEditorView(viewport);
+              },
+          .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
+          .open_file_in_new_tab =
+              [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
+          .open_untitled_tab = [this]() { return OpenUntitledTab(); },
+          .find_tab_index_by_specifier =
+              [this](std::string_view specifier, std::string* error_message) {
+                return FindTabIndexBySpecifier(specifier, error_message);
+              },
+          .activate_tab = [this](std::size_t index) { ActivateTab(index); },
+          .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
+          .reopen_active_tab = [this]() { return ReopenActiveTab(); },
+          .save_tab = [this](std::size_t index) { return SaveTab(index); },
+          .reset_caret_blink = [this]() { ResetCaretBlink(); },
+          .split_active_editor =
+              [this](EditorSplitOrientation orientation) { return SplitActiveEditor(orientation); },
+          .unsplit_active_editor = [this]() { return UnsplitActiveEditor(); },
+          .cycle_editor_split = [this](int delta) { return CycleEditorSplit(delta); },
+          .activate_ordered_editor_split =
+              [this](std::size_t index) { return ActivateOrderedEditorSplit(index); },
+          .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
+          .request_close_tabs =
+              [this](std::vector<std::size_t> indices) { RequestCloseTabs(std::move(indices)); },
+          .close_all_tabs = [this]() { CloseAllTabs(); },
+          .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
+          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
+          .active_compare_tab = [this]() { return ActiveCompareTab(); },
+          .refresh_compare_tab_derived_state =
+              [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
+          .sync_compare_selection_from_viewport =
+              [this](CompareTabState& compare_tab, bool reveal_selection) {
+                SyncCompareSelectionFromViewport(compare_tab, reveal_selection);
+              },
+          .active_merge_tab = [this]() { return ActiveMergeTab(); },
+          .update_merge_tracking_after_viewport_edit =
+              [this](MergeTabState& merge_tab, const std::vector<std::string>& before_lines,
+                     std::optional<editor::SelectionRange> selection_before,
+                     editor::TextPosition cursor_before) {
+                UpdateMergeTrackingAfterViewportEdit(merge_tab, before_lines, selection_before,
+                                                     cursor_before);
+              },
+          .request_active_tab_redraw =
+              [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
+          .request_active_editable_change_redraw =
+              [this](const std::vector<std::string>& before_lines,
+                     const std::vector<std::string>& after_lines) {
+                RequestActiveEditableChangeRedraw(before_lines, after_lines);
+              },
+          .request_active_editable_blame_neighborhood_redraw =
+              [this](std::size_t before_line, std::size_t after_line) {
+                RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
+              },
+          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .terminal_has_selection = [this]() { return TerminalHasSelection(); },
+          .selected_terminal_text = [this]() { return SelectedTerminalText(); },
+          .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
+          .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
+          .read_clipboard_text = [this]() { return ReadClipboardText(); },
+          .paste_clipboard_into_terminal =
+              [this]() { MakeTextInputCoordinator().PasteClipboardIntoTerminal(); },
+          .refresh_available_colorscheme_names =
+              [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
+          .apply_colorscheme =
+              [this](std::string_view name) {
+                MakePersistenceCoordinator().ApplyColorscheme(name, true, true);
+              },
+          .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
+          .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
+          .apply_ui_scale =
+              [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
+          .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
+          .reset_command_prompt_session =
+              [this]() { MakeCommandPromptCoordinator().ResetSessionState(); },
+          .request_command_mode_transition_redraw =
+              [this](bool bottom_panel_was_visible) {
+                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+              },
+          .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
+          .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
+          .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },
+          .request_quit = [this]() { RequestQuit(); },
+      });
 }
 
 }  // namespace microide::workspace

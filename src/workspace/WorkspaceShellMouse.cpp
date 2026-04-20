@@ -118,7 +118,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (TabMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+  if (MakeTabMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -146,7 +146,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (ActiveTabIsCompare()) {
-    const bool handled = CompareMouseCoordinator(*this).HandleButtonDown(event, layout);
+    const bool handled = MakeCompareMouseCoordinator().HandleButtonDown(event, layout);
     if (handled) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }
@@ -154,14 +154,14 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (ActiveTabIsMerge()) {
-    const bool handled = MergeMouseCoordinator(*this).HandleButtonDown(event, layout);
+    const bool handled = MakeMergeMouseCoordinator().HandleButtonDown(event, layout);
     if (handled) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }
 
-  const bool handled = EditorMouseCoordinator(*this).HandleButtonDown(event, layout);
+  const bool handled = MakeEditorMouseCoordinator().HandleButtonDown(event, layout);
   if (handled) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
@@ -186,7 +186,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && tab_drag_state_.kind != TabDragKind::None) {
-    if (TabMouseCoordinator(*this).HandleButtonUp(event)) {
+    if (MakeTabMouseCoordinator().HandleButtonUp(event)) {
       ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;
     }

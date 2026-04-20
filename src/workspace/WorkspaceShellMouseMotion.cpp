@@ -53,7 +53,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (tab_drag_state_.kind != TabDragKind::None) {
-    const bool handled = TabMouseCoordinator(*this).HandleMotion(event);
+    const bool handled = MakeTabMouseCoordinator().HandleMotion(event);
     if (handled) {
       ensure_redraw([this]() { RequestWindowRedraw(); });
     }
@@ -88,7 +88,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (MergeMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+    if (MakeMergeMouseCoordinator().HandleDrag(event, drag_layout)) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
@@ -119,12 +119,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
-    if (CompareMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+    if (MakeCompareMouseCoordinator().HandleDrag(event, drag_layout)) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
-    if (EditorMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+    if (MakeEditorMouseCoordinator().HandleDrag(event, drag_layout)) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
@@ -141,7 +141,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   if (ActiveTabIsMerge()) {
     hover_visual_changed =
         hover_visual_changed ||
-        MergeMouseCoordinator(*this).HandleHoverMotion(event, layout);
+        MakeMergeMouseCoordinator().HandleHoverMotion(event, layout);
   }
 
   if (hover_visual_changed) {
@@ -157,7 +157,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (ActiveTabIsCompare()) {
-    const bool handled = CompareMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+    const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, layout);
     if (handled) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }
@@ -165,14 +165,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (ActiveTabIsMerge()) {
-    const bool handled = MergeMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+    const bool handled = MakeMergeMouseCoordinator().HandleSelectionMotion(event, layout);
     if (handled) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }
 
-  const bool handled = EditorMouseCoordinator(*this).HandleSelectionMotion(event, layout);
+  const bool handled = MakeEditorMouseCoordinator().HandleSelectionMotion(event, layout);
   if (handled) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
@@ -225,7 +225,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (TabMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
+  if (MakeTabMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -243,7 +243,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   if (Contains(layout.editor_surface, event.wheel.mouse_x, event.wheel.mouse_y)) {
     if (ActiveTabIsCompare()) {
       const bool handled =
-          CompareMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
+          MakeCompareMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
       if (handled) {
         ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       }
@@ -251,13 +251,13 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     }
     if (ActiveTabIsMerge()) {
       const bool handled =
-          MergeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
+          MakeMergeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
       if (handled) {
         ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       }
       return handled;
     }
-    const bool handled = EditorMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks);
+    const bool handled = MakeEditorMouseCoordinator().HandleWheel(event, layout, vertical_ticks);
     if (handled) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }

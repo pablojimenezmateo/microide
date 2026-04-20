@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -9,11 +10,13 @@
 
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceMenuState.h"
+#include "workspace/WorkspaceProjectState.h"
+#include "workspace/WorkspacePromptState.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
+#include "workspace/WorkspaceTabState.h"
 
 namespace microide::workspace {
-
-class WorkspaceShell;
 
 enum class ProjectOpenPickerResult {
   Launched,
@@ -23,7 +26,108 @@ enum class ProjectOpenPickerResult {
 
 class WorkspaceActionContext {
  public:
-  explicit WorkspaceActionContext(WorkspaceShell& shell);
+  struct Operations {
+    std::function<void()> close_tree_context_menu;
+    std::function<bool(ActionSource, std::string)> reject_action;
+    std::function<SidebarViewRequest(const std::vector<std::string>&)> parse_sidebar_view_request;
+    std::function<bool(const std::filesystem::path&, bool, bool)> open_project;
+    std::function<void(std::size_t)> request_close_project;
+    std::function<bool(std::size_t, bool)> switch_project;
+    std::function<ProjectOpenPickerResult()> open_native_project_picker;
+    std::function<SidebarMode()> active_sidebar_mode;
+    std::function<void()> toggle_sidebar;
+    std::function<void()> close_sidebar;
+    std::function<void(const std::filesystem::path&)> show_tree_sidebar;
+    std::function<void(std::string, bool)> show_search_sidebar;
+    std::function<void()> show_problems_sidebar;
+    std::function<void()> show_git_sidebar;
+    std::function<bool(std::string_view, bool)> show_plugin_sidebar;
+    std::function<std::optional<SDL_FRect>()> current_window_rect;
+    std::function<void()> refresh_project_files;
+    std::function<void()> reload_clean_open_buffers_from_disk;
+    std::function<std::filesystem::path(ActionSource)> tree_mutation_base_path;
+    std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
+    std::function<void(PromptSurfaceState::Action,
+                       PromptSurfaceState::Kind,
+                       const std::filesystem::path&,
+                       std::string)>
+        open_prompt_surface;
+    std::function<bool(std::string_view)> write_clipboard_text;
+    std::function<bool(std::string_view)> write_primary_selection_text;
+    std::function<void(std::string)> open_terminal;
+    std::function<void(OverlayMode)> show_overlay;
+    std::function<void()> dismiss_overlay;
+    std::function<editor::TextViewport*()> active_editor_viewport;
+    std::function<void()> open_buffer_search;
+    std::function<void()> refresh_buffer_search;
+    std::function<void()> open_buffer_replace;
+    std::function<void(const std::filesystem::path&, const std::string&)> open_compare_picker_for_path;
+    std::function<void(const project::GitCommitEntry&)> open_comparison;
+    std::function<bool(const std::filesystem::path&,
+                       const std::filesystem::path&,
+                       const std::filesystem::path&,
+                       const std::filesystem::path&)>
+        open_merge_editor;
+    std::function<TabEntry::EditorTabState*()> active_editor_tab;
+    std::function<bool(const editor::TextViewport&)> replace_active_editor_view;
+    std::function<void(const std::filesystem::path&)> open_file;
+    std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
+    std::function<bool()> open_untitled_tab;
+    std::function<std::optional<std::size_t>(std::string_view, std::string*)>
+        find_tab_index_by_specifier;
+    std::function<void(std::size_t)> activate_tab;
+    std::function<bool(std::size_t)> move_active_tab_to;
+    std::function<bool()> reopen_active_tab;
+    std::function<bool(std::size_t)> save_tab;
+    std::function<void()> reset_caret_blink;
+    std::function<bool(EditorSplitOrientation)> split_active_editor;
+    std::function<bool()> unsplit_active_editor;
+    std::function<bool(int)> cycle_editor_split;
+    std::function<bool(std::size_t)> activate_ordered_editor_split;
+    std::function<void(std::size_t)> request_close_tab;
+    std::function<void(std::vector<std::size_t>)> request_close_tabs;
+    std::function<void()> close_all_tabs;
+    std::function<editor::TextViewport*()> active_navigable_viewport;
+    std::function<void()> request_focused_editor_redraw;
+    std::function<editor::TextViewport*()> active_editable_viewport;
+    std::function<CompareTabState*()> active_compare_tab;
+    std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
+    std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
+    std::function<MergeTabState*()> active_merge_tab;
+    std::function<void(MergeTabState&,
+                       const std::vector<std::string>&,
+                       std::optional<editor::SelectionRange>,
+                       editor::TextPosition)>
+        update_merge_tracking_after_viewport_edit;
+    std::function<void(bool)> request_active_tab_redraw;
+    std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
+        request_active_editable_change_redraw;
+    std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
+    std::function<void()> request_tab_strip_redraw;
+    std::function<bool()> terminal_has_selection;
+    std::function<std::string()> selected_terminal_text;
+    std::function<std::optional<std::string>()> last_terminal_command_text;
+    std::function<std::optional<std::string>()> selection_text_with_context;
+    std::function<std::optional<std::string>()> read_clipboard_text;
+    std::function<void()> paste_clipboard_into_terminal;
+    std::function<void()> refresh_available_colorscheme_names;
+    std::function<void(std::string_view)> apply_colorscheme;
+    std::function<void()> apply_editor_preferences_to_all_tabs;
+    std::function<void()> save_config_state;
+    std::function<void(float)> apply_ui_scale;
+    std::function<TerminalTabState*()> active_terminal_tab;
+    std::function<void()> reset_command_prompt_session;
+    std::function<void(bool)> request_command_mode_transition_redraw;
+    std::function<bool()> plugin_runtime_enabled;
+    std::function<void()> reload_plugins_for_current_project;
+    std::function<std::string()> plugin_runtime_reload_summary;
+    std::function<void()> request_quit;
+  };
+
+  WorkspaceActionContext(ProjectCatalogState& project_catalog,
+                         ProjectWorkspaceState& current_project_state,
+                         float& ui_scale,
+                         Operations operations);
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
@@ -131,10 +235,13 @@ class WorkspaceActionContext {
   void OpenCommandPrompt(std::string input = {});
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
-  void RequestQuit();
+ void RequestQuit();
 
  private:
-  WorkspaceShell& shell_;
+  ProjectCatalogState& project_catalog_;
+  ProjectWorkspaceState& state_;
+  float& ui_scale_;
+  Operations operations_;
 };
 
 }  // namespace microide::workspace

@@ -7,6 +7,8 @@
 
 namespace microide::workspace {
 
+class WorkspaceShell;
+
 class ActionCoordinator {
  public:
   explicit ActionCoordinator(WorkspaceShell& shell);

@@ -5,9 +5,11 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/WorkspaceShell.h"
+
 namespace microide::workspace {
 
-ActionCoordinator::ActionCoordinator(WorkspaceShell& shell) : context_(shell) {}
+ActionCoordinator::ActionCoordinator(WorkspaceShell& shell) : context_(shell.MakeActionContext()) {}
 
 bool ActionCoordinator::Execute(ActionId id,
                                 const std::vector<std::string>& args,
