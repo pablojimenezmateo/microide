@@ -54,7 +54,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
   if (HandleGlobalKeyDown(event, modifiers, active_compare_tab, active_merge_tab)) {
     return true;
   }
-  if (shell_.surface_.command_mode) {
+  if (shell_.panel_state_.command_mode) {
     const bool handled = CommandPromptCoordinator(shell_).HandleKeyDown(event);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestBottomPanelCommandRedraw(); });
@@ -72,7 +72,7 @@ bool WorkspaceShell::KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent&
     }
     return handled;
   }
-  if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.surface_.sidebar_visible) {
+  if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.sidebar_state_.visible) {
     const bool handled = HandleSidebarKeyDown(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { shell_.RequestSidebarRedraw(); });
@@ -113,20 +113,20 @@ bool WorkspaceShell::KeyInputCoordinator::HandleGlobalKeyDown(const SDL_Keyboard
                                                               bool active_compare_tab,
                                                               bool active_merge_tab) {
   ActionCoordinator action(shell_);
-  if ((modifiers & SDL_KMOD_CTRL) && !shell_.surface_.command_mode &&
-      !shell_.surface_.overlay_visible && event.key == SDLK_N) {
+  if ((modifiers & SDL_KMOD_CTRL) && !shell_.panel_state_.command_mode &&
+      !shell_.overlay_state_.visible && event.key == SDLK_N) {
     return shell_.OpenUntitledTab();
   }
 
-  if ((modifiers & SDL_KMOD_CTRL) && !shell_.surface_.command_mode &&
-      !shell_.surface_.overlay_visible && shell_.surface_.focus == FocusTarget::Editor &&
+  if ((modifiers & SDL_KMOD_CTRL) && !shell_.panel_state_.command_mode &&
+      !shell_.overlay_state_.visible && shell_.surface_.focus == FocusTarget::Editor &&
       !active_compare_tab && shell_.ActiveEditableViewport() != nullptr && event.key == SDLK_A) {
     action.Execute(ActionId::SelectAll, {}, ActionSource::Shortcut);
     return true;
   }
 
-  if ((modifiers & SDL_KMOD_CTRL) && !shell_.surface_.command_mode &&
-      !shell_.surface_.overlay_visible && shell_.surface_.focus == FocusTarget::Editor &&
+  if ((modifiers & SDL_KMOD_CTRL) && !shell_.panel_state_.command_mode &&
+      !shell_.overlay_state_.visible && shell_.surface_.focus == FocusTarget::Editor &&
       !active_compare_tab) {
     if (!active_merge_tab && (modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_F) {
       action.Execute(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
@@ -208,13 +208,13 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
       return true;
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
-        if (shell_.surface_.overlay_visible) {
+        if (shell_.overlay_state_.visible) {
           shell_.surface_.focus = FocusTarget::Overlay;
           return true;
         }
         const bool include_panel = shell_.BottomPanelVisible();
         if (include_panel) {
-          if (shell_.surface_.sidebar_visible) {
+          if (shell_.sidebar_state_.visible) {
             if (modifiers & SDL_KMOD_SHIFT) {
               shell_.surface_.focus =
                   shell_.surface_.focus == FocusTarget::Sidebar
@@ -233,11 +233,11 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
                                         ? FocusTarget::Editor
                                         : FocusTarget::Panel;
           }
-        } else if (shell_.surface_.sidebar_visible && !(modifiers & SDL_KMOD_SHIFT)) {
+        } else if (shell_.sidebar_state_.visible && !(modifiers & SDL_KMOD_SHIFT)) {
           shell_.surface_.focus =
               shell_.surface_.focus == FocusTarget::Sidebar ? FocusTarget::Editor
                                                             : FocusTarget::Sidebar;
-        } else if (shell_.surface_.sidebar_visible) {
+        } else if (shell_.sidebar_state_.visible) {
           shell_.surface_.focus =
               shell_.surface_.focus == FocusTarget::Editor ? FocusTarget::Sidebar
                                                            : FocusTarget::Editor;
@@ -248,12 +248,12 @@ bool WorkspaceShell::KeyInputCoordinator::HandleSurfaceNavigationKeyDown(
       }
       break;
     case SDLK_ESCAPE:
-      if (shell_.surface_.overlay_visible) {
+      if (shell_.overlay_state_.visible) {
         shell_.DismissOverlay();
         return true;
       }
-      if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.surface_.sidebar_visible &&
-          shell_.surface_.sidebar_temporary && shell_.surface_.sidebar_mode == SidebarMode::Search) {
+      if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.sidebar_state_.visible &&
+          shell_.sidebar_state_.temporary && shell_.sidebar_state_.mode == SidebarMode::Search) {
         shell_.CloseSidebar();
         return true;
       }

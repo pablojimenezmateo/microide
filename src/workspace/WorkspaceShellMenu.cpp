@@ -204,10 +204,10 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
   }
   if (item.action == ActionId::Focus && item.arg_count > 0) {
     if (item.args[0] == "sidebar") {
-      return surface_.sidebar_visible;
+      return sidebar_state_.visible;
     }
     if (item.args[0] == "panel") {
-      return surface_.command_mode || ActiveTerminalTab() != nullptr;
+      return panel_state_.command_mode || ActiveTerminalTab() != nullptr;
     }
     return true;
   }
@@ -228,16 +228,16 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   }
 
   if (item.action == ActionId::SidebarToggle) {
-    return surface_.sidebar_visible;
+    return sidebar_state_.visible;
   }
   if (item.action == ActionId::SidebarShow && item.arg_count > 0) {
     const std::optional<SidebarViewInfo> view = FindSidebarView(item.args[0], plugin_runtime_.Host());
     if (view.has_value()) {
-      if (view->mode == SidebarMode::Search && surface_.sidebar_temporary) {
+      if (view->mode == SidebarMode::Search && sidebar_state_.temporary) {
         return false;
       }
-      return surface_.sidebar_visible && surface_.sidebar_mode == view->mode &&
-             surface_.sidebar_view_id == view->id;
+      return sidebar_state_.visible && sidebar_state_.mode == view->mode &&
+             sidebar_state_.view_id == view->id;
     }
   }
   return false;

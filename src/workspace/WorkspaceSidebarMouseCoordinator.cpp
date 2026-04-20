@@ -21,7 +21,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
     return true;
   }
 
-  if (!shell_.surface_.sidebar_visible ||
+  if (!shell_.sidebar_state_.visible ||
       !Contains(layout.sidebar, event.button.x, event.button.y)) {
     return false;
   }
@@ -30,19 +30,19 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& 
   const float local_y =
       event.button.y - (layout.sidebar.y + kSidebarHeaderHeight + 6.0f);
 
-  if (shell_.surface_.sidebar_mode == SidebarMode::Search) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Search) {
     return HandleSearchButtonDown(event, layout, local_y);
   }
 
-  if (shell_.surface_.sidebar_mode == SidebarMode::Git) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Git) {
     return HandleGitButtonDown(event, layout, local_y);
   }
 
-  if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Problems) {
     return HandleProblemsButtonDown(event, layout, local_y);
   }
 
-  if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Plugin) {
     return HandlePluginButtonDown(event, layout, local_y);
   }
 
@@ -105,7 +105,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_E
                              .results[shell_.overlay_workflow_.project_search.selected_index];
     shell_.OpenFile(shell_.project_root_ / result.relative_path);
     shell_.text_viewport_.MoveCursorTo(result.line, result.column);
-    if (shell_.surface_.sidebar_temporary) {
+    if (shell_.sidebar_state_.temporary) {
       shell_.RestorePreviousSidebar();
     }
     shell_.surface_.focus = FocusTarget::Editor;

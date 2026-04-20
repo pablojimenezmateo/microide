@@ -10,7 +10,7 @@ namespace microide::workspace {
 bool WorkspaceShell::SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
                                                          const WorkspaceLayout& layout) {
   if (shell_.interaction_state_.drag_target != DragTarget::SidebarScrollbar ||
-      !shell_.surface_.sidebar_visible) {
+      !shell_.sidebar_state_.visible) {
     return false;
   }
 
@@ -20,7 +20,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
     return false;
   }
 
-  shell_.surface_.sidebar_scroll_row = std::clamp(
+  shell_.sidebar_state_.scroll_row = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
           *list_layout.scrollbar, static_cast<float>(event.motion.y),
           shell_.interaction_state_.drag_scrollbar_offset))),
@@ -32,14 +32,14 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
 bool WorkspaceShell::SidebarMouseCoordinator::HandleWheel(const SDL_Event& event,
                                                           const WorkspaceLayout& layout,
                                                           int vertical_ticks) {
-  if (!shell_.surface_.sidebar_visible ||
+  if (!shell_.sidebar_state_.visible ||
       !Contains(layout.sidebar, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
 
   const auto list_layout = CurrentListLayout(layout);
-  shell_.surface_.sidebar_scroll_row =
-      std::clamp(shell_.surface_.sidebar_scroll_row - vertical_ticks, 0, list_layout.max_scroll);
+  shell_.sidebar_state_.scroll_row =
+      std::clamp(shell_.sidebar_state_.scroll_row - vertical_ticks, 0, list_layout.max_scroll);
   shell_.surface_.focus = FocusTarget::Sidebar;
   return true;
 }
@@ -47,7 +47,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::HandleWheel(const SDL_Event& event
 bool WorkspaceShell::SidebarMouseCoordinator::BeginScrollbarDrag(
     const SDL_Event& event,
     const WorkspaceLayout& layout) {
-  if (!shell_.surface_.sidebar_visible) {
+  if (!shell_.sidebar_state_.visible) {
     return false;
   }
 
@@ -62,7 +62,7 @@ bool WorkspaceShell::SidebarMouseCoordinator::BeginScrollbarDrag(
       Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
           ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
           : list_layout.scrollbar->thumb.h * 0.5f;
-  shell_.surface_.sidebar_scroll_row = std::clamp(
+  shell_.sidebar_state_.scroll_row = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
           *list_layout.scrollbar, static_cast<float>(event.button.y),
           shell_.interaction_state_.drag_scrollbar_offset))),
@@ -73,19 +73,19 @@ bool WorkspaceShell::SidebarMouseCoordinator::BeginScrollbarDrag(
 
 ScrollableListLayout WorkspaceShell::SidebarMouseCoordinator::CurrentListLayout(
     const WorkspaceLayout& layout) const {
-  if (shell_.surface_.sidebar_mode == SidebarMode::Search) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Search) {
     const auto line_map = shell_.BuildProjectSearchLineMap();
     return shell_.ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
   }
-  if (shell_.surface_.sidebar_mode == SidebarMode::Git) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Git) {
     const auto lines = shell_.BuildGitSidebarLines();
     return shell_.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
   }
-  if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Problems) {
     return shell_.ComputeProblemsSidebarListLayout(layout.sidebar,
                                                    shell_.problems_sidebar_.entries.size());
   }
-  if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Plugin) {
     return shell_.ComputePluginSidebarListLayout(layout.sidebar,
                                                  shell_.plugin_sidebar_.items.size());
   }

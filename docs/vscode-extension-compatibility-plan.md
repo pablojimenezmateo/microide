@@ -594,9 +594,11 @@ Status:
   `ProjectWorkspaceState` container shape used by project-catalog entries, removing duplicated
   project-switch and persistence bookkeeping for tabs, search state, terminals, diagnostics,
   command history, colorscheme, and editor preferences
-- follow-up cleanup on 2026-04-19 also keeps the active shell surface as a direct alias of the
-  `ProjectSurfaceState` stored in persisted project state, removing duplicated sidebar, overlay,
-  command-mode, focus, width, and scroll bookkeeping
+- follow-up cleanup on 2026-04-20 also keeps the active shell surface as a direct alias of the
+  `ProjectSurfaceState` stored in persisted project state, and splits project-scoped sidebar,
+  overlay, and panel ownership into dedicated `SidebarState`, `OverlayState`, and `PanelState`
+  models, removing duplicated sidebar, overlay, command-prompt, focus, width, height, and
+  scroll bookkeeping
 - follow-up cleanup on 2026-04-20 also keeps transient drag, mouse-selection, and window-focus
   interaction state outside `ProjectSurfaceState`, so project switches clear in-flight gestures
   instead of restoring stale interaction state from another project

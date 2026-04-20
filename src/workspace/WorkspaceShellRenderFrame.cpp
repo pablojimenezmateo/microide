@@ -98,13 +98,13 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
-  surface_.sidebar_width = ClampSidebarWidth(surface_.sidebar_width, static_cast<float>(width));
-  surface_.bottom_panel_height =
-      ClampBottomPanelHeight(surface_.bottom_panel_height, static_cast<float>(height));
+  sidebar_state_.width = ClampSidebarWidth(sidebar_state_.width, static_cast<float>(width));
+  panel_state_.height =
+      ClampBottomPanelHeight(panel_state_.height, static_cast<float>(height));
 
   const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(width), static_cast<float>(height), surface_.sidebar_visible,
-                    BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+      ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_state_.visible,
+                    BottomPanelVisible(), sidebar_state_.width, panel_state_.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   TextInputCoordinator(*this).SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
@@ -153,7 +153,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
                           layout.breadcrumb.w, kWorkspaceDividerThickness),
                  theme_.border);
 
-  if (surface_.sidebar_visible) {
+  if (sidebar_state_.visible) {
     DrawFilledRect(renderer, layout.sidebar, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
@@ -238,8 +238,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active &&
-                                           (surface_.overlay_mode == OverlayMode::BufferSearch ||
-                                            surface_.overlay_mode == OverlayMode::BufferReplace)
+                                           (overlay_state_.mode == OverlayMode::BufferSearch ||
+                                            overlay_state_.mode == OverlayMode::BufferReplace)
                                        ? overlay_workflow_.buffer_search.query
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,

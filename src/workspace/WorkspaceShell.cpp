@@ -187,7 +187,7 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
 }
 
 const project::TreeEntry* WorkspaceShell::SelectedTreeEntry() const {
-  if (surface_.sidebar_mode != SidebarMode::Tree) {
+  if (sidebar_state_.mode != SidebarMode::Tree) {
     return nullptr;
   }
   const auto& entries = directory_tree_.entries();

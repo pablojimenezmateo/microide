@@ -94,7 +94,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
       const FocusRequest request = BuildFocusRequest(args);
       switch (request.target) {
         case FocusRequestTarget::Sidebar:
-          if (shell_.surface_.sidebar_visible) {
+          if (shell_.sidebar_state_.visible) {
             shell_.surface_.focus = FocusTarget::Sidebar;
             return DispatchResult::Handled;
           }
@@ -103,7 +103,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
           shell_.surface_.focus = FocusTarget::Editor;
           return DispatchResult::Handled;
         case FocusRequestTarget::Panel:
-          if (shell_.surface_.command_mode || shell_.ActiveTerminalTab() != nullptr) {
+          if (shell_.panel_state_.command_mode || shell_.ActiveTerminalTab() != nullptr) {
             shell_.surface_.focus = FocusTarget::Panel;
             return DispatchResult::Handled;
           }
@@ -116,7 +116,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
     }
     case ActionId::OpenCommandPrompt: {
       const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-      shell_.surface_.command_mode = true;
+      shell_.panel_state_.command_mode = true;
       shell_.surface_.focus = FocusTarget::Panel;
       shell_.command_.input.clear();
       CommandPromptCoordinator(shell_).ResetSessionState();

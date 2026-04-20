@@ -21,7 +21,7 @@ constexpr float kTreeChevronSlotWidth = 12.0f;
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  if (!surface_.sidebar_visible) {
+  if (!sidebar_state_.visible) {
     return;
   }
 
@@ -78,7 +78,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               sidebar_mode_rect.y + sidebar_mode_rect.h * 0.5f, true,
               sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary : theme_.text_muted);
 
-  if (surface_.sidebar_mode == SidebarMode::Search) {
+  if (sidebar_state_.mode == SidebarMode::Search) {
     const std::string active_query =
         overlay_workflow_.project_search.editing &&
                 overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
@@ -168,7 +168,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const int selected_line =
         ProjectSearchLineForResult(overlay_workflow_.project_search.selected_index);
     scroll_row = RevealScrollableListIndex(list_layout, selected_line);
-    surface_.sidebar_scroll_row = scroll_row;
+    sidebar_state_.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
@@ -224,7 +224,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             interaction_state_.drag_target == DragTarget::SidebarScrollbar);
-  } else if (surface_.sidebar_mode == SidebarMode::Git) {
+  } else if (sidebar_state_.mode == SidebarMode::Git) {
     draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
                        CanStageAllGitSidebarEntries());
     draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
@@ -234,7 +234,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto lines = BuildGitSidebarLines();
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
-    surface_.sidebar_scroll_row = scroll_row;
+    sidebar_state_.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
@@ -327,7 +327,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             interaction_state_.drag_target == DragTarget::SidebarScrollbar);
-  } else if (surface_.sidebar_mode == SidebarMode::Problems) {
+  } else if (sidebar_state_.mode == SidebarMode::Problems) {
     const auto list_layout =
         ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
     const int scroll_row = list_layout.scroll_row;
@@ -382,7 +382,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                             static_cast<float>(problems_sidebar_.entries.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             interaction_state_.drag_target == DragTarget::SidebarScrollbar);
-  } else if (surface_.sidebar_mode == SidebarMode::Plugin) {
+  } else if (sidebar_state_.mode == SidebarMode::Plugin) {
     const auto list_layout =
         ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
     const int scroll_row = list_layout.scroll_row;

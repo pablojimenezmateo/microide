@@ -94,7 +94,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker: {
-      if (!surface_.overlay_visible) {
+      if (!overlay_state_.visible) {
         return std::nullopt;
       }
       const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
@@ -138,7 +138,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     }
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
-      if (!surface_.sidebar_visible || surface_.sidebar_mode != SidebarMode::Search ||
+      if (!sidebar_state_.visible || sidebar_state_.mode != SidebarMode::Search ||
           !overlay_workflow_.project_search.editing) {
         return std::nullopt;
       }

@@ -71,9 +71,9 @@ std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
     return std::nullopt;
   }
 
-  return ComputeLayout(window_rect->w, window_rect->h, surface_.sidebar_visible,
-                       BottomPanelVisible(), surface_.sidebar_width,
-                       surface_.bottom_panel_height);
+  return ComputeLayout(window_rect->w, window_rect->h, sidebar_state_.visible,
+                       BottomPanelVisible(), sidebar_state_.width,
+                       panel_state_.height);
 }
 
 const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeState() const {
@@ -117,7 +117,7 @@ void WorkspaceShell::RequestChromeRedraw() {
 }
 
 void WorkspaceShell::RequestSidebarRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && surface_.sidebar_visible) {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && sidebar_state_.visible) {
     RequestRedrawRect(layout->sidebar);
     return;
   }
@@ -170,7 +170,7 @@ void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
   RequestBreadcrumbRedraw();
   RequestTabStripRedraw();
   RequestEditorSurfaceRedraw();
-  if (include_tree_sidebar && surface_.sidebar_visible && surface_.sidebar_mode == SidebarMode::Tree) {
+  if (include_tree_sidebar && sidebar_state_.visible && sidebar_state_.mode == SidebarMode::Tree) {
     RequestSidebarRedraw();
   }
 }
@@ -504,12 +504,12 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
   if (!layout.has_value() || !BottomPanelVisible()) {
     return std::nullopt;
   }
-  return BottomPanelContentRect(*layout, surface_.command_mode);
+  return BottomPanelContentRect(*layout, panel_state_.command_mode);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !surface_.command_mode) {
+  if (!layout.has_value() || !panel_state_.command_mode) {
     return std::nullopt;
   }
   return BottomPanelCommandAreaRect(*layout);
@@ -517,7 +517,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() c
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !surface_.overlay_visible) {
+  if (!layout.has_value() || !overlay_state_.visible) {
     return std::nullopt;
   }
   return ComputeOverlayRect(layout->editor_area);
@@ -634,8 +634,8 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  if (surface_.command_mode || prompts_.dirty_visible || prompts_.surface_visible ||
-      surface_.overlay_visible || menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
+  if (panel_state_.command_mode || prompts_.dirty_visible || prompts_.surface_visible ||
+      overlay_state_.visible || menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     return false;
   }
 

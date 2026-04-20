@@ -208,9 +208,9 @@ void WorkspaceShell::PathMutationCoordinator::RetargetOpenTabsForRename(
       PathEqualsOrWithin(shell_.overlay_workflow_.compare_picker.path, old_path)) {
     shell_.overlay_workflow_.compare_picker.path =
         ReplacePathPrefix(shell_.overlay_workflow_.compare_picker.path, old_path, new_path);
-    if (shell_.surface_.overlay_visible &&
-        shell_.surface_.overlay_mode == OverlayMode::CommitPicker) {
-      shell_.surface_.overlay_visible = false;
+    if (shell_.overlay_state_.visible &&
+        shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+      shell_.overlay_state_.visible = false;
     }
   }
 }
@@ -329,9 +329,9 @@ void WorkspaceShell::PathMutationCoordinator::CloseOpenTabsForPath(
     shell_.overlay_workflow_.compare_picker.query.clear();
     shell_.overlay_workflow_.compare_picker.commits.clear();
     shell_.overlay_workflow_.compare_picker.matches.clear();
-    if (shell_.surface_.overlay_visible &&
-        shell_.surface_.overlay_mode == OverlayMode::CommitPicker) {
-      shell_.surface_.overlay_visible = false;
+    if (shell_.overlay_state_.visible &&
+        shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
+      shell_.overlay_state_.visible = false;
     }
   }
 }

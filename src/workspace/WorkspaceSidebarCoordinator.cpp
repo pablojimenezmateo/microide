@@ -18,30 +18,30 @@ void WorkspaceShell::SidebarCoordinator::ShowMode(SidebarMode mode, bool tempora
     MenuCoordinator(shell_).CloseTreeContextMenu();
   }
 
-  if (shell_.surface_.sidebar_mode == SidebarMode::Search && mode != SidebarMode::Search) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Search && mode != SidebarMode::Search) {
     shell_.StopProjectSearch();
   }
 
   if (temporary) {
-    if (!shell_.surface_.sidebar_temporary && shell_.surface_.sidebar_visible) {
-      shell_.surface_.sidebar_prev_mode = shell_.surface_.sidebar_mode;
-      shell_.surface_.sidebar_prev_view_id = shell_.surface_.sidebar_view_id;
+    if (!shell_.sidebar_state_.temporary && shell_.sidebar_state_.visible) {
+      shell_.sidebar_state_.prev_mode = shell_.sidebar_state_.mode;
+      shell_.sidebar_state_.prev_view_id = shell_.sidebar_state_.view_id;
     }
   } else {
-    shell_.surface_.sidebar_prev_mode = SidebarMode::None;
-    shell_.surface_.sidebar_prev_view_id.clear();
+    shell_.sidebar_state_.prev_mode = SidebarMode::None;
+    shell_.sidebar_state_.prev_view_id.clear();
   }
 
   if (mode != SidebarMode::Plugin) {
     if (const SidebarViewSpec* view = FindBuiltinSidebarView(mode); view != nullptr) {
-      shell_.surface_.sidebar_view_id = std::string(view->id);
+      shell_.sidebar_state_.view_id = std::string(view->id);
     }
   }
-  shell_.surface_.sidebar_mode = mode;
-  shell_.surface_.sidebar_temporary = temporary;
-  shell_.surface_.sidebar_visible = true;
+  shell_.sidebar_state_.mode = mode;
+  shell_.sidebar_state_.temporary = temporary;
+  shell_.sidebar_state_.visible = true;
   shell_.surface_.focus = FocusTarget::Sidebar;
-  shell_.surface_.sidebar_scroll_row = 0;
+  shell_.sidebar_state_.scroll_row = 0;
   shell_.RequestWindowRedraw();
 }
 
@@ -86,27 +86,27 @@ bool WorkspaceShell::SidebarCoordinator::ShowPlugin(std::string_view id, bool te
     return false;
   }
 
-  shell_.surface_.sidebar_view_id = provider->id;
+  shell_.sidebar_state_.view_id = provider->id;
   ShowMode(SidebarMode::Plugin, temporary);
   return RefreshPlugin();
 }
 
 void WorkspaceShell::SidebarCoordinator::Close() {
-  const bool was_visible = shell_.surface_.sidebar_visible;
-  if (shell_.surface_.sidebar_mode == SidebarMode::Search) {
+  const bool was_visible = shell_.sidebar_state_.visible;
+  if (shell_.sidebar_state_.mode == SidebarMode::Search) {
     shell_.StopProjectSearch();
   }
   MenuCoordinator(shell_).CloseTreeContextMenu();
 
-  if (shell_.surface_.sidebar_temporary && shell_.surface_.sidebar_prev_mode != SidebarMode::None) {
+  if (shell_.sidebar_state_.temporary && shell_.sidebar_state_.prev_mode != SidebarMode::None) {
     RestorePrevious();
     return;
   }
 
-  shell_.surface_.sidebar_visible = false;
-  shell_.surface_.sidebar_temporary = false;
-  shell_.surface_.sidebar_prev_mode = SidebarMode::None;
-  shell_.surface_.sidebar_prev_view_id.clear();
+  shell_.sidebar_state_.visible = false;
+  shell_.sidebar_state_.temporary = false;
+  shell_.sidebar_state_.prev_mode = SidebarMode::None;
+  shell_.sidebar_state_.prev_view_id.clear();
   if (shell_.surface_.focus == FocusTarget::Sidebar) {
     shell_.surface_.focus = FocusTarget::Editor;
   }
@@ -116,28 +116,28 @@ void WorkspaceShell::SidebarCoordinator::Close() {
 }
 
 void WorkspaceShell::SidebarCoordinator::Toggle() {
-  const bool was_visible = shell_.surface_.sidebar_visible;
-  if (shell_.surface_.sidebar_visible) {
+  const bool was_visible = shell_.sidebar_state_.visible;
+  if (shell_.sidebar_state_.visible) {
     Close();
     return;
   }
 
-  if (shell_.surface_.sidebar_mode == SidebarMode::None) {
-    shell_.surface_.sidebar_mode = SidebarMode::Tree;
+  if (shell_.sidebar_state_.mode == SidebarMode::None) {
+    shell_.sidebar_state_.mode = SidebarMode::Tree;
   }
-  if (shell_.surface_.sidebar_mode == SidebarMode::Plugin &&
-      shell_.surface_.sidebar_view_id.empty()) {
-    shell_.surface_.sidebar_mode = SidebarMode::Tree;
+  if (shell_.sidebar_state_.mode == SidebarMode::Plugin &&
+      shell_.sidebar_state_.view_id.empty()) {
+    shell_.sidebar_state_.mode = SidebarMode::Tree;
   }
-  if (shell_.surface_.sidebar_mode != SidebarMode::Plugin) {
-    if (const SidebarViewSpec* view = FindBuiltinSidebarView(shell_.surface_.sidebar_mode);
+  if (shell_.sidebar_state_.mode != SidebarMode::Plugin) {
+    if (const SidebarViewSpec* view = FindBuiltinSidebarView(shell_.sidebar_state_.mode);
         view != nullptr) {
-      shell_.surface_.sidebar_view_id = std::string(view->id);
+      shell_.sidebar_state_.view_id = std::string(view->id);
     }
   }
-  shell_.surface_.sidebar_visible = true;
-  shell_.surface_.sidebar_temporary = false;
-  shell_.surface_.sidebar_prev_view_id.clear();
+  shell_.sidebar_state_.visible = true;
+  shell_.sidebar_state_.temporary = false;
+  shell_.sidebar_state_.prev_view_id.clear();
   shell_.surface_.focus = FocusTarget::Sidebar;
   if (!was_visible) {
     shell_.RequestWindowRedraw();
@@ -145,34 +145,34 @@ void WorkspaceShell::SidebarCoordinator::Toggle() {
 }
 
 void WorkspaceShell::SidebarCoordinator::RestorePrevious() {
-  if (shell_.surface_.sidebar_mode == SidebarMode::Search &&
-      shell_.surface_.sidebar_prev_mode != SidebarMode::Search) {
+  if (shell_.sidebar_state_.mode == SidebarMode::Search &&
+      shell_.sidebar_state_.prev_mode != SidebarMode::Search) {
     shell_.StopProjectSearch();
   }
 
-  if (shell_.surface_.sidebar_prev_mode == SidebarMode::None) {
-    shell_.surface_.sidebar_temporary = false;
+  if (shell_.sidebar_state_.prev_mode == SidebarMode::None) {
+    shell_.sidebar_state_.temporary = false;
     return;
   }
 
-  shell_.surface_.sidebar_mode = shell_.surface_.sidebar_prev_mode;
-  shell_.surface_.sidebar_view_id = shell_.surface_.sidebar_prev_view_id;
-  if (shell_.surface_.sidebar_mode != SidebarMode::Plugin &&
-      shell_.surface_.sidebar_view_id.empty()) {
-    if (const SidebarViewSpec* view = FindBuiltinSidebarView(shell_.surface_.sidebar_mode);
+  shell_.sidebar_state_.mode = shell_.sidebar_state_.prev_mode;
+  shell_.sidebar_state_.view_id = shell_.sidebar_state_.prev_view_id;
+  if (shell_.sidebar_state_.mode != SidebarMode::Plugin &&
+      shell_.sidebar_state_.view_id.empty()) {
+    if (const SidebarViewSpec* view = FindBuiltinSidebarView(shell_.sidebar_state_.mode);
         view != nullptr) {
-      shell_.surface_.sidebar_view_id = std::string(view->id);
+      shell_.sidebar_state_.view_id = std::string(view->id);
     }
   }
-  shell_.surface_.sidebar_prev_mode = SidebarMode::None;
-  shell_.surface_.sidebar_prev_view_id.clear();
-  shell_.surface_.sidebar_temporary = false;
-  shell_.surface_.sidebar_visible = true;
+  shell_.sidebar_state_.prev_mode = SidebarMode::None;
+  shell_.sidebar_state_.prev_view_id.clear();
+  shell_.sidebar_state_.temporary = false;
+  shell_.sidebar_state_.visible = true;
   shell_.surface_.focus = FocusTarget::Sidebar;
-  shell_.surface_.sidebar_scroll_row = 0;
-  if (shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+  shell_.sidebar_state_.scroll_row = 0;
+  if (shell_.sidebar_state_.mode == SidebarMode::Plugin) {
     RefreshPlugin();
-  } else if (shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+  } else if (shell_.sidebar_state_.mode == SidebarMode::Problems) {
     RefreshProblems();
   }
   shell_.RequestSidebarRedraw();
@@ -186,7 +186,7 @@ void WorkspaceShell::SidebarCoordinator::RefreshProjectFiles() {
   RefreshGit();
   RefreshProblems();
   RefreshPlugin();
-  if (shell_.surface_.sidebar_visible) {
+  if (shell_.sidebar_state_.visible) {
     shell_.RequestSidebarRedraw();
   }
 }

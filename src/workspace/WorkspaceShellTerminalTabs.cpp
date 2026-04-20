@@ -96,7 +96,7 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
   if (terminal_tabs_.empty()) {
     active_terminal_tab_index_ = 0;
     ClearTerminalSelection();
-    if (surface_.focus == FocusTarget::Panel && !surface_.command_mode) {
+    if (surface_.focus == FocusTarget::Panel && !panel_state_.command_mode) {
       surface_.focus = FocusTarget::Editor;
     }
     return;

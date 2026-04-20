@@ -7,7 +7,7 @@ namespace microide::workspace {
 using namespace detail;
 
 void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  if (!surface_.overlay_visible) {
+  if (!overlay_state_.visible) {
     return;
   }
 
@@ -49,7 +49,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                         TruncateLabel(label, row.w - 12.0f));
   };
 
-  if (surface_.overlay_mode == OverlayMode::BufferSearch) {
+  if (overlay_state_.mode == OverlayMode::BufferSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Search Buffer");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
@@ -63,7 +63,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
                theme_.text_muted, theme_.overlay_background, summary);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = surface_.overlay_scroll_row + row;
+      const int item_index = overlay_state_.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_workflow_.buffer_search.matches.size())) {
         break;
       }
@@ -75,19 +75,19 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                                               overlay.w - 150.0f);
       draw_overlay_row(row,
                        static_cast<int>(overlay_workflow_.buffer_search.selected_index) -
-                           surface_.overlay_scroll_row,
+                           overlay_state_.scroll_row,
                        label);
     }
-  } else if (surface_.overlay_mode == OverlayMode::BufferReplace) {
+  } else if (overlay_state_.mode == OverlayMode::BufferReplace) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Replace Buffer");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               surface_.buffer_search_field == BufferSearchField::Search ? theme_.text_primary
+               overlay_state_.buffer_search_field == BufferSearchField::Search ? theme_.text_primary
                                                                          : theme_.text_secondary,
                theme_.overlay_background,
                "find: " + overlay_workflow_.buffer_search.query);
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-               surface_.buffer_search_field == BufferSearchField::Replace ? theme_.text_primary
+               overlay_state_.buffer_search_field == BufferSearchField::Replace ? theme_.text_primary
                                                                           : theme_.text_secondary,
                theme_.overlay_background,
                "replace: " + overlay_workflow_.buffer_search.replace_text);
@@ -101,7 +101,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                theme_.text_muted, theme_.overlay_background,
                TruncateLabel(summary, overlay.w - 36.0f));
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = surface_.overlay_scroll_row + row;
+      const int item_index = overlay_state_.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_workflow_.buffer_search.matches.size())) {
         break;
       }
@@ -113,10 +113,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                                               overlay.w - 150.0f);
       draw_overlay_row(row,
                        static_cast<int>(overlay_workflow_.buffer_search.selected_index) -
-                           surface_.overlay_scroll_row,
+                           overlay_state_.scroll_row,
                        label);
     }
-  } else if (surface_.overlay_mode == OverlayMode::ProjectSearch) {
+  } else if (overlay_state_.mode == OverlayMode::ProjectSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Project Search");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
@@ -133,7 +133,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
                theme_.text_muted, theme_.overlay_background, summary);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = surface_.overlay_scroll_row + row;
+      const int item_index = overlay_state_.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_workflow_.project_search.results.size())) {
         break;
       }
@@ -144,10 +144,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
           std::to_string(result.column + 1) + "  " + TruncateLabel(result.preview, overlay.w - 220.0f);
       draw_overlay_row(row,
                        static_cast<int>(overlay_workflow_.project_search.selected_index) -
-                           surface_.overlay_scroll_row,
+                           overlay_state_.scroll_row,
                        label);
     }
-  } else if (surface_.overlay_mode == OverlayMode::CommitPicker) {
+  } else if (overlay_state_.mode == OverlayMode::CommitPicker) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Compare against commit");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
@@ -157,7 +157,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                theme_.text_secondary, theme_.overlay_background,
                "> " + overlay_workflow_.compare_picker.query);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = surface_.overlay_scroll_row + row;
+      const int item_index = overlay_state_.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_workflow_.compare_picker.matches.size())) {
         break;
       }
@@ -166,7 +166,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       draw_overlay_row(
           row,
           static_cast<int>(overlay_workflow_.compare_picker.selected_index) -
-              surface_.overlay_scroll_row,
+              overlay_state_.scroll_row,
           commit.short_hash + "  " + commit.subject);
     }
     if (overlay_workflow_.compare_picker.matches.empty()) {
@@ -181,13 +181,13 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
 
     const auto& results = file_finder_.results();
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = surface_.overlay_scroll_row + row;
+      const int item_index = overlay_state_.scroll_row + row;
       if (item_index >= static_cast<int>(results.size())) {
         break;
       }
       draw_overlay_row(
           row,
-          static_cast<int>(file_finder_.selected_index()) - surface_.overlay_scroll_row,
+          static_cast<int>(file_finder_.selected_index()) - overlay_state_.scroll_row,
           results[static_cast<std::size_t>(item_index)].relative_path.string());
     }
     if (results.empty()) {
@@ -198,7 +198,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
 
   draw_vertical_scrollbar(overlay_list_layout.list_rect, static_cast<float>(OverlayItemCount()),
                           overlay_list_layout.visible_units,
-                          static_cast<float>(surface_.overlay_scroll_row),
+                          static_cast<float>(overlay_state_.scroll_row),
                          interaction_state_.drag_target == DragTarget::OverlayScrollbar);
 }
 

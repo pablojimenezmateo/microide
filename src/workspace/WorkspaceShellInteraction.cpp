@@ -9,7 +9,7 @@ namespace microide::workspace {
 
 void WorkspaceShell::MoveFileFinderSelection(int delta) {
   file_finder_.MoveSelection(delta);
-  if (surface_.overlay_visible) {
+  if (overlay_state_.visible) {
     const auto layout = CurrentWorkspaceLayout();
     if (!layout.has_value()) {
       return;
@@ -34,16 +34,16 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::None;
   }
 
-  if (surface_.command_mode) {
+  if (panel_state_.command_mode) {
     return TextInputSurface::Command;
   }
 
-  if (surface_.overlay_visible) {
-    switch (surface_.overlay_mode) {
+  if (overlay_state_.visible) {
+    switch (overlay_state_.mode) {
       case OverlayMode::BufferSearch:
         return TextInputSurface::BufferSearch;
       case OverlayMode::BufferReplace:
-        return surface_.buffer_search_field == BufferSearchField::Search
+        return overlay_state_.buffer_search_field == BufferSearchField::Search
                    ? TextInputSurface::BufferReplaceSearch
                    : TextInputSurface::BufferReplaceReplace;
       case OverlayMode::ProjectSearch:
@@ -56,8 +56,8 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     }
   }
 
-  if (surface_.focus == FocusTarget::Sidebar && surface_.sidebar_visible &&
-      surface_.sidebar_mode == SidebarMode::Search &&
+  if (surface_.focus == FocusTarget::Sidebar && sidebar_state_.visible &&
+      sidebar_state_.mode == SidebarMode::Search &&
       overlay_workflow_.project_search.editing) {
     return overlay_workflow_.project_search.edit_field == ProjectSearchEditField::Query
                ? TextInputSurface::SidebarSearchQuery

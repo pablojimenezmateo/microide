@@ -91,7 +91,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
 
   ResetCurrentProjectStateStorage();
 
-  surface_.sidebar_visible = !show_welcome;
+  sidebar_state_.visible = !show_welcome;
   surface_.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
   tab_drag_state_ = TabDragState{};
   persistence.ApplyColorscheme(active_colorscheme_name_, false, false);
@@ -204,7 +204,7 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 
   current_project_state_.initialized = true;
   current_project_state_.restore_persistence_on_activate = false;
-  current_project_state_.overlay_workflow.project_search.running = false;
+  current_project_state_.overlay.workflow.project_search.running = false;
   state = std::move(current_project_state_);
   RebindProjectState(state);
   ResetCurrentProjectStateStorage();
@@ -217,7 +217,7 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   ClearEditorBlame();
 
   current_project_state_ = std::move(state);
-  current_project_state_.overlay_workflow.project_search.running = false;
+  current_project_state_.overlay.workflow.project_search.running = false;
   RebindProjectState(current_project_state_);
   ResetTransientInteractionState();
 
@@ -257,11 +257,11 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
     }
   }
   file_finder_.SetIndex(&file_index_);
-  surface_.sidebar_scroll_row = 0;
+  sidebar_state_.scroll_row = 0;
   RefreshGitSidebar();
   RefreshProblemsSidebar();
 
-  if (surface_.sidebar_mode == SidebarMode::Search &&
+  if (sidebar_state_.mode == SidebarMode::Search &&
       !overlay_workflow_.project_search.query.empty()) {
     RefreshProjectSearch();
   }

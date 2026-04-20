@@ -23,7 +23,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleButtonDown(
     MenuCoordinator(shell_).CloseMenuBar();
   }
 
-  if (event.button.button == SDL_BUTTON_LEFT && shell_.surface_.sidebar_visible) {
+  if (event.button.button == SDL_BUTTON_LEFT && shell_.sidebar_state_.visible) {
     const SDL_FRect sidebar_mode_rect = shell_.SidebarModeControlRect(layout.sidebar);
     if (Contains(sidebar_mode_rect, event.button.x, event.button.y)) {
       if (shell_.menu_state_.menu_bar_open &&
@@ -67,17 +67,17 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   (void)event;
   (void)layout;
 
-  if (!shell_.surface_.overlay_visible) {
+  if (!shell_.overlay_state_.visible) {
     return false;
   }
 
   const int overlay_ticks = vertical_ticks != 0 ? vertical_ticks : horizontal_ticks;
-  if (shell_.surface_.overlay_mode == OverlayMode::CommitPicker) {
+  if (shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
     shell_.MoveComparePickerSelection(-overlay_ticks);
-  } else if (shell_.surface_.overlay_mode == OverlayMode::BufferSearch ||
-             shell_.surface_.overlay_mode == OverlayMode::BufferReplace) {
+  } else if (shell_.overlay_state_.mode == OverlayMode::BufferSearch ||
+             shell_.overlay_state_.mode == OverlayMode::BufferReplace) {
     shell_.MoveBufferSearchSelection(-overlay_ticks);
-  } else if (shell_.surface_.overlay_mode == OverlayMode::ProjectSearch) {
+  } else if (shell_.overlay_state_.mode == OverlayMode::ProjectSearch) {
     shell_.MoveProjectSearchSelection(-overlay_ticks);
   } else {
     shell_.MoveFileFinderSelection(-overlay_ticks);
@@ -267,7 +267,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleMenuMotion(
 bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
     const SDL_Event& event,
     const WorkspaceLayout& layout) {
-  if (!shell_.surface_.overlay_visible || event.button.button != SDL_BUTTON_LEFT) {
+  if (!shell_.overlay_state_.visible || event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
 
@@ -287,7 +287,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
         Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
             ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
             : list_layout.scrollbar->thumb.h * 0.5f;
-    shell_.surface_.overlay_scroll_row = std::clamp(
+    shell_.overlay_state_.scroll_row = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *list_layout.scrollbar, static_cast<float>(event.button.y),
             shell_.interaction_state_.drag_scrollbar_offset))),
@@ -303,7 +303,7 @@ bool WorkspaceShell::ChromeMouseCoordinator::HandleOverlayButtonDown(
       *item_index < static_cast<int>(shell_.OverlayItemCount())) {
     shell_.SetOverlaySelectedIndex(static_cast<std::size_t>(*item_index));
     shell_.RevealOverlaySelection(overlay);
-    if (shell_.surface_.overlay_mode == OverlayMode::CommitPicker) {
+    if (shell_.overlay_state_.mode == OverlayMode::CommitPicker) {
       shell_.ActivateOverlaySelection();
     }
   }

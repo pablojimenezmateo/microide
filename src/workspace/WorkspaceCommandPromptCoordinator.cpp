@@ -206,7 +206,7 @@ bool WorkspaceShell::CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardE
   switch (event.key) {
     case SDLK_ESCAPE: {
       const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-      shell_.surface_.command_mode = false;
+      shell_.panel_state_.command_mode = false;
       shell_.command_.input.clear();
       ResetSessionState();
       shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
@@ -216,7 +216,7 @@ bool WorkspaceShell::CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardE
     case SDLK_KP_ENTER:
       if (shell_.command_.input.empty() || ExecuteCommandLine(shell_.command_.input)) {
         const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-        shell_.surface_.command_mode = false;
+        shell_.panel_state_.command_mode = false;
         shell_.command_.input.clear();
         ResetSessionState();
         shell_.RequestCommandModeTransitionRedraw(bottom_panel_was_visible);

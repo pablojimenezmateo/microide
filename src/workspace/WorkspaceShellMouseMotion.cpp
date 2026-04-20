@@ -71,7 +71,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (interaction_state_.drag_target == DragTarget::SidebarDivider) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
-      surface_.sidebar_width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
+      sidebar_state_.width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
       RequestSidebarLayoutChangeRedraw(drag_layout);
       return true;
     }
@@ -101,14 +101,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return handled;
     }
 
-    if (interaction_state_.drag_target == DragTarget::OverlayScrollbar && surface_.overlay_visible) {
+    if (interaction_state_.drag_target == DragTarget::OverlayScrollbar && overlay_state_.visible) {
       const SDL_FRect overlay = ComputeOverlayRect(drag_layout.editor_area);
       const auto list_layout = ComputeOverlayListLayout(overlay);
       if (!list_layout.scrollbar.has_value()) {
         ClearDragState();
         return false;
       }
-      surface_.overlay_scroll_row =
+      overlay_state_.scroll_row =
           std::clamp(static_cast<int>(std::lround(
                          ScrollUnitsForPointer(*list_layout.scrollbar,
                                               static_cast<float>(event.motion.y),

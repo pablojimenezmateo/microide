@@ -1,6 +1,6 @@
 # Production Tech Debt Review
 
-Reviewed on 2026-04-14.
+Reviewed on 2026-04-20.
 
 Scope:
 - `src/app/*`
@@ -180,8 +180,9 @@ Recommended next step:
 
 Impact:
 - Medium
-- Render ownership is clearer than before, but the shell still owns broad sidebar, overlay,
-  bottom-panel, menu, and prompt surface state through one state-heavy shell model.
+- Render ownership is clearer than before, but render and input still reach widely through shell
+  helpers even after sidebar, overlay, panel, menu, and prompt state moved behind smaller
+  dedicated models.
 
 Evidence:
 - Top-level render orchestration is now split across `WorkspaceShellRender.cpp`,
@@ -190,7 +191,10 @@ Evidence:
   `WorkspaceShellRenderBottomPanel.cpp`, `WorkspaceShellRenderMenus.cpp`,
   `WorkspaceShellRenderPrompts.cpp`, and `WorkspaceShellRenderTextInput.cpp`.
 - Sidebar, overlay, bottom-panel, menu, and prompt drawing now live in dedicated translation
-  units, but they still operate directly on shell-owned surface state and helper methods.
+  units, and their state now lives in dedicated `SidebarState`, `OverlayState`, `PanelState`,
+  `MenuSurfaceState`, and `PromptState` models instead of one state-heavy shell surface object.
+- Those render and input paths still depend directly on broad shell helper methods and theme or
+  layout access instead of narrower renderer inputs or facades.
 
 References:
 - `src/workspace/WorkspaceShellRender.cpp`
@@ -204,14 +208,14 @@ References:
 - `src/workspace/WorkspaceShellRenderTextInput.cpp`
 
 Why this matters:
-- The top-level render entry point is smaller, but shell-owned render behavior still spans too
-  many unrelated UI surfaces.
+- The top-level render entry point is smaller, and the state split is materially better, but
+  shell-owned render behavior still spans too many unrelated UI surfaces through helper reach.
 - UI regressions remain harder to isolate than they should be.
 
 Recommended next step:
-- Keep the new surface-specific render files narrow, then peel sidebar, overlay, bottom-panel,
-  menu, and prompt state behind smaller renderer inputs or service-owned models instead of routing
-  them all through `WorkspaceShell`.
+- Keep the new surface-specific render files narrow, then continue replacing direct shell helper
+  reach with smaller renderer inputs or facade-style subsystem APIs instead of routing every
+  render and input decision back through `WorkspaceShell`.
 
 ### 5. The git process layer is no longer the main process-boundary debt
 

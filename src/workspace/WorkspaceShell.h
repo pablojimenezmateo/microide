@@ -656,21 +656,7 @@ class WorkspaceShell {
   };
 
   struct ProjectSurfaceState {
-    bool sidebar_visible = true;
-    SidebarMode sidebar_mode = SidebarMode::Tree;
-    SidebarMode sidebar_prev_mode = SidebarMode::None;
-    std::string sidebar_view_id = "tree";
-    std::string sidebar_prev_view_id;
-    bool sidebar_temporary = false;
-    bool overlay_visible = false;
-    OverlayMode overlay_mode = OverlayMode::FileFinder;
-    BufferSearchField buffer_search_field = BufferSearchField::Search;
-    bool command_mode = false;
     FocusTarget focus = FocusTarget::Sidebar;
-    float sidebar_width = 288.0f;
-    float bottom_panel_height = 184.0f;
-    int sidebar_scroll_row = 0;
-    int overlay_scroll_row = 0;
   };
 
   struct InteractionState {
@@ -725,6 +711,20 @@ class WorkspaceShell {
     ComparePickerState compare_picker;
   };
 
+  struct OverlayState {
+    bool visible = false;
+    OverlayMode mode = OverlayMode::FileFinder;
+    BufferSearchField buffer_search_field = BufferSearchField::Search;
+    int scroll_row = 0;
+    OverlayWorkflowState workflow;
+  };
+
+  struct PanelState {
+    bool command_mode = false;
+    float height = 184.0f;
+    CommandState command;
+  };
+
   struct GitSidebarState {
     std::vector<GitSidebarEntry> entries;
     std::string base_ref;
@@ -742,6 +742,20 @@ class WorkspaceShell {
     std::vector<plugin::PluginHost::SidebarItem> items;
     std::string error;
     std::size_t selected_index = 0;
+  };
+
+  struct SidebarState {
+    bool visible = true;
+    SidebarMode mode = SidebarMode::Tree;
+    SidebarMode prev_mode = SidebarMode::None;
+    std::string view_id = "tree";
+    std::string prev_view_id;
+    bool temporary = false;
+    float width = 288.0f;
+    int scroll_row = 0;
+    GitSidebarState git;
+    ProblemsSidebarState problems;
+    PluginSidebarState plugin;
   };
 
   struct PromptState {
@@ -765,14 +779,12 @@ class WorkspaceShell {
     std::size_t active_tab_index = 0;
     int tab_scroll_index = 0;
     ProjectSurfaceState surface;
+    SidebarState sidebar;
+    OverlayState overlay;
+    PanelState panel;
     std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
     std::size_t active_terminal_tab_index = 0;
-    OverlayWorkflowState overlay_workflow;
-    GitSidebarState git_sidebar;
-    ProblemsSidebarState problems_sidebar;
-    PluginSidebarState plugin_sidebar;
     editor::DiagnosticsStore diagnostics_store;
-    CommandState command;
     std::string active_colorscheme_name = "default";
     std::optional<SDL_Color> project_base_color;
     EditorPreferences editor_preferences;
@@ -1486,15 +1498,18 @@ class WorkspaceShell {
   std::size_t& active_tab_index_ = current_project_state_.active_tab_index;
   int& tab_scroll_index_ = current_project_state_.tab_scroll_index;
   ProjectSurfaceState& surface_ = current_project_state_.surface;
+  SidebarState& sidebar_state_ = current_project_state_.sidebar;
+  OverlayState& overlay_state_ = current_project_state_.overlay;
+  PanelState& panel_state_ = current_project_state_.panel;
   InteractionState interaction_state_;
   MenuSurfaceState menu_state_;
   std::vector<std::unique_ptr<TerminalTabState>>& terminal_tabs_ = current_project_state_.terminal_tabs;
   std::size_t& active_terminal_tab_index_ = current_project_state_.active_terminal_tab_index;
   WindowPresentationState window_presentation_;
-  OverlayWorkflowState& overlay_workflow_ = current_project_state_.overlay_workflow;
-  GitSidebarState& git_sidebar_ = current_project_state_.git_sidebar;
-  ProblemsSidebarState& problems_sidebar_ = current_project_state_.problems_sidebar;
-  PluginSidebarState& plugin_sidebar_ = current_project_state_.plugin_sidebar;
+  OverlayWorkflowState& overlay_workflow_ = overlay_state_.workflow;
+  GitSidebarState& git_sidebar_ = sidebar_state_.git;
+  ProblemsSidebarState& problems_sidebar_ = sidebar_state_.problems;
+  PluginSidebarState& plugin_sidebar_ = sidebar_state_.plugin;
   editor::DiagnosticsStore& diagnostics_store_ = current_project_state_.diagnostics_store;
   struct SidebarModeMenuEntry {
     std::string label;
@@ -1523,7 +1538,7 @@ class WorkspaceShell {
   PendingProjectOpenDialogResult pending_project_open_dialog_result_;
   PromptState prompts_;
   bool quit_requested_ = false;
-  CommandState& command_ = current_project_state_.command;
+  CommandState& command_ = panel_state_.command;
   std::vector<std::string> available_colorscheme_names_;
   std::string& active_colorscheme_name_ = current_project_state_.active_colorscheme_name;
   std::optional<SDL_Color>& project_base_color_ = current_project_state_.project_base_color;

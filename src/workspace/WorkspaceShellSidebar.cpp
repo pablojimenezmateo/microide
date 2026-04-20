@@ -90,21 +90,21 @@ ScrollableListLayout WorkspaceShell::ComputeProjectSearchSidebarListLayout(
     const SDL_FRect& sidebar_rect,
     std::size_t line_count) const {
   return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kProjectSearchResultsTop,
-                                     line_count, surface_.sidebar_scroll_row, kSidebarInset,
+                                     line_count, sidebar_state_.scroll_row, kSidebarInset,
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
 ScrollableListLayout WorkspaceShell::ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                  std::size_t line_count) const {
   return ComputeScrollableListLayout(sidebar_rect, GitSidebarListTop(sidebar_rect), line_count,
-                                     surface_.sidebar_scroll_row, kSidebarInset, kSidebarRowHeight,
+                                     sidebar_state_.scroll_row, kSidebarInset, kSidebarRowHeight,
                                      kSidebarRowHeight - 2.0f, 0.0f, 0.0f, true);
 }
 
 ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                   std::size_t line_count) const {
   return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kSidebarHeaderHeight + 6.0f,
-                                     line_count, surface_.sidebar_scroll_row, kSidebarInset,
+                                     line_count, sidebar_state_.scroll_row, kSidebarInset,
                                      kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
@@ -142,11 +142,11 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
 
 std::string WorkspaceShell::SidebarModeControlLabel() const {
   if (const std::optional<SidebarViewInfo> view =
-          FindSidebarView(surface_.sidebar_view_id, plugin_runtime_.Host());
+          FindSidebarView(sidebar_state_.view_id, plugin_runtime_.Host());
       view.has_value()) {
     return std::string(view->label);
   }
-  if (const SidebarViewSpec* view = FindBuiltinSidebarView(surface_.sidebar_mode);
+  if (const SidebarViewSpec* view = FindBuiltinSidebarView(sidebar_state_.mode);
       view != nullptr) {
     return std::string(view->label);
   }
@@ -165,7 +165,7 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 }
 
 std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {
-  if (!last_mouse_position_valid_ || !surface_.sidebar_visible || surface_.sidebar_mode != SidebarMode::Git ||
+  if (!last_mouse_position_valid_ || !sidebar_state_.visible || sidebar_state_.mode != SidebarMode::Git ||
       !Contains(sidebar_rect, last_mouse_x_, last_mouse_y_)) {
     return {};
   }

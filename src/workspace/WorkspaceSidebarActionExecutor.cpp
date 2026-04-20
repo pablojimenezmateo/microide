@@ -29,9 +29,9 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
       const SidebarViewRequest request = ParseSidebarViewRequest(args, shell_.plugin_runtime_.Host());
       if (request.view.has_value()) {
         const bool same_view =
-            shell_.surface_.sidebar_visible &&
-            shell_.surface_.sidebar_mode == request.view->mode &&
-            shell_.surface_.sidebar_view_id == request.view->id;
+            shell_.sidebar_state_.visible &&
+            shell_.sidebar_state_.mode == request.view->mode &&
+            shell_.sidebar_state_.view_id == request.view->id;
         switch (request.view->mode) {
           case SidebarMode::Tree:
             if (same_view) {
@@ -41,7 +41,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
             }
             return DispatchResult::Handled;
           case SidebarMode::Search:
-            if (same_view && !shell_.surface_.sidebar_temporary) {
+            if (same_view && !shell_.sidebar_state_.temporary) {
               shell_.CloseSidebar();
             } else {
               shell_.ShowSearchSidebar(request.query, false);
@@ -100,7 +100,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
             break;
         }
       }
-      shell_.surface_.sidebar_visible = true;
+      shell_.sidebar_state_.visible = true;
       shell_.surface_.focus = FocusTarget::Sidebar;
       return DispatchResult::Handled;
     }
@@ -115,7 +115,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
       }
       const float current_width =
           shell_.CurrentWindowRect().has_value() ? shell_.CurrentWindowRect()->w : 1.0f;
-      shell_.surface_.sidebar_width =
+      shell_.sidebar_state_.width =
           ClampSidebarWidth(request->width, std::max(1.0f, current_width));
       return DispatchResult::Handled;
     }

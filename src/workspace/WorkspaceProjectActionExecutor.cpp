@@ -32,7 +32,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
           case ProjectOpenDialogLaunchResult::Unavailable:
             if (source == ActionSource::Menu) {
               const bool bottom_panel_was_visible = shell_.BottomPanelVisible();
-              shell_.surface_.command_mode = true;
+              shell_.panel_state_.command_mode = true;
               shell_.surface_.focus = FocusTarget::Panel;
               shell_.command_.input = "project-open ";
               CommandPromptCoordinator(shell_).ResetSessionState();

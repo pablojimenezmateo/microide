@@ -199,7 +199,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
-  if (surface_.command_mode) {
+  if (panel_state_.command_mode) {
     const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
     DrawFilledRect(renderer, command_area, theme_.surface_raised);
     DrawFilledRect(renderer,

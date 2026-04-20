@@ -32,7 +32,7 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
   const auto& match =
       overlay_workflow_.buffer_search.matches[overlay_workflow_.buffer_search.selected_index];
   text_viewport_.MoveCursorTo(match.start.line, match.start.column);
-  if (surface_.overlay_visible) {
+  if (overlay_state_.visible) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }
@@ -77,9 +77,9 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
 }
 
 std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() const {
-  if (!surface_.overlay_visible ||
-      (surface_.overlay_mode != OverlayMode::BufferSearch &&
-       surface_.overlay_mode != OverlayMode::BufferReplace) ||
+  if (!overlay_state_.visible ||
+      (overlay_state_.mode != OverlayMode::BufferSearch &&
+       overlay_state_.mode != OverlayMode::BufferReplace) ||
       overlay_workflow_.buffer_search.matches.empty() ||
       overlay_workflow_.buffer_search.selected_index >=
           overlay_workflow_.buffer_search.matches.size()) {

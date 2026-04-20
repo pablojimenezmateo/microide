@@ -18,8 +18,8 @@ void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int heigh
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::Render");
   const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(width), static_cast<float>(height), surface_.sidebar_visible,
-                    BottomPanelVisible(), surface_.sidebar_width, surface_.bottom_panel_height);
+      ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_state_.visible,
+                    BottomPanelVisible(), sidebar_state_.width, panel_state_.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   const std::size_t terminal_line_count =
       ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;

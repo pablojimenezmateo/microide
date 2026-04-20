@@ -68,7 +68,7 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
         shell_.git_sidebar_.entries[i].section == previous_section) {
       shell_.git_sidebar_.selected_index = i;
       RevealSelectedGitLine();
-      if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Git) {
+      if (shell_.sidebar_state_.visible && shell_.sidebar_state_.mode == SidebarMode::Git) {
         shell_.RequestSidebarRedraw();
       }
       return;
@@ -76,7 +76,7 @@ void WorkspaceShell::SidebarCoordinator::RefreshGit() {
   }
 
   RevealSelectedGitLine();
-  if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Git) {
+  if (shell_.sidebar_state_.visible && shell_.sidebar_state_.mode == SidebarMode::Git) {
     shell_.RequestSidebarRedraw();
   }
 }
@@ -115,7 +115,7 @@ bool WorkspaceShell::SidebarCoordinator::RefreshProblems() {
   }
 
   RevealSelectedProblemsLine();
-  if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Problems) {
+  if (shell_.sidebar_state_.visible && shell_.sidebar_state_.mode == SidebarMode::Problems) {
     shell_.RequestSidebarRedraw();
   }
   return !shell_.problems_sidebar_.entries.empty();
@@ -125,26 +125,26 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
   shell_.plugin_sidebar_.items.clear();
   shell_.plugin_sidebar_.error.clear();
   shell_.plugin_sidebar_.selected_index = 0;
-  if (shell_.surface_.sidebar_mode != SidebarMode::Plugin) {
+  if (shell_.sidebar_state_.mode != SidebarMode::Plugin) {
     return false;
   }
-  if (shell_.surface_.sidebar_view_id.empty() ||
-      shell_.plugin_runtime_.Host().FindSidebarProvider(shell_.surface_.sidebar_view_id) ==
+  if (shell_.sidebar_state_.view_id.empty() ||
+      shell_.plugin_runtime_.Host().FindSidebarProvider(shell_.sidebar_state_.view_id) ==
           nullptr) {
-    shell_.surface_.sidebar_mode = SidebarMode::Tree;
-    shell_.surface_.sidebar_view_id = "tree";
-    if (shell_.surface_.sidebar_visible) {
+    shell_.sidebar_state_.mode = SidebarMode::Tree;
+    shell_.sidebar_state_.view_id = "tree";
+    if (shell_.sidebar_state_.visible) {
       shell_.RequestSidebarRedraw();
     }
     return false;
   }
 
   std::string error_message;
-  if (!shell_.plugin_runtime_.Host().SnapshotSidebar(shell_.surface_.sidebar_view_id,
+  if (!shell_.plugin_runtime_.Host().SnapshotSidebar(shell_.sidebar_state_.view_id,
                                                      &shell_.plugin_sidebar_.items,
                                                      &error_message)) {
     shell_.plugin_sidebar_.error = std::move(error_message);
-    if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+    if (shell_.sidebar_state_.visible && shell_.sidebar_state_.mode == SidebarMode::Plugin) {
       shell_.RequestSidebarRedraw();
     }
     return false;
@@ -154,7 +154,7 @@ bool WorkspaceShell::SidebarCoordinator::RefreshPlugin() {
         shell_.plugin_sidebar_.selected_index, shell_.plugin_sidebar_.items.size() - 1);
   }
   RevealSelectedPluginLine();
-  if (shell_.surface_.sidebar_visible && shell_.surface_.sidebar_mode == SidebarMode::Plugin) {
+  if (shell_.sidebar_state_.visible && shell_.sidebar_state_.mode == SidebarMode::Plugin) {
     shell_.RequestSidebarRedraw();
   }
   return true;
@@ -176,7 +176,7 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedTreeLine() {
   }
 
   const auto list_layout = shell_.ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-  shell_.surface_.sidebar_scroll_row = RevealScrollableListIndex(
+  shell_.sidebar_state_.scroll_row = RevealScrollableListIndex(
       list_layout, static_cast<int>(shell_.directory_tree_.selected_index()));
 }
 
@@ -196,7 +196,7 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedGitLine() {
   }
   const auto lines = shell_.BuildGitSidebarLines();
   const auto list_layout = shell_.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-  shell_.surface_.sidebar_scroll_row =
+  shell_.sidebar_state_.scroll_row =
       RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
 }
 
@@ -215,7 +215,7 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedProblemsLine() {
   }
   const auto list_layout = shell_.ComputeProblemsSidebarListLayout(
       layout.sidebar, shell_.problems_sidebar_.entries.size());
-  shell_.surface_.sidebar_scroll_row = RevealScrollableListIndex(
+  shell_.sidebar_state_.scroll_row = RevealScrollableListIndex(
       list_layout, static_cast<int>(shell_.problems_sidebar_.selected_index));
 }
 
@@ -234,7 +234,7 @@ void WorkspaceShell::SidebarCoordinator::RevealSelectedPluginLine() {
   }
   const auto list_layout =
       shell_.ComputePluginSidebarListLayout(layout.sidebar, shell_.plugin_sidebar_.items.size());
-  shell_.surface_.sidebar_scroll_row = RevealScrollableListIndex(
+  shell_.sidebar_state_.scroll_row = RevealScrollableListIndex(
       list_layout, static_cast<int>(shell_.plugin_sidebar_.selected_index));
 }
 

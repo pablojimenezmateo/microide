@@ -87,8 +87,8 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
   }
 
   const WorkspaceLayout layout =
-      ComputeLayout(window_width, window_height, surface_.sidebar_visible, BottomPanelVisible(),
-                    surface_.sidebar_width, surface_.bottom_panel_height);
+      ComputeLayout(window_width, window_height, sidebar_state_.visible, BottomPanelVisible(),
+                    sidebar_state_.width, panel_state_.height);
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }
@@ -223,7 +223,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (surface_.overlay_visible) {
+  if (overlay_state_.visible) {
     const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
     if (!Contains(overlay, x, y)) {
       return CursorKind::Default;
@@ -240,11 +240,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
 
-    if (surface_.overlay_mode == OverlayMode::BufferReplace) {
+    if (overlay_state_.mode == OverlayMode::BufferReplace) {
       return y >= overlay.y + 40.0f && y < overlay.y + 82.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
-    if (surface_.overlay_mode == OverlayMode::CommitPicker) {
+    if (overlay_state_.mode == OverlayMode::CommitPicker) {
       return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
@@ -252,7 +252,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                                                             : CursorKind::Default;
   }
 
-  if (surface_.sidebar_visible && Contains(SidebarResizeHandleRect(layout), x, y)) {
+  if (sidebar_state_.visible && Contains(SidebarResizeHandleRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
   if (BottomPanelVisible() && Contains(BottomPanelResizeHandleRect(layout), x, y)) {
@@ -287,11 +287,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (surface_.sidebar_visible && Contains(layout.sidebar, x, y)) {
+  if (sidebar_state_.visible && Contains(layout.sidebar, x, y)) {
     if (Contains(SidebarModeControlRect(layout.sidebar), x, y)) {
       return CursorKind::Pointer;
     }
-    if (surface_.sidebar_mode == SidebarMode::Search) {
+    if (sidebar_state_.mode == SidebarMode::Search) {
       if (Contains(ProjectSearchQueryRect(layout.sidebar), x, y) ||
           Contains(ProjectSearchReplaceRect(layout.sidebar), x, y)) {
         return CursorKind::Text;
@@ -315,7 +315,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
-    if (surface_.sidebar_mode == SidebarMode::Git) {
+    if (sidebar_state_.mode == SidebarMode::Git) {
       if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&
           CanStageAllGitSidebarEntries()) {
         return CursorKind::Pointer;
@@ -352,7 +352,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Pointer;
     }
-    if (surface_.sidebar_mode == SidebarMode::Problems) {
+    if (sidebar_state_.mode == SidebarMode::Problems) {
       const auto list_layout =
           ComputeProblemsSidebarListLayout(layout.sidebar, problems_sidebar_.entries.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
@@ -364,7 +364,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
     }
-    if (surface_.sidebar_mode == SidebarMode::Plugin) {
+    if (sidebar_state_.mode == SidebarMode::Plugin) {
       const auto list_layout =
           ComputePluginSidebarListLayout(layout.sidebar, plugin_sidebar_.items.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
@@ -422,7 +422,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Default;
       }
     }
-    if (surface_.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
+    if (panel_state_.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }
     if (ActiveTerminalTab() != nullptr &&

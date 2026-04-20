@@ -26,9 +26,9 @@ struct WorkspaceShellTestAccess {
     shell.directory_tree_.SetRoot(shell.project_root_);
     shell.file_index_.SetRoot(shell.project_root_);
     shell.file_finder_.SetIndex(&shell.file_index_);
-    shell.surface_.sidebar_visible = true;
-    shell.surface_.sidebar_mode = WorkspaceShell::SidebarMode::Tree;
-    shell.surface_.sidebar_view_id = "tree";
+    shell.sidebar_state_.visible = true;
+    shell.sidebar_state_.mode = WorkspaceShell::SidebarMode::Tree;
+    shell.sidebar_state_.view_id = "tree";
     shell.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
   }
 
@@ -544,7 +544,7 @@ struct WorkspaceShellTestAccess {
   static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.tab_scroll_index_; }
   static SDL_FRect BottomPanelContentRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return microide::workspace::BottomPanelContentRect(layout, shell.surface_.command_mode);
+    return microide::workspace::BottomPanelContentRect(layout, shell.panel_state_.command_mode);
   }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,
@@ -965,7 +965,7 @@ struct WorkspaceShellTestAccess {
     return shell.SelectedTreePath();
   }
   static int SidebarScrollRow(const WorkspaceShell& shell) {
-    return shell.surface_.sidebar_scroll_row;
+    return shell.sidebar_state_.scroll_row;
   }
   static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.project_catalog_.entries.size(); }
   static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {
@@ -990,7 +990,7 @@ struct WorkspaceShellTestAccess {
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_open_dialog_active_;
   }
-  static bool CommandMode(const WorkspaceShell& shell) { return shell.surface_.command_mode; }
+  static bool CommandMode(const WorkspaceShell& shell) { return shell.panel_state_.command_mode; }
   static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.command_.input; }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
     return WorkspaceShell::CommandPromptCoordinator::PromptStatusText(shell);
@@ -998,9 +998,9 @@ struct WorkspaceShellTestAccess {
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.overlay_workflow_.project_search.query;
   }
-  static bool OverlayVisible(const WorkspaceShell& shell) { return shell.surface_.overlay_visible; }
+  static bool OverlayVisible(const WorkspaceShell& shell) { return shell.overlay_state_.visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
-    return shell.surface_.overlay_mode == WorkspaceShell::OverlayMode::FileFinder;
+    return shell.overlay_state_.mode == WorkspaceShell::OverlayMode::FileFinder;
   }
   static bool TextInputSurfaceIsEditor(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::Editor;
@@ -1011,12 +1011,12 @@ struct WorkspaceShellTestAccess {
   static bool TextInputSurfaceIsPromptInput(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::PromptInput;
   }
-  static bool SidebarVisible(const WorkspaceShell& shell) { return shell.surface_.sidebar_visible; }
+  static bool SidebarVisible(const WorkspaceShell& shell) { return shell.sidebar_state_.visible; }
   static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
-    return shell.surface_.sidebar_mode;
+    return shell.sidebar_state_.mode;
   }
   static const std::string& SidebarViewId(const WorkspaceShell& shell) {
-    return shell.surface_.sidebar_view_id;
+    return shell.sidebar_state_.view_id;
   }
   static std::size_t ProblemsSidebarSelectedIndex(const WorkspaceShell& shell) {
     return shell.problems_sidebar_.selected_index;
@@ -1028,7 +1028,7 @@ struct WorkspaceShellTestAccess {
   static const std::string& PluginSidebarError(const WorkspaceShell& shell) {
     return shell.plugin_sidebar_.error;
   }
-  static float SidebarWidth(const WorkspaceShell& shell) { return shell.surface_.sidebar_width; }
+  static float SidebarWidth(const WorkspaceShell& shell) { return shell.sidebar_state_.width; }
   static float UiScale(const WorkspaceShell& shell) { return shell.UiScale(); }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.editor_preferences_.soft_tabs;

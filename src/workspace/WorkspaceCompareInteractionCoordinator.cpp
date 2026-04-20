@@ -15,7 +15,7 @@ WorkspaceShell::CompareInteractionCoordinator::CompareInteractionCoordinator(Wor
     : shell_(shell) {}
 
 void WorkspaceShell::CompareInteractionCoordinator::OpenPicker() {
-  if (!shell_.surface_.sidebar_visible || shell_.surface_.sidebar_mode != SidebarMode::Tree) {
+  if (!shell_.sidebar_state_.visible || shell_.sidebar_state_.mode != SidebarMode::Tree) {
     return;
   }
 
@@ -102,7 +102,7 @@ void WorkspaceShell::CompareInteractionCoordinator::MovePickerSelection(int delt
       static_cast<int>(shell_.overlay_workflow_.compare_picker.matches.size()) - 1;
   shell_.overlay_workflow_.compare_picker.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (shell_.surface_.overlay_visible) {
+  if (shell_.overlay_state_.visible) {
     if (const auto layout = shell_.CurrentWorkspaceLayout(); layout.has_value()) {
       shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout->editor_area));
     }

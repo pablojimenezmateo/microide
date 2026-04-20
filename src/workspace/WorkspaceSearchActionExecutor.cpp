@@ -45,7 +45,7 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
           !shell_.OpenProjectTab(request.project_root, true, true)) {
         return reject("Failed to open project: " + request.project_root.string());
       }
-      if (source == ActionSource::Shortcut && shell_.surface_.overlay_visible) {
+      if (source == ActionSource::Shortcut && shell_.overlay_state_.visible) {
         shell_.DismissOverlay();
         return DispatchResult::Handled;
       }
@@ -88,8 +88,8 @@ WorkspaceShell::ActionCoordinator::DispatchResult WorkspaceShell::ActionCoordina
         path = shell_.ResolveTreeActionPath(source);
       } else if (path.empty() && !shell_.text_viewport_.path().empty()) {
         path = shell_.text_viewport_.path().lexically_normal();
-      } else if (path.empty() && shell_.surface_.sidebar_visible &&
-                 shell_.surface_.sidebar_mode == SidebarMode::Tree) {
+      } else if (path.empty() && shell_.sidebar_state_.visible &&
+                 shell_.sidebar_state_.mode == SidebarMode::Tree) {
         const auto& entries = shell_.directory_tree_.entries();
         if (shell_.directory_tree_.selected_index() < entries.size() &&
             !entries[shell_.directory_tree_.selected_index()].is_directory) {

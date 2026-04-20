@@ -67,7 +67,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
 
   if (shell_.ActiveTerminalTab() != nullptr) {
     const SDL_FRect panel_content =
-        BottomPanelContentRect(layout, shell_.surface_.command_mode);
+        BottomPanelContentRect(layout, shell_.panel_state_.command_mode);
     if (event.button.button == SDL_BUTTON_RIGHT && Contains(panel_content, event.button.x,
                                                             event.button.y)) {
       shell_.surface_.focus = FocusTarget::Panel;
@@ -99,7 +99,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
 
   if (shell_.ActiveTerminalTab() != nullptr) {
     const SDL_FRect panel_content =
-        BottomPanelContentRect(layout, shell_.surface_.command_mode);
+        BottomPanelContentRect(layout, shell_.panel_state_.command_mode);
     if (Contains(panel_content, event.button.x, event.button.y)) {
       if (const std::optional<std::string> url =
               shell_.TerminalUrlAtPoint(static_cast<float>(event.button.x),
@@ -133,7 +133,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleButtonDown(const SDL_Event& ev
     shell_.surface_.focus = FocusTarget::Panel;
   }
 
-  if (shell_.surface_.command_mode) {
+  if (shell_.panel_state_.command_mode) {
     shell_.surface_.focus = FocusTarget::Panel;
   }
   return true;
@@ -172,7 +172,7 @@ bool WorkspaceShell::PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
       return false;
     }
     const float desired_height = window_rect->h - static_cast<float>(event.motion.y);
-    shell_.surface_.bottom_panel_height =
+    shell_.panel_state_.height =
         ClampBottomPanelHeight(desired_height, window_rect->h);
     return true;
   }

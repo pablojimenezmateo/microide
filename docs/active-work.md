@@ -143,8 +143,10 @@ Current state:
   reset lists for tabs, tree or index state, terminals, overlays, diagnostics, command history,
   colorscheme, or editor preferences
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
-  `ProjectWorkspaceState`, so project switching no longer hand-copies duplicated sidebar,
-  overlay, command-mode, focus, width, or scroll fields between active and persisted surface
+  `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
+  dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic
+  surface bag, so project switching no longer hand-copy duplicated sidebar, overlay,
+  command-prompt, focus, width, height, or scroll fields between active and persisted UI state
   models
 - transient drag, mouse-selection, and window-focus interaction state now lives outside
   `ProjectSurfaceState`, so project switches clear in-flight gestures instead of leaking stale

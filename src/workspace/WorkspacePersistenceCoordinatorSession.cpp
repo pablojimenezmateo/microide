@@ -27,9 +27,9 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
   }
 
   PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = shell_.surface_.sidebar_visible;
-  persisted_session.sidebar_width = shell_.surface_.sidebar_width;
-  persisted_session.bottom_panel_height = shell_.surface_.bottom_panel_height;
+  persisted_session.sidebar_visible = shell_.sidebar_state_.visible;
+  persisted_session.sidebar_width = shell_.sidebar_state_.width;
+  persisted_session.bottom_panel_height = shell_.panel_state_.height;
   persisted_session.active_tab_index = shell_.active_tab_index_;
   if (!ParseProjectSessionText(*text, &persisted_session)) {
     return false;
@@ -37,8 +37,8 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
 
   shell_.open_tabs_.clear();
   shell_.active_tab_index_ = 0;
-  shell_.surface_.overlay_visible = false;
-  shell_.surface_.command_mode = false;
+  shell_.overlay_state_.visible = false;
+  shell_.panel_state_.command_mode = false;
   shell_.overlay_workflow_.compare_picker.matches.clear();
   shell_.overlay_workflow_.compare_picker.commits.clear();
   shell_.overlay_workflow_.compare_picker.selected_index = 0;
@@ -284,9 +284,9 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
     });
   }
 
-  shell_.surface_.sidebar_visible = persisted_session.sidebar_visible;
-  shell_.surface_.sidebar_width = persisted_session.sidebar_width;
-  shell_.surface_.bottom_panel_height = persisted_session.bottom_panel_height;
+  shell_.sidebar_state_.visible = persisted_session.sidebar_visible;
+  shell_.sidebar_state_.width = persisted_session.sidebar_width;
+  shell_.panel_state_.height = persisted_session.bottom_panel_height;
 
   if (shell_.open_tabs_.empty()) {
     shell_.text_viewport_.SetPlaceholderText(
@@ -294,7 +294,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
         "Project loaded.\n"
         "Use the sidebar to open files.\n");
     shell_.surface_.focus =
-        shell_.surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+        shell_.sidebar_state_.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
     return true;
   }
 
@@ -302,7 +302,7 @@ bool WorkspaceShell::PersistenceCoordinator::RestoreSessionState() {
       std::min(persisted_session.active_tab_index, shell_.open_tabs_.size() - 1);
   shell_.active_tab_index_ = active_index;
   shell_.surface_.focus =
-      shell_.surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+      shell_.sidebar_state_.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
   return true;
 }
 
@@ -319,9 +319,9 @@ void WorkspaceShell::PersistenceCoordinator::SaveSessionState() {
   }
 
   PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = shell_.surface_.sidebar_visible;
-  persisted_session.sidebar_width = shell_.surface_.sidebar_width;
-  persisted_session.bottom_panel_height = shell_.surface_.bottom_panel_height;
+  persisted_session.sidebar_visible = shell_.sidebar_state_.visible;
+  persisted_session.sidebar_width = shell_.sidebar_state_.width;
+  persisted_session.bottom_panel_height = shell_.panel_state_.height;
   persisted_session.active_tab_index = 0;
 
   for (std::size_t tab_index = 0; tab_index < shell_.open_tabs_.size(); ++tab_index) {

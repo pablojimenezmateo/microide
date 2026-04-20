@@ -65,8 +65,8 @@ bool WorkspaceShell::SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
                                                : shell_.git_sidebar_.base_label,
         "HEAD", "HEAD");
   }
-  if (opened && shell_.surface_.sidebar_visible &&
-      shell_.surface_.sidebar_mode == SidebarMode::Git) {
+  if (opened && shell_.sidebar_state_.visible &&
+      shell_.sidebar_state_.mode == SidebarMode::Git) {
     shell_.RequestSidebarRedraw();
   }
   return opened;
@@ -84,7 +84,7 @@ bool WorkspaceShell::SidebarCoordinator::OpenProblemItem() {
   shell_.OpenFile(entry.diagnostic.path);
   shell_.text_viewport_.MoveCursorTo(entry.diagnostic.range.start.line,
                                      entry.diagnostic.range.start.column);
-  if (shell_.surface_.sidebar_temporary) {
+  if (shell_.sidebar_state_.temporary) {
     shell_.RestorePreviousSidebar();
   }
   shell_.surface_.focus = FocusTarget::Editor;
@@ -99,11 +99,11 @@ bool WorkspaceShell::SidebarCoordinator::OpenPluginItem() {
   const auto& item = shell_.plugin_sidebar_.items[shell_.plugin_sidebar_.selected_index];
   std::string error_message;
   const bool confirmed = shell_.plugin_runtime_.Host().ConfirmSidebarItem(
-      shell_.surface_.sidebar_view_id, item, &error_message);
+      shell_.sidebar_state_.view_id, item, &error_message);
   if (!confirmed && !error_message.empty()) {
     shell_.plugin_sidebar_.error = std::move(error_message);
   }
-  if (confirmed && shell_.surface_.sidebar_temporary) {
+  if (confirmed && shell_.sidebar_state_.temporary) {
     shell_.RestorePreviousSidebar();
   }
   if (confirmed && !item.path.empty()) {

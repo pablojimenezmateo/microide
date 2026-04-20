@@ -135,14 +135,14 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
     shell_.RequestPromptRedraw();
     return true;
   }
-  if (shell_.surface_.command_mode) {
+  if (shell_.panel_state_.command_mode) {
     CommandPromptCoordinator(shell_).AppendInput(input);
     shell_.RequestBottomPanelCommandRedraw();
     return true;
   }
 
-  if (shell_.surface_.overlay_visible) {
-    switch (shell_.surface_.overlay_mode) {
+  if (shell_.overlay_state_.visible) {
+    switch (shell_.overlay_state_.mode) {
       case OverlayMode::CommitPicker:
         shell_.overlay_workflow_.compare_picker.query.append(input);
         shell_.RefreshComparePicker();
@@ -152,7 +152,7 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
         shell_.RefreshBufferSearch();
         return true;
       case OverlayMode::BufferReplace:
-        if (shell_.surface_.buffer_search_field == BufferSearchField::Search) {
+        if (shell_.overlay_state_.buffer_search_field == BufferSearchField::Search) {
           shell_.overlay_workflow_.buffer_search.query.append(input);
           shell_.RefreshBufferSearch();
         } else {
@@ -172,8 +172,8 @@ bool WorkspaceShell::TextInputCoordinator::HandleTextInput(const SDL_TextInputEv
     }
   }
 
-  if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.surface_.sidebar_visible &&
-      shell_.surface_.sidebar_mode == SidebarMode::Search &&
+  if (shell_.surface_.focus == FocusTarget::Sidebar && shell_.sidebar_state_.visible &&
+      shell_.sidebar_state_.mode == SidebarMode::Search &&
       shell_.overlay_workflow_.project_search.editing) {
     shell_.overlay_workflow_.project_search.edit_buffer.append(input);
     shell_.RequestSidebarRedraw();

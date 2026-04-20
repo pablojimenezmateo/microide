@@ -68,7 +68,7 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   if (update.finished) {
     overlay_workflow_.project_search.running = false;
   }
-  if (surface_.overlay_visible && surface_.overlay_mode == OverlayMode::ProjectSearch) {
+  if (overlay_state_.visible && overlay_state_.mode == OverlayMode::ProjectSearch) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }
@@ -358,7 +358,7 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   const int max_index = static_cast<int>(overlay_workflow_.project_search.results.size()) - 1;
   overlay_workflow_.project_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (surface_.overlay_visible) {
+  if (overlay_state_.visible) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }

@@ -5,13 +5,13 @@
 namespace microide::workspace {
 
 WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
-  return surface_.sidebar_visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+  return sidebar_state_.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
 }
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   RequestOverlayRedraw();
-  surface_.overlay_visible = true;
-  surface_.overlay_mode = mode;
+  overlay_state_.visible = true;
+  overlay_state_.mode = mode;
   surface_.focus = FocusTarget::Overlay;
   ResetOverlayScroll();
   RequestOverlayRedraw();
@@ -19,14 +19,14 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestOverlayRedraw();
-  surface_.overlay_visible = false;
+  overlay_state_.visible = false;
   surface_.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
   RequestOverlayRedraw();
 }
 
 void WorkspaceShell::OpenBufferSearch() {
   ShowOverlay(OverlayMode::BufferSearch);
-  surface_.buffer_search_field = BufferSearchField::Search;
+  overlay_state_.buffer_search_field = BufferSearchField::Search;
   overlay_workflow_.buffer_search.query.clear();
   overlay_workflow_.buffer_search.replace_text.clear();
   overlay_workflow_.buffer_search.matches.clear();
@@ -35,7 +35,7 @@ void WorkspaceShell::OpenBufferSearch() {
 
 void WorkspaceShell::OpenBufferReplace() {
   ShowOverlay(OverlayMode::BufferReplace);
-  surface_.buffer_search_field = BufferSearchField::Search;
+  overlay_state_.buffer_search_field = BufferSearchField::Search;
   overlay_workflow_.buffer_search.query.clear();
   overlay_workflow_.buffer_search.replace_text.clear();
   overlay_workflow_.buffer_search.matches.clear();
@@ -55,12 +55,12 @@ void WorkspaceShell::OpenProjectSearch() {
 }
 
 void WorkspaceShell::ResetOverlayScroll() {
-  surface_.overlay_scroll_row = 0;
+  overlay_state_.scroll_row = 0;
   RequestOverlayRedraw();
 }
 
 float WorkspaceShell::OverlayListStartOffset() const {
-  switch (surface_.overlay_mode) {
+  switch (overlay_state_.mode) {
     case OverlayMode::FileFinder:
       return 74.0f;
     case OverlayMode::BufferReplace:
@@ -75,7 +75,7 @@ float WorkspaceShell::OverlayListStartOffset() const {
 
 ScrollableListLayout WorkspaceShell::ComputeOverlayListLayout(const SDL_FRect& overlay) const {
   return ComputeScrollableListLayout(overlay, overlay.y + OverlayListStartOffset(),
-                                     OverlayItemCount(), surface_.overlay_scroll_row, 18.0f,
+                                     OverlayItemCount(), overlay_state_.scroll_row, 18.0f,
                                      22.0f, 18.0f, 16.0f, 8.0f);
 }
 
@@ -84,7 +84,7 @@ int WorkspaceShell::OverlayVisibleRows(const SDL_FRect& overlay) const {
 }
 
 std::size_t WorkspaceShell::OverlayItemCount() const {
-  switch (surface_.overlay_mode) {
+  switch (overlay_state_.mode) {
     case OverlayMode::CommitPicker:
       return overlay_workflow_.compare_picker.matches.size();
     case OverlayMode::BufferSearch:
@@ -99,7 +99,7 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
 }
 
 std::size_t WorkspaceShell::OverlaySelectedIndex() const {
-  switch (surface_.overlay_mode) {
+  switch (overlay_state_.mode) {
     case OverlayMode::CommitPicker:
       return overlay_workflow_.compare_picker.selected_index;
     case OverlayMode::BufferSearch:
@@ -119,7 +119,7 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
     return;
   }
   const std::size_t clamped_index = std::min(index, item_count - 1);
-  switch (surface_.overlay_mode) {
+  switch (overlay_state_.mode) {
     case OverlayMode::CommitPicker:
       overlay_workflow_.compare_picker.selected_index = clamped_index;
       break;
@@ -142,14 +142,14 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
     }
   }
   RequestOverlayRedraw();
-  if (surface_.overlay_mode == OverlayMode::BufferSearch ||
-      surface_.overlay_mode == OverlayMode::BufferReplace) {
+  if (overlay_state_.mode == OverlayMode::BufferSearch ||
+      overlay_state_.mode == OverlayMode::BufferReplace) {
     RequestEditorSurfaceRedraw();
   }
 }
 
 void WorkspaceShell::ClampOverlayScrollRow(const SDL_FRect& overlay) {
-  surface_.overlay_scroll_row = ComputeOverlayListLayout(overlay).scroll_row;
+  overlay_state_.scroll_row = ComputeOverlayListLayout(overlay).scroll_row;
 }
 
 void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
@@ -160,12 +160,12 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
 
   const auto layout = ComputeOverlayListLayout(overlay);
   const int selected = static_cast<int>(std::min(OverlaySelectedIndex(), OverlayItemCount() - 1));
-  surface_.overlay_scroll_row = RevealScrollableListIndex(layout, selected);
+  overlay_state_.scroll_row = RevealScrollableListIndex(layout, selected);
   RequestOverlayRedraw();
 }
 
 bool WorkspaceShell::ActivateOverlaySelection() {
-  switch (surface_.overlay_mode) {
+  switch (overlay_state_.mode) {
     case OverlayMode::CommitPicker:
       OpenSelectedCompareCommit();
       return true;
