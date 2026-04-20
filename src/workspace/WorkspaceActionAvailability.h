@@ -1,0 +1,41 @@
+#pragma once
+
+#include <filesystem>
+#include <functional>
+#include <optional>
+#include <string>
+
+#include "editor/TextViewport.h"
+#include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceContext.h"
+#include "workspace/WorkspaceProjectState.h"
+
+namespace microide::workspace {
+
+class ActionAvailability {
+ public:
+  struct Operations {
+    std::function<TreeContextTargetKind()> selected_tree_target_kind;
+    std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
+    std::function<const editor::TextViewport*()> active_editable_viewport;
+    std::function<const TerminalTabState*()> active_terminal_tab;
+    std::function<std::optional<std::string>()> last_terminal_command_text;
+    std::function<bool()> terminal_has_selection;
+    std::function<bool()> active_tab_is_editor;
+    std::function<bool()> active_tab_is_compare;
+    std::function<bool()> active_tab_is_merge;
+    std::function<const CompareTabState*()> active_compare_tab;
+  };
+
+  ActionAvailability(const WorkspaceContext& context, Operations operations);
+
+  bool IsEnabled(ActionId id) const;
+
+ private:
+  TreeContextTargetKind ActiveTreeTargetKind() const;
+
+  const WorkspaceContext& context_;
+  Operations operations_;
+};
+
+}  // namespace microide::workspace

@@ -219,7 +219,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     return FindSidebarView(item.args[0], plugin_runtime_.Host()).has_value();
   }
 
-  return IsActionEnabled(item.action);
+  return MakeActionAvailability().IsEnabled(item.action);
 }
 
 bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {

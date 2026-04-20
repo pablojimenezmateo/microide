@@ -28,6 +28,7 @@
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceActionAvailability.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceInteractionState.h"
@@ -39,6 +40,7 @@
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspacePromptState.h"
+#include "workspace/WorkspaceRootView.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/WorkspaceTextInputState.h"
@@ -402,7 +404,6 @@ class WorkspaceShell {
   static const ActionSpec* FindActionSpec(ActionId id);
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
   static const std::vector<std::string>& CommandNames();
-  bool IsActionEnabled(ActionId id) const;
   static std::span<const MenuSpec> MenuSpecs();
   static const MenuSpec* FindMenuSpec(MenuId id);
   std::span<const MenuItemSpec> MenuItems(MenuId id) const;
@@ -955,6 +956,8 @@ class WorkspaceShell {
   bool HandleMouseButtonUp(const SDL_Event& event);
   bool HandleMouseMotion(const SDL_Event& event);
   bool HandleMouseWheel(const SDL_Event& event);
+  ActionAvailability MakeActionAvailability() const;
+  WorkspaceRootView MakeRootView();
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;

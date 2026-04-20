@@ -22,9 +22,10 @@ participate in production behavior.
 
 What is still open:
 
-- `WorkspaceShell` is still a large facade with app-facing orchestration, rendering, and action
-  enablement logic
-- there is still no dedicated view tree or bootstrapper layer
+- `WorkspaceShell` is still a large facade with app-facing orchestration, rendering, and event
+  routing logic
+- `WorkspaceRootView` now owns the top-level render composition path, but there is still no
+  broader autonomous view tree or bootstrapper layer
 - tests still lean heavily on `WorkspaceShellTestAccess`
 - action routing is context-backed now, but there is still no command bus or event bus
 
@@ -91,6 +92,22 @@ every workspace subsystem, but it is still larger than the intended end state.
 callback-backed `WorkspaceActionContext` value instead of taking `WorkspaceShell&` or reaching
 through shell-private state.
 
+Action enablement is no longer shell-owned either. `WorkspaceActionAvailability` now evaluates the
+top-level `ActionId` enablement rules from `WorkspaceContext` plus focused read-only callbacks for
+tree, editor, compare, and terminal state instead of routing that logic through
+`WorkspaceShell::IsActionEnabled`.
+
+### Render Ownership
+
+`WorkspaceShell` still exposes the app-facing `Render` and `RenderPrepared` entry points, but the
+top-level render composition path now runs through `WorkspaceRootView`. That view owns the ordered
+render phases for frame preparation, active workspace surfaces, chrome, sidebar, overlay, bottom
+panel, menus, prompts, and text-input composition.
+
+This is the first real view seam in the shell breakdown, but it is intentionally minimal. The code
+does not yet have a broader tree of autonomous sidebar, editor-stack, panel, or overlay views, and
+there is still no dedicated bootstrapper or composition-root type.
+
 ## What Landed
 
 The breakdown completed in coherent slices:
@@ -105,14 +122,15 @@ The breakdown completed in coherent slices:
 6. removed the remaining production `friend class` declarations from `WorkspaceShell`
 7. removed the old active-project reference aliases from `WorkspaceShell`
 8. moved `WorkspaceActionCoordinator` off `WorkspaceShell&`
+9. moved top-level action enablement into `WorkspaceActionAvailability`
+10. introduced a minimal `WorkspaceRootView` and routed `Render` or `RenderPrepared` through it
 
 ## Remaining Work
 
 The current code still falls short of the end-state architecture in a few important ways:
 
-- `WorkspaceShell` is still the dominant render and event orchestrator
-- `IsActionEnabled` still lives on the shell
-- no `WorkspaceRootView` or equivalent view-tree layer exists yet
+- `WorkspaceShell` is still the dominant event and lifecycle orchestrator
+- `WorkspaceRootView` is only a first render seam, not a full autonomous view tree
 - no dedicated bootstrapper or composition-root type exists yet
 - `WorkspaceShellTestAccess` is still broad and heavily used
 

@@ -40,123 +40,22 @@ std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
   return WorkspaceDocumentedCommandUsages();
 }
 
-bool WorkspaceShell::IsActionEnabled(ActionId id) const {
-  switch (id) {
-    case ActionId::Colorscheme:
-    case ActionId::Files:
-    case ActionId::OpenCommandPrompt:
-    case ActionId::PluginsReload:
-    case ActionId::ProjectOpen:
-    case ActionId::Quit:
-    case ActionId::SidebarClose:
-    case ActionId::SidebarHide:
-    case ActionId::SidebarShow:
-    case ActionId::SidebarToggle:
-      return true;
-    case ActionId::CloseActiveTab:
-      return !context_.current_project_state.open_tabs.empty();
-    case ActionId::CloseAllTabs:
-      return !context_.current_project_state.open_tabs.empty();
-    case ActionId::CloseOtherTabs:
-      return context_.current_project_state.open_tabs.size() > 1;
-    case ActionId::CloseTabsToRight:
-      return !context_.current_project_state.open_tabs.empty() && context_.current_project_state.active_tab_index + 1 < context_.current_project_state.open_tabs.size();
-    case ActionId::CloseTabsToLeft:
-      return !context_.current_project_state.open_tabs.empty() && context_.current_project_state.active_tab_index > 0;
-    case ActionId::CompareHead:
-    case ActionId::OpenSelectedTreeItem:
-    case ActionId::OpenSelectedTreeItemInNewTab:
-      return !context_.current_project_state.root.empty() &&
-             (context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
-                                                 : SelectedTreeTargetKind()) ==
-                 TreeContextTargetKind::File;
-    case ActionId::CreateDirectory:
-    case ActionId::CreateFile: {
-      if (context_.current_project_state.root.empty()) {
-        return false;
-      }
-      const TreeContextTargetKind target =
-          context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
-                                             : SelectedTreeTargetKind();
-      return target == TreeContextTargetKind::Directory || target == TreeContextTargetKind::Root ||
-             target == TreeContextTargetKind::Background;
-    }
-    case ActionId::DeletePath:
-    case ActionId::RenamePath: {
-      if (context_.current_project_state.root.empty()) {
-        return false;
-      }
-      const TreeContextTargetKind target =
-          context_.menu_state.tree_context_menu.open ? context_.menu_state.tree_context_menu.target
-                                             : SelectedTreeTargetKind();
-      return target == TreeContextTargetKind::File || target == TreeContextTargetKind::Directory;
-    }
-    case ActionId::Compare:
-    case ActionId::Find:
-    case ActionId::GitRefresh:
-    case ActionId::Merge:
-    case ActionId::Open:
-    case ActionId::ProjectClose:
-    case ActionId::ProjectSearch:
-    case ActionId::Tab:
-    case ActionId::Term:
-    case ActionId::Tree:
-    case ActionId::TreeRefresh:
-      return !context_.current_project_state.root.empty();
-    case ActionId::CopyLastTerminalCommand:
-      return ActiveTerminalTab() != nullptr && LastTerminalCommandText().has_value();
-    case ActionId::CopySelectionWithContext:
-      return ActiveEditableViewport() != nullptr && ActiveEditableViewport()->has_selection();
-    case ActionId::CopySelection:
-      return (ActiveEditableViewport() != nullptr && ActiveEditableViewport()->has_selection()) ||
-             (context_.current_project_state.surface.focus == FocusTarget::Panel && TerminalHasSelection());
-    case ActionId::CutSelection:
-    case ActionId::Redo:
-    case ActionId::SelectAll:
-    case ActionId::Undo:
-      return ActiveEditableViewport() != nullptr;
-    case ActionId::PasteClipboard:
-      return ActiveEditableViewport() != nullptr ||
-             (context_.current_project_state.surface.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr);
-    case ActionId::Goto:
-    case ActionId::Jump:
-    case ActionId::ReplaceInBuffer:
-    case ActionId::Reopen:
-    case ActionId::Search:
-    case ActionId::SplitFirst:
-    case ActionId::SplitLast:
-    case ActionId::SplitNext:
-    case ActionId::SplitPrev:
-    case ActionId::Unsplit:
-    case ActionId::Vsplit:
-      return ActiveTabIsEditor();
-    case ActionId::Save:
-      return ActiveTabIsEditor() || ActiveTabIsMerge() ||
-             (ActiveTabIsCompare() && ActiveCompareTab() != nullptr && ActiveCompareTab()->right_editable);
-    case ActionId::Focus:
-      return true;
-    case ActionId::IndentWidth:
-      return true;
-    case ActionId::CopyAbsolutePath:
-      return !ResolveTreeActionPath(ActionSource::ContextMenu).empty();
-    case ActionId::CopyRelativePath: {
-      const std::filesystem::path path = ResolveTreeActionPath(ActionSource::ContextMenu);
-      return !context_.current_project_state.root.empty() && !path.empty() && path != context_.current_project_state.root;
-    }
-    case ActionId::SidebarWidth:
-    case ActionId::SoftTabs:
-    case ActionId::TabSize:
-    case ActionId::UiScale:
-      return true;
-    case ActionId::ProjectNext:
-    case ActionId::ProjectPrev:
-      return !context_.current_project_state.root.empty() && context_.project_catalog.entries.size() > 1;
-    case ActionId::TabMove:
-    case ActionId::TabSwitch:
-      return !context_.current_project_state.root.empty() && !context_.current_project_state.open_tabs.empty();
-  }
-
-  return true;
+ActionAvailability WorkspaceShell::MakeActionAvailability() const {
+  return ActionAvailability(
+      context_,
+      ActionAvailability::Operations{
+          .selected_tree_target_kind = [this]() { return SelectedTreeTargetKind(); },
+          .resolve_tree_action_path =
+              [this](ActionSource source) { return ResolveTreeActionPath(source); },
+          .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
+          .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
+          .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },
+          .terminal_has_selection = [this]() { return TerminalHasSelection(); },
+          .active_tab_is_editor = [this]() { return ActiveTabIsEditor(); },
+          .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
+          .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },
+          .active_compare_tab = [this]() { return ActiveCompareTab(); },
+      });
 }
 
 std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {

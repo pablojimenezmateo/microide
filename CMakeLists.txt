@@ -150,6 +150,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
   src/workspace/WorkspaceActionCoordinator.cpp
+  src/workspace/WorkspaceActionAvailability.cpp
   src/workspace/WorkspaceActionContext.cpp
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
@@ -232,6 +233,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceProjectStateCoordinator.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
+  src/workspace/WorkspaceRootView.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellTerminal.cpp

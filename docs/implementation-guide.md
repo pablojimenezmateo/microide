@@ -113,7 +113,10 @@ longer keeps the old active-project reference-alias member block. Project catalo
 lifecycle, dirty-prompt, menu, command-prompt, diff-tab, compare-interaction, path-mutation,
 action-context, action dispatch, tab, key-input, text-input, and mouse coordination now bind
 through explicit context-or-state plus callback dependencies rather than taking `WorkspaceShell&`,
-and ordinary production friend-class access on the shell is gone. Plugin runtime, project,
+and ordinary production friend-class access on the shell is gone. Top-level action enablement now
+runs through `WorkspaceActionAvailability`, and the shell's `Render` or `RenderPrepared` entry
+points now delegate the ordered frame composition path to a minimal `WorkspaceRootView`. That view
+split is only the first render seam, not the final view-tree endpoint. Plugin runtime, project,
 terminal, compare, and rendering work should continue to move into narrower subsystems rather than
 accrete more logic in one file.
 

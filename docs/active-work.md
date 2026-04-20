@@ -218,9 +218,8 @@ Current state:
   `WorkspaceTextInputCoordinator` that depend on project or prompt or menu or text-input state
   plus explicit callbacks for action dispatch, menu transitions, command prompt, compare or merge
   editing, terminal I/O, and redraw behavior instead of `WorkspaceShell&`
-- `WorkspaceShell` still needs more dissolution work around render composition, action enablement,
-  and test seams; the current state should be treated as an intermediate shell-facade cleanup, not
-  the final endpoint
+- `WorkspaceShell` still needs more dissolution work around event orchestration and test seams; the
+  current state should be treated as an intermediate shell-facade cleanup, not the final endpoint
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
@@ -265,6 +264,12 @@ Current state:
   `WorkspaceShellRenderBottomPanel.cpp`, `WorkspaceShellRenderMenus.cpp`,
   `WorkspaceShellRenderPrompts.cpp`, and `WorkspaceShellRenderTextInput.cpp` units instead of one
   monolithic `WorkspaceShellRender.cpp`
+- top-level `ActionId` enablement now runs through a dedicated `WorkspaceActionAvailability`
+  helper backed by `WorkspaceContext` and read-only editor or compare or terminal callbacks instead
+  of `WorkspaceShell::IsActionEnabled`
+- `WorkspaceShell` render entry points now delegate the ordered frame composition path to a minimal
+  `WorkspaceRootView`, which is the first real host-owned view seam even though the broader
+  sidebar or editor-stack or overlay view tree and bootstrapper work are still open
 - repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
 
 Open work:
