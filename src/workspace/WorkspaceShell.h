@@ -41,6 +41,7 @@
 #include "workspace/WorkspacePromptState.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTerminalSelection.h"
+#include "workspace/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
 
@@ -161,6 +162,15 @@ class WorkspaceShell {
   bool WindowDragRegionContains(float x, float y) const;
   WindowAction ConsumeWindowAction();
 
+  struct VisiblePopupMenuItem {
+    std::size_t index = 0;
+    SDL_FRect rect{};
+    bool enabled = false;
+    bool checked = false;
+    bool hovered = false;
+    bool separator = false;
+  };
+
  private:
   using FocusTarget = workspace::FocusTarget;
   using OverlayMode = workspace::OverlayMode;
@@ -195,22 +205,9 @@ class WorkspaceShell {
   using DirtyPromptState = workspace::DirtyPromptState;
   using PromptSurfaceState = workspace::PromptSurfaceState;
   using PromptState = workspace::PromptState;
-
-  enum class TextInputSurface {
-    None,
-    Editor,
-    Command,
-    PromptInput,
-    FileFinder,
-    BufferSearch,
-    BufferReplaceSearch,
-    BufferReplaceReplace,
-    ProjectSearchOverlay,
-    CommitPicker,
-    SidebarSearchQuery,
-    SidebarSearchReplace,
-    Terminal,
-  };
+  using TextInputSurface = workspace::TextInputSurface;
+  using TextCompositionState = workspace::TextCompositionState;
+  using TextInputState = workspace::TextInputState;
 
   enum class CursorKind {
     Default,
@@ -297,6 +294,7 @@ class WorkspaceShell {
     std::size_t new_end = 0;
   };
 
+ public:
   struct BottomPanelLogLayout {
     SDL_FRect content_rect{};
     float text_x = 0.0f;
@@ -327,6 +325,7 @@ class WorkspaceShell {
     bool hovered = false;
   };
 
+ private:
   struct EditorPaneLayout {
     std::size_t leaf_id = 0;
     SDL_FRect rect{};
@@ -389,34 +388,12 @@ class WorkspaceShell {
     Unavailable,
   };
 
-  struct TextCompositionState {
-    TextInputSurface surface = TextInputSurface::None;
-    std::string text;
-    int start = -1;
-    int length = -1;
-  };
-
-  struct VisiblePopupMenuItem {
-    std::size_t index = 0;
-    SDL_FRect rect{};
-    bool enabled = false;
-    bool checked = false;
-    bool hovered = false;
-    bool separator = false;
-  };
-
   friend class WorkspaceActionContext;
-  friend class KeyInputCoordinator;
-  friend class TextInputCoordinator;
   friend class TabCoordinator;
-  friend class SidebarCoordinator;
-  friend class ChromeMouseCoordinator;
   friend class EditorMouseCoordinator;
   friend class CompareMouseCoordinator;
   friend class MergeMouseCoordinator;
   friend class TabMouseCoordinator;
-  friend class SidebarMouseCoordinator;
-  friend class PanelMouseCoordinator;
 
   static constexpr float kProjectSearchQueryTop = 38.0f;
   static constexpr float kProjectSearchReplaceTop = 54.0f;
@@ -476,6 +453,12 @@ class WorkspaceShell {
   PathMutationCoordinator MakePathMutationCoordinator();
   DiffTabCoordinator MakeDiffTabCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
+  SidebarCoordinator MakeSidebarCoordinator();
+  KeyInputCoordinator MakeKeyInputCoordinator();
+  TextInputCoordinator MakeTextInputCoordinator();
+  ChromeMouseCoordinator MakeChromeMouseCoordinator();
+  SidebarMouseCoordinator MakeSidebarMouseCoordinator();
+  PanelMouseCoordinator MakePanelMouseCoordinator();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
   void DestroyLifecycleCursors();
@@ -1163,8 +1146,9 @@ class WorkspaceShell {
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   WindowAction pending_window_action_ = WindowAction::None;
-  TextInputSurface active_text_input_surface_ = TextInputSurface::None;
-  TextCompositionState text_composition_;
+  TextInputState& text_input_state_ = context_.text_input;
+  TextInputSurface& active_text_input_surface_ = text_input_state_.active_surface;
+  TextCompositionState& text_composition_ = text_input_state_.composition;
   Uint64 caret_blink_epoch_ms_ = 0;
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;

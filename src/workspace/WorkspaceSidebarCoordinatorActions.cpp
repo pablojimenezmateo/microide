@@ -11,118 +11,117 @@
 namespace microide::workspace {
 
 void SidebarCoordinator::MoveGitSelection(int delta) {
-  if (shell_.git_sidebar_.entries.empty() || delta == 0) {
+  if (state_.sidebar.git.entries.empty() || delta == 0) {
     return;
   }
-  const int current = static_cast<int>(shell_.git_sidebar_.selected_index);
-  const int max_index = static_cast<int>(shell_.git_sidebar_.entries.size()) - 1;
-  shell_.git_sidebar_.selected_index =
+  const int current = static_cast<int>(state_.sidebar.git.selected_index);
+  const int max_index = static_cast<int>(state_.sidebar.git.entries.size()) - 1;
+  state_.sidebar.git.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealSelectedGitLine();
 }
 
 void SidebarCoordinator::MoveProblemsSelection(int delta) {
-  if (shell_.problems_sidebar_.entries.empty() || delta == 0) {
+  if (state_.sidebar.problems.entries.empty() || delta == 0) {
     return;
   }
-  const int current = static_cast<int>(shell_.problems_sidebar_.selected_index);
-  const int max_index = static_cast<int>(shell_.problems_sidebar_.entries.size()) - 1;
-  shell_.problems_sidebar_.selected_index =
+  const int current = static_cast<int>(state_.sidebar.problems.selected_index);
+  const int max_index = static_cast<int>(state_.sidebar.problems.entries.size()) - 1;
+  state_.sidebar.problems.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealSelectedProblemsLine();
 }
 
 void SidebarCoordinator::MovePluginSelection(int delta) {
-  if (shell_.plugin_sidebar_.items.empty() || delta == 0) {
+  if (state_.sidebar.plugin.items.empty() || delta == 0) {
     return;
   }
-  const int current = static_cast<int>(shell_.plugin_sidebar_.selected_index);
-  const int max_index = static_cast<int>(shell_.plugin_sidebar_.items.size()) - 1;
-  shell_.plugin_sidebar_.selected_index =
+  const int current = static_cast<int>(state_.sidebar.plugin.selected_index);
+  const int max_index = static_cast<int>(state_.sidebar.plugin.items.size()) - 1;
+  state_.sidebar.plugin.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   RevealSelectedPluginLine();
 }
 
 bool SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
-  if (entry_index >= shell_.git_sidebar_.entries.size()) {
+  if (entry_index >= state_.sidebar.git.entries.size()) {
     return false;
   }
-  const auto& entry = shell_.git_sidebar_.entries[entry_index];
+  const auto& entry = state_.sidebar.git.entries[entry_index];
   bool opened = false;
   if (entry.section == GitSidebarEntry::Section::Modified) {
     if (entry.conflicted) {
-      opened = shell_.OpenGitConflictMerge(entry.path);
+      opened = operations_.open_git_conflict_merge(entry.path);
     } else {
-      opened = shell_.OpenWorkingTreeComparison(entry.path, "HEAD", "HEAD");
+      opened = operations_.open_working_tree_comparison(entry.path, "HEAD", "HEAD");
     }
   } else {
-    if (shell_.git_sidebar_.base_ref.empty()) {
+    if (state_.sidebar.git.base_ref.empty()) {
       return false;
     }
-    opened = shell_.OpenBranchHeadComparison(
-        entry.path, shell_.git_sidebar_.base_ref,
-        shell_.git_sidebar_.base_label.empty() ? shell_.git_sidebar_.base_ref
-                                               : shell_.git_sidebar_.base_label,
+    opened = operations_.open_branch_head_comparison(
+        entry.path, state_.sidebar.git.base_ref,
+        state_.sidebar.git.base_label.empty() ? state_.sidebar.git.base_ref
+                                              : state_.sidebar.git.base_label,
         "HEAD", "HEAD");
   }
-  if (opened && shell_.sidebar_state_.visible &&
-      shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Git) {
-    shell_.RequestSidebarRedraw();
+  if (opened && state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+    operations_.request_sidebar_redraw();
   }
   return opened;
 }
 
 bool SidebarCoordinator::OpenProblemItem() {
-  if (shell_.problems_sidebar_.entries.empty() ||
-      shell_.problems_sidebar_.selected_index >= shell_.problems_sidebar_.entries.size()) {
+  if (state_.sidebar.problems.entries.empty() ||
+      state_.sidebar.problems.selected_index >= state_.sidebar.problems.entries.size()) {
     return false;
   }
-  const auto& entry = shell_.problems_sidebar_.entries[shell_.problems_sidebar_.selected_index];
+  const auto& entry = state_.sidebar.problems.entries[state_.sidebar.problems.selected_index];
   if (entry.diagnostic.path.empty()) {
     return false;
   }
-  shell_.OpenFile(entry.diagnostic.path);
-  if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+  operations_.open_file(entry.diagnostic.path);
+  if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
     viewport->MoveCursorTo(entry.diagnostic.range.start.line,
                            entry.diagnostic.range.start.column);
   }
-  if (shell_.sidebar_state_.temporary) {
-    shell_.RestorePreviousSidebar();
+  if (state_.sidebar.temporary) {
+    RestorePrevious();
   }
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+  state_.surface.focus = FocusTarget::Editor;
   return true;
 }
 
 bool SidebarCoordinator::OpenPluginItem() {
-  if (shell_.plugin_sidebar_.items.empty() ||
-      shell_.plugin_sidebar_.selected_index >= shell_.plugin_sidebar_.items.size()) {
+  if (state_.sidebar.plugin.items.empty() ||
+      state_.sidebar.plugin.selected_index >= state_.sidebar.plugin.items.size()) {
     return false;
   }
-  const auto& item = shell_.plugin_sidebar_.items[shell_.plugin_sidebar_.selected_index];
+  const auto& item = state_.sidebar.plugin.items[state_.sidebar.plugin.selected_index];
   std::string error_message;
-  const bool confirmed = shell_.plugin_runtime_.Host().ConfirmSidebarItem(
-      shell_.sidebar_state_.view_id, item, &error_message);
+  const bool confirmed =
+      plugin_runtime_.Host().ConfirmSidebarItem(state_.sidebar.view_id, item, &error_message);
   if (!confirmed && !error_message.empty()) {
-    shell_.plugin_sidebar_.error = std::move(error_message);
+    state_.sidebar.plugin.error = std::move(error_message);
   }
-  if (confirmed && shell_.sidebar_state_.temporary) {
-    shell_.RestorePreviousSidebar();
+  if (confirmed && state_.sidebar.temporary) {
+    RestorePrevious();
   }
   if (confirmed && !item.path.empty()) {
-    shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+    state_.surface.focus = FocusTarget::Editor;
   }
   return confirmed;
 }
 
 bool SidebarCoordinator::CanStageAllGitEntries() const {
-  return std::any_of(shell_.git_sidebar_.entries.begin(), shell_.git_sidebar_.entries.end(),
+  return std::any_of(state_.sidebar.git.entries.begin(), state_.sidebar.git.entries.end(),
                      [](const auto& entry) {
                        return entry.section == GitSidebarEntry::Section::Modified && !entry.staged;
                      });
 }
 
 bool SidebarCoordinator::CanDiscardAllGitEntries() const {
-  return std::any_of(shell_.git_sidebar_.entries.begin(), shell_.git_sidebar_.entries.end(),
+  return std::any_of(state_.sidebar.git.entries.begin(), state_.sidebar.git.entries.end(),
                      [](const auto& entry) {
                        return entry.section == GitSidebarEntry::Section::Modified;
                      });
@@ -133,8 +132,8 @@ bool SidebarCoordinator::StageAllGitEntries() {
     return false;
   }
   std::vector<std::filesystem::path> affected_paths;
-  affected_paths.reserve(shell_.git_sidebar_.entries.size());
-  for (const auto& entry : shell_.git_sidebar_.entries) {
+  affected_paths.reserve(state_.sidebar.git.entries.size());
+  for (const auto& entry : state_.sidebar.git.entries) {
     if (entry.section != GitSidebarEntry::Section::Modified || entry.staged) {
       continue;
     }
@@ -143,11 +142,11 @@ bool SidebarCoordinator::StageAllGitEntries() {
   std::sort(affected_paths.begin(), affected_paths.end());
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
-  if (!project::GitStageAll(shell_.project_root_)) {
+  if (!project::GitStageAll(project_root_)) {
     return false;
   }
   for (const auto& path : affected_paths) {
-    shell_.InvalidateEditorBlamePath(path);
+    operations_.invalidate_editor_blame_path(path);
   }
   RefreshProjectFiles();
   return true;
@@ -157,9 +156,8 @@ void SidebarCoordinator::OpenDiscardAllGitPrompt() {
   if (!CanDiscardAllGitEntries()) {
     return;
   }
-  shell_.OpenPromptSurface(WorkspaceShell::PromptSurfaceState::Action::DiscardGitChanges,
-                           WorkspaceShell::PromptSurfaceState::Kind::Confirm,
-                           shell_.project_root_);
+  operations_.open_prompt_surface(PromptSurfaceState::Action::DiscardGitChanges,
+                                  PromptSurfaceState::Kind::Confirm, project_root_, {});
 }
 
 bool SidebarCoordinator::DiscardAllGitEntries() {
@@ -168,13 +166,13 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
   }
 
   std::string blocking_label;
-  if (shell_.HasDirtyEditorTabsForPath(shell_.project_root_, &blocking_label)) {
+  if (operations_.has_dirty_editor_tabs_for_path(project_root_, &blocking_label)) {
     return false;
   }
 
   std::vector<std::filesystem::path> affected_paths;
-  affected_paths.reserve(shell_.git_sidebar_.entries.size());
-  for (const auto& entry : shell_.git_sidebar_.entries) {
+  affected_paths.reserve(state_.sidebar.git.entries.size());
+  for (const auto& entry : state_.sidebar.git.entries) {
     if (entry.section != GitSidebarEntry::Section::Modified) {
       continue;
     }
@@ -184,12 +182,12 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
 
-  if (!project::GitDiscardAll(shell_.project_root_)) {
+  if (!project::GitDiscardAll(project_root_)) {
     return false;
   }
 
   for (const auto& path : affected_paths) {
-    shell_.InvalidateEditorBlamePath(path);
+    operations_.invalidate_editor_blame_path(path);
     ReconcileOpenTabsAfterPathDiscard(path);
   }
   RefreshProjectFiles();
@@ -197,54 +195,54 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
 }
 
 bool SidebarCoordinator::StageGitEntry(std::size_t entry_index) {
-  if (entry_index >= shell_.git_sidebar_.entries.size()) {
+  if (entry_index >= state_.sidebar.git.entries.size()) {
     return false;
   }
-  const auto& entry = shell_.git_sidebar_.entries[entry_index];
+  const auto& entry = state_.sidebar.git.entries[entry_index];
   if (entry.section != GitSidebarEntry::Section::Modified || entry.staged) {
     return false;
   }
-  if (!project::GitStagePath(shell_.project_root_, entry.path)) {
+  if (!project::GitStagePath(project_root_, entry.path)) {
     return false;
   }
-  shell_.InvalidateEditorBlamePath(entry.path);
+  operations_.invalidate_editor_blame_path(entry.path);
   RefreshProjectFiles();
   return true;
 }
 
 bool SidebarCoordinator::UnstageGitEntry(std::size_t entry_index) {
-  if (entry_index >= shell_.git_sidebar_.entries.size()) {
+  if (entry_index >= state_.sidebar.git.entries.size()) {
     return false;
   }
-  const auto& entry = shell_.git_sidebar_.entries[entry_index];
+  const auto& entry = state_.sidebar.git.entries[entry_index];
   if (entry.section != GitSidebarEntry::Section::Modified || !entry.staged) {
     return false;
   }
-  if (!project::GitUnstagePath(shell_.project_root_, entry.path)) {
+  if (!project::GitUnstagePath(project_root_, entry.path)) {
     return false;
   }
-  shell_.InvalidateEditorBlamePath(entry.path);
+  operations_.invalidate_editor_blame_path(entry.path);
   RefreshProjectFiles();
   return true;
 }
 
 bool SidebarCoordinator::DiscardGitEntry(std::size_t entry_index) {
-  if (entry_index >= shell_.git_sidebar_.entries.size()) {
+  if (entry_index >= state_.sidebar.git.entries.size()) {
     return false;
   }
-  const auto& entry = shell_.git_sidebar_.entries[entry_index];
+  const auto& entry = state_.sidebar.git.entries[entry_index];
   if (entry.section != GitSidebarEntry::Section::Modified) {
     return false;
   }
 
   std::string blocking_label;
-  if (shell_.HasDirtyEditorTabsForPath(entry.path, &blocking_label)) {
+  if (operations_.has_dirty_editor_tabs_for_path(entry.path, &blocking_label)) {
     return false;
   }
-  if (!project::GitDiscardPath(shell_.project_root_, entry.path)) {
+  if (!project::GitDiscardPath(project_root_, entry.path)) {
     return false;
   }
-  shell_.InvalidateEditorBlamePath(entry.path);
+  operations_.invalidate_editor_blame_path(entry.path);
   ReconcileOpenTabsAfterPathDiscard(entry.path);
   RefreshProjectFiles();
   return true;
@@ -254,10 +252,10 @@ void SidebarCoordinator::ReconcileOpenTabsAfterPathDiscard(const std::filesystem
   const std::filesystem::path normalized_path = path.lexically_normal();
   std::error_code error;
   if (std::filesystem::exists(normalized_path, error) && !error) {
-    shell_.ReloadCleanEditorTabsForPath(normalized_path);
+    operations_.reload_clean_editor_tabs_for_path(normalized_path);
     return;
   }
-  shell_.CloseOpenTabsForPath(normalized_path);
+  operations_.close_open_tabs_for_path(normalized_path);
 }
 
 }  // namespace microide::workspace

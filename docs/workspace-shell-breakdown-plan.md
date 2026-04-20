@@ -41,17 +41,19 @@ Evidence from the current codebase:
   it through alias members such as `project_root_`, `directory_tree_`, `open_tabs_`, `surface_`,
   `sidebar_state_`, `overlay_state_`, `panel_state_`, `terminal_tabs_`, `diagnostics_store_`,
   `active_colorscheme_name_`, and `editor_preferences_`.
-- `WorkspaceShell` still declares 12 `friend class` relationships so coordinators can reach into
+- `WorkspaceShell` still declares 6 `friend class` relationships so coordinators can reach into
   private shell state directly.
-- `WorkspaceContext` now owns project catalog, active project, prompt, menu, and interaction
-  state, but most top-level coordinators still take `WorkspaceShell&` and therefore still depend
-  on the full shell rather than on narrow APIs. `WorkspaceProjectCatalogCoordinator`,
+- `WorkspaceContext` now owns project catalog, active project, prompt, menu, interaction, and
+  text-input state, but several top-level coordinators still take `WorkspaceShell&` and therefore
+  still depend on the full shell rather than on narrow APIs. `WorkspaceProjectCatalogCoordinator`,
   `WorkspacePersistenceCoordinator`, `WorkspaceLifecycleCoordinator`, and
   `WorkspaceDirtyPromptCoordinator` plus `WorkspaceMenuCoordinator` plus
   `WorkspaceCommandPromptCoordinator` plus `WorkspaceDiffTabCoordinator` plus
-  `WorkspaceCompareInteractionCoordinator` plus `WorkspacePathMutationCoordinator` are the first
-  exceptions: they now depend on `WorkspaceContext` plus explicit callbacks instead of
-  `WorkspaceShell&`.
+  `WorkspaceCompareInteractionCoordinator` plus `WorkspacePathMutationCoordinator` plus
+  `WorkspaceSidebarCoordinator` plus `WorkspaceKeyInputCoordinator` plus
+  `WorkspaceTextInputCoordinator` plus `WorkspaceChromeMouseCoordinator` plus
+  `WorkspaceSidebarMouseCoordinator` plus `WorkspacePanelMouseCoordinator` now depend on
+  explicit state plus callbacks instead of `WorkspaceShell&`.
 - `WorkspaceActionContext` is still a shell proxy. It exposes a cleaner file boundary than the old
   nested action coordinator, but it still mostly forwards into private shell state and shell
   helpers.
@@ -347,8 +349,11 @@ This work should land in coherent slices rather than one giant branch:
    `WorkspacePersistenceCoordinator`, `WorkspaceLifecycleCoordinator`, and
    `WorkspaceDirtyPromptCoordinator` plus `WorkspaceMenuCoordinator` plus
    `WorkspaceCommandPromptCoordinator` plus `WorkspaceDiffTabCoordinator` plus
-   `WorkspaceCompareInteractionCoordinator` plus `WorkspacePathMutationCoordinator` now consume
-   `WorkspaceContext` plus explicit callbacks instead of `WorkspaceShell&`.
+   `WorkspaceCompareInteractionCoordinator` plus `WorkspacePathMutationCoordinator` plus
+   `WorkspaceSidebarCoordinator` plus `WorkspaceKeyInputCoordinator` plus
+   `WorkspaceTextInputCoordinator` plus `WorkspaceChromeMouseCoordinator` plus
+   `WorkspaceSidebarMouseCoordinator` plus `WorkspacePanelMouseCoordinator` now consume
+   explicit state plus callbacks instead of `WorkspaceShell&`.
 4. Migrate action handling so new controllers stop needing shell reach-through.
 5. Migrate sidebar, tabs, prompts, and overlays onto explicit controller APIs.
 6. Extract the root view and top-level surface views.

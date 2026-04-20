@@ -47,7 +47,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
-  if (ChromeMouseCoordinator(*this).HandleMotion(event, layout)) {
+  if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -77,13 +77,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
 
     if (interaction_state_.drag_target == DragTarget::BottomPanelDivider) {
-      if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+      if (MakePanelMouseCoordinator().HandleDrag(event, drag_layout)) {
         RequestBottomPanelLayoutChangeRedraw(drag_layout);
         return true;
       }
     }
 
-    if (PanelMouseCoordinator(*this).HandleDrag(event, drag_layout)) {
+    if (MakePanelMouseCoordinator().HandleDrag(event, drag_layout)) {
       ensure_redraw([this]() { RequestBottomPanelRedraw(); });
       return true;
     }
@@ -94,7 +94,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
 
     if (interaction_state_.drag_target == DragTarget::SidebarScrollbar) {
-      const bool handled = SidebarMouseCoordinator(*this).HandleDrag(event, drag_layout);
+      const bool handled = MakeSidebarMouseCoordinator().HandleDrag(event, drag_layout);
       if (handled) {
         ensure_redraw([this]() { RequestSidebarRedraw(); });
       }
@@ -133,7 +133,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
-  if (PanelMouseCoordinator(*this).HandleMotion(event)) {
+  if (MakePanelMouseCoordinator().HandleMotion(event)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
@@ -220,7 +220,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   const WorkspaceLayout layout = *layout_state;
 
-  if (ChromeMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
+  if (MakeChromeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -230,12 +230,12 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (SidebarMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
+  if (MakeSidebarMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
     ensure_redraw([this]() { RequestSidebarRedraw(); });
     return true;
   }
 
-  if (PanelMouseCoordinator(*this).HandleWheel(event, layout, vertical_ticks)) {
+  if (MakePanelMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }

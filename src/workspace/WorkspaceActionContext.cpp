@@ -580,7 +580,7 @@ void WorkspaceActionContext::PasteClipboard() {
       clipboard_text.has_value()) {
     if (shell_.surface_.focus == WorkspaceShell::FocusTarget::Panel &&
         shell_.ActiveTerminalTab() != nullptr) {
-      TextInputCoordinator(shell_).PasteClipboardIntoTerminal();
+      shell_.MakeTextInputCoordinator().PasteClipboardIntoTerminal();
       return;
     }
     if (auto* viewport = shell_.ActiveEditableViewport(); viewport != nullptr) {

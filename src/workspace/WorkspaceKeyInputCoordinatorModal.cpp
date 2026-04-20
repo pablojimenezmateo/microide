@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -12,35 +11,35 @@ bool KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& even
   (void)modifiers;
   switch (event.key) {
     case SDLK_ESCAPE:
-      shell_.prompts_.dirty.selected_action = 2;
-      shell_.ConfirmDirtyPrompt();
+      prompts_.dirty.selected_action = 2;
+      operations_.confirm_dirty_prompt();
       return true;
     case SDLK_LEFT:
-      shell_.prompts_.dirty.selected_action = std::max(0, shell_.prompts_.dirty.selected_action - 1);
+      prompts_.dirty.selected_action = std::max(0, prompts_.dirty.selected_action - 1);
       return true;
     case SDLK_RIGHT:
     case SDLK_TAB:
-      shell_.prompts_.dirty.selected_action = std::min(2, shell_.prompts_.dirty.selected_action + 1);
+      prompts_.dirty.selected_action = std::min(2, prompts_.dirty.selected_action + 1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      shell_.ConfirmDirtyPrompt();
+      operations_.confirm_dirty_prompt();
       return true;
     default: {
-      const char input_character = shell_.KeycodeToAscii(event.key, SDL_GetModState());
+      const char input_character = operations_.keycode_to_ascii(event.key, SDL_GetModState());
       if (input_character == 's') {
-        shell_.prompts_.dirty.selected_action = 0;
-        shell_.ConfirmDirtyPrompt();
+        prompts_.dirty.selected_action = 0;
+        operations_.confirm_dirty_prompt();
         return true;
       }
       if (input_character == 'd') {
-        shell_.prompts_.dirty.selected_action = 1;
-        shell_.ConfirmDirtyPrompt();
+        prompts_.dirty.selected_action = 1;
+        operations_.confirm_dirty_prompt();
         return true;
       }
       if (input_character == 'c') {
-        shell_.prompts_.dirty.selected_action = 2;
-        shell_.ConfirmDirtyPrompt();
+        prompts_.dirty.selected_action = 2;
+        operations_.confirm_dirty_prompt();
         return true;
       }
       return true;
@@ -49,26 +48,23 @@ bool KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& even
 }
 
 bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event) {
-  auto menu = shell_.MakeMenuCoordinator();
   switch (event.key) {
     case SDLK_ESCAPE:
-      menu.CloseTreeContextMenu();
+      operations_.close_tree_context_menu();
       return true;
     case SDLK_DOWN:
-      shell_.menu_state_.tree_context_menu.active_item_index =
-          menu.NextEnabledTreeContextMenuItemIndex(
-              shell_.menu_state_.tree_context_menu.active_item_index, 1);
+      menu_state_.tree_context_menu.active_item_index = operations_.next_enabled_tree_context_menu_item_index(
+          menu_state_.tree_context_menu.active_item_index, 1);
       return true;
     case SDLK_UP:
-      shell_.menu_state_.tree_context_menu.active_item_index =
-          menu.NextEnabledTreeContextMenuItemIndex(
-              shell_.menu_state_.tree_context_menu.active_item_index, -1);
+      menu_state_.tree_context_menu.active_item_index = operations_.next_enabled_tree_context_menu_item_index(
+          menu_state_.tree_context_menu.active_item_index, -1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      if (shell_.menu_state_.tree_context_menu.active_item_index >= 0) {
-        return menu.ExecuteTreeContextMenuItem(
-            static_cast<std::size_t>(shell_.menu_state_.tree_context_menu.active_item_index));
+      if (menu_state_.tree_context_menu.active_item_index >= 0) {
+        return operations_.execute_tree_context_menu_item(
+            static_cast<std::size_t>(menu_state_.tree_context_menu.active_item_index));
       }
       return true;
     default:
@@ -78,27 +74,25 @@ bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& 
 
 bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
-  auto menu = shell_.MakeMenuCoordinator();
   switch (event.key) {
     case SDLK_ESCAPE:
-      menu.CloseMenuBar();
+      operations_.close_menu_bar();
       return true;
     case SDLK_LEFT:
-      return menu.SwitchMenuBarMenu(-1);
+      return operations_.switch_menu_bar_menu(-1);
     case SDLK_RIGHT:
-      return menu.SwitchMenuBarMenu(1);
+      return operations_.switch_menu_bar_menu(1);
     case SDLK_TAB:
-      return menu.SwitchMenuBarMenu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+      return operations_.switch_menu_bar_menu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
     case SDLK_DOWN:
-      return menu.MoveActiveMenuItem(1);
+      return operations_.move_active_menu_item(1);
     case SDLK_UP:
-      return menu.MoveActiveMenuItem(-1);
+      return operations_.move_active_menu_item(-1);
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      if (shell_.menu_state_.active_menu_item_index >= 0) {
-        return menu.ExecuteMenuItem(
-            shell_.menu_state_.active_menu_id,
-            static_cast<std::size_t>(shell_.menu_state_.active_menu_item_index));
+      if (menu_state_.active_menu_item_index >= 0) {
+        return operations_.execute_menu_item(menu_state_.active_menu_id,
+                                             static_cast<std::size_t>(menu_state_.active_menu_item_index));
       }
       return true;
     default:
@@ -107,18 +101,18 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
 }
 
 bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
-  if (shell_.prompts_.surface.kind == WorkspaceShell::PromptSurfaceState::Kind::TextInput) {
+  if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        shell_.DismissPromptSurface(true);
+        operations_.dismiss_prompt_surface(true);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        shell_.prompts_.surface.selected_button = 0;
-        shell_.ConfirmPromptSurface();
+        prompts_.surface.selected_button = 0;
+        operations_.confirm_prompt_surface();
         return true;
       case SDLK_BACKSPACE:
-        RemoveLastUtf8Codepoint(&shell_.prompts_.surface.input);
+        RemoveLastUtf8Codepoint(&prompts_.surface.input);
         return true;
       default:
         return true;
@@ -127,20 +121,18 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
 
   switch (event.key) {
     case SDLK_ESCAPE:
-      shell_.DismissPromptSurface(true);
+      operations_.dismiss_prompt_surface(true);
       return true;
     case SDLK_LEFT:
-      shell_.prompts_.surface.selected_button =
-          std::max(0, shell_.prompts_.surface.selected_button - 1);
+      prompts_.surface.selected_button = std::max(0, prompts_.surface.selected_button - 1);
       return true;
     case SDLK_RIGHT:
     case SDLK_TAB:
-      shell_.prompts_.surface.selected_button =
-          std::min(1, shell_.prompts_.surface.selected_button + 1);
+      prompts_.surface.selected_button = std::min(1, prompts_.surface.selected_button + 1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      shell_.ConfirmPromptSurface();
+      operations_.confirm_prompt_surface();
       return true;
     default:
       return true;

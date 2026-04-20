@@ -16,28 +16,28 @@ namespace microide::workspace {
 
 void SidebarCoordinator::RefreshGit() {
   const std::filesystem::path previous_path =
-      shell_.git_sidebar_.selected_index < shell_.git_sidebar_.entries.size()
-          ? shell_.git_sidebar_.entries[shell_.git_sidebar_.selected_index].path
+      state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
+          ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path
           : std::filesystem::path{};
   const GitSidebarEntry::Section previous_section =
-      shell_.git_sidebar_.selected_index < shell_.git_sidebar_.entries.size()
-          ? shell_.git_sidebar_.entries[shell_.git_sidebar_.selected_index].section
+      state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
+          ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].section
           : GitSidebarEntry::Section::Modified;
 
-  shell_.git_sidebar_.entries.clear();
-  shell_.git_sidebar_.base_ref.clear();
-  shell_.git_sidebar_.base_label.clear();
-  shell_.git_sidebar_.repo_available = false;
-  shell_.git_sidebar_.selected_index = 0;
-  if (shell_.project_root_.empty()) {
+  state_.sidebar.git.entries.clear();
+  state_.sidebar.git.base_ref.clear();
+  state_.sidebar.git.base_label.clear();
+  state_.sidebar.git.repo_available = false;
+  state_.sidebar.git.selected_index = 0;
+  if (project_root_.empty()) {
     return;
   }
 
-  const auto working_entries = project::CollectGitWorkingTreeEntries(shell_.project_root_);
+  const auto working_entries = project::CollectGitWorkingTreeEntries(project_root_);
   for (const auto& entry : working_entries) {
-    shell_.git_sidebar_.entries.push_back(GitSidebarEntry{
+    state_.sidebar.git.entries.push_back(GitSidebarEntry{
         .section = GitSidebarEntry::Section::Modified,
-        .path = (shell_.project_root_ / entry.relative_path).lexically_normal(),
+        .path = (project_root_ / entry.relative_path).lexically_normal(),
         .relative_path = entry.relative_path,
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
         .conflicted = entry.conflicted,
@@ -45,133 +45,124 @@ void SidebarCoordinator::RefreshGit() {
     });
   }
 
-  const auto base_ref = project::ResolveGitBaseReference(shell_.project_root_);
+  const auto base_ref = project::ResolveGitBaseReference(project_root_);
   if (base_ref.has_value()) {
-    shell_.git_sidebar_.repo_available = true;
-    shell_.git_sidebar_.base_ref = base_ref->ref;
-    shell_.git_sidebar_.base_label = base_ref->label;
+    state_.sidebar.git.repo_available = true;
+    state_.sidebar.git.base_ref = base_ref->ref;
+    state_.sidebar.git.base_label = base_ref->label;
     const auto outgoing_entries =
-        project::CollectGitBranchOutgoingFiles(shell_.project_root_, shell_.git_sidebar_.base_ref);
+        project::CollectGitBranchOutgoingFiles(project_root_, state_.sidebar.git.base_ref);
     for (const auto& entry : outgoing_entries) {
-      shell_.git_sidebar_.entries.push_back(GitSidebarEntry{
+      state_.sidebar.git.entries.push_back(GitSidebarEntry{
           .section = GitSidebarEntry::Section::Outgoing,
-          .path = (shell_.project_root_ / entry.relative_path).lexically_normal(),
+          .path = (project_root_ / entry.relative_path).lexically_normal(),
           .relative_path = entry.relative_path,
           .status = entry.status,
       });
     }
   } else {
-    shell_.git_sidebar_.repo_available = std::filesystem::exists(shell_.project_root_ / ".git");
+    state_.sidebar.git.repo_available = std::filesystem::exists(project_root_ / ".git");
   }
 
-  for (std::size_t i = 0; i < shell_.git_sidebar_.entries.size(); ++i) {
-    if (shell_.git_sidebar_.entries[i].path == previous_path &&
-        shell_.git_sidebar_.entries[i].section == previous_section) {
-      shell_.git_sidebar_.selected_index = i;
+  for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
+    if (state_.sidebar.git.entries[i].path == previous_path &&
+        state_.sidebar.git.entries[i].section == previous_section) {
+      state_.sidebar.git.selected_index = i;
       RevealSelectedGitLine();
-      if (shell_.sidebar_state_.visible &&
-          shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Git) {
-        shell_.RequestSidebarRedraw();
+      if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+        operations_.request_sidebar_redraw();
       }
       return;
     }
   }
 
   RevealSelectedGitLine();
-  if (shell_.sidebar_state_.visible &&
-      shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Git) {
-    shell_.RequestSidebarRedraw();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+    operations_.request_sidebar_redraw();
   }
 }
 
 bool SidebarCoordinator::RefreshProblems() {
   std::optional<editor::PublishedDiagnostic> previous_diagnostic;
-  if (shell_.problems_sidebar_.selected_index < shell_.problems_sidebar_.entries.size()) {
+  if (state_.sidebar.problems.selected_index < state_.sidebar.problems.entries.size()) {
     previous_diagnostic =
-        shell_.problems_sidebar_.entries[shell_.problems_sidebar_.selected_index].diagnostic;
+        state_.sidebar.problems.entries[state_.sidebar.problems.selected_index].diagnostic;
   }
 
-  shell_.problems_sidebar_.entries.clear();
-  shell_.problems_sidebar_.selected_index = 0;
-  for (const auto& diagnostic : shell_.diagnostics_store_.SnapshotAll()) {
+  state_.sidebar.problems.entries.clear();
+  state_.sidebar.problems.selected_index = 0;
+  for (const auto& diagnostic : state_.diagnostics_store.SnapshotAll()) {
     ProblemsSidebarEntry entry;
     const std::string collapsed_message = CollapseWhitespace(diagnostic.message);
     entry.diagnostic = diagnostic;
     entry.primary_label = collapsed_message.empty() ? "Diagnostic" : collapsed_message;
-    entry.detail_label =
-        RelativePathLabel(shell_.project_root_, diagnostic.path) + ":" +
-        std::to_string(diagnostic.range.start.line + 1) + ":" +
-        std::to_string(diagnostic.range.start.column + 1);
+    entry.detail_label = RelativePathLabel(project_root_, diagnostic.path) + ":" +
+                         std::to_string(diagnostic.range.start.line + 1) + ":" +
+                         std::to_string(diagnostic.range.start.column + 1);
     if (!diagnostic.owner.empty()) {
       entry.detail_label += " | " + diagnostic.owner;
     }
-    shell_.problems_sidebar_.entries.push_back(std::move(entry));
+    state_.sidebar.problems.entries.push_back(std::move(entry));
   }
 
   if (previous_diagnostic.has_value()) {
-    for (std::size_t i = 0; i < shell_.problems_sidebar_.entries.size(); ++i) {
-      if (shell_.problems_sidebar_.entries[i].diagnostic == *previous_diagnostic) {
-        shell_.problems_sidebar_.selected_index = i;
+    for (std::size_t i = 0; i < state_.sidebar.problems.entries.size(); ++i) {
+      if (state_.sidebar.problems.entries[i].diagnostic == *previous_diagnostic) {
+        state_.sidebar.problems.selected_index = i;
         break;
       }
     }
   }
 
   RevealSelectedProblemsLine();
-  if (shell_.sidebar_state_.visible &&
-      shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Problems) {
-    shell_.RequestSidebarRedraw();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Problems) {
+    operations_.request_sidebar_redraw();
   }
-  return !shell_.problems_sidebar_.entries.empty();
+  return !state_.sidebar.problems.entries.empty();
 }
 
 bool SidebarCoordinator::RefreshPlugin() {
-  shell_.plugin_sidebar_.items.clear();
-  shell_.plugin_sidebar_.error.clear();
-  shell_.plugin_sidebar_.selected_index = 0;
-  if (shell_.sidebar_state_.view_id.empty() ||
-      FindBuiltinSidebarView(shell_.sidebar_state_.view_id) != nullptr) {
+  state_.sidebar.plugin.items.clear();
+  state_.sidebar.plugin.error.clear();
+  state_.sidebar.plugin.selected_index = 0;
+  if (state_.sidebar.view_id.empty() || FindBuiltinSidebarView(state_.sidebar.view_id) != nullptr) {
     return false;
   }
-  if (shell_.plugin_runtime_.Host().FindSidebarProvider(shell_.sidebar_state_.view_id) ==
-      nullptr) {
-    shell_.sidebar_state_.view_id = "tree";
-    if (shell_.sidebar_state_.visible) {
-      shell_.RequestSidebarRedraw();
+  if (plugin_runtime_.Host().FindSidebarProvider(state_.sidebar.view_id) == nullptr) {
+    state_.sidebar.view_id = "tree";
+    if (state_.sidebar.visible) {
+      operations_.request_sidebar_redraw();
     }
     return false;
   }
 
   std::string error_message;
-  if (!shell_.plugin_runtime_.Host().SnapshotSidebar(shell_.sidebar_state_.view_id,
-                                                     &shell_.plugin_sidebar_.items,
-                                                     &error_message)) {
-    shell_.plugin_sidebar_.error = std::move(error_message);
-    if (shell_.sidebar_state_.visible &&
-        shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Plugin) {
-      shell_.RequestSidebarRedraw();
+  if (!plugin_runtime_.Host().SnapshotSidebar(state_.sidebar.view_id, &state_.sidebar.plugin.items,
+                                              &error_message)) {
+    state_.sidebar.plugin.error = std::move(error_message);
+    if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
+      operations_.request_sidebar_redraw();
     }
     return false;
   }
-  if (!shell_.plugin_sidebar_.items.empty()) {
-    shell_.plugin_sidebar_.selected_index = std::min(
-        shell_.plugin_sidebar_.selected_index, shell_.plugin_sidebar_.items.size() - 1);
+  if (!state_.sidebar.plugin.items.empty()) {
+    state_.sidebar.plugin.selected_index =
+        std::min(state_.sidebar.plugin.selected_index, state_.sidebar.plugin.items.size() - 1);
   }
   RevealSelectedPluginLine();
-  if (shell_.sidebar_state_.visible &&
-      shell_.ActiveSidebarMode() == WorkspaceShell::SidebarMode::Plugin) {
-    shell_.RequestSidebarRedraw();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
+    operations_.request_sidebar_redraw();
   }
   return true;
 }
 
 void SidebarCoordinator::RevealSelectedTreeLine() {
-  const auto& entries = shell_.directory_tree_.entries();
-  if (shell_.directory_tree_.selected_index() >= entries.size()) {
+  const auto& entries = state_.directory_tree.entries();
+  if (state_.directory_tree.selected_index() >= entries.size()) {
     return;
   }
 
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  const auto layout_state = operations_.current_workspace_layout();
   if (!layout_state.has_value()) {
     return;
   }
@@ -180,18 +171,18 @@ void SidebarCoordinator::RevealSelectedTreeLine() {
     return;
   }
 
-  const auto list_layout = shell_.ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-  shell_.sidebar_state_.scroll_row = RevealScrollableListIndex(
-      list_layout, static_cast<int>(shell_.directory_tree_.selected_index()));
+  const auto list_layout = operations_.compute_tree_sidebar_list_layout(layout.sidebar, entries.size());
+  state_.sidebar.scroll_row =
+      RevealScrollableListIndex(list_layout, static_cast<int>(state_.directory_tree.selected_index()));
 }
 
 void SidebarCoordinator::RevealSelectedGitLine() {
-  const auto selected_line = shell_.SelectedGitSidebarLineIndex();
+  const auto selected_line = operations_.selected_git_sidebar_line_index();
   if (!selected_line.has_value()) {
     return;
   }
 
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  const auto layout_state = operations_.current_workspace_layout();
   if (!layout_state.has_value()) {
     return;
   }
@@ -199,37 +190,17 @@ void SidebarCoordinator::RevealSelectedGitLine() {
   if (layout.sidebar.h <= 0.0f) {
     return;
   }
-  const auto lines = shell_.BuildGitSidebarLines();
-  const auto list_layout = shell_.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-  shell_.sidebar_state_.scroll_row =
-      RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
+  const auto lines = operations_.build_git_sidebar_lines();
+  const auto list_layout = operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
+  state_.sidebar.scroll_row = RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
 }
 
 void SidebarCoordinator::RevealSelectedProblemsLine() {
-  if (shell_.problems_sidebar_.entries.empty() ||
-      shell_.problems_sidebar_.selected_index >= shell_.problems_sidebar_.entries.size()) {
+  if (state_.sidebar.problems.entries.empty() ||
+      state_.sidebar.problems.selected_index >= state_.sidebar.problems.entries.size()) {
     return;
   }
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  if (layout.sidebar.h <= 0.0f) {
-    return;
-  }
-  const auto list_layout = shell_.ComputeProblemsSidebarListLayout(
-      layout.sidebar, shell_.problems_sidebar_.entries.size());
-  shell_.sidebar_state_.scroll_row = RevealScrollableListIndex(
-      list_layout, static_cast<int>(shell_.problems_sidebar_.selected_index));
-}
-
-void SidebarCoordinator::RevealSelectedPluginLine() {
-  if (shell_.plugin_sidebar_.items.empty() ||
-      shell_.plugin_sidebar_.selected_index >= shell_.plugin_sidebar_.items.size()) {
-    return;
-  }
-  const auto layout_state = shell_.CurrentWorkspaceLayout();
+  const auto layout_state = operations_.current_workspace_layout();
   if (!layout_state.has_value()) {
     return;
   }
@@ -238,9 +209,28 @@ void SidebarCoordinator::RevealSelectedPluginLine() {
     return;
   }
   const auto list_layout =
-      shell_.ComputePluginSidebarListLayout(layout.sidebar, shell_.plugin_sidebar_.items.size());
-  shell_.sidebar_state_.scroll_row = RevealScrollableListIndex(
-      list_layout, static_cast<int>(shell_.plugin_sidebar_.selected_index));
+      operations_.compute_problems_sidebar_list_layout(layout.sidebar, state_.sidebar.problems.entries.size());
+  state_.sidebar.scroll_row =
+      RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.problems.selected_index));
+}
+
+void SidebarCoordinator::RevealSelectedPluginLine() {
+  if (state_.sidebar.plugin.items.empty() ||
+      state_.sidebar.plugin.selected_index >= state_.sidebar.plugin.items.size()) {
+    return;
+  }
+  const auto layout_state = operations_.current_workspace_layout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
+  if (layout.sidebar.h <= 0.0f) {
+    return;
+  }
+  const auto list_layout =
+      operations_.compute_plugin_sidebar_list_layout(layout.sidebar, state_.sidebar.plugin.items.size());
+  state_.sidebar.scroll_row =
+      RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.plugin.selected_index));
 }
 
 }  // namespace microide::workspace

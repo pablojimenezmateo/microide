@@ -88,7 +88,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   interaction_state_.mouse_selecting = false;
 
-  if (ChromeMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+  if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -108,12 +108,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (PanelMouseCoordinator(*this).HandleResizeButtonDown(event, layout)) {
+  if (MakePanelMouseCoordinator().HandleResizeButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
-  if (SidebarMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+  if (MakeSidebarMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestSidebarRedraw(); });
     return true;
   }
@@ -123,7 +123,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (PanelMouseCoordinator(*this).HandleButtonDown(event, layout)) {
+  if (MakePanelMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
@@ -194,7 +194,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     return true;
   }
 
-  if (PanelMouseCoordinator(*this).HandleButtonUp(event)) {
+  if (MakePanelMouseCoordinator().HandleButtonUp(event)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }

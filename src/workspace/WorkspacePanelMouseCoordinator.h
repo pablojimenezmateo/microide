@@ -1,12 +1,49 @@
 #pragma once
 
+#include <functional>
+#include <optional>
+#include <vector>
+
+#include "workspace/WorkspaceInteractionState.h"
+#include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceMenuState.h"
+#include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
 class PanelMouseCoordinator {
  public:
-  explicit PanelMouseCoordinator(WorkspaceShell& shell);
+  struct Operations {
+    std::function<bool()> bottom_panel_visible;
+    std::function<SDL_FRect(const WorkspaceLayout&)> bottom_panel_resize_handle_rect;
+    std::function<WorkspaceShell::BottomPanelLogLayout(const WorkspaceLayout&, std::size_t)>
+        compute_bottom_panel_log_layout;
+    std::function<void(int, std::size_t, int)> set_bottom_panel_scroll_row;
+    std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
+    std::function<SDL_FRect(const WorkspaceLayout&, bool)> bottom_panel_content_rect;
+    std::function<std::optional<std::string>()> read_primary_selection_text;
+    std::function<void()> clear_terminal_selection;
+    std::function<void(std::string_view)> append_terminal_pending_input;
+    std::function<std::optional<std::string>(float, float)> terminal_url_at_point;
+    std::function<bool(std::string_view)> open_external_url;
+    std::function<std::optional<TerminalSelectionPosition>(int,
+                                                           int,
+                                                           const std::vector<terminal::TerminalLine>&,
+                                                           std::size_t)>
+        terminal_selection_position_for_point;
+    std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
+    std::function<std::optional<TerminalSelectionPosition>(int, int)> terminal_viewport_position_for_point;
+    std::function<terminal::TerminalSession::MouseButton(Uint8)> terminal_mouse_button_for_sdl;
+    std::function<std::optional<SDL_FRect>()> current_window_rect;
+    std::function<float(float, float)> clamp_bottom_panel_height;
+    std::function<void()> sync_primary_selection_with_terminal_selection;
+  };
+
+  PanelMouseCoordinator(ProjectWorkspaceState& state,
+                        MenuSurfaceState& menu_state,
+                        InteractionState& interaction_state,
+                        Operations operations);
 
   bool HandleResizeButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -20,7 +57,10 @@ class PanelMouseCoordinator {
  private:
   bool HandleMouseCaptureButton(const SDL_Event& event, bool pressed);
 
-  WorkspaceShell& shell_;
+  ProjectWorkspaceState& state_;
+  MenuSurfaceState& menu_state_;
+  InteractionState& interaction_state_;
+  Operations operations_;
 };
 
 }  // namespace microide::workspace

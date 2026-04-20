@@ -20,7 +20,7 @@ struct ScopeExit {
 }  // namespace
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
-  TextInputCoordinator text_input(*this);
+  auto text_input = MakeTextInputCoordinator();
   const ScopeExit sync_terminal_focus{[this]() { SyncTerminalFocusState(); }};
   const auto finish = [this](bool handled) {
     return EventResult{
@@ -86,7 +86,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       return finish(false);
   }
 
-  return finish(KeyInputCoordinator(*this).HandleKeyDown(event.key));
+  return finish(MakeKeyInputCoordinator().HandleKeyDown(event.key));
 }
 
 }  // namespace microide::workspace

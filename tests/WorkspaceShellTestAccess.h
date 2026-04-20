@@ -468,13 +468,13 @@ struct WorkspaceShellTestAccess {
                                     SDL_Keymod modifiers) {
     SDL_KeyboardEvent event{};
     event.key = key;
-    return TextInputCoordinator(shell).HandleTerminalKeyDown(event, modifiers);
+    return shell.MakeTextInputCoordinator().HandleTerminalKeyDown(event, modifiers);
   }
   static bool HandleTextInput(WorkspaceShell& shell, std::string_view text) {
     SDL_TextInputEvent event{};
     const std::string storage(text);
     event.text = storage.c_str();
-    return TextInputCoordinator(shell).HandleTextInput(event);
+    return shell.MakeTextInputCoordinator().HandleTextInput(event);
   }
   static bool HandleKeyEvent(WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
     SDL_Event event{};

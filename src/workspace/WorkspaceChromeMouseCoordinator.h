@@ -1,12 +1,67 @@
 #pragma once
 
+#include <functional>
+#include <optional>
+#include <span>
+#include <vector>
+
+#include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceMenuState.h"
+#include "workspace/WorkspaceProjectState.h"
+#include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
 class ChromeMouseCoordinator {
  public:
-  explicit ChromeMouseCoordinator(WorkspaceShell& shell);
+  struct Operations {
+    std::function<void()> close_menu_bar;
+    std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
+    std::function<SDL_FRect(const SDL_FRect&)> sidebar_mode_control_rect;
+    std::function<void()> request_chrome_redraw;
+    std::function<std::vector<WorkspaceShell::VisibleMenuBarItem>(const SDL_FRect&)>
+        compute_visible_menu_bar_items;
+    std::function<std::vector<WorkspaceShell::VisibleWindowControlButton>(const SDL_FRect&)>
+        compute_visible_window_control_buttons;
+    std::function<void(WorkspaceShell::WindowAction)> set_pending_window_action;
+    std::function<void()> request_quit;
+    std::function<void(MenuId)> open_menu_bar_menu;
+    std::function<std::optional<SDL_FRect>(const SDL_FRect&)> active_submenu_rect;
+    std::function<std::vector<WorkspaceShell::VisiblePopupMenuItem>(MenuId, const SDL_FRect&)>
+        compute_visible_popup_menu_items;
+    std::function<bool(MenuId, std::size_t)> execute_menu_item;
+    std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
+    std::function<const MenuSpec*(MenuId)> find_menu_spec;
+    std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
+    std::function<void(MenuId, const SDL_FRect&)> open_submenu;
+    std::function<void()> close_submenu;
+    std::function<void(int)> move_compare_picker_selection;
+    std::function<void(int)> move_buffer_search_selection;
+    std::function<void(int)> move_project_search_selection;
+    std::function<void(int)> move_file_finder_selection;
+    std::function<void()> request_overlay_redraw;
+    std::function<void(bool)> dismiss_overlay;
+    std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
+    std::function<void(const SDL_FRect&)> clamp_overlay_scroll_row;
+    std::function<ScrollableListLayout(const SDL_FRect&)> compute_overlay_list_layout;
+    std::function<std::size_t()> overlay_item_count;
+    std::function<void(std::size_t)> set_overlay_selected_index;
+    std::function<void(const SDL_FRect&)> reveal_overlay_selection;
+    std::function<void()> activate_overlay_selection;
+    std::function<std::optional<SDL_FRect>()> compute_tree_context_menu_rect;
+    std::function<std::vector<WorkspaceShell::VisiblePopupMenuItem>(TreeContextTargetKind,
+                                                                    int,
+                                                                    const SDL_FRect&)>
+        compute_visible_tree_context_menu_items;
+    std::function<bool(std::size_t)> execute_tree_context_menu_item;
+    std::function<void()> close_tree_context_menu;
+  };
+
+  ChromeMouseCoordinator(ProjectWorkspaceState& state,
+                         MenuSurfaceState& menu_state,
+                         InteractionState& interaction_state,
+                         Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleMotion(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -22,7 +77,10 @@ class ChromeMouseCoordinator {
   bool HandleTreeContextMenuButtonDown(const SDL_Event& event);
   bool HandleTreeContextMenuMotion(const SDL_Event& event);
 
-  WorkspaceShell& shell_;
+  ProjectWorkspaceState& state_;
+  MenuSurfaceState& menu_state_;
+  InteractionState& interaction_state_;
+  Operations operations_;
 };
 
 }  // namespace microide::workspace

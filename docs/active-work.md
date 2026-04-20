@@ -210,6 +210,17 @@ Current state:
   workspace prompt state plus project tab or diagnostics state and explicit callbacks for prompt
   dismissal, editor-tab helpers, compare or merge tab rebuilds, and redraw instead of
   `WorkspaceShell&`
+- sidebar mode, refresh, and git or problem or plugin entry actions now run through a
+  `WorkspaceSidebarCoordinator` that depends on project workspace state plus explicit callbacks
+  for project-open, search, compare, prompt, and redraw behavior instead of `WorkspaceShell&`
+- keydown and text-input routing now run through `WorkspaceKeyInputCoordinator` and
+  `WorkspaceTextInputCoordinator` that depend on project or prompt or menu or text-input state
+  plus explicit callbacks for action dispatch, menu transitions, command prompt, compare or merge
+  editing, terminal I/O, and redraw behavior instead of `WorkspaceShell&`
+- chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
+  `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
+  project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
+  terminal selection, tree context menus, and redraw behavior instead of `WorkspaceShell&`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic
@@ -218,6 +229,9 @@ Current state:
   models
 - native project-picker launch, pending-result, and callback bookkeeping now live in a dedicated
   `WorkspaceProjectDialogState` model instead of more flattened dialog state on `WorkspaceShell`
+- shell-global text-input surface and composition state now live in a dedicated
+  `WorkspaceTextInputState` on `WorkspaceContext`, so IME and typed-input routing no longer keep
+  that state flattened directly on `WorkspaceShell`
 - transient drag, mouse-selection, and window-focus interaction state now lives outside
   `ProjectSurfaceState`, so project switches clear in-flight gestures instead of leaking stale
   interaction state across projects

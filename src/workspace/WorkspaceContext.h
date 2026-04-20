@@ -6,6 +6,7 @@
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
+#include "workspace/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
 
@@ -15,6 +16,7 @@ struct WorkspaceContext {
   InteractionState interaction_state;
   MenuSurfaceState menu_state;
   PromptState prompts;
+  TextInputState text_input;
 
   WorkspaceContext() { RebindProjectState(current_project_state); }
 

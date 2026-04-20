@@ -106,7 +106,7 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
       ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_state_.visible,
                     BottomPanelVisible(), sidebar_state_.width, panel_state_.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
-  TextInputCoordinator(*this).SyncTextInputSurface(render_window);
+  MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
       NormalizeEditorSplitTree(*editor_tab);

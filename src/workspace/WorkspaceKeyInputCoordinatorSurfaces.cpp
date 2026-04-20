@@ -1,52 +1,52 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
-#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 
 bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
-  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::CommitPicker) {
+  if (state_.overlay.mode == OverlayMode::CommitPicker) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        shell_.DismissOverlay();
+        operations_.dismiss_overlay(false);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        return shell_.ActivateOverlaySelection();
+        operations_.activate_overlay_selection();
+        return true;
       case SDLK_UP:
-        shell_.MoveComparePickerSelection(-1);
+        operations_.move_compare_picker_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveComparePickerSelection(1);
+        operations_.move_compare_picker_selection(1);
         return true;
       case SDLK_HOME:
-        if (!shell_.overlay_workflow_.compare_picker.matches.empty()) {
-          shell_.overlay_workflow_.compare_picker.selected_index = 0;
-          if (const auto layout = shell_.CurrentWorkspaceLayout(); layout.has_value()) {
-            shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout->editor_area));
+        if (!state_.overlay.workflow.compare_picker.matches.empty()) {
+          state_.overlay.workflow.compare_picker.selected_index = 0;
+          if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
+            operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
           }
         }
         return true;
       case SDLK_END:
-        if (!shell_.overlay_workflow_.compare_picker.matches.empty()) {
-          shell_.overlay_workflow_.compare_picker.selected_index =
-              shell_.overlay_workflow_.compare_picker.matches.size() - 1;
-          if (const auto layout = shell_.CurrentWorkspaceLayout(); layout.has_value()) {
-            shell_.RevealOverlaySelection(shell_.ComputeOverlayRect(layout->editor_area));
+        if (!state_.overlay.workflow.compare_picker.matches.empty()) {
+          state_.overlay.workflow.compare_picker.selected_index =
+              state_.overlay.workflow.compare_picker.matches.size() - 1;
+          if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
+            operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
           }
         }
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveComparePickerSelection(-8);
+        operations_.move_compare_picker_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveComparePickerSelection(8);
+        operations_.move_compare_picker_selection(8);
         return true;
       case SDLK_BACKSPACE:
-        if (RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.compare_picker.query)) {
-          shell_.RefreshComparePicker();
+        if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.compare_picker.query)) {
+          operations_.refresh_compare_picker();
         }
         return true;
       default:
@@ -54,26 +54,27 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::BufferSearch) {
+  if (state_.overlay.mode == OverlayMode::BufferSearch) {
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        return shell_.ActivateOverlaySelection();
+        operations_.activate_overlay_selection();
+        return true;
       case SDLK_UP:
-        shell_.MoveBufferSearchSelection(-1);
+        operations_.move_buffer_search_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveBufferSearchSelection(1);
+        operations_.move_buffer_search_selection(1);
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveBufferSearchSelection(-8);
+        operations_.move_buffer_search_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveBufferSearchSelection(8);
+        operations_.move_buffer_search_selection(8);
         return true;
       case SDLK_BACKSPACE:
-        if (RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.buffer_search.query)) {
-          shell_.RefreshBufferSearch();
+        if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.buffer_search.query)) {
+          operations_.refresh_buffer_search();
         }
         return true;
       default:
@@ -81,47 +82,45 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::BufferReplace) {
+  if (state_.overlay.mode == OverlayMode::BufferReplace) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        shell_.overlay_state_.visible = false;
-        shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+        state_.overlay.visible = false;
+        state_.surface.focus = FocusTarget::Editor;
         return true;
       case SDLK_TAB:
-        shell_.overlay_state_.buffer_search_field =
-            shell_.overlay_state_.buffer_search_field ==
-                    WorkspaceShell::BufferSearchField::Search
-                ? WorkspaceShell::BufferSearchField::Replace
-                : WorkspaceShell::BufferSearchField::Search;
+        state_.overlay.buffer_search_field =
+            state_.overlay.buffer_search_field == BufferSearchField::Search
+                ? BufferSearchField::Replace
+                : BufferSearchField::Search;
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
         if (modifiers & SDL_KMOD_CTRL) {
-          shell_.ReplaceAllBufferSearchMatches();
+          operations_.replace_all_buffer_search_matches();
         } else {
-          shell_.ReplaceCurrentBufferSearchMatch();
+          operations_.replace_current_buffer_search_match();
         }
         return true;
       case SDLK_UP:
-        shell_.MoveBufferSearchSelection(-1);
+        operations_.move_buffer_search_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveBufferSearchSelection(1);
+        operations_.move_buffer_search_selection(1);
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveBufferSearchSelection(-8);
+        operations_.move_buffer_search_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveBufferSearchSelection(8);
+        operations_.move_buffer_search_selection(8);
         return true;
       case SDLK_BACKSPACE:
-        if (shell_.overlay_state_.buffer_search_field ==
-            WorkspaceShell::BufferSearchField::Search) {
-          if (RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.buffer_search.query)) {
-            shell_.RefreshBufferSearch();
+        if (state_.overlay.buffer_search_field == BufferSearchField::Search) {
+          if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.buffer_search.query)) {
+            operations_.refresh_buffer_search();
           }
         } else {
-          RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.buffer_search.replace_text);
+          RemoveLastUtf8Codepoint(&state_.overlay.workflow.buffer_search.replace_text);
         }
         return true;
       default:
@@ -129,30 +128,31 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  if (shell_.overlay_state_.mode == WorkspaceShell::OverlayMode::ProjectSearch) {
+  if (state_.overlay.mode == OverlayMode::ProjectSearch) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        shell_.overlay_state_.visible = false;
-        shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+        state_.overlay.visible = false;
+        state_.surface.focus = FocusTarget::Editor;
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        return shell_.ActivateOverlaySelection();
+        operations_.activate_overlay_selection();
+        return true;
       case SDLK_UP:
-        shell_.MoveProjectSearchSelection(-1);
+        operations_.move_project_search_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveProjectSearchSelection(1);
+        operations_.move_project_search_selection(1);
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveProjectSearchSelection(-8);
+        operations_.move_project_search_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveProjectSearchSelection(8);
+        operations_.move_project_search_selection(8);
         return true;
       case SDLK_BACKSPACE:
-        if (RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.project_search.query)) {
-          shell_.RefreshProjectSearch();
+        if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.project_search.query)) {
+          operations_.refresh_project_search();
         }
         return true;
       default:
@@ -163,22 +163,23 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   switch (event.key) {
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      return shell_.ActivateOverlaySelection();
+      operations_.activate_overlay_selection();
+      return true;
     case SDLK_UP:
-      shell_.MoveFileFinderSelection(-1);
+      operations_.move_file_finder_selection(-1);
       return true;
     case SDLK_DOWN:
-      shell_.MoveFileFinderSelection(1);
+      operations_.move_file_finder_selection(1);
       return true;
     case SDLK_PAGEUP:
-      shell_.MoveFileFinderSelection(-8);
+      operations_.move_file_finder_selection(-8);
       return true;
     case SDLK_PAGEDOWN:
-      shell_.MoveFileFinderSelection(8);
+      operations_.move_file_finder_selection(8);
       return true;
     case SDLK_BACKSPACE:
-      shell_.file_finder_.Backspace();
-      shell_.ResetOverlayScroll();
+      state_.file_finder.Backspace();
+      operations_.reset_overlay_scroll();
       return true;
     default:
       return false;
@@ -187,20 +188,20 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
-  const SidebarMode sidebar_mode = shell_.ActiveSidebarMode();
+  const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
   if (sidebar_mode == SidebarMode::Search) {
-    const char input_character = shell_.KeycodeToAscii(event.key, modifiers);
-    if (shell_.overlay_workflow_.project_search.editing) {
+    const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
+    if (state_.overlay.workflow.project_search.editing) {
       switch (event.key) {
         case SDLK_ESCAPE:
-          shell_.CancelProjectSearchEdit();
+          operations_.cancel_project_search_edit();
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
-          shell_.CommitProjectSearchEdit();
+          operations_.commit_project_search_edit();
           return true;
         case SDLK_BACKSPACE:
-          RemoveLastUtf8Codepoint(&shell_.overlay_workflow_.project_search.edit_buffer);
+          RemoveLastUtf8Codepoint(&state_.overlay.workflow.project_search.edit_buffer);
           return true;
         default:
           return false;
@@ -209,72 +210,73 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
 
     switch (event.key) {
       case SDLK_ESCAPE:
-        if (shell_.sidebar_state_.temporary) {
-          shell_.CloseSidebar();
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
           return true;
         }
         return false;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
-        if (!shell_.overlay_workflow_.project_search.results.empty() &&
-            shell_.overlay_workflow_.project_search.selected_index <
-                shell_.overlay_workflow_.project_search.results.size()) {
-          const auto& result = shell_.overlay_workflow_.project_search
-                                   .results[shell_.overlay_workflow_.project_search.selected_index];
-          shell_.OpenFile(shell_.project_root_ / result.relative_path);
-          if (editor::TextViewport* viewport = shell_.ActiveEditorViewport(); viewport != nullptr) {
+        if (!state_.overlay.workflow.project_search.results.empty() &&
+            state_.overlay.workflow.project_search.selected_index <
+                state_.overlay.workflow.project_search.results.size()) {
+          const auto& result =
+              state_.overlay.workflow.project_search.results[state_.overlay.workflow.project_search.selected_index];
+          operations_.open_file(state_.root / result.relative_path);
+          if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+              viewport != nullptr) {
             viewport->MoveCursorTo(result.line, result.column);
           }
-          if (shell_.sidebar_state_.temporary) {
-            shell_.RestorePreviousSidebar();
+          if (state_.sidebar.temporary) {
+            operations_.restore_previous_sidebar();
           }
-          shell_.surface_.focus = WorkspaceShell::FocusTarget::Editor;
+          state_.surface.focus = FocusTarget::Editor;
         }
         return true;
       case SDLK_UP:
-        shell_.MoveProjectSearchSelection(-1);
+        operations_.move_project_search_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveProjectSearchSelection(1);
+        operations_.move_project_search_selection(1);
         return true;
       case SDLK_HOME:
-        if (!shell_.overlay_workflow_.project_search.results.empty()) {
-          shell_.overlay_workflow_.project_search.selected_index = 0;
+        if (!state_.overlay.workflow.project_search.results.empty()) {
+          state_.overlay.workflow.project_search.selected_index = 0;
         }
         return true;
       case SDLK_END:
-        if (!shell_.overlay_workflow_.project_search.results.empty()) {
-          shell_.overlay_workflow_.project_search.selected_index =
-              shell_.overlay_workflow_.project_search.results.size() - 1;
+        if (!state_.overlay.workflow.project_search.results.empty()) {
+          state_.overlay.workflow.project_search.selected_index =
+              state_.overlay.workflow.project_search.results.size() - 1;
         }
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveProjectSearchSelection(-8);
+        operations_.move_project_search_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveProjectSearchSelection(8);
+        operations_.move_project_search_selection(8);
         return true;
       case SDLK_R:
         if (input_character == 'R') {
-          shell_.ReplaceAllProjectSearchMatches();
+          operations_.replace_all_project_search_matches();
         } else {
-          shell_.RefreshProjectSearch();
+          operations_.refresh_project_search();
         }
         return true;
       case SDLK_EQUALS:
-        shell_.BeginProjectSearchEdit(WorkspaceShell::ProjectSearchEditField::Replace);
+        operations_.begin_project_search_edit(ProjectSearchEditField::Replace);
         return true;
       case SDLK_SLASH:
-        shell_.BeginProjectSearchEdit(WorkspaceShell::ProjectSearchEditField::Query);
+        operations_.begin_project_search_edit(ProjectSearchEditField::Query);
         return true;
       default:
         if (event.key == SDLK_J && input_character == 'j') {
-          shell_.MoveProjectSearchSelection(1);
+          operations_.move_project_search_selection(1);
           return true;
         }
         if (event.key == SDLK_K && input_character == 'k') {
-          shell_.MoveProjectSearchSelection(-1);
+          operations_.move_project_search_selection(-1);
           return true;
         }
         return false;
@@ -284,44 +286,44 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   if (sidebar_mode == SidebarMode::Git) {
     switch (event.key) {
       case SDLK_UP:
-        shell_.MoveGitSidebarSelection(-1);
+        operations_.move_git_sidebar_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveGitSidebarSelection(1);
+        operations_.move_git_sidebar_selection(1);
         return true;
       case SDLK_HOME:
-        if (!shell_.git_sidebar_.entries.empty()) {
-          shell_.git_sidebar_.selected_index = 0;
-          shell_.RevealSelectedGitSidebarLine();
+        if (!state_.sidebar.git.entries.empty()) {
+          state_.sidebar.git.selected_index = 0;
+          operations_.reveal_selected_git_sidebar_line();
         }
         return true;
       case SDLK_END:
-        if (!shell_.git_sidebar_.entries.empty()) {
-          shell_.git_sidebar_.selected_index = shell_.git_sidebar_.entries.size() - 1;
-          shell_.RevealSelectedGitSidebarLine();
+        if (!state_.sidebar.git.entries.empty()) {
+          state_.sidebar.git.selected_index = state_.sidebar.git.entries.size() - 1;
+          operations_.reveal_selected_git_sidebar_line();
         }
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveGitSidebarSelection(-8);
+        operations_.move_git_sidebar_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveGitSidebarSelection(8);
+        operations_.move_git_sidebar_selection(8);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        return shell_.OpenGitSidebarEntry(shell_.git_sidebar_.selected_index);
+        return operations_.open_git_sidebar_entry(state_.sidebar.git.selected_index);
       case SDLK_R:
-        return ActionCoordinator(shell_).Execute(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+        return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
       default: {
-        const char input_character = shell_.KeycodeToAscii(event.key, modifiers);
+        const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
         if (input_character == 's') {
-          return shell_.StageGitSidebarEntry(shell_.git_sidebar_.selected_index);
+          return operations_.stage_git_sidebar_entry(state_.sidebar.git.selected_index);
         }
         if (input_character == 'u') {
-          return shell_.UnstageGitSidebarEntry(shell_.git_sidebar_.selected_index);
+          return operations_.unstage_git_sidebar_entry(state_.sidebar.git.selected_index);
         }
         if (input_character == 'x') {
-          return shell_.DiscardGitSidebarEntry(shell_.git_sidebar_.selected_index);
+          return operations_.discard_git_sidebar_entry(state_.sidebar.git.selected_index);
         }
         return false;
       }
@@ -331,42 +333,41 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   if (sidebar_mode == SidebarMode::Problems) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        if (shell_.sidebar_state_.temporary) {
-          shell_.CloseSidebar();
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
           return true;
         }
         return false;
       case SDLK_UP:
-        shell_.MoveProblemsSidebarSelection(-1);
+        operations_.move_problems_sidebar_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MoveProblemsSidebarSelection(1);
+        operations_.move_problems_sidebar_selection(1);
         return true;
       case SDLK_HOME:
-        if (!shell_.problems_sidebar_.entries.empty()) {
-          shell_.problems_sidebar_.selected_index = 0;
-          shell_.RevealSelectedProblemsSidebarLine();
+        if (!state_.sidebar.problems.entries.empty()) {
+          state_.sidebar.problems.selected_index = 0;
+          operations_.reveal_selected_problems_sidebar_line();
         }
         return true;
       case SDLK_END:
-        if (!shell_.problems_sidebar_.entries.empty()) {
-          shell_.problems_sidebar_.selected_index =
-              shell_.problems_sidebar_.entries.size() - 1;
-          shell_.RevealSelectedProblemsSidebarLine();
+        if (!state_.sidebar.problems.entries.empty()) {
+          state_.sidebar.problems.selected_index = state_.sidebar.problems.entries.size() - 1;
+          operations_.reveal_selected_problems_sidebar_line();
         }
         return true;
       case SDLK_PAGEUP:
-        shell_.MoveProblemsSidebarSelection(-8);
+        operations_.move_problems_sidebar_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MoveProblemsSidebarSelection(8);
+        operations_.move_problems_sidebar_selection(8);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
-        return shell_.OpenSelectedProblemSidebarItem();
+        return operations_.open_selected_problem_sidebar_item();
       case SDLK_R:
-        return shell_.RefreshProblemsSidebar();
+        return operations_.refresh_problems_sidebar();
       default:
         return false;
     }
@@ -375,41 +376,41 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   if (sidebar_mode == SidebarMode::Plugin) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        if (shell_.sidebar_state_.temporary) {
-          shell_.CloseSidebar();
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
           return true;
         }
         return false;
       case SDLK_UP:
-        shell_.MovePluginSidebarSelection(-1);
+        operations_.move_plugin_sidebar_selection(-1);
         return true;
       case SDLK_DOWN:
-        shell_.MovePluginSidebarSelection(1);
+        operations_.move_plugin_sidebar_selection(1);
         return true;
       case SDLK_HOME:
-        if (!shell_.plugin_sidebar_.items.empty()) {
-          shell_.plugin_sidebar_.selected_index = 0;
-          shell_.RevealSelectedPluginSidebarLine();
+        if (!state_.sidebar.plugin.items.empty()) {
+          state_.sidebar.plugin.selected_index = 0;
+          operations_.reveal_selected_plugin_sidebar_line();
         }
         return true;
       case SDLK_END:
-        if (!shell_.plugin_sidebar_.items.empty()) {
-          shell_.plugin_sidebar_.selected_index = shell_.plugin_sidebar_.items.size() - 1;
-          shell_.RevealSelectedPluginSidebarLine();
+        if (!state_.sidebar.plugin.items.empty()) {
+          state_.sidebar.plugin.selected_index = state_.sidebar.plugin.items.size() - 1;
+          operations_.reveal_selected_plugin_sidebar_line();
         }
         return true;
       case SDLK_PAGEUP:
-        shell_.MovePluginSidebarSelection(-8);
+        operations_.move_plugin_sidebar_selection(-8);
         return true;
       case SDLK_PAGEDOWN:
-        shell_.MovePluginSidebarSelection(8);
+        operations_.move_plugin_sidebar_selection(8);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
-        return shell_.OpenSelectedPluginSidebarItem();
+        return operations_.open_selected_plugin_sidebar_item();
       case SDLK_R:
-        return shell_.RefreshPluginSidebar();
+        return operations_.refresh_plugin_sidebar();
       default:
         return false;
     }
@@ -417,35 +418,35 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
 
   switch (event.key) {
     case SDLK_UP:
-      shell_.directory_tree_.MoveSelection(-1);
-      shell_.RevealSelectedTreeSidebarLine();
+      state_.directory_tree.MoveSelection(-1);
+      operations_.reveal_selected_tree_sidebar_line();
       return true;
     case SDLK_DOWN:
-      shell_.directory_tree_.MoveSelection(1);
-      shell_.RevealSelectedTreeSidebarLine();
+      state_.directory_tree.MoveSelection(1);
+      operations_.reveal_selected_tree_sidebar_line();
       return true;
     case SDLK_LEFT:
-      shell_.directory_tree_.CollapseSelection();
-      shell_.RevealSelectedTreeSidebarLine();
+      state_.directory_tree.CollapseSelection();
+      operations_.reveal_selected_tree_sidebar_line();
       return true;
     case SDLK_RIGHT:
-      shell_.directory_tree_.ExpandSelection();
-      shell_.RevealSelectedTreeSidebarLine();
+      state_.directory_tree.ExpandSelection();
+      operations_.reveal_selected_tree_sidebar_line();
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER: {
-      const auto opened = shell_.directory_tree_.ActivateSelection();
-      shell_.RevealSelectedTreeSidebarLine();
+      const auto opened = state_.directory_tree.ActivateSelection();
+      operations_.reveal_selected_tree_sidebar_line();
       if (opened.has_value()) {
-        shell_.OpenFile(*opened);
+        operations_.open_file(*opened);
       }
       return true;
     }
     case SDLK_R:
-      shell_.RefreshProjectFiles();
+      operations_.refresh_project_files();
       return true;
     case SDLK_D:
-      shell_.OpenComparePicker();
+      operations_.open_compare_picker();
       return true;
     default:
       return false;

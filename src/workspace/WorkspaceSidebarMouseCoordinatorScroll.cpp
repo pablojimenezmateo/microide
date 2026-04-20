@@ -9,44 +9,43 @@ namespace microide::workspace {
 
 bool SidebarMouseCoordinator::HandleDrag(const SDL_Event& event,
                                          const WorkspaceLayout& layout) {
-  if (shell_.interaction_state_.drag_target != WorkspaceShell::DragTarget::SidebarScrollbar ||
-      !shell_.sidebar_state_.visible) {
+  if (interaction_state_.drag_target != DragTarget::SidebarScrollbar || !state_.sidebar.visible) {
     return false;
   }
 
   const auto list_layout = CurrentListLayout(layout);
   if (!list_layout.scrollbar.has_value()) {
-    shell_.ClearDragState();
+    interaction_state_.drag_target = DragTarget::None;
     return false;
   }
 
-  shell_.sidebar_state_.scroll_row = std::clamp(
+  state_.sidebar.scroll_row = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
           *list_layout.scrollbar, static_cast<float>(event.motion.y),
-          shell_.interaction_state_.drag_scrollbar_offset))),
+          interaction_state_.drag_scrollbar_offset))),
       0, list_layout.max_scroll);
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
+  state_.surface.focus = FocusTarget::Sidebar;
   return true;
 }
 
 bool SidebarMouseCoordinator::HandleWheel(const SDL_Event& event,
                                           const WorkspaceLayout& layout,
                                           int vertical_ticks) {
-  if (!shell_.sidebar_state_.visible ||
+  if (!state_.sidebar.visible ||
       !Contains(layout.sidebar, event.wheel.mouse_x, event.wheel.mouse_y)) {
     return false;
   }
 
   const auto list_layout = CurrentListLayout(layout);
-  shell_.sidebar_state_.scroll_row =
-      std::clamp(shell_.sidebar_state_.scroll_row - vertical_ticks, 0, list_layout.max_scroll);
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
+  state_.sidebar.scroll_row =
+      std::clamp(state_.sidebar.scroll_row - vertical_ticks, 0, list_layout.max_scroll);
+  state_.surface.focus = FocusTarget::Sidebar;
   return true;
 }
 
 bool SidebarMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
                                                  const WorkspaceLayout& layout) {
-  if (!shell_.sidebar_state_.visible) {
+  if (!state_.sidebar.visible) {
     return false;
   }
 
@@ -56,40 +55,40 @@ bool SidebarMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
     return false;
   }
 
-  shell_.interaction_state_.drag_target = WorkspaceShell::DragTarget::SidebarScrollbar;
-  shell_.interaction_state_.drag_scrollbar_offset =
+  interaction_state_.drag_target = DragTarget::SidebarScrollbar;
+  interaction_state_.drag_scrollbar_offset =
       Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
           ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
           : list_layout.scrollbar->thumb.h * 0.5f;
-  shell_.sidebar_state_.scroll_row = std::clamp(
+  state_.sidebar.scroll_row = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(
           *list_layout.scrollbar, static_cast<float>(event.button.y),
-          shell_.interaction_state_.drag_scrollbar_offset))),
+          interaction_state_.drag_scrollbar_offset))),
       0, list_layout.max_scroll);
-  shell_.surface_.focus = WorkspaceShell::FocusTarget::Sidebar;
+  state_.surface.focus = FocusTarget::Sidebar;
   return true;
 }
 
 ScrollableListLayout SidebarMouseCoordinator::CurrentListLayout(const WorkspaceLayout& layout) const {
-  const SidebarMode sidebar_mode = shell_.ActiveSidebarMode();
+  const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
   if (sidebar_mode == SidebarMode::Search) {
-    const auto line_map = shell_.BuildProjectSearchLineMap();
-    return shell_.ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
+    const auto line_map = operations_.build_project_search_line_map();
+    return operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
   }
   if (sidebar_mode == SidebarMode::Git) {
-    const auto lines = shell_.BuildGitSidebarLines();
-    return shell_.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+    const auto lines = operations_.build_git_sidebar_lines();
+    return operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
   }
   if (sidebar_mode == SidebarMode::Problems) {
-    return shell_.ComputeProblemsSidebarListLayout(layout.sidebar,
-                                                   shell_.problems_sidebar_.entries.size());
+    return operations_.compute_problems_sidebar_list_layout(layout.sidebar,
+                                                            state_.sidebar.problems.entries.size());
   }
   if (sidebar_mode == SidebarMode::Plugin) {
-    return shell_.ComputePluginSidebarListLayout(layout.sidebar,
-                                                 shell_.plugin_sidebar_.items.size());
+    return operations_.compute_plugin_sidebar_list_layout(layout.sidebar,
+                                                          state_.sidebar.plugin.items.size());
   }
-  return shell_.ComputeTreeSidebarListLayout(layout.sidebar,
-                                             shell_.directory_tree_.entries().size());
+  return operations_.compute_tree_sidebar_list_layout(layout.sidebar,
+                                                      state_.directory_tree.entries().size());
 }
 
 }  // namespace microide::workspace

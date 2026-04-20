@@ -110,9 +110,11 @@ The codebase is organized by responsibility:
 dedicated `WorkspaceContext`, and project, tab, prompt, menu, and interaction models live in
 dedicated workspace headers instead of being defined inline on the shell. Project catalog,
 persistence, lifecycle, dirty-prompt, menu, command-prompt, diff-tab, compare-interaction, and
-path-mutation coordination now also bind through explicit context-plus-callback dependencies
-rather than taking `WorkspaceShell&`. Plugin runtime, project, terminal, compare, and rendering
-work should continue to move into narrower subsystems rather than accrete more logic in one file.
+path-mutation coordination plus sidebar, key-input, text-input, chrome-mouse, sidebar-mouse, and
+panel-mouse coordination now also bind through explicit context-or-state plus callback
+dependencies rather than taking `WorkspaceShell&`. Plugin runtime, project, terminal, compare,
+and rendering work should continue to move into narrower subsystems rather than accrete more
+logic in one file.
 
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed

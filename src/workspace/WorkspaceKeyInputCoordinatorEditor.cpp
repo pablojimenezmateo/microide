@@ -6,7 +6,7 @@ namespace microide::workspace {
 
 bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
-  WorkspaceShell::CompareTabState* compare_tab = shell_.ActiveCompareTab();
+  CompareTabState* compare_tab = operations_.active_compare_tab();
   if (compare_tab != nullptr && compare_tab->right_editable && compare_tab->right_view_active) {
     auto& viewport = compare_tab->right_viewport;
     const auto apply_compare_edit = [&](auto&& edit) {
@@ -14,49 +14,49 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       const std::size_t cursor_before_line = viewport.cursor_line();
       const std::vector<std::string> before_lines = viewport.lines();
       edit();
-      shell_.RefreshCompareTabDerivedState(*compare_tab);
-      shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport.lines());
+      operations_.refresh_compare_tab_derived_state(*compare_tab);
+      operations_.sync_compare_selection_from_viewport(*compare_tab, true);
+      operations_.reset_caret_blink();
+      operations_.request_active_editable_change_redraw(before_lines, viewport.lines());
       if (viewport.dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            viewport.cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                      viewport.cursor_line());
+        operations_.request_tab_strip_redraw();
       }
       return true;
     };
     const auto sync_compare_navigation = [&](std::size_t previous_selected_row) {
-      shell_.SyncCompareSelectionFromViewport(*compare_tab, true);
-      shell_.ResetCaretBlink();
+      operations_.sync_compare_selection_from_viewport(*compare_tab, true);
+      operations_.reset_caret_blink();
       if (compare_tab->selected_row != previous_selected_row) {
-        shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
-        shell_.RequestCompareRowRangeRedraw(compare_tab->selected_row,
-                                            compare_tab->selected_row + 1);
+        operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
+        operations_.request_compare_row_range_redraw(compare_tab->selected_row,
+                                                     compare_tab->selected_row + 1);
       } else {
-        shell_.RequestFocusedEditorRedraw();
+        operations_.request_focused_editor_redraw();
       }
       return true;
     };
 
     if ((modifiers & SDL_KMOD_ALT) != 0) {
       if (event.key == SDLK_LEFTBRACKET) {
-        shell_.JumpCompareHunk(-1);
+        operations_.jump_compare_hunk(-1);
         return true;
       }
       if (event.key == SDLK_RIGHTBRACKET) {
-        shell_.JumpCompareHunk(1);
+        operations_.jump_compare_hunk(1);
         return true;
       }
-      const char input_character = shell_.KeycodeToAscii(event.key, modifiers & ~SDL_KMOD_ALT);
+      const char input_character = operations_.keycode_to_ascii(event.key, modifiers & ~SDL_KMOD_ALT);
       if (input_character == 'o') {
-        shell_.OpenWorkingFileFromCompare();
+        operations_.open_working_file_from_compare();
         return true;
       }
     }
 
     switch (event.key) {
       case SDLK_ESCAPE:
-        shell_.RequestCloseTab(shell_.active_tab_index_);
+        operations_.request_close_active_tab();
         return true;
       case SDLK_TAB:
         return apply_compare_edit([&]() { viewport.InsertTab(); });
@@ -124,63 +124,63 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
 
   switch (event.key) {
     case SDLK_ESCAPE:
-      shell_.RequestCloseTab(shell_.active_tab_index_);
+      operations_.request_close_active_tab();
       return true;
     case SDLK_UP:
-      shell_.MoveCompareSelection(-1);
+      operations_.move_compare_selection(-1);
       return true;
     case SDLK_DOWN:
-      shell_.MoveCompareSelection(1);
+      operations_.move_compare_selection(1);
       return true;
     case SDLK_PAGEUP:
-      shell_.MoveCompareSelection(-20);
+      operations_.move_compare_selection(-20);
       return true;
     case SDLK_PAGEDOWN:
-      shell_.MoveCompareSelection(20);
+      operations_.move_compare_selection(20);
       return true;
     case SDLK_HOME:
-      if (auto* active_compare_tab = shell_.ActiveCompareTab(); active_compare_tab != nullptr) {
+      if (auto* active_compare_tab = operations_.active_compare_tab(); active_compare_tab != nullptr) {
         const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = 0;
-        shell_.RevealActiveCompareSelection();
-        shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
-        shell_.RequestCompareRowRangeRedraw(active_compare_tab->selected_row,
-                                            active_compare_tab->selected_row + 1);
+        operations_.reveal_active_compare_selection();
+        operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
+        operations_.request_compare_row_range_redraw(active_compare_tab->selected_row,
+                                                     active_compare_tab->selected_row + 1);
       }
       return true;
     case SDLK_END:
-      if (auto* active_compare_tab = shell_.ActiveCompareTab();
+      if (auto* active_compare_tab = operations_.active_compare_tab();
           active_compare_tab != nullptr && !active_compare_tab->model.rows.empty()) {
         const std::size_t previous_selected_row = active_compare_tab->selected_row;
         active_compare_tab->selected_row = active_compare_tab->model.rows.size() - 1;
-        shell_.RevealActiveCompareSelection();
-        shell_.RequestCompareRowRangeRedraw(previous_selected_row, previous_selected_row + 1);
-        shell_.RequestCompareRowRangeRedraw(active_compare_tab->selected_row,
-                                            active_compare_tab->selected_row + 1);
+        operations_.reveal_active_compare_selection();
+        operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
+        operations_.request_compare_row_range_redraw(active_compare_tab->selected_row,
+                                                     active_compare_tab->selected_row + 1);
       }
       return true;
     case SDLK_LEFTBRACKET:
-      shell_.JumpCompareHunk(-1);
+      operations_.jump_compare_hunk(-1);
       return true;
     case SDLK_RIGHTBRACKET:
-      shell_.JumpCompareHunk(1);
+      operations_.jump_compare_hunk(1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      shell_.OpenWorkingFileFromCompare();
+      operations_.open_working_file_from_compare();
       return true;
     default: {
-      const char input_character = shell_.KeycodeToAscii(event.key, modifiers);
+      const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
       if (input_character == 'j') {
-        shell_.MoveCompareSelection(1);
+        operations_.move_compare_selection(1);
         return true;
       }
       if (input_character == 'k') {
-        shell_.MoveCompareSelection(-1);
+        operations_.move_compare_selection(-1);
         return true;
       }
       if (input_character == 'o') {
-        shell_.OpenWorkingFileFromCompare();
+        operations_.open_working_file_from_compare();
         return true;
       }
       return false;
@@ -190,7 +190,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
                                              SDL_Keymod modifiers) {
-  WorkspaceShell::MergeTabState* merge_tab = shell_.ActiveMergeTab();
+  MergeTabState* merge_tab = operations_.active_merge_tab();
   if (merge_tab == nullptr) {
     return false;
   }
@@ -203,60 +203,60 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     const std::optional<editor::SelectionRange> selection_before = viewport.selection_range();
     const editor::TextPosition cursor_before{viewport.cursor_line(), viewport.cursor_column()};
     edit();
-    shell_.UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before,
-                                                cursor_before);
-    shell_.ResetCaretBlink();
-    shell_.RequestActiveEditableChangeRedraw(before_lines, viewport.lines());
+    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                          selection_before, cursor_before);
+    operations_.reset_caret_blink();
+    operations_.request_active_editable_change_redraw(before_lines, viewport.lines());
     if (viewport.dirty() != was_dirty) {
-      shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                          viewport.cursor_line());
-      shell_.RequestTabStripRedraw();
+      operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                    viewport.cursor_line());
+      operations_.request_tab_strip_redraw();
     }
     return true;
   };
   const auto sync_merge_navigation = [&]() {
     merge_tab->scroll_row = static_cast<int>(viewport.scroll_line());
     merge_tab->horizontal_scroll = viewport.horizontal_scroll();
-    shell_.ResetCaretBlink();
-    shell_.RequestFocusedEditorRedraw();
+    operations_.reset_caret_blink();
+    operations_.request_focused_editor_redraw();
     return true;
   };
 
   if ((modifiers & SDL_KMOD_ALT) != 0) {
-    const char input_character = shell_.KeycodeToAscii(event.key, modifiers & ~SDL_KMOD_ALT);
+    const char input_character = operations_.keycode_to_ascii(event.key, modifiers & ~SDL_KMOD_ALT);
     if (event.key == SDLK_LEFTBRACKET) {
-      shell_.MoveMergeSelection(-1);
+      operations_.move_merge_selection(-1);
       return true;
     }
     if (event.key == SDLK_RIGHTBRACKET) {
-      shell_.MoveMergeSelection(1);
+      operations_.move_merge_selection(1);
       return true;
     }
     if (input_character == 'i') {
-      shell_.ApplyMergeChoice(compare::MergeChoice::Incoming);
+      operations_.apply_merge_choice(compare::MergeChoice::Incoming);
       return true;
     }
     if (input_character == 'c') {
-      shell_.ApplyMergeChoice(compare::MergeChoice::Current);
+      operations_.apply_merge_choice(compare::MergeChoice::Current);
       return true;
     }
     if (input_character == 'b') {
-      shell_.ApplyMergeChoice(compare::MergeChoice::Base);
+      operations_.apply_merge_choice(compare::MergeChoice::Base);
       return true;
     }
     if (input_character == 'm') {
-      shell_.ApplyMergeChoice(compare::MergeChoice::Both);
+      operations_.apply_merge_choice(compare::MergeChoice::Both);
       return true;
     }
     if (input_character == 'o') {
-      shell_.OpenMergeResultFile();
+      operations_.open_merge_result_file();
       return true;
     }
   }
 
   switch (event.key) {
     case SDLK_ESCAPE:
-      shell_.RequestCloseTab(shell_.active_tab_index_);
+      operations_.request_close_active_tab();
       return true;
     case SDLK_TAB:
       return apply_merge_edit([&]() { viewport.InsertTab(); });
@@ -308,7 +308,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
                                                      SDL_Keymod modifiers) {
-  editor::TextViewport* viewport = shell_.ActiveEditorViewport();
+  editor::TextViewport* viewport = operations_.active_editor_viewport();
   if (viewport == nullptr) {
     return false;
   }
@@ -319,12 +319,12 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       const std::size_t cursor_before_line = viewport->cursor_line();
       const std::vector<std::string> before_lines = viewport->lines();
       viewport->InsertTab();
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
       return true;
     }
@@ -334,12 +334,12 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       const std::size_t cursor_before_line = viewport->cursor_line();
       const std::vector<std::string> before_lines = viewport->lines();
       viewport->InsertNewline();
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
       return true;
     }
@@ -348,12 +348,12 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       const std::size_t cursor_before_line = viewport->cursor_line();
       const std::vector<std::string> before_lines = viewport->lines();
       viewport->Backspace();
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
       return true;
     }
@@ -362,12 +362,12 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       const std::size_t cursor_before_line = viewport->cursor_line();
       const std::vector<std::string> before_lines = viewport->lines();
       viewport->DeleteForward();
-      shell_.ResetCaretBlink();
-      shell_.RequestActiveEditableChangeRedraw(before_lines, viewport->lines());
+      operations_.reset_caret_blink();
+      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
       if (viewport->dirty() != was_dirty) {
-        shell_.RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line,
-                                                            viewport->cursor_line());
-        shell_.RequestTabStripRedraw();
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                      viewport->cursor_line());
+        operations_.request_tab_strip_redraw();
       }
       return true;
     }
@@ -378,27 +378,27 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   switch (event.key) {
     case SDLK_UP:
       viewport->MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_DOWN:
       viewport->MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_LEFT:
       viewport->MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_RIGHT:
       viewport->MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_PAGEUP:
       viewport->Page(-1);
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_PAGEDOWN:
       viewport->Page(1);
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -406,7 +406,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       } else {
         viewport->MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
       }
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -416,7 +416,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       } else {
         viewport->MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
       }
-      shell_.ResetCaretBlink();
+      operations_.reset_caret_blink();
       return true;
     default:
       return false;
