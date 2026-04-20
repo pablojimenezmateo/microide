@@ -384,6 +384,7 @@ add_executable(microide_diff_bench
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
+  src/util/TextFileIO.cpp
   tools/CompareBench.cpp
 )
 

@@ -128,6 +128,8 @@ whether the backend is external or built in.
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
 - `docs/plugin-runtime-research.md`: plugin architecture notes and external references
+- `docs/workspace-shell-breakdown-plan.md`: plan to dissolve `WorkspaceShell` into narrower
+  context, service, controller, and view ownership
 - `docs/diff-editor-merge-rewrite-plan.md`: targeted diff and merge rewrite plan
 - `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
 - `docs/performance-findings.md`: shipped performance work worth preserving
