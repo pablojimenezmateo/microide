@@ -755,17 +755,30 @@ This phase unlocks the bulk of the practical non-AI plugin demand:
 
 ### Phase 4. Build SCM, review, and advanced provider surfaces
 
-Deliverables:
+Status: **Complete** — all core infrastructure is shipped.
 
-- SCM provider registry
-- blame and code annotation providers
-- virtual document support
-- inline diff comments and review threads
-- auth provider model
-- secret storage
+Shipped:
 
-This phase is the floor for strong GitLens-like and GitHub-review-like extensions without turning
-the editor into a browser host.
+- `WorkspaceScmRegistry` for source control provider registration
+- `WorkspaceAnnotationRegistry` for blame, decoration, and margin annotation providers
+- `WorkspaceVirtualDocument` for document generation and virtual views (diffs, merges, etc.)
+- `WorkspaceReviewComments` for inline code review comments and discussion threads
+- `WorkspaceAuthProvider` for authentication provider management and session tracking
+- `WorkspaceSecretStorage` for secure credential storage
+- four new PluginHost Lua APIs: scm, annotations, auth, plus host-managed virtual documents
+  and review comments
+
+This phase provides the foundation for strong GitLens-like and GitHub-review-like extensions
+without turning the editor into a browser host.
+
+Remaining wiring (post-Phase 4):
+
+- SCM sidebar UI and source control operations
+- Annotation gutter and margin rendering
+- Virtual document tab and editor support
+- Review comment inline display and threading
+- Authentication flow UI (login/logout/session management)
+- OS credential manager backend integration
 
 ### Phase 5. Build the AI platform
 

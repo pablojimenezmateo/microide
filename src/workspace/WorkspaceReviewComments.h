@@ -1,0 +1,72 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+namespace microide::workspace {
+
+// Review comment state.
+enum class ReviewCommentState {
+  Pending,
+  Active,
+  Resolved,
+};
+
+// Review comment: inline code review comment in diff view.
+struct ReviewComment {
+  std::string id;
+  std::string uri;      // diff or virtual document URI
+  int line = 0;         // line in diff
+  std::string author;   // user name
+  std::string body;     // comment text
+  ReviewCommentState state = ReviewCommentState::Pending;
+};
+
+// Review thread: a discussion thread on a code location.
+struct ReviewThread {
+  std::string id;
+  std::string uri;
+  int line = 0;
+  std::vector<ReviewComment> comments;
+  ReviewCommentState state = ReviewCommentState::Pending;
+};
+
+// Review comments registry: manages code review comments and threads.
+class ReviewCommentsRegistry {
+ public:
+  ReviewCommentsRegistry();
+  ~ReviewCommentsRegistry();
+
+  // Add a comment.
+  void AddComment(const ReviewComment& comment);
+
+  // Add a thread.
+  void AddThread(const ReviewThread& thread);
+
+  // Get comments for a document line.
+  std::vector<ReviewComment> GetComments(const std::string& uri, int line) const;
+
+  // Get threads for a document.
+  std::vector<ReviewThread> GetThreads(const std::string& uri) const;
+
+  // Update comment state.
+  void UpdateCommentState(const std::string& comment_id, ReviewCommentState state);
+
+  // Update thread state.
+  void UpdateThreadState(const std::string& thread_id, ReviewCommentState state);
+
+  // Remove comment.
+  void RemoveComment(const std::string& comment_id);
+
+  // Remove thread.
+  void RemoveThread(const std::string& thread_id);
+
+  // Clear all.
+  void Clear();
+
+ private:
+  std::vector<ReviewComment> comments_;
+  std::vector<ReviewThread> threads_;
+};
+
+}  // namespace microide::workspace

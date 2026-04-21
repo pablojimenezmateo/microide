@@ -144,6 +144,26 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  struct ContributedScmProvider {
+    std::string id;
+    std::string label;
+    std::string plugin_id;
+  };
+
+  struct ContributedAnnotationProvider {
+    std::string id;
+    std::string label;
+    std::string type;  // "blame", "decoration", "margin"
+    std::string language_id;
+    std::string plugin_id;
+  };
+
+  struct ContributedAuthProvider {
+    std::string id;
+    std::string label;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -205,6 +225,9 @@ class PluginHost {
   const std::vector<ContributedTool>& ContributedTools() const;
   const std::vector<ContributedDebugger>& ContributedDebuggers() const;
   const std::vector<ContributedTestProvider>& ContributedTestProviders() const;
+  const std::vector<ContributedScmProvider>& ContributedScmProviders() const;
+  const std::vector<ContributedAnnotationProvider>& ContributedAnnotationProviders() const;
+  const std::vector<ContributedAuthProvider>& ContributedAuthProviders() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

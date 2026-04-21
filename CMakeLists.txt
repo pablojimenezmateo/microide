@@ -257,6 +257,12 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceToolRegistry.cpp
   src/workspace/WorkspaceToolDownloader.cpp
   src/workspace/WorkspaceTestController.cpp
+  src/workspace/WorkspaceScmRegistry.cpp
+  src/workspace/WorkspaceAnnotationRegistry.cpp
+  src/workspace/WorkspaceVirtualDocument.cpp
+  src/workspace/WorkspaceReviewComments.cpp
+  src/workspace/WorkspaceAuthProvider.cpp
+  src/workspace/WorkspaceSecretStorage.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceViewTree.cpp

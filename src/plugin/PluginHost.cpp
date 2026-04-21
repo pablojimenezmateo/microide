@@ -153,6 +153,9 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedTool> tools;
   std::vector<PluginHost::ContributedDebugger> debuggers;
   std::vector<PluginHost::ContributedTestProvider> test_providers;
+  std::vector<PluginHost::ContributedScmProvider> scm_providers;
+  std::vector<PluginHost::ContributedAnnotationProvider> annotation_providers;
+  std::vector<PluginHost::ContributedAuthProvider> auth_providers;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -1346,6 +1349,75 @@ struct PluginHost::Impl {
     return 0;
   }
 
+  static int LuaScmProviderAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* id = luaL_checkstring(state, 1);
+    const char* label = luaL_checkstring(state, 2);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "scm provider registration requires an active plugin state");
+    }
+    host->scm_providers.push_back(PluginHost::ContributedScmProvider{
+        .id = plugin->id + "." + std::string(id),
+        .label = label,
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaAnnotationProviderAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "annotation provider registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto label_opt = read_string("label");
+    auto type_opt = read_string("type");
+    auto language_id_opt = read_string("language_id");
+    if (!id_opt || !label_opt || !type_opt || !language_id_opt) {
+      return luaL_error(state, "annotation provider requires id, label, type, and language_id");
+    }
+
+    host->annotation_providers.push_back(PluginHost::ContributedAnnotationProvider{
+        .id = plugin->id + "." + *id_opt,
+        .label = std::move(*label_opt),
+        .type = std::move(*type_opt),
+        .language_id = std::move(*language_id_opt),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaAuthProviderAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* id = luaL_checkstring(state, 1);
+    const char* label = luaL_checkstring(state, 2);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "auth provider registration requires an active plugin state");
+    }
+    host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
+        .id = plugin->id + "." + std::string(id),
+        .label = label,
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     if (host == nullptr || host->current_project_root.empty()) {
@@ -1919,6 +1991,24 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaTestProviderAdd, 1);
     lua_setfield(state, -2, "add");
     lua_setfield(state, -2, "tests");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaScmProviderAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "scm");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaAnnotationProviderAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "annotations");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaAuthProviderAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "auth");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -2370,6 +2460,24 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           test_providers.end());
+      scm_providers.erase(
+          std::remove_if(scm_providers.begin(), scm_providers.end(),
+                         [&](const PluginHost::ContributedScmProvider& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          scm_providers.end());
+      annotation_providers.erase(
+          std::remove_if(annotation_providers.begin(), annotation_providers.end(),
+                         [&](const PluginHost::ContributedAnnotationProvider& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          annotation_providers.end());
+      auth_providers.erase(
+          std::remove_if(auth_providers.begin(), auth_providers.end(),
+                         [&](const PluginHost::ContributedAuthProvider& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          auth_providers.end());
     }
   }
 
@@ -3031,6 +3139,21 @@ const std::vector<PluginHost::ContributedDebugger>& PluginHost::ContributedDebug
 const std::vector<PluginHost::ContributedTestProvider>& PluginHost::ContributedTestProviders()
     const {
   return impl_->test_providers;
+}
+
+const std::vector<PluginHost::ContributedScmProvider>& PluginHost::ContributedScmProviders()
+    const {
+  return impl_->scm_providers;
+}
+
+const std::vector<PluginHost::ContributedAnnotationProvider>&
+PluginHost::ContributedAnnotationProviders() const {
+  return impl_->annotation_providers;
+}
+
+const std::vector<PluginHost::ContributedAuthProvider>& PluginHost::ContributedAuthProviders()
+    const {
+  return impl_->auth_providers;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {

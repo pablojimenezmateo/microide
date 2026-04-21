@@ -362,6 +362,30 @@ Open work:
 - wire `WorkspaceDapManager` into a debugger session UI
 - validate real LSP and DAP server communication once wire-up is in place
 
+- Phase 4 SCM, review, and advanced provider surfaces now shipped:
+  - `workspace/WorkspaceScmRegistry.*` manages source control provider registrations
+  - `workspace/WorkspaceAnnotationRegistry.*` manages blame, decoration, and margin annotation
+    providers per language
+  - `workspace/WorkspaceVirtualDocument.*` provides virtual document support for diff views,
+    merge views, and generated content
+  - `workspace/WorkspaceReviewComments.*` manages inline code review comments and discussion
+    threads with state tracking
+  - `workspace/WorkspaceAuthProvider.*` manages authentication providers and active sessions
+  - `workspace/WorkspaceSecretStorage.*` provides secure credential storage (currently in-memory;
+    in production uses OS credential managers)
+  - `PluginHost` gains four new Lua tables: `ctx.scm` (add), `ctx.annotations` (add),
+    `ctx.auth` (add); virtual documents and review comments are host-managed
+
+Open work:
+
+- wire `WorkspaceScmRegistry` into a source control sidebar
+- wire `WorkspaceAnnotationRegistry` into the editor gutter and margin
+- wire `WorkspaceVirtualDocument` into tab and editor support
+- wire `WorkspaceReviewComments` into inline diff comment UI
+- implement `WorkspaceAuthProvider` session flows (login/logout UI)
+- implement OS credential manager backend for `WorkspaceSecretStorage`
+- validate GitLens-like and GitHub-review-like workflows once wiring is in place
+
 ### 2. Terminal Hardening
 
 Current state:
