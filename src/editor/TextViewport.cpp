@@ -143,6 +143,7 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_revision_ = 0;
   visible_line_cache_.clear();
+  visible_line_cache_order_.clear();
   ClampCursorColumn();
   ClampScrollState();
   EnsureCursorVisible();
@@ -411,25 +412,42 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   const std::vector<std::string> before_lines = document_->lines;
   const ViewState before_state = CaptureViewState();
   const std::string lowered_needle = ToLower(needle);
+  const std::string lowered_replacement = ToLower(replacement);
   std::size_t replacements = 0;
 
+  // Build the final document state in one pass per line, bypassing ApplyRangeEdit
+  // so that InvalidateDerivedCaches / RefreshEncoding are called once at the end
+  // rather than once per replacement.
+  std::string new_line;
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
-    std::string lowered_line = ToLower(document_->lines[line_index]);
+    std::string& current_line = document_->lines[line_index];
+    std::string lowered_line = ToLower(current_line);
     std::size_t offset = lowered_line.find(lowered_needle);
-    while (offset != std::string::npos) {
-      const SelectionRange range{
-          .start = TextPosition{line_index, offset},
-          .end = TextPosition{line_index, offset + needle.size()},
-      };
-      (void)ApplyRangeEdit(range, replacement, false);
-      ++replacements;
-      lowered_line = ToLower(document_->lines[line_index]);
-      offset = lowered_line.find(lowered_needle,
-                                 offset + replacement.size());
+    if (offset == std::string::npos) {
+      continue;
     }
+
+    new_line.clear();
+    new_line.reserve(current_line.size());
+    std::size_t copy_from = 0;
+    while (offset != std::string::npos) {
+      new_line.append(current_line, copy_from, offset - copy_from);
+      new_line.append(replacement);
+      copy_from = offset + needle.size();
+      ++replacements;
+      lowered_line.replace(offset, needle.size(), lowered_replacement);
+      offset = lowered_line.find(lowered_needle, offset + replacement.size());
+    }
+    new_line.append(current_line, copy_from);
+    current_line = std::move(new_line);
   }
 
   if (replacements > 0) {
+    document_->dirty = true;
+    document_->redo_stack.clear();
+    RefreshEncoding();
+    InvalidateLayoutCaches();
+    EnsureCursorVisible();
     PushHistoryEntry(BuildHistoryEntryForDocumentChange(
         before_lines, before_state, document_->lines, CaptureViewState()));
   }
@@ -472,36 +490,26 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
   ++visible_line_queries_;
   const std::size_t caret_column =
       line_index == cursor_line_ ? cursor_column_ : document_->lines[line_index].size();
-  const auto cached = std::find_if(
-      visible_line_cache_.begin(), visible_line_cache_.end(),
-      [&](const VisibleLineCacheEntry& entry) {
-        return entry.revision == document_->layout_revision && entry.line_index == line_index &&
-               entry.horizontal_scroll == horizontal_scroll_ &&
-               entry.visible_columns == visible_columns_ && entry.tab_size == tab_size_ &&
-               entry.caret_text_column == caret_column;
-      });
-  if (cached != visible_line_cache_.end()) {
-    ++visible_line_hits_;
-    return cached->layout;
-  }
-
-  LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[line_index], horizontal_scroll_,
-                                                   visible_columns_, caret_column, tab_size_);
-  visible_line_cache_.push_back(VisibleLineCacheEntry{
+  const VisibleLineCacheKey cache_key{
       .line_index = line_index,
       .horizontal_scroll = horizontal_scroll_,
       .visible_columns = visible_columns_,
       .tab_size = tab_size_,
       .caret_text_column = caret_column,
-      .revision = document_->layout_revision,
-      .layout = layout,
-  });
-  if (visible_line_cache_.size() > kVisibleLineCacheLimit) {
-    visible_line_cache_.erase(visible_line_cache_.begin(),
-                              visible_line_cache_.begin() +
-                                  static_cast<std::ptrdiff_t>(visible_line_cache_.size() -
-                                                              kVisibleLineCacheLimit));
+  };
+  if (const auto it = visible_line_cache_.find(cache_key); it != visible_line_cache_.end()) {
+    ++visible_line_hits_;
+    return it->second;
   }
+
+  LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[line_index], horizontal_scroll_,
+                                                   visible_columns_, caret_column, tab_size_);
+  if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
+    visible_line_cache_.erase(visible_line_cache_order_.front());
+    visible_line_cache_order_.pop_front();
+  }
+  visible_line_cache_.emplace(cache_key, layout);
+  visible_line_cache_order_.push_back(cache_key);
   return layout;
 }
 
@@ -526,13 +534,9 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     highlight_state_revision_ = document_->layout_revision;
   }
 
-  const auto cached = std::find_if(
-      highlight_cache_.begin(), highlight_cache_.end(), [&](const HighlightCacheEntry& entry) {
-        return entry.revision == document_->layout_revision && entry.line_index == line_index;
-      });
-  if (cached != highlight_cache_.end()) {
+  if (const auto it = highlight_cache_.find(line_index); it != highlight_cache_.end()) {
     ++highlight_hits_;
-    return cached->tokens;
+    return it->second;
   }
 
   const SyntaxState previous_state =
@@ -549,18 +553,13 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     highlight_state_computed_through_ = line_index;
   }
 
-  highlight_cache_.push_back(HighlightCacheEntry{
-      .line_index = line_index,
-      .revision = document_->layout_revision,
-      .tokens = highlighted.tokens,
-  });
-  if (highlight_cache_.size() > kHighlightCacheLimit) {
-    highlight_cache_.erase(highlight_cache_.begin(),
-                           highlight_cache_.begin() +
-                               static_cast<std::ptrdiff_t>(highlight_cache_.size() -
-                                                           kHighlightCacheLimit));
+  if (highlight_cache_.size() >= kHighlightCacheLimit) {
+    highlight_cache_.erase(highlight_cache_order_.front());
+    highlight_cache_order_.pop_front();
   }
-  return highlight_cache_.back().tokens;
+  auto [it, _] = highlight_cache_.emplace(line_index, highlighted.tokens);
+  highlight_cache_order_.push_back(line_index);
+  return it->second;
 }
 
 TextViewportCacheStats TextViewport::CacheStats() const {
@@ -716,7 +715,9 @@ void TextViewport::InvalidateDerivedCaches() {
   EnsureDocument();
   ++document_->layout_revision;
   visible_line_cache_.clear();
+  visible_line_cache_order_.clear();
   highlight_cache_.clear();
+  highlight_cache_order_.clear();
   initial_highlight_state_.reset();
   line_highlight_states_.clear();
   highlight_state_computed_through_.reset();
@@ -790,7 +791,7 @@ void TextViewport::PushHistoryEntry(HistoryEntry entry) {
   document_->redo_stack.clear();
   document_->undo_stack.push_back(std::move(entry));
   if (document_->undo_stack.size() > kMaxHistoryEntries) {
-    document_->undo_stack.erase(document_->undo_stack.begin());
+    document_->undo_stack.pop_front();
   }
 }
 

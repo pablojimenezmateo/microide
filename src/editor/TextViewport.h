@@ -1,10 +1,12 @@
 #pragma once
 
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "editor/SyntaxHighlighter.h"
@@ -144,8 +146,8 @@ class TextViewport {
   struct DocumentState {
     std::filesystem::path path;
     std::vector<std::string> lines;
-    std::vector<HistoryEntry> undo_stack;
-    std::vector<HistoryEntry> redo_stack;
+    std::deque<HistoryEntry> undo_stack;
+    std::deque<HistoryEntry> redo_stack;
     LineEnding line_ending = LineEnding::LF;
     bool mixed_line_endings = false;
     TextEncoding encoding = TextEncoding::ASCII;
@@ -161,20 +163,29 @@ class TextViewport {
     TextEncoding encoding = TextEncoding::ASCII;
   };
 
-  struct VisibleLineCacheEntry {
+  struct VisibleLineCacheKey {
     std::size_t line_index = 0;
     std::size_t horizontal_scroll = 0;
     std::size_t visible_columns = 0;
     std::size_t tab_size = 0;
     std::size_t caret_text_column = 0;
-    std::size_t revision = 0;
-    LayoutLine layout;
+
+    bool operator==(const VisibleLineCacheKey& o) const noexcept {
+      return line_index == o.line_index && horizontal_scroll == o.horizontal_scroll &&
+             visible_columns == o.visible_columns && tab_size == o.tab_size &&
+             caret_text_column == o.caret_text_column;
+    }
   };
 
-  struct HighlightCacheEntry {
-    std::size_t line_index = 0;
-    std::size_t revision = 0;
-    std::vector<SyntaxTokenKind> tokens;
+  struct VisibleLineCacheKeyHash {
+    std::size_t operator()(const VisibleLineCacheKey& k) const noexcept {
+      std::size_t h = k.line_index;
+      h ^= k.horizontal_scroll * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+      h ^= k.visible_columns * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+      h ^= k.tab_size * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+      h ^= k.caret_text_column * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+      return h;
+    }
   };
 
   void ResetState(std::vector<std::string> lines,
@@ -242,11 +253,14 @@ class TextViewport {
   bool soft_tabs_ = false;
   mutable std::optional<std::size_t> cached_max_visual_columns_;
   mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
-  mutable std::vector<std::size_t> cached_visual_line_columns_;
+  mutable std::deque<std::size_t> cached_visual_line_columns_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::size_t cached_max_visual_columns_revision_ = 0;
-  mutable std::vector<VisibleLineCacheEntry> visible_line_cache_;
-  mutable std::vector<HighlightCacheEntry> highlight_cache_;
+  mutable std::unordered_map<VisibleLineCacheKey, LayoutLine, VisibleLineCacheKeyHash>
+      visible_line_cache_;
+  mutable std::deque<VisibleLineCacheKey> visible_line_cache_order_;
+  mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
+  mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<SyntaxState> line_highlight_states_;
   mutable std::optional<std::size_t> highlight_state_computed_through_;

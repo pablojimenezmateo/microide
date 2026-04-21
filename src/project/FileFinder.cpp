@@ -26,6 +26,17 @@ bool RemoveLastUtf8Codepoint(std::string* text) {
 
 void FileFinder::SetIndex(const FileIndex* index) {
   index_ = index;
+  cached_entries_.clear();
+  if (index_ != nullptr) {
+    for (const auto& path : index_->files()) {
+      const std::string path_string = path.string();
+      cached_entries_.push_back(CachedFileEntry{
+          .path_string = path_string,
+          .lower_path = ToLower(path_string),
+          .lower_filename = ToLower(std::filesystem::path(path_string).filename().string()),
+      });
+    }
+  }
   results_.clear();
   selected_index_ = 0;
   if (index_ != nullptr && !query_.empty()) {
@@ -67,14 +78,14 @@ void FileFinder::Refresh() {
   }
 
   const std::string lower_query = ToLower(query_);
-  for (const auto& path : index_->files()) {
-    const std::string path_string = path.string();
-    const int score = RankMatch(path_string, lower_query);
+  const auto& files = index_->files();
+  for (std::size_t i = 0; i < cached_entries_.size() && i < files.size(); ++i) {
+    const int score = RankMatchCached(cached_entries_[i], lower_query);
     if (score == std::numeric_limits<int>::max()) {
       continue;
     }
     results_.push_back(FileFinderResult{
-        .relative_path = path,
+        .relative_path = files[i],
         .score = score,
     });
   }
@@ -137,16 +148,13 @@ int FileFinder::SubsequenceScore(const std::string& text, const std::string& que
   return total_gap + first_match;
 }
 
-int FileFinder::RankMatch(const std::string& path, const std::string& query) {
+int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string& query) {
   if (query.empty()) {
-    return static_cast<int>(path.size());
+    return static_cast<int>(entry.path_string.size());
   }
 
-  const std::string lower_path = ToLower(path);
-  const std::string file_name = ToLower(std::filesystem::path(path).filename().string());
-
-  const int path_score = SubsequenceScore(lower_path, query);
-  const int file_score = SubsequenceScore(file_name, query);
+  const int path_score = SubsequenceScore(entry.lower_path, query);
+  const int file_score = SubsequenceScore(entry.lower_filename, query);
   if (path_score == std::numeric_limits<int>::max() &&
       file_score == std::numeric_limits<int>::max()) {
     return std::numeric_limits<int>::max();
@@ -154,11 +162,11 @@ int FileFinder::RankMatch(const std::string& path, const std::string& query) {
 
   int score = path_score == std::numeric_limits<int>::max()
                   ? std::numeric_limits<int>::max() / 2
-                  : path_score * 3 + static_cast<int>(path.size());
+                  : path_score * 3 + static_cast<int>(entry.path_string.size());
 
   if (file_score != std::numeric_limits<int>::max()) {
-    score = std::min(score, file_score - 20 + static_cast<int>(file_name.size()));
-    if (file_name.rfind(query, 0) == 0) {
+    score = std::min(score, file_score - 20 + static_cast<int>(entry.lower_filename.size()));
+    if (entry.lower_filename.rfind(query, 0) == 0) {
       score -= 30;
     }
   }

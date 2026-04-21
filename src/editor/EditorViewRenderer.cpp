@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <string>
 
 #include "editor/DecoratedTextGridRenderer.h"
@@ -16,8 +17,9 @@ namespace {
 const DecoratedTextGridRenderer kDecoratedRowRenderer;
 
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
-  const std::string last_line_label = std::to_string(std::max<std::size_t>(1, line_count));
-  return std::max(48.0f, text_renderer.MeasureWidth(last_line_label) + 18.0f);
+  char buf[20];
+  const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
+  return std::max(48.0f, text_renderer.MeasureWidth(std::string_view{buf, end}) + 18.0f);
 }
 
 std::string ToLower(std::string_view text) {
@@ -285,8 +287,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t cursor_line = viewport.cursor_line();
   const auto selection = viewport.selection_range();
+  char line_number_buf[20];
   const std::string lowered_search_query = ToLower(search_query);
   std::size_t blame_index = 0;
+  std::string lowered_line_scratch;
 
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t line_index = scroll_line + row;
@@ -310,7 +314,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (!lowered_search_query.empty()) {
-      const std::string lowered_line = ToLower(lines[line_index]);
+      const std::string& src = lines[line_index];
+      lowered_line_scratch.resize(src.size());
+      std::transform(src.begin(), src.end(), lowered_line_scratch.begin(),
+                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      const std::string& lowered_line = lowered_line_scratch;
       std::size_t match_offset = lowered_line.find(lowered_search_query);
       while (match_offset != std::string::npos) {
         const std::size_t start_visual =
@@ -388,10 +396,14 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                  *severity);
     }
-    text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
-                               selected ? theme.current_line_number : theme.line_number,
-                               selected ? theme.row_highlight : theme.gutter_background,
-                               std::to_string(line_index + 1));
+    {
+      const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
+                                          line_index + 1);
+      text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
+                                 selected ? theme.current_line_number : theme.line_number,
+                                 selected ? theme.row_highlight : theme.gutter_background,
+                                 std::string_view{line_number_buf, end});
+    }
 
     if (draw_caret && selected && layout.caret_visible) {
       const float caret_x = metrics.text_x +

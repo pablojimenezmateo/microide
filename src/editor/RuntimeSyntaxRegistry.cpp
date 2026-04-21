@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -75,12 +74,13 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
     return std::nullopt;
   }
   if (skip != nullptr && skip->valid()) {
-    std::string masked(text);
+    thread_local std::string masked_buf;
+    masked_buf.assign(text);
     for (const MatchRange match : FindAllRegex(text, *skip)) {
-      std::fill(masked.begin() + static_cast<std::ptrdiff_t>(match.start),
-                masked.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
+      std::fill(masked_buf.begin() + static_cast<std::ptrdiff_t>(match.start),
+                masked_buf.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
     }
-    return FindFirstRegex(masked, pattern, nullptr);
+    return FindFirstRegex(masked_buf, pattern, nullptr);
   }
 
   auto match_data = pattern.CreateMatchData();
@@ -237,14 +237,21 @@ std::string JoinSyntaxPatterns(const std::vector<std::string>& patterns) {
     return {};
   }
 
-  std::ostringstream stream;
+  std::string result;
+  std::size_t total = 0;
+  for (const auto& p : patterns) {
+    total += p.size() + 4;  // "(?:" + p + ")" + "|"
+  }
+  result.reserve(total);
   for (std::size_t i = 0; i < patterns.size(); ++i) {
     if (i != 0) {
-      stream << "|";
+      result += '|';
     }
-    stream << "(?:" << patterns[i] << ")";
+    result += "(?:";
+    result += patterns[i];
+    result += ')';
   }
-  return stream.str();
+  return result;
 }
 
 bool ValidateCompiledRegex(const CompiledRegex& regex, std::vector<std::string>* errors) {

@@ -254,15 +254,15 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string>& de
     return lines;
   }();
 
-  std::vector<double> similarity(left_count * right_count, 0.0);
-  auto similarity_at = [&](std::size_t i, std::size_t j) -> double& {
-    return similarity[i * right_count + j];
-  };
-  for (std::size_t i = 0; i < left_count; ++i) {
-    for (std::size_t j = 0; j < right_count; ++j) {
-      similarity_at(i, j) = LineSimilarity(left_tokenized[i], right_tokenized[j]);
+  // Compute similarities lazily: -1 means "not yet computed".
+  std::vector<double> similarity(left_count * right_count, -1.0);
+  auto similarity_at = [&](std::size_t i, std::size_t j) -> double {
+    double& val = similarity[i * right_count + j];
+    if (val < 0.0) {
+      val = LineSimilarity(left_tokenized[i], right_tokenized[j]);
     }
-  }
+    return val;
+  };
 
   std::vector<double> dp((left_count + 1) * (right_count + 1), 0.0);
   std::vector<HunkAlignmentKind> choice((left_count + 1) * (right_count + 1),

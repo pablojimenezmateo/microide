@@ -58,12 +58,11 @@ std::size_t TextLayout::PreviousTextColumn(const std::string& line, std::size_t 
     return 0;
   }
 
-  std::size_t previous = 0;
-  for (std::size_t current = 0; current < clamped_column;) {
-    previous = current;
-    current += util::Utf8SequenceLength(line, current);
+  std::size_t pos = clamped_column - 1;
+  while (pos > 0 && (static_cast<unsigned char>(line[pos]) & 0xC0u) == 0x80u) {
+    --pos;
   }
-  return previous;
+  return pos;
 }
 
 std::size_t TextLayout::NextTextColumn(const std::string& line, std::size_t text_column) {

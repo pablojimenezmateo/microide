@@ -399,49 +399,49 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   entry.height = surface->h;
   SDL_DestroySurface(surface);
 
-  cache_order_.push_back(key);
-  entry.order = std::prev(cache_order_.end());
-  cache_.insert_or_assign(key, entry);
+  // insert_or_assign returns an iterator into the map; store a pointer to the
+  // key stored inside the map node (stable until the node is erased).
+  auto [map_it, _] = cache_.insert_or_assign(key, std::move(entry));
+  cache_order_.push_back(&map_it->first);
+  map_it->second.order = std::prev(cache_order_.end());
+
   while (cache_order_.size() > kMaxCacheEntries) {
-    const std::string old_key = cache_order_.front();
-    auto it = cache_.find(old_key);
-    if (it != cache_.end()) {
-      if (it->second.texture != nullptr) {
-        SDL_DestroyTexture(it->second.texture);
-      }
-      cache_.erase(it);
-    }
+    auto evict_it = cache_.find(*cache_order_.front());
     cache_order_.pop_front();
+    if (evict_it != cache_.end()) {
+      if (evict_it->second.texture != nullptr) {
+        SDL_DestroyTexture(evict_it->second.texture);
+      }
+      cache_.erase(evict_it);
+    }
   }
 
-  auto it = cache_.find(key);
-  return it == cache_.end() ? nullptr : &it->second;
+  return &map_it->second;
 }
 
 std::string SdlTtfTextBackend::BuildCacheKey(std::string_view text,
                                              SDL_Color color,
                                              const SDL_Color* background) const {
-  std::string key(text);
+  // Pack the color components as raw bytes after a '\n' separator.
+  // Rendered token text never contains newlines, so '\n' is unambiguous.
+  // Raw-byte packing avoids 8 std::to_string calls and the resulting temporaries.
+  std::string key;
+  key.reserve(text.size() + 10);
+  key.append(text);
   key.push_back('\n');
-  key += std::to_string(color.r);
-  key.push_back(',');
-  key += std::to_string(color.g);
-  key.push_back(',');
-  key += std::to_string(color.b);
-  key.push_back(',');
-  key += std::to_string(color.a);
-  key.push_back('\n');
+  key.push_back(static_cast<char>(color.r));
+  key.push_back(static_cast<char>(color.g));
+  key.push_back(static_cast<char>(color.b));
+  key.push_back(static_cast<char>(color.a));
   if (background == nullptr) {
-    key += "none";
-    return key;
+    key.push_back('\x00');
+  } else {
+    key.push_back('\x01');
+    key.push_back(static_cast<char>(background->r));
+    key.push_back(static_cast<char>(background->g));
+    key.push_back(static_cast<char>(background->b));
+    key.push_back(static_cast<char>(background->a));
   }
-  key += std::to_string(background->r);
-  key.push_back(',');
-  key += std::to_string(background->g);
-  key.push_back(',');
-  key += std::to_string(background->b);
-  key.push_back(',');
-  key += std::to_string(background->a);
   return key;
 }
 

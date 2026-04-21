@@ -45,30 +45,6 @@ std::string ToLowerAscii(std::string_view text) {
   return lowered;
 }
 
-char LowerAsciiChar(char value) {
-  return static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
-}
-
-std::size_t FindCaseInsensitiveAscii(std::string_view haystack,
-                                     std::string_view needle,
-                                     std::size_t offset) {
-  if (needle.empty() || offset > haystack.size() || needle.size() > haystack.size() - offset) {
-    return std::string_view::npos;
-  }
-
-  const std::size_t limit = haystack.size() - needle.size();
-  for (std::size_t start = offset; start <= limit; ++start) {
-    std::size_t index = 0;
-    while (index < needle.size() &&
-           LowerAsciiChar(haystack[start + index]) == LowerAsciiChar(needle[index])) {
-      ++index;
-    }
-    if (index == needle.size()) {
-      return start;
-    }
-  }
-  return std::string_view::npos;
-}
 
 bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::string_view line,
@@ -122,7 +98,14 @@ class PreparedLiteralQuery {
   bool valid() const { return error_.empty(); }
   const std::string& error() const { return error_; }
 
+  bool case_sensitive() const { return case_sensitive_; }
+
+  std::string LowerLine(std::string_view line) const {
+    return case_sensitive_ ? std::string{} : ToLowerAscii(line);
+  }
+
   bool FindNext(std::string_view line,
+                const std::string& lowered_line,
                 std::size_t* search_from,
                 std::size_t* match_start,
                 std::size_t* match_end) const {
@@ -142,8 +125,8 @@ class PreparedLiteralQuery {
       return true;
     }
 
-    const std::size_t position = FindCaseInsensitiveAscii(line, lowered_query_, *search_from);
-    if (position == std::string_view::npos) {
+    const std::size_t position = lowered_line.find(lowered_query_, *search_from);
+    if (position == std::string::npos) {
       return false;
     }
     *match_start = position;
@@ -302,6 +285,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     file.seekg(0, std::ios::beg);
 
     std::string line;
+    std::string lowered_line;
     std::size_t line_index = 0;
     while (!token.IsCancellationRequested() && std::getline(file, line)) {
       if (!line.empty() && line.back() == '\r') {
@@ -311,6 +295,10 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
         break;
       }
 
+      if (literal_query != nullptr) {
+        lowered_line = literal_query->LowerLine(line);
+      }
+
       std::size_t search_from = 0;
       std::size_t match_start = 0;
       std::size_t match_end = 0;
@@ -318,7 +306,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
               FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data, &match_start,
                                  &match_end)) ||
              (literal_query != nullptr &&
-              literal_query->FindNext(line, &search_from, &match_start, &match_end))) {
+              literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
         batch.push_back(ProjectSearchResult{
             .relative_path = relative_path,
             .line = line_index,

@@ -44,7 +44,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     SDL_Texture* texture = nullptr;
     int width = 0;
     int height = 0;
-    std::list<std::string>::iterator order;
+    std::list<const std::string*>::iterator order;
   };
 
   SdlTtfTextBackend() = default;
@@ -76,7 +76,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
   std::unordered_map<std::string, CacheEntry> cache_;
-  std::list<std::string> cache_order_;
+  std::list<const std::string*> cache_order_;
 };
 
 }  // namespace microide::render

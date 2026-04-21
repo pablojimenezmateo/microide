@@ -693,11 +693,19 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
 
   const std::size_t clamped_active = std::min(active_index, widths.size() - 1);
   const std::size_t clamped_first = std::min(current_first_index, widths.size() - 1);
-  const auto visible = ComputeVisibleStripLayouts(widths, start_x, gap, max_x, clamped_first);
-  if (std::any_of(visible.begin(), visible.end(), [&](const StripSlotLayout& slot) {
-        return slot.index == clamped_active;
-      })) {
-    return clamped_first;
+
+  // Check visibility inline without allocating a StripSlotLayout vector.
+  {
+    float x = start_x;
+    for (std::size_t i = clamped_first; i < widths.size(); ++i) {
+      if (x + widths[i] > max_x) {
+        break;
+      }
+      if (i == clamped_active) {
+        return clamped_first;
+      }
+      x += widths[i] + gap;
+    }
   }
 
   float used_width = widths[clamped_active];
