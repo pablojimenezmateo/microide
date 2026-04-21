@@ -145,6 +145,12 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedSettingSpec> settings;
   std::unordered_map<std::string, PluginHost::ContributedStatusItem> status_items;
   std::vector<PluginHost::ContributedStatusItem> status_item_order;
+  std::vector<PluginHost::ContributedFormatter> formatters;
+  std::vector<PluginHost::ContributedSaveParticipant> save_participants;
+  std::vector<PluginHost::ContributedCompletion> completions;
+  std::vector<PluginHost::ContributedCodeAction> code_actions;
+  std::vector<PluginHost::ContributedTask> tasks;
+  std::vector<PluginHost::ContributedTool> tools;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -970,6 +976,282 @@ struct PluginHost::Impl {
     return 0;
   }
 
+  static int LuaFormattersAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "formatter registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto language_id_opt = read_string("language_id");
+    auto label_opt = read_string("label");
+    if (!id_opt || !language_id_opt || !label_opt) {
+      return luaL_error(state, "formatter requires id, language_id, and label");
+    }
+
+    lua_getfield(state, 1, "command");
+    if (!lua_istable(state, -1)) {
+      lua_pop(state, 1);
+      return luaL_error(state, "formatter command must be an array");
+    }
+    std::vector<std::string> command;
+    for (lua_Integer i = 1; ; ++i) {
+      lua_geti(state, -1, i);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        break;
+      }
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 2);
+        return luaL_error(state, "formatter command must be a string array");
+      }
+      command.push_back(lua_tostring(state, -1));
+      lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+
+    if (command.empty()) {
+      return luaL_error(state, "formatter command cannot be empty");
+    }
+
+    host->formatters.push_back(PluginHost::ContributedFormatter{
+        .id = plugin->id + "." + *id_opt,
+        .language_id = std::move(*language_id_opt),
+        .label = std::move(*label_opt),
+        .command = std::move(command),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaSaveParticipantsAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* id = luaL_checkstring(state, 1);
+    luaL_checktype(state, 2, LUA_TFUNCTION);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "save participant registration requires an active plugin state");
+    }
+    host->save_participants.push_back(PluginHost::ContributedSaveParticipant{
+        .id = plugin->id + "." + std::string(id),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaCompletionAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "completion registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto language_id_opt = read_string("language_id");
+    if (!id_opt || !language_id_opt) {
+      return luaL_error(state, "completion requires id and language_id");
+    }
+
+    std::string trigger_characters;
+    if (auto trigger_opt = read_string("trigger_characters")) {
+      trigger_characters = std::move(*trigger_opt);
+    }
+
+    host->completions.push_back(PluginHost::ContributedCompletion{
+        .id = plugin->id + "." + *id_opt,
+        .language_id = std::move(*language_id_opt),
+        .trigger_characters = std::move(trigger_characters),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaCodeActionAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "code action registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto language_id_opt = read_string("language_id");
+    if (!id_opt || !language_id_opt) {
+      return luaL_error(state, "code action requires id and language_id");
+    }
+
+    host->code_actions.push_back(PluginHost::ContributedCodeAction{
+        .id = plugin->id + "." + *id_opt,
+        .language_id = std::move(*language_id_opt),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaTaskAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "task registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto label_opt = read_string("label");
+    if (!id_opt || !label_opt) {
+      return luaL_error(state, "task requires id and label");
+    }
+
+    lua_getfield(state, 1, "command");
+    if (!lua_istable(state, -1)) {
+      lua_pop(state, 1);
+      return luaL_error(state, "task command must be an array");
+    }
+    std::vector<std::string> command;
+    for (lua_Integer i = 1; ; ++i) {
+      lua_geti(state, -1, i);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        break;
+      }
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 2);
+        return luaL_error(state, "task command must be a string array");
+      }
+      command.push_back(lua_tostring(state, -1));
+      lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+
+    if (command.empty()) {
+      return luaL_error(state, "task command cannot be empty");
+    }
+
+    std::string group;
+    if (auto group_opt = read_string("group")) {
+      group = std::move(*group_opt);
+    }
+
+    std::string cwd;
+    if (auto cwd_opt = read_string("cwd")) {
+      cwd = std::move(*cwd_opt);
+    }
+
+    bool run_in_shell = false;
+    lua_getfield(state, 1, "run_in_shell");
+    if (lua_isboolean(state, -1)) {
+      run_in_shell = lua_toboolean(state, -1) != 0;
+    }
+    lua_pop(state, 1);
+
+    host->tasks.push_back(PluginHost::ContributedTask{
+        .id = plugin->id + "." + *id_opt,
+        .label = std::move(*label_opt),
+        .group = std::move(group),
+        .command = std::move(command),
+        .cwd = std::move(cwd),
+        .run_in_shell = run_in_shell,
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaToolAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "tool registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto platform_opt = read_string("platform");
+    auto url_opt = read_string("url");
+    auto sha256_opt = read_string("sha256");
+    if (!id_opt || !platform_opt || !url_opt || !sha256_opt) {
+      return luaL_error(state, "tool requires id, platform, url, and sha256");
+    }
+
+    std::string label;
+    if (auto label_opt = read_string("label")) {
+      label = std::move(*label_opt);
+    }
+
+    std::string install_dir;
+    if (auto dir_opt = read_string("install_dir")) {
+      install_dir = std::move(*dir_opt);
+    }
+
+    host->tools.push_back(PluginHost::ContributedTool{
+        .id = plugin->id + "." + *id_opt,
+        .label = std::move(label),
+        .platform = std::move(*platform_opt),
+        .download_url = std::move(*url_opt),
+        .sha256 = std::move(*sha256_opt),
+        .install_dir = std::move(install_dir),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     if (host == nullptr || host->current_project_root.empty()) {
@@ -1495,6 +1777,42 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaStatusUpdate, 1);
     lua_setfield(state, -2, "update");
     lua_setfield(state, -2, "status");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaFormattersAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "formatters");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaSaveParticipantsAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "save_participants");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaCompletionAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "completion");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaCodeActionAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "code_actions");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaTaskAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "tasks");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaToolAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "tools");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -1898,6 +2216,42 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           status_item_order.end());
+      formatters.erase(
+          std::remove_if(formatters.begin(), formatters.end(),
+                         [&](const PluginHost::ContributedFormatter& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          formatters.end());
+      save_participants.erase(
+          std::remove_if(save_participants.begin(), save_participants.end(),
+                         [&](const PluginHost::ContributedSaveParticipant& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          save_participants.end());
+      completions.erase(
+          std::remove_if(completions.begin(), completions.end(),
+                         [&](const PluginHost::ContributedCompletion& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          completions.end());
+      code_actions.erase(
+          std::remove_if(code_actions.begin(), code_actions.end(),
+                         [&](const PluginHost::ContributedCodeAction& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          code_actions.end());
+      tasks.erase(
+          std::remove_if(tasks.begin(), tasks.end(),
+                         [&](const PluginHost::ContributedTask& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          tasks.end());
+      tools.erase(
+          std::remove_if(tools.begin(), tools.end(),
+                         [&](const PluginHost::ContributedTool& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          tools.end());
     }
   }
 
@@ -2525,6 +2879,31 @@ bool PluginHost::UpdateStatusItem(std::string_view id, std::string text, std::st
     impl_->callbacks.request_status_redraw();
   }
   return true;
+}
+
+const std::vector<PluginHost::ContributedFormatter>& PluginHost::ContributedFormatters() const {
+  return impl_->formatters;
+}
+
+const std::vector<PluginHost::ContributedSaveParticipant>& PluginHost::ContributedSaveParticipants()
+    const {
+  return impl_->save_participants;
+}
+
+const std::vector<PluginHost::ContributedCompletion>& PluginHost::ContributedCompletions() const {
+  return impl_->completions;
+}
+
+const std::vector<PluginHost::ContributedCodeAction>& PluginHost::ContributedCodeActions() const {
+  return impl_->code_actions;
+}
+
+const std::vector<PluginHost::ContributedTask>& PluginHost::ContributedTasks() const {
+  return impl_->tasks;
+}
+
+const std::vector<PluginHost::ContributedTool>& PluginHost::ContributedTools() const {
+  return impl_->tools;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {

@@ -322,6 +322,39 @@ Open work:
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in
   product features even when plugins can extend around them
 
+- Phase 3 async service platform is now shipped:
+  - `platform/AsyncSubprocess.*` provides a POSIX-backed async subprocess interface with
+    bidirectional pipes, poll-based non-blocking reads, and SIGTERM/SIGKILL shutdown
+  - `util/JsonValue.*` implements a recursive JSON parser and serializer for LSP communication
+  - `workspace/WorkspaceLspClient.*` implements a synchronous JSON-RPC 2.0 client with
+    initialize, didOpen, didChange, didSave, didClose notifications and textDocument/hover,
+    textDocument/completion, textDocument/codeAction requests
+  - `workspace/WorkspaceLspManager.*` manages multiple LSP servers, one per language_id
+  - `workspace/WorkspaceFormatterRegistry.*` stores declarative formatter specs (language_id,
+    command, label)
+  - `workspace/WorkspaceSaveParticipants.*` stores save-participant specs for Lua callbacks
+  - `workspace/WorkspaceCompletionRegistry.*` stores language-specific completion-provider specs
+  - `workspace/WorkspaceCodeActionRegistry.*` stores language-specific code-action-provider specs
+  - `workspace/WorkspaceTaskRegistry.*` stores runnable task specs with subprocess command,
+    label, group, and working directory
+  - `workspace/WorkspaceToolRegistry.*` stores downloadable tool specs with platform,
+    download URL, and SHA256 checksum
+  - `PluginHost` gains six new Lua tables: `ctx.formatters` (add), `ctx.save_participants` (add),
+    `ctx.completion` (add), `ctx.code_actions` (add), `ctx.tasks` (add), `ctx.tools` (add);
+    corresponding C++ accessors are available to workspace coordinators
+  - all new registries have full test coverage in `tests/Phase3Tests.cpp`
+
+Open work:
+
+- wire `WorkspaceLspManager` into the formatter registry so document formatting runs via LSP on save
+- implement background task execution for formatters and save participants
+- wire `WorkspaceCompletionRegistry` into the command-prompt coordinator and editor completion
+- wire `WorkspaceCodeActionRegistry` into the editor code-action popups
+- wire `WorkspaceTaskRegistry` into a task runner so plugins can contribute runnable tasks
+- implement tool download and installation from `WorkspaceToolRegistry`
+- add plugin output channels for save participants, formatters, and LSP diagnostics
+- validate real LSP server communication once wire-up is in place
+
 ### 2. Terminal Hardening
 
 Current state:

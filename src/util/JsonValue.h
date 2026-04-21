@@ -21,9 +21,8 @@ struct JsonValue {
   JsonValue() = default;
   JsonValue(std::nullptr_t) : v(Null{}) {}  // NOLINT(google-explicit-constructor)
   JsonValue(bool b) : v(b) {}               // NOLINT(google-explicit-constructor)
-  JsonValue(int n) : v(static_cast<std::int64_t>(n)) {}  // NOLINT
-  JsonValue(std::int64_t n) : v(n) {}                    // NOLINT
-  JsonValue(double d) : v(d) {}                           // NOLINT
+  JsonValue(std::int64_t n) : v(n) {}       // NOLINT
+  JsonValue(double d) : v(d) {}             // NOLINT
   JsonValue(std::string s) : v(std::move(s)) {}           // NOLINT
   JsonValue(std::string_view s) : v(std::string(s)) {}    // NOLINT
   JsonValue(const char* s) : v(std::string(s)) {}         // NOLINT

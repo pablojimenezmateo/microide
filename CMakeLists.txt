@@ -115,6 +115,7 @@ set(MICROIDE_CORE_SOURCES
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
+  src/platform/AsyncSubprocess.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
   src/platform/Subprocess.cpp
@@ -138,6 +139,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
+  src/util/JsonValue.cpp
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
@@ -244,6 +246,14 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSettingsRegistry.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
+  src/workspace/WorkspaceLspClient.cpp
+  src/workspace/WorkspaceLspManager.cpp
+  src/workspace/WorkspaceFormatterRegistry.cpp
+  src/workspace/WorkspaceSaveParticipants.cpp
+  src/workspace/WorkspaceCompletionRegistry.cpp
+  src/workspace/WorkspaceCodeActionRegistry.cpp
+  src/workspace/WorkspaceTaskRegistry.cpp
+  src/workspace/WorkspaceToolRegistry.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceViewTree.cpp
@@ -336,6 +346,7 @@ add_executable(microide_tests
   tests/WorkspaceShellSharedTerminalTests.cpp
   tests/WorkspaceShellTerminalTests.cpp
   tests/ContributionRegistryTests.cpp
+  tests/Phase3Tests.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")

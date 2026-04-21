@@ -85,6 +85,52 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  struct ContributedFormatter {
+    std::string id;
+    std::string language_id;
+    std::string label;
+    std::vector<std::string> command;
+    std::string plugin_id;
+  };
+
+  struct ContributedSaveParticipant {
+    std::string id;
+    std::string plugin_id;
+  };
+
+  struct ContributedCompletion {
+    std::string id;
+    std::string language_id;
+    std::string trigger_characters;
+    std::string plugin_id;
+  };
+
+  struct ContributedCodeAction {
+    std::string id;
+    std::string language_id;
+    std::string plugin_id;
+  };
+
+  struct ContributedTask {
+    std::string id;
+    std::string label;
+    std::string group;
+    std::vector<std::string> command;
+    std::string cwd;
+    bool run_in_shell = false;
+    std::string plugin_id;
+  };
+
+  struct ContributedTool {
+    std::string id;
+    std::string label;
+    std::string platform;
+    std::string download_url;
+    std::string sha256;
+    std::string install_dir;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -138,6 +184,12 @@ class PluginHost {
   const std::vector<ContributedSettingSpec>& ContributedSettings() const;
   const std::vector<ContributedStatusItem>& ContributedStatusItems() const;
   bool UpdateStatusItem(std::string_view id, std::string text, std::string tooltip = {});
+  const std::vector<ContributedFormatter>& ContributedFormatters() const;
+  const std::vector<ContributedSaveParticipant>& ContributedSaveParticipants() const;
+  const std::vector<ContributedCompletion>& ContributedCompletions() const;
+  const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
+  const std::vector<ContributedTask>& ContributedTasks() const;
+  const std::vector<ContributedTool>& ContributedTools() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();
