@@ -151,6 +151,8 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedCodeAction> code_actions;
   std::vector<PluginHost::ContributedTask> tasks;
   std::vector<PluginHost::ContributedTool> tools;
+  std::vector<PluginHost::ContributedDebugger> debuggers;
+  std::vector<PluginHost::ContributedTestProvider> test_providers;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -1252,6 +1254,98 @@ struct PluginHost::Impl {
     return 0;
   }
 
+  static int LuaDebuggerAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "debugger registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto type_opt = read_string("type");
+    if (!id_opt || !type_opt) {
+      return luaL_error(state, "debugger requires id and type");
+    }
+
+    lua_getfield(state, 1, "command");
+    if (!lua_istable(state, -1)) {
+      lua_pop(state, 1);
+      return luaL_error(state, "debugger command must be an array");
+    }
+    std::vector<std::string> command;
+    for (lua_Integer i = 1; ; ++i) {
+      lua_geti(state, -1, i);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        break;
+      }
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 2);
+        return luaL_error(state, "debugger command must be a string array");
+      }
+      command.push_back(lua_tostring(state, -1));
+      lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+
+    if (command.empty()) {
+      return luaL_error(state, "debugger command cannot be empty");
+    }
+
+    host->debuggers.push_back(PluginHost::ContributedDebugger{
+        .id = plugin->id + "." + *id_opt,
+        .type = std::move(*type_opt),
+        .command = std::move(command),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaTestProviderAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "test provider registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto language_id_opt = read_string("language_id");
+    if (!id_opt || !language_id_opt) {
+      return luaL_error(state, "test provider requires id and language_id");
+    }
+
+    host->test_providers.push_back(PluginHost::ContributedTestProvider{
+        .id = plugin->id + "." + *id_opt,
+        .language_id = std::move(*language_id_opt),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     if (host == nullptr || host->current_project_root.empty()) {
@@ -1813,6 +1907,18 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaToolAdd, 1);
     lua_setfield(state, -2, "add");
     lua_setfield(state, -2, "tools");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaDebuggerAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "debuggers");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaTestProviderAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "tests");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -2252,6 +2358,18 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           tools.end());
+      debuggers.erase(
+          std::remove_if(debuggers.begin(), debuggers.end(),
+                         [&](const PluginHost::ContributedDebugger& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          debuggers.end());
+      test_providers.erase(
+          std::remove_if(test_providers.begin(), test_providers.end(),
+                         [&](const PluginHost::ContributedTestProvider& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          test_providers.end());
     }
   }
 
@@ -2904,6 +3022,15 @@ const std::vector<PluginHost::ContributedTask>& PluginHost::ContributedTasks() c
 
 const std::vector<PluginHost::ContributedTool>& PluginHost::ContributedTools() const {
   return impl_->tools;
+}
+
+const std::vector<PluginHost::ContributedDebugger>& PluginHost::ContributedDebuggers() const {
+  return impl_->debuggers;
+}
+
+const std::vector<PluginHost::ContributedTestProvider>& PluginHost::ContributedTestProviders()
+    const {
+  return impl_->test_providers;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {

@@ -131,6 +131,19 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  struct ContributedDebugger {
+    std::string id;
+    std::string type;  // "lldb", "python", "node", etc.
+    std::vector<std::string> command;
+    std::string plugin_id;
+  };
+
+  struct ContributedTestProvider {
+    std::string id;
+    std::string language_id;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -190,6 +203,8 @@ class PluginHost {
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
   const std::vector<ContributedTask>& ContributedTasks() const;
   const std::vector<ContributedTool>& ContributedTools() const;
+  const std::vector<ContributedDebugger>& ContributedDebuggers() const;
+  const std::vector<ContributedTestProvider>& ContributedTestProviders() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

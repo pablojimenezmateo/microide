@@ -330,6 +330,7 @@ Open work:
     initialize, didOpen, didChange, didSave, didClose notifications and textDocument/hover,
     textDocument/completion, textDocument/codeAction requests
   - `workspace/WorkspaceLspManager.*` manages multiple LSP servers, one per language_id
+  - `workspace/WorkspaceDapManager.*` manages multiple debug adapters, one per debugger type
   - `workspace/WorkspaceFormatterRegistry.*` stores declarative formatter specs (language_id,
     command, label)
   - `workspace/WorkspaceSaveParticipants.*` stores save-participant specs for Lua callbacks
@@ -339,9 +340,14 @@ Open work:
     label, group, and working directory
   - `workspace/WorkspaceToolRegistry.*` stores downloadable tool specs with platform,
     download URL, and SHA256 checksum
-  - `PluginHost` gains six new Lua tables: `ctx.formatters` (add), `ctx.save_participants` (add),
-    `ctx.completion` (add), `ctx.code_actions` (add), `ctx.tasks` (add), `ctx.tools` (add);
-    corresponding C++ accessors are available to workspace coordinators
+  - `workspace/WorkspaceToolDownloader.*` provides caching and download orchestration for tools
+  - `workspace/WorkspaceTestController.*` manages test discovery and execution results
+  - `workspace/WorkspaceOutputChannels.*` (already shipped from Phase 2) provides named log
+    channels for tool output
+  - `PluginHost` gains eight new Lua tables: `ctx.formatters` (add), `ctx.save_participants` (add),
+    `ctx.completion` (add), `ctx.code_actions` (add), `ctx.tasks` (add), `ctx.tools` (add),
+    `ctx.debuggers` (add), `ctx.tests` (add); corresponding C++ accessors are available to
+    workspace coordinators
   - all new registries have full test coverage in `tests/Phase3Tests.cpp`
 
 Open work:
@@ -351,9 +357,10 @@ Open work:
 - wire `WorkspaceCompletionRegistry` into the command-prompt coordinator and editor completion
 - wire `WorkspaceCodeActionRegistry` into the editor code-action popups
 - wire `WorkspaceTaskRegistry` into a task runner so plugins can contribute runnable tasks
-- implement tool download and installation from `WorkspaceToolRegistry`
-- add plugin output channels for save participants, formatters, and LSP diagnostics
-- validate real LSP server communication once wire-up is in place
+- implement tool download via `WorkspaceToolDownloader` for `WorkspaceToolRegistry`
+- wire `WorkspaceTestController` into the editor gutter and test sidebar
+- wire `WorkspaceDapManager` into a debugger session UI
+- validate real LSP and DAP server communication once wire-up is in place
 
 ### 2. Terminal Hardening
 

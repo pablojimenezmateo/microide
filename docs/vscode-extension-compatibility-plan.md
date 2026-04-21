@@ -714,7 +714,7 @@ This phase is where `microide` becomes genuinely user-extensible instead of just
 
 ### Phase 3. Build the language, task, and diagnostics platform
 
-Status: **Substantially complete** — core infrastructure is now shipped.
+Status: **Complete** — all core infrastructure is shipped.
 
 Shipped:
 
@@ -722,21 +722,26 @@ Shipped:
 - `util/JsonValue` recursive JSON parser and serializer
 - `WorkspaceLspClient` with JSON-RPC 2.0 and standard LSP requests/notifications
 - `WorkspaceLspManager` for multi-language server coordination
+- `WorkspaceDapManager` for multi-debugger coordination
 - `WorkspaceFormatterRegistry` for subprocess-based formatters
 - `WorkspaceSaveParticipants` for Lua save callbacks
 - `WorkspaceCompletionRegistry`, `WorkspaceCodeActionRegistry` for language-specific providers
 - `WorkspaceTaskRegistry` for runnable tasks
 - `WorkspaceToolRegistry` for downloadable tool declarations
-- six new PluginHost Lua APIs: formatters, save_participants, completion, code_actions, tasks, tools
+- `WorkspaceToolDownloader` for cache management and download orchestration
+- `WorkspaceTestController` for test discovery and execution results
+- `WorkspaceOutputChannels` for named tool output logs
+- eight new PluginHost Lua APIs: formatters, save_participants, completion, code_actions, tasks,
+  tools, debuggers, tests
 
 Remaining wiring (post-Phase 3):
 
 - LSP integration into formatter pipeline and diagnostic display
 - task execution and background process handling
 - completion and code-action UI hookups
-- tool download and installation
-- output channels for logging
-- DAP manager for debuggers
+- tool download and installation implementation
+- test discovery UI and test result display
+- DAP session UI and breakpoint management
 
 This phase unlocks the bulk of the practical non-AI plugin demand:
 

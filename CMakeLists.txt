@@ -248,12 +248,15 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspManager.cpp
+  src/workspace/WorkspaceDapManager.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
   src/workspace/WorkspaceCompletionRegistry.cpp
   src/workspace/WorkspaceCodeActionRegistry.cpp
   src/workspace/WorkspaceTaskRegistry.cpp
   src/workspace/WorkspaceToolRegistry.cpp
+  src/workspace/WorkspaceToolDownloader.cpp
+  src/workspace/WorkspaceTestController.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceViewTree.cpp
