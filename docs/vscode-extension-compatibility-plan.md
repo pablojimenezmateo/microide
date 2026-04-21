@@ -854,6 +854,228 @@ If this is executed well, `microide` can become deeply extensible without:
 That is the path most aligned with the current product shape and the performance rules in
 `AGENTS.md`.
 
+## UI Wiring Implementation
+
+All core registries and services (Phases 2-5) are now shipped as infrastructure.
+The remaining work is wiring them into the actual workspace UI and coordinators.
+
+### Phase 2 UI Wiring (5 coordinators/paths)
+
+1. **KeyInput Coordinator Integration**
+   - Replace hardcoded key dispatch in `WorkspaceKeyInputCoordinator` with calls to `WorkspaceKeybindingRegistry::ResolveKeybindings`
+   - Context-aware lookup (global/editor/sidebar/terminal) based on current surface
+   - Handle user-disabled keybindings via `PersistedUserConfigState::disabled_keybinding_ids`
+   - Test: verify plugin keybindings and user disables take effect at runtime
+
+2. **Settings Persistence Integration**
+   - Wire `Callbacks::get_setting` to read from `PersistedUserConfigState::settings`
+   - Load settings on project open, apply to UI elements (tab size, indent width, etc.)
+   - Hook `WorkspaceSettingsRegistry` into persistence coordinator for save/load round-trips
+   - Test: verify settings persist across sessions and plugin settings appear in settings UI
+
+3. **Status Bar Rendering**
+   - Extend `WorkspaceShellRenderChrome.cpp` to render plugin-contributed status items
+   - Call `WorkspaceStatusRegistry::ResolveStatusItems` to get sorted items
+   - Include alignment (left/right) and priority in layout calculation
+   - Wire `Callbacks::request_status_redraw` to invalidate chrome on status updates
+   - Test: verify status items appear in bottom chrome with correct ordering
+
+4. **Menu Coordinator Integration**
+   - Extend menu builder in `WorkspaceMenuCoordinator` to include `WorkspaceMenuRegistry::ContributedMenuItems` alongside built-in entries
+   - Call during menu bar, anchored menu, and context menu construction
+   - Parse menu IDs ("file", "edit", "view", "search") to group contributions correctly
+   - Test: verify plugin menu items appear in correct menus at runtime
+
+5. **Sidebar View Policy**
+   - Read `PersistedProjectConfigState::sidebar_policies` on project open
+   - Apply to `WorkspaceSidebarRegistry::OrderedSidebarViews` to hide/reorder views
+   - Persist user hide/reorder choices back to config on changes
+   - Test: verify sidebar view visibility and order survive session restart
+
+### Phase 3 UI Wiring (8 coordinators/features)
+
+1. **LSP-Backed Formatting**
+   - On buffer save, query `WorkspaceFormatterRegistry::FindFormatter(language_id)`
+   - If not found and LSP exists, use `WorkspaceLspManager::RequestFormatting` on `WorkspaceLspClient`
+   - Apply text edits and mark buffer dirty, preserve cursor position
+   - Show brief status in status bar ("Formatting...") with timeout fallback
+   - Test: verify Prettier and ESLint-like formatters format on save
+
+2. **Background Task Execution**
+   - Create `WorkspaceBackgroundTaskRunner` wrapper around existing task executor
+   - Queue formatter, save-participant, and tool-runner tasks without blocking UI
+   - Wire cancellation via `WorkspaceDirtyPromptCoordinator` (don't save if task running)
+   - Display task progress in bottom panel or status bar
+   - Test: verify formatters and save hooks run non-blocking and can be cancelled
+
+3. **Completion UI**
+   - Extend command-prompt coordinator to call `WorkspaceCompletionRegistry::FindProvider` for path completion
+   - Query LSP completion if available via `WorkspaceLspClient::RequestCompletion`
+   - Display completions in overlay above prompt or in-editor when editing
+   - Allow plugin Lua completion hooks via callbacks
+   - Test: verify completion works in command prompt and editor
+
+4. **Code Actions Popup**
+   - On diagnostic hover or user request, call `WorkspaceCodeActionRegistry::FindProvider` and LSP `RequestCodeAction`
+   - Build list of (title, command) pairs from results
+   - Show in-editor popup with keyboard and mouse selection
+   - Execute selected action via `ActionCoordinator`
+   - Test: verify code actions appear for diagnostics and can be executed
+
+5. **Task Runner**
+   - Create sidebar view or command-palette interface for `WorkspaceTaskRegistry` tasks
+   - Spawn task subprocess via `AsyncSubprocess`, pipe stdout/stderr to output channel
+   - Wire into bottom-panel output display with scrollback
+   - Allow task stop via SIGTERM/SIGKILL through `WorkspaceBackgroundTaskRunner`
+   - Test: verify tasks run, output appears, and can be stopped
+
+6. **Tool Download and Installation**
+   - Trigger `WorkspaceToolDownloader::Download` on first use if tool missing
+   - Show download progress overlay ("Downloading tool... 45%")
+   - Verify SHA256 checksum before marking as ready
+   - Cache in project-local or user-local tool directory
+   - Test: verify tool download, caching, and checksum verification
+
+7. **Test Controller UI**
+   - Add gutter icons for test discovery via `WorkspaceTestController::DiscoverTests`
+   - Show test tree in bottom panel or sidebar view
+   - Run/debug single test or test suite via `WorkspaceTestController::ExecuteTest`
+   - Display pass/fail results with stack traces on failure
+   - Test: verify test discovery, execution, and result display
+
+8. **DAP Manager UI**
+   - Extend breakpoint gutter rendering to support DAP breakpoints
+   - Create simple "Launch Debugger" command or sidebar panel
+   - Wire `WorkspaceDapManager::StartSession` on launch request
+   - Display call stack, locals, and watch variables in bottom panel
+   - Step over/into/out/continue via DAP protocol
+   - Test: verify breakpoints, stepping, and variable inspection
+
+### Phase 4 UI Wiring (6 coordinators/features)
+
+1. **SCM Sidebar**
+   - Add `WorkspaceScmRegistry` as a sidebar view option alongside Tree/Git/Problems
+   - Display provider-specific SCM status (branches, commits, etc.)
+   - Wire actions (commit, push, pull) via command dispatch
+   - Allow switching between SCM providers if multiple registered
+   - Test: verify SCM sidebar appears and provider-specific UI renders
+
+2. **Annotation Gutter and Margin**
+   - Query `WorkspaceAnnotationRegistry::FindProviders(language_id)` on buffer open
+   - Request annotations (blame info, decoration, margin text) from each provider
+   - Render in gutter next to line numbers or in margin area
+   - Show provider tooltip on hover over annotation
+   - Test: verify annotations appear and tooltips work
+
+3. **Virtual Document Support**
+   - Extend tab system to recognize virtual URIs ("virtual://...")
+   - Query `WorkspaceVirtualDocument::GetDocument(uri)` to fetch content
+   - Open in editor with language detection from `language_id`
+   - Render as read-only or editable based on `editable` flag
+   - Apply edits via `WorkspaceVirtualDocument::UpdateContent`
+   - Test: verify virtual docs open, render, and can be edited if editable
+
+4. **Review Comments UI**
+   - In diff/merge tabs, query `WorkspaceReviewComments::GetComments(uri, line)`
+   - Render comment threads inline next to changed lines
+   - Show comment text, author, timestamp, and resolution state
+   - Allow adding/editing/resolving comments via `UpdateCommentState`
+   - Display in sidebar view or inline in diff
+   - Test: verify review comments appear inline and state changes persist
+
+5. **Auth Provider UI**
+   - Create login flow for `WorkspaceAuthProvider::GetProvider(id)`
+   - Show "Sign In" prompt in status bar or sidebar for plugins requiring auth
+   - Prompt for credentials, call auth provider, store session via `AddSession`
+   - Display active account in status bar with logout option
+   - Retrieve credentials from `WorkspaceSecretStorage` on session restore
+   - Test: verify login flow, session persistence, and logout
+
+6. **OS Credential Manager Backend**
+   - Implement macOS Keychain backend for `WorkspaceSecretStorage`
+   - Implement Windows Credential Manager backend
+   - Implement Linux `pass` or `libsecret` backend
+   - Fall back to in-memory storage if backend unavailable
+   - Integrate with system login/logout lifecycle
+   - Test: verify credentials persist across sessions and are secure
+
+### Phase 5 UI Wiring (7 features)
+
+1. **Provider and Model Selection UI**
+   - Create modal or sidebar panel for model selection
+   - Populate from `WorkspaceAiProvider::AllModels()` — show (provider_id, model_name) pairs
+   - Allow setting default provider/model for different contexts (inline vs chat)
+   - Persist selection in project config
+   - Test: verify provider/model selection UI and defaults
+
+2. **Inline Completion Rendering**
+   - Hook into editor typing path: call `WorkspaceInlineCompletion::GetCompletions(line, column)` after typing pause
+   - Render ghost text in lighter color at cursor position
+   - Tab to accept, Escape to dismiss, configurable debounce delay
+   - Display provider and model name in corner for context
+   - Test: verify inline completions render and can be accepted/dismissed
+
+3. **Inline Actions Menu**
+   - On inline completion accept, query `WorkspaceInlineCompletion::GetActions(line)`
+   - Show (Explain, Edit, Fix, Refactor, Document) actions as quick buttons or menu
+   - Apply transformation based on action type, request via appropriate API
+   - Test: verify inline actions appear and work correctly
+
+4. **Sidebar Chat Interface**
+   - Create new sidebar view for AI chat
+   - Display `WorkspaceConversation` messages from `GetAllConversations()`
+   - Message input box at bottom with send button
+   - Show conversation history with timestamps and model name
+   - Create new conversation via "New Chat" button
+   - Auto-save conversation on new message via persistence coordinator
+   - Test: verify chat displays, persists, and can be sent/received
+
+5. **External Agent Protocol Handlers**
+   - Implement HTTP POST handler for agent requests (JSON body with context + prompt)
+   - Implement stdio protocol (JSON-RPC 2.0 like LSP) for agent subprocesses
+   - Implement WebSocket handler for streaming agent responses
+   - Parse agent response format, insert into chat or inline completion
+   - Test: verify agents can be invoked and respond correctly
+
+6. **MCP Tool Client**
+   - Implement MCP protocol client (JSON-RPC 2.0 for tool discovery and execution)
+   - Query `WorkspaceMcpTool::GetAvailableTools(agent_id)` based on agent permissions
+   - Check `WorkspaceMcpTool::CheckPermission` before tool execution
+   - Prompt user if permission is `PromptRequired`
+   - Execute tool and capture output for agent
+   - Test: verify tools are discovered, permissions enforced, and execution works
+
+7. **Context and Streaming**
+   - Before sending chat/completion request, collect `WorkspaceAiContext` items via `AddItem`/`GetContext`
+   - Apply prioritization (current file > selection > diagnostics > git > others)
+   - Include in API request payload up to `max_total_bytes` limit
+   - Cancel pending requests via `RequestCancel` on user action
+   - Stream response chunks into chat message in real-time
+   - Test: verify context is collected, prioritized, and streamed correctly
+
+### Wiring Implementation Workflow
+
+Each phase builds on prior wiring:
+
+- **Phase 2** enables user customization of keybindings, settings, menus, and status bar
+- **Phase 3** enables language-aware formatting, completion, testing, and debugging
+- **Phase 4** enables SCM and code review workflows with auth
+- **Phase 5** enables AI-powered features with external agents and tools
+
+The wiring follows the existing pattern throughout the codebase:
+1. Registries provide data structures and query methods
+2. Coordinators query registries at runtime
+3. Shell render paths display results
+4. Persistence coordinator saves and restores state
+5. Tests validate end-to-end behavior
+
+### Estimated Scope
+
+- ~40-50 coordinator changes/extensions (mostly in existing `Workspace*Coordinator.cpp` files)
+- ~30-40 UI render path modifications (mostly in `WorkspaceShellRender*.cpp` files)
+- Integration with 18+ existing registries and services
+- Full test coverage required for each wiring point
+
 ## Sources
 
 Local `microide` references:
