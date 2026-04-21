@@ -64,11 +64,15 @@ SDL_HitTestResult WorkspaceShell::WindowHitTest(float x, float y) const {
     }
   }
 
+  if (WindowDragRegionContains(x, y)) {
+    return SDL_HITTEST_DRAGGABLE;
+  }
+
   return SDL_HITTEST_NORMAL;
 }
 
 bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
-  if (!CurrentWindowChromeState().custom_enabled) {
+  if (!CurrentWindowChromeState().custom_enabled || CurrentWindowChromeState().fullscreen) {
     return false;
   }
 
@@ -656,6 +660,24 @@ SDL_Cursor* WorkspaceShell::CursorHandle(CursorKind kind) {
   }
 
   return SDL_GetDefaultCursor();
+}
+
+void WorkspaceShell::ClearMouseHoverState() {
+  last_mouse_position_valid_ = false;
+  active_editor_hover_target_.reset();
+  editor_hover_refresh_pending_ = false;
+
+  if (cursor_kind_ == CursorKind::Default) {
+    return;
+  }
+
+  if (SDL_Cursor* default_cursor = CursorHandle(CursorKind::Default);
+      default_cursor != nullptr && SDL_SetCursor(default_cursor)) {
+    cursor_kind_ = CursorKind::Default;
+    return;
+  }
+
+  cursor_kind_ = CursorKind::Default;
 }
 
 void WorkspaceShell::UpdateMouseCursor(float x, float y) {

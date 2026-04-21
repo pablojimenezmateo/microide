@@ -471,6 +471,48 @@ void TestWorkspaceShellCompareDividerMatchesMarkerWidth() {
          "compare divider should not reserve extra empty space before the right gutter");
 }
 
+void TestWorkspaceShellCompareRenderKeepsDividerBorderOnUnchangedRows() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "same line\nold line\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare divider border fixture", "compare divider border fixture");
+  WriteFile(source, "same line\nnew line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare divider border fixture should open");
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "compare divider border render test should read software pixels");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const auto theme = microide::render::MakeDefaultTheme();
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  const int border_x = static_cast<int>(std::floor(surface.center_x));
+  const int border_y = static_cast<int>(std::floor(surface.rows_y + surface.line_height * 0.5f));
+  Expect(SDL_ReadSurfacePixel(pixels, border_x, border_y, &r, &g, &b, &a),
+         "compare divider border render test should read the divider border pixel");
+  Expect(r == theme.border.r && g == theme.border.g &&
+             b == theme.border.b && a == theme.border.a,
+         "compare divider should keep a visible left border on unchanged rows");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -524,6 +566,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/CompareDividerMatchesMarkerWidth",
           TestWorkspaceShellCompareDividerMatchesMarkerWidth);
+  AddTest(tests, "WorkspaceShell/CompareRenderKeepsDividerBorderOnUnchangedRows",
+          TestWorkspaceShellCompareRenderKeepsDividerBorderOnUnchangedRows);
   AddTest(tests, "WorkspaceShell/ComparePaneResizeKeepsWiderPaneTextVisible",
           TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible);
 }

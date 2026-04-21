@@ -25,9 +25,6 @@ class Application {
   workspace::WorkspaceShell::EventResult HandleEvent(const SDL_Event& event);
   void Render(std::vector<SDL_FRect> dirty_rects = {},
               const char* reason = "full");
-  bool StartWindowDrag(const SDL_Event& converted_event);
-  bool UpdateWindowDrag();
-  void StopWindowDrag();
   bool UpdateRendererPresentation(int* logical_width = nullptr, int* logical_height = nullptr);
   bool EnsureSceneTexture(int logical_width, int logical_height);
   void DestroySceneTexture();
@@ -51,9 +48,6 @@ class Application {
   bool first_render_complete_ = false;
   bool scene_texture_valid_ = false;
   bool redraw_trace_enabled_ = false;
-  bool window_drag_active_ = false;
-  int window_drag_origin_x_ = 0;
-  int window_drag_origin_y_ = 0;
   int scene_texture_width_ = 0;
   int scene_texture_height_ = 0;
   Uint64 redraw_trace_frames_ = 0;
@@ -64,8 +58,6 @@ class Application {
   Uint64 redraw_trace_total_rendered_clips_ = 0;
   std::size_t redraw_trace_max_dirty_rects_ = 0;
   std::size_t redraw_trace_max_rendered_clips_ = 0;
-  float window_drag_mouse_x_ = 0.0f;
-  float window_drag_mouse_y_ = 0.0f;
 
   workspace::WorkspaceShell workspace_shell_;
 };

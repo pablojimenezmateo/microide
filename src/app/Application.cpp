@@ -23,6 +23,18 @@ constexpr int kInitialWindowHeight = 900;
 constexpr Uint64 kRenderTraceLogInterval = 120;
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
 
+bool EventUsesRenderCoordinates(Uint32 event_type) {
+  switch (event_type) {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_WHEEL:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool CustomWindowChromeEnabled(SDL_Window* window) {
   return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) != 0;
 }
@@ -70,6 +82,15 @@ std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowP
               .fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0,
           },
   };
+}
+
+void SyncWindowState(SDL_Window* window) {
+  if (window == nullptr) {
+    return;
+  }
+  if (!SDL_SyncWindow(window)) {
+    SDL_Log("SDL_SyncWindow failed: %s", SDL_GetError());
+  }
 }
 
 }  // namespace
@@ -204,6 +225,7 @@ bool Application::Initialize() {
       SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
       SDL_SetWindowBordered(window_, true);
     }
+    SyncWindowState(window_);
   }
 
   {
@@ -229,7 +251,6 @@ void Application::Shutdown() {
     return;
   }
 
-  StopWindowDrag();
   workspace_shell_.SetDialogWindow(nullptr);
   workspace_shell_.Shutdown();
 
@@ -264,6 +285,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
           .handled = true,
           .redraw = {},
       };
+    case SDL_EVENT_WINDOW_SHOWN:
     case SDL_EVENT_WINDOW_EXPOSED:
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
@@ -276,41 +298,15 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
               .rects = {},
           },
       };
-    case SDL_EVENT_WINDOW_FOCUS_LOST:
-      StopWindowDrag();
+    default:
       break;
-  }
-
-  if (window_drag_active_) {
-    if (event.type == SDL_EVENT_MOUSE_MOTION) {
-      return workspace::WorkspaceShell::EventResult{
-          .handled = UpdateWindowDrag(),
-          .redraw = {},
-      };
-    }
-    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP &&
-        event.button.button == SDL_BUTTON_LEFT) {
-      StopWindowDrag();
-      return workspace::WorkspaceShell::EventResult{
-          .handled = true,
-          .redraw = {},
-      };
-    }
   }
 
   UpdateRendererPresentation();
   SDL_Event converted_event = event;
-  if (renderer_ != nullptr) {
+  if (renderer_ != nullptr && EventUsesRenderCoordinates(event.type)) {
     SDL_ConvertEventToRenderCoordinates(renderer_, &converted_event);
   }
-
-  const bool start_window_drag =
-      event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-      event.button.button == SDL_BUTTON_LEFT && event.button.clicks == 1 &&
-      window_ != nullptr &&
-      (SDL_GetWindowFlags(window_) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) == 0 &&
-      workspace_shell_.WindowDragRegionContains(converted_event.button.x,
-                                                converted_event.button.y);
 
   const auto result = workspace_shell_.HandleEvent(converted_event);
   ConsumeWindowActions();
@@ -321,58 +317,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
         .redraw = result.redraw,
     };
   }
-  if (start_window_drag && StartWindowDrag(converted_event)) {
-    return workspace::WorkspaceShell::EventResult{
-        .handled = true,
-        .redraw = result.redraw,
-    };
-  }
   return result;
-}
-
-bool Application::StartWindowDrag(const SDL_Event& converted_event) {
-  if (window_ == nullptr || converted_event.type != SDL_EVENT_MOUSE_BUTTON_DOWN ||
-      converted_event.button.button != SDL_BUTTON_LEFT || window_drag_active_) {
-    return false;
-  }
-
-  if (!workspace_shell_.WindowDragRegionContains(converted_event.button.x,
-                                                 converted_event.button.y)) {
-    return false;
-  }
-
-  if (!SDL_GetWindowPosition(window_, &window_drag_origin_x_, &window_drag_origin_y_)) {
-    return false;
-  }
-  SDL_GetGlobalMouseState(&window_drag_mouse_x_, &window_drag_mouse_y_);
-  SDL_CaptureMouse(true);
-  window_drag_active_ = true;
-  return true;
-}
-
-bool Application::UpdateWindowDrag() {
-  if (!window_drag_active_ || window_ == nullptr) {
-    return false;
-  }
-
-  float global_mouse_x = 0.0f;
-  float global_mouse_y = 0.0f;
-  SDL_GetGlobalMouseState(&global_mouse_x, &global_mouse_y);
-  const int target_x = window_drag_origin_x_ +
-                       static_cast<int>(std::lround(global_mouse_x - window_drag_mouse_x_));
-  const int target_y = window_drag_origin_y_ +
-                       static_cast<int>(std::lround(global_mouse_y - window_drag_mouse_y_));
-  SDL_SetWindowPosition(window_, target_x, target_y);
-  return true;
-}
-
-void Application::StopWindowDrag() {
-  if (!window_drag_active_) {
-    return;
-  }
-
-  window_drag_active_ = false;
-  SDL_CaptureMouse(false);
 }
 
 void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason) {
@@ -632,12 +577,14 @@ void Application::ConsumeWindowActions() {
       } else {
         SDL_MaximizeWindow(window_);
       }
+      SyncWindowState(window_);
       UpdateRendererPresentation();
       return;
     }
     case workspace::WorkspaceShell::WindowAction::ToggleFullscreen: {
       const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
       SDL_SetWindowFullscreen(window_, (flags & SDL_WINDOW_FULLSCREEN) == 0);
+      SyncWindowState(window_);
       UpdateRendererPresentation();
       return;
     }

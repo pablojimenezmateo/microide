@@ -591,6 +591,11 @@ struct WorkspaceShell::TestAccess {
     event.key.mod = modifiers;
     return shell.HandleEvent(event).handled;
   }
+  static bool HandleWindowMouseLeave(WorkspaceShell& shell) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_WINDOW_MOUSE_LEAVE;
+    return shell.HandleEvent(event).handled;
+  }
   static bool HandleWindowFocusEvent(WorkspaceShell& shell, bool focused) {
     SDL_Event event{};
     event.type = focused ? SDL_EVENT_WINDOW_FOCUS_GAINED : SDL_EVENT_WINDOW_FOCUS_LOST;

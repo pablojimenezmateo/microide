@@ -1178,6 +1178,7 @@ class WorkspaceShell {
   void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
+  void ClearMouseHoverState();
   void UpdateMouseCursor(float x, float y);
 
   render::Theme theme_ = render::MakeDefaultTheme();

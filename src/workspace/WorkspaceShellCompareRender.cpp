@@ -200,12 +200,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float content_width = std::max(0.0f, rect.w - right_reserved);
   const float content_height = std::max(0.0f, rect.h - bottom_reserved);
-  const float divider_x = surface.center_x;
+  const float divider_x = surface.center_x + std::min(1.0f, std::max(0.0f, surface.divider_width - 1.0f));
   std::size_t blame_index = 0;
 
   DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f), theme_.border);
   DrawFilledRect(renderer,
-                 MakeRect(surface.center_x - 1.0f, rect.y, 1.0f, content_height),
+                 MakeRect(surface.center_x, rect.y, 1.0f, content_height),
                  theme_.border);
   DrawFilledRect(renderer, MakeRect(surface.right_x - 1.0f, rect.y, 1.0f, content_height),
                  theme_.border);

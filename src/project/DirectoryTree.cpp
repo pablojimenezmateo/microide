@@ -251,25 +251,32 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
 
   std::error_code error;
   std::vector<SortableEntry> children;
-  for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
-    if (error) {
-      break;
-    }
-
-    const auto path = entry.path();
+  std::filesystem::directory_iterator iterator(
+      directory, std::filesystem::directory_options::skip_permission_denied, error);
+  std::filesystem::directory_iterator end;
+  while (!error && iterator != end) {
+    const auto path = iterator->path();
     const std::string sort_key = path.filename().string();
     std::error_code relative_error;
     const auto relative = std::filesystem::relative(path, root_, relative_error);
     if (relative_error || relative.empty()) {
+      iterator.increment(error);
       continue;
     }
 
-    const bool is_directory = entry.is_directory();
+    std::error_code type_error;
+    const bool is_directory = iterator->is_directory(type_error);
+    if (type_error) {
+      iterator.increment(error);
+      continue;
+    }
     if (is_directory && path.filename() == ".git") {
+      iterator.increment(error);
       continue;
     }
 
     if (IsHidden(path)) {
+      iterator.increment(error);
       continue;
     }
 
@@ -277,6 +284,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       IgnoreMatcher child_matcher = matcher;
       child_matcher.LoadIgnoreFile(path / ".gitignore");
       if (child_matcher.Ignored(relative, true)) {
+        iterator.increment(error);
         continue;
       }
       children.push_back(SortableEntry{
@@ -285,10 +293,12 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
           .is_directory = true,
           .matcher = std::move(child_matcher),
       });
+      iterator.increment(error);
       continue;
     }
 
     if (matcher.Ignored(relative, false)) {
+      iterator.increment(error);
       continue;
     }
 
@@ -298,6 +308,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
         .is_directory = false,
         .matcher = IgnoreMatcher{},
     });
+    iterator.increment(error);
   }
 
   std::sort(children.begin(), children.end(), [](const SortableEntry& lhs, const SortableEntry& rhs) {

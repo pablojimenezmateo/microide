@@ -901,6 +901,29 @@ void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
          "hovering a tab should expose the full relative path tooltip");
 }
 
+void TestWorkspaceShellWindowMouseLeaveClearsTabTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  WorkspaceShellTestAccess::HandleMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
+                                              tab_rect.y + tab_rect.h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+         "tab tooltip fixture should start with a hovered tab label");
+
+  Expect(WorkspaceShellTestAccess::HandleWindowMouseLeave(shell),
+         "window mouse leave should be handled");
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
+         "window mouse leave should clear stale tab tooltip hover state");
+}
+
 void TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1280,6 +1303,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorDragSelectionTracksPointer);
   AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
+  AddTest(tests, "WorkspaceShell/WindowMouseLeaveClearsTabTooltip",
+          TestWorkspaceShellWindowMouseLeaveClearsTabTooltip);
   AddTest(tests, "WorkspaceShell/EditorSelectionWritesPrimaryBufferAndMiddleClickPastes",
           TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TextInputSurfaceTracksEditorOverlayAndPrompt",

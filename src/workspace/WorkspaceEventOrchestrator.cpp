@@ -89,6 +89,10 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       return finish(operations_.handle_text_editing(event.edit));
     case SDL_EVENT_TEXT_INPUT:
       return finish(operations_.handle_text_input(event.text));
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+      operations_.handle_window_mouse_leave();
+      operations_.request_window_redraw();
+      return finish(true);
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
       state_.window_has_input_focus = true;
       operations_.request_window_redraw();

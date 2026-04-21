@@ -184,8 +184,8 @@ void TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
 
-  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 640.0f, 10.0f) == SDL_HITTEST_NORMAL,
-         "empty title-bar hit testing should stay normal so mouse clicks reach the shell");
+  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 640.0f, 10.0f) == SDL_HITTEST_DRAGGABLE,
+         "empty title-bar hit testing should hand borderless dragging back to the window manager");
   Expect(WorkspaceShellTestAccess::WindowDragRegionContains(shell, 640.0f, 10.0f),
          "empty title-bar space should still be eligible for window dragging");
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, 640.0f, 10.0f, SDL_BUTTON_LEFT, 2),
@@ -219,8 +219,8 @@ void TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize() {
           },
   });
 
-  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 1.0f, 1.0f) == SDL_HITTEST_NORMAL,
-         "maximized presentation state should disable resize hit targets");
+  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 1.0f, 1.0f) == SDL_HITTEST_DRAGGABLE,
+         "maximized presentation state should keep the title bar draggable without exposing resize hit targets");
   Expect(WorkspaceShellTestAccess::WindowDragRegionContains(shell, 640.0f, 10.0f),
          "presentation state should keep the title bar draggable");
 }
