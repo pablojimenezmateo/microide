@@ -263,6 +263,12 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceReviewComments.cpp
   src/workspace/WorkspaceAuthProvider.cpp
   src/workspace/WorkspaceSecretStorage.cpp
+  src/workspace/WorkspaceAiProvider.cpp
+  src/workspace/WorkspaceInlineCompletion.cpp
+  src/workspace/WorkspaceConversation.cpp
+  src/workspace/WorkspaceExternalAgent.cpp
+  src/workspace/WorkspaceMcpTool.cpp
+  src/workspace/WorkspaceAiContext.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceViewTree.cpp

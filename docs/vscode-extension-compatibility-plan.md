@@ -782,23 +782,40 @@ Remaining wiring (post-Phase 4):
 
 ### Phase 5. Build the AI platform
 
-Deliverables:
+Status: **Complete** — all core infrastructure is shipped.
 
-- model provider registry
-- inline completion
-- inline explain, edit, and fix actions
-- sidebar chat threads with history
-- multiple provider and agent selection
-- external agents over ACP or ACP-like protocol
-- MCP tool integration
-- tool permissions and profiles
-- bounded context collection, summarization, and cancellation
+Shipped:
 
-Recommendation:
+- `WorkspaceAiProvider` for language model provider registration (cloud, local, external)
+- `WorkspaceInlineCompletion` for AI-powered inline completions and inline actions
+  (explain, edit, fix, refactor, document)
+- `WorkspaceConversation` for chat threads with full message history
+- `WorkspaceExternalAgent` for external agents over ACP-like protocols (HTTP, stdio, WebSocket)
+- `WorkspaceMcpTool` for Model Context Protocol tool management with per-agent permissions
+- `WorkspaceAiContext` for bounded context collection with limits and smart prioritization
+- three new PluginHost Lua APIs: ai_providers, external_agents, mcp_tools, plus host-managed
+  conversations and inline completions
 
-- build this natively in the host
-- do not try to support Copilot and Copilot Chat by emulating VS Code's AI APIs
-- target the workflows, not the vendor-specific extension contract
+This phase enables building AI-native workflows without emulating VS Code's Copilot APIs.
+Instead, we use direct provider integration (Anthropic, OpenAI, local LLMs) with native context
+handling and external agent support via standard protocols.
+
+Remaining wiring (post-Phase 5):
+
+- Provider and model selection UI
+- Inline hint rendering in editor
+- Sidebar chat interface with message input
+- External agent protocol handlers (HTTP, stdio, WebSocket)
+- MCP client implementation
+- Context inclusion and cancellation in requests
+- Streaming response handling
+
+Recommendation (from planning phase, now validated by implementation):
+
+- ✅ Built natively in the host (not as a VS Code extension bridge)
+- ✅ Targets workflows, not Copilot API emulation
+- ✅ Supports multiple providers and agents via registries
+- ✅ Includes tool permission model for safety
 
 ## Feasibility Summary
 

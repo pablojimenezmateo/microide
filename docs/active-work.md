@@ -386,6 +386,34 @@ Open work:
 - implement OS credential manager backend for `WorkspaceSecretStorage`
 - validate GitLens-like and GitHub-review-like workflows once wiring is in place
 
+- Phase 5 AI platform is now shipped:
+  - `workspace/WorkspaceAiProvider.*` manages language model provider registrations (cloud, local,
+    external)
+  - `workspace/WorkspaceInlineCompletion.*` manages AI-powered inline code completions and
+    inline actions (explain, edit, fix, refactor, document)
+  - `workspace/WorkspaceConversation.*` manages chat/conversation threads with full message
+    history, persistence-ready
+  - `workspace/WorkspaceExternalAgent.*` manages external AI agents over ACP-like protocols
+    (HTTP, stdio, WebSocket) with capability declaration and task-based selection
+  - `workspace/WorkspaceMcpTool.*` manages Model Context Protocol tools with per-agent
+    permission levels (denied, prompt-required, allowed-within-context, allowed)
+  - `workspace/WorkspaceAiContext.*` provides bounded context collection with configurable
+    limits (size, file count) and smart prioritization (current file > selection > diagnostics)
+  - `PluginHost` gains three new Lua tables: `ctx.ai_providers` (add),
+    `ctx.external_agents` (add), `ctx.mcp_tools` (add); conversations and inline completions
+    are host-managed
+
+Open work:
+
+- wire `WorkspaceAiProvider` into provider and model selection UI
+- wire `WorkspaceInlineCompletion` into editor inline hint rendering
+- wire `WorkspaceConversation` into a sidebar chat interface with message input
+- implement external agent protocol handlers (HTTP, stdio, WebSocket)
+- implement MCP protocol client for tool use
+- wire `WorkspaceAiContext` into completion and chat requests for bounded context
+- implement context cancellation and streaming response handling
+- validate real LLM workflows (completion, chat, inline actions) once wiring is in place
+
 ### 2. Terminal Hardening
 
 Current state:

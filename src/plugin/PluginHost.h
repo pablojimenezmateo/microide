@@ -164,6 +164,31 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  struct ContributedAiProvider {
+    std::string id;
+    std::string label;
+    std::string type;  // "cloud", "local", "external"
+    std::vector<std::string> models;
+    std::string plugin_id;
+  };
+
+  struct ContributedExternalAgent {
+    std::string id;
+    std::string label;
+    std::string protocol;  // "acp", "stdio", "http"
+    std::string endpoint;
+    std::vector<std::string> capabilities;
+    std::string plugin_id;
+  };
+
+  struct ContributedMcpTool {
+    std::string id;
+    std::string name;
+    std::string description;
+    std::string input_schema;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -228,6 +253,9 @@ class PluginHost {
   const std::vector<ContributedScmProvider>& ContributedScmProviders() const;
   const std::vector<ContributedAnnotationProvider>& ContributedAnnotationProviders() const;
   const std::vector<ContributedAuthProvider>& ContributedAuthProviders() const;
+  const std::vector<ContributedAiProvider>& ContributedAiProviders() const;
+  const std::vector<ContributedExternalAgent>& ContributedExternalAgents() const;
+  const std::vector<ContributedMcpTool>& ContributedMcpTools() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

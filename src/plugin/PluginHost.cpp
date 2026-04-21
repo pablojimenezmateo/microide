@@ -156,6 +156,9 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedScmProvider> scm_providers;
   std::vector<PluginHost::ContributedAnnotationProvider> annotation_providers;
   std::vector<PluginHost::ContributedAuthProvider> auth_providers;
+  std::vector<PluginHost::ContributedAiProvider> ai_providers;
+  std::vector<PluginHost::ContributedExternalAgent> external_agents;
+  std::vector<PluginHost::ContributedMcpTool> mcp_tools;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -1418,6 +1421,153 @@ struct PluginHost::Impl {
     return 0;
   }
 
+  static int LuaAiProviderAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "AI provider registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto label_opt = read_string("label");
+    auto type_opt = read_string("type");
+    if (!id_opt || !label_opt || !type_opt) {
+      return luaL_error(state, "AI provider requires id, label, and type");
+    }
+
+    lua_getfield(state, 1, "models");
+    std::vector<std::string> models;
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1; ; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (lua_isstring(state, -1)) {
+          models.push_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+
+    host->ai_providers.push_back(PluginHost::ContributedAiProvider{
+        .id = plugin->id + "." + *id_opt,
+        .label = std::move(*label_opt),
+        .type = std::move(*type_opt),
+        .models = std::move(models),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaExternalAgentAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "external agent registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto label_opt = read_string("label");
+    auto protocol_opt = read_string("protocol");
+    auto endpoint_opt = read_string("endpoint");
+    if (!id_opt || !label_opt || !protocol_opt || !endpoint_opt) {
+      return luaL_error(state,
+                        "external agent requires id, label, protocol, and endpoint");
+    }
+
+    lua_getfield(state, 1, "capabilities");
+    std::vector<std::string> capabilities;
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1; ; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (lua_isstring(state, -1)) {
+          capabilities.push_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+
+    host->external_agents.push_back(PluginHost::ContributedExternalAgent{
+        .id = plugin->id + "." + *id_opt,
+        .label = std::move(*label_opt),
+        .protocol = std::move(*protocol_opt),
+        .endpoint = std::move(*endpoint_opt),
+        .capabilities = std::move(capabilities),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
+  static int LuaMcpToolAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "MCP tool registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto name_opt = read_string("name");
+    auto description_opt = read_string("description");
+    auto schema_opt = read_string("input_schema");
+    if (!id_opt || !name_opt || !description_opt || !schema_opt) {
+      return luaL_error(state,
+                        "MCP tool requires id, name, description, and input_schema");
+    }
+
+    host->mcp_tools.push_back(PluginHost::ContributedMcpTool{
+        .id = plugin->id + "." + *id_opt,
+        .name = std::move(*name_opt),
+        .description = std::move(*description_opt),
+        .input_schema = std::move(*schema_opt),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     if (host == nullptr || host->current_project_root.empty()) {
@@ -2009,6 +2159,24 @@ struct PluginHost::Impl {
     lua_pushcclosure(state, &LuaAuthProviderAdd, 1);
     lua_setfield(state, -2, "add");
     lua_setfield(state, -2, "auth");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaAiProviderAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "ai_providers");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaExternalAgentAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "external_agents");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaMcpToolAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "mcp_tools");
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
@@ -2478,6 +2646,24 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           auth_providers.end());
+      ai_providers.erase(
+          std::remove_if(ai_providers.begin(), ai_providers.end(),
+                         [&](const PluginHost::ContributedAiProvider& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          ai_providers.end());
+      external_agents.erase(
+          std::remove_if(external_agents.begin(), external_agents.end(),
+                         [&](const PluginHost::ContributedExternalAgent& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          external_agents.end());
+      mcp_tools.erase(
+          std::remove_if(mcp_tools.begin(), mcp_tools.end(),
+                         [&](const PluginHost::ContributedMcpTool& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          mcp_tools.end());
     }
   }
 
@@ -3154,6 +3340,20 @@ PluginHost::ContributedAnnotationProviders() const {
 const std::vector<PluginHost::ContributedAuthProvider>& PluginHost::ContributedAuthProviders()
     const {
   return impl_->auth_providers;
+}
+
+const std::vector<PluginHost::ContributedAiProvider>& PluginHost::ContributedAiProviders()
+    const {
+  return impl_->ai_providers;
+}
+
+const std::vector<PluginHost::ContributedExternalAgent>& PluginHost::ContributedExternalAgents()
+    const {
+  return impl_->external_agents;
+}
+
+const std::vector<PluginHost::ContributedMcpTool>& PluginHost::ContributedMcpTools() const {
+  return impl_->mcp_tools;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {
