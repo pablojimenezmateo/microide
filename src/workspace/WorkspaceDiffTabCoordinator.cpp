@@ -13,6 +13,26 @@
 
 namespace microide::workspace {
 
+namespace {
+
+void NotifyBufferOpenForEditableTab(const TabEntry& tab,
+                                    const DiffTabCoordinator::Operations& operations) {
+  if (!operations.notify_plugin_buffer_open) {
+    return;
+  }
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+      tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
+    operations.notify_plugin_buffer_open(tab.compare->right_viewport.path());
+    return;
+  }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+      !tab.merge->result_viewport.path().empty()) {
+    operations.notify_plugin_buffer_open(tab.merge->result_viewport.path());
+  }
+}
+
+}  // namespace
+
 DiffTabCoordinator::DiffTabCoordinator(ProjectWorkspaceState& state, Operations operations)
     : state_(state), operations_(std::move(operations)) {}
 
@@ -122,6 +142,7 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*compare_tab));
   ActivateCompareTab(state_.open_tabs.size() - 1, true);
+  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
 }
 
 bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
@@ -158,6 +179,7 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*merge_tab));
   ActivateMergeTab(state_.open_tabs.size() - 1);
+  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
   return true;
 }
 
@@ -194,6 +216,7 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*compare_tab));
   ActivateCompareTab(state_.open_tabs.size() - 1, false);
+  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
   return true;
 }
 
@@ -230,6 +253,7 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*compare_tab));
   ActivateCompareTab(state_.open_tabs.size() - 1, false);
+  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
   return true;
 }
 
@@ -275,6 +299,7 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
 
   state_.open_tabs.push_back(std::move(*merge_tab));
   ActivateMergeTab(state_.open_tabs.size() - 1);
+  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
   return true;
 }
 
@@ -283,6 +308,8 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
       context_.current_project_state,
       DiffTabCoordinator::Operations{
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
+          .notify_plugin_buffer_open =
+              [this](const std::filesystem::path& path) { NotifyPluginBufferOpen(path); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
           .ensure_active_tab_visible = [this]() { EnsureActiveTabVisible(); },

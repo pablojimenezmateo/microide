@@ -1,5 +1,9 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <algorithm>
+#include <cmath>
+
+#include "editor/EditorViewRenderer.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
@@ -131,12 +135,68 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_RIGHT &&
       Contains(layout.editor_surface, event.button.x, event.button.y) &&
       ActiveEditableViewport() != nullptr) {
+    const bool retargeted_cursor = [&]() {
+      if (!ActiveTabIsEditor()) {
+        return false;
+      }
+
+      SyncActiveEditorTab();
+      auto* editor_tab = ActiveEditorTab();
+      if (editor_tab == nullptr) {
+        return false;
+      }
+      NormalizeEditorSplitTree(*editor_tab);
+
+      const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+      const auto pane_it = std::find_if(
+          panes.begin(), panes.end(),
+          [&](const EditorPaneLayout& pane) {
+            return Contains(pane.rect, event.button.x, event.button.y);
+          });
+      if (pane_it == panes.end()) {
+        return false;
+      }
+      if (!pane_it->active) {
+        SetActiveEditorSplit(pane_it->leaf_id);
+      }
+
+      editor::TextViewport* viewport = ActiveEditorViewport();
+      if (viewport == nullptr) {
+        return false;
+      }
+
+      const editor::EditorViewMetrics metrics =
+          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
+      viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+
+      const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
+      const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
+      const std::size_t line =
+          std::min(viewport->scroll_line() + row,
+                   viewport->line_count() == 0 ? 0 : viewport->line_count() - 1);
+      const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
+      const std::size_t visual_column =
+          viewport->horizontal_scroll() +
+          static_cast<std::size_t>(std::max(
+              0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
+
+      viewport->MoveCursorToVisualColumn(line, visual_column, false);
+      return true;
+    }();
     MakeMenuCoordinator().OpenAnchoredMenu(
-        MenuId::Edit,
+        MenuId::EditorContext,
         MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                  1.0f));
+    if (retargeted_cursor) {
+      ResetCaretBlink();
+    }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    ensure_redraw([this]() { RequestChromeRedraw(); });
+    ensure_redraw([this, retargeted_cursor]() {
+      RequestChromeRedraw();
+      if (retargeted_cursor) {
+        RequestFocusedEditorRedraw();
+      }
+    });
     return true;
   }
 

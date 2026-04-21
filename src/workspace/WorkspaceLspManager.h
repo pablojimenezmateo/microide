@@ -2,6 +2,7 @@
 
 #include "workspace/WorkspaceLspClient.h"
 
+#include <SDL3/SDL.h>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -16,17 +17,24 @@ class LspManager {
   LspManager(const LspManager&) = delete;
   LspManager& operator=(const LspManager&) = delete;
 
+  // Set SDL event type used to wake the main loop when responses arrive.
+  void SetWakeEventType(Uint32 event_type);
+
   // Register a server command for a language.
-  // command: e.g., ["rust-analyzer"]
-  // root_uri: workspace root, e.g., "file:///path/to/project"
   void RegisterServer(const std::string& language_id, const std::vector<std::string>& command,
                       const std::string& root_uri);
 
   // Get or start server for language; returns nullptr if not registered or failed to start.
   LspClient* GetServer(const std::string& language_id);
 
+  // True if a server is registered for language, regardless of running state.
+  bool HasServer(const std::string& language_id) const;
+
   // True if server is running for language.
   bool IsServerRunning(const std::string& language_id) const;
+
+  // Call from main thread each frame to dispatch pending LSP callbacks.
+  void DrainCallbacks();
 
   // Stop all servers.
   void ShutdownAll();
@@ -38,6 +46,7 @@ class LspManager {
     std::unique_ptr<LspClient> client;
   };
 
+  Uint32 wake_event_type_ = 0;
   std::unordered_map<std::string, ServerEntry> servers_;
 };
 

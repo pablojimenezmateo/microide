@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -54,9 +55,16 @@ class TextRenderer {
   void ClearWidthCache() const;
   void RememberMeasuredWidth(std::string text, float width) const;
 
+  struct StringHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view sv) const noexcept {
+      return std::hash<std::string_view>{}(sv);
+    }
+  };
+
   std::unique_ptr<TextRendererBackend> backend_;
   bool attempted_optional_backend_ = false;
-  mutable std::unordered_map<std::string, float> width_cache_;
+  mutable std::unordered_map<std::string, float, StringHash, std::equal_to<>> width_cache_;
   mutable std::deque<std::string> width_cache_order_;
   mutable std::string width_cache_backend_name_ = "debug";
   mutable float width_cache_scale_x_ = 1.0f;

@@ -764,30 +764,39 @@ void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
          "copy with context should prepend the relative path and selected line range");
 }
 
-void TestWorkspaceShellEditorRightClickOpensEditContextMenu() {
+void TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "main.cpp";
   std::filesystem::create_directories(root);
-  WriteFile(source, "int main() {}\n");
+  WriteFile(source, "int alpha = beta;\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float click_x =
+      metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 12.0f;
+  const float click_y = metrics.first_line_y + metrics.line_height * 0.5f;
 
   SDL_Event event{};
   event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
   event.button.button = SDL_BUTTON_RIGHT;
-  event.button.x = 320;
-  event.button.y = 140;
+  event.button.x = click_x;
+  event.button.y = click_y;
 
   Expect(shell.HandleEvent(event).handled,
          "right-clicking the editor should be handled");
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell),
          "right-clicking the editor should open a popup menu");
-  Expect(WorkspaceShellTestAccess::EditMenuOpen(shell),
-         "right-clicking the editor should open the edit popup as a context menu");
+  Expect(WorkspaceShellTestAccess::EditorContextMenuOpen(shell),
+         "right-clicking the editor should open the dedicated editor context menu");
+  Expect(!WorkspaceShellTestAccess::EditMenuOpen(shell),
+         "right-clicking the editor should not light up the top-level Edit menu");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 12,
+         "right-clicking a symbol should retarget the caret before opening the context menu");
 }
 
 void OpenSplitEditorMouseFixture(WorkspaceShell& shell,
@@ -1305,8 +1314,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
-  AddTest(tests, "WorkspaceShell/EditorRightClickOpensEditContextMenu",
-          TestWorkspaceShellEditorRightClickOpensEditContextMenu);
+  AddTest(tests, "WorkspaceShell/EditorRightClickOpensSymbolAwareContextMenu",
+          TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu);
   AddTest(tests, "WorkspaceShell/ClickingInactiveEditorPaneActivatesSplit",
           TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit);
   AddTest(tests, "WorkspaceShell/EditorWheelActivatesHoveredSplit",

@@ -22,6 +22,7 @@ enum class MenuId {
   View,
   SidebarMode,
   Search,
+  EditorContext,
   EditorTabContext,
   Project,
   Terminal,

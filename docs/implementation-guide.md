@@ -91,7 +91,8 @@ These are out of scope unless deliberately added as a separate phase:
 - recent-project and recent-file surfaces
 - soft wrap
 
-LSP-backed diagnostics are also a separate phase, not an implicit requirement of the current shell.
+Broad LSP coverage is not an implicit requirement of the current shell; only validated workflows
+should stay in scope.
 
 ## Architecture Map
 

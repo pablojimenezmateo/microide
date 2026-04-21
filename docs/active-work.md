@@ -321,9 +321,11 @@ Open work:
   - `platform/AsyncSubprocess.*` provides a POSIX-backed async subprocess interface with
     bidirectional pipes, poll-based non-blocking reads, and SIGTERM/SIGKILL shutdown
   - `util/JsonValue.*` implements a recursive JSON parser and serializer for LSP communication
-  - `workspace/WorkspaceLspClient.*` implements a synchronous JSON-RPC 2.0 client with
-    initialize, didOpen, didChange, didSave, didClose notifications and textDocument/hover,
-    textDocument/completion, textDocument/codeAction, and textDocument/formatting requests
+  - `workspace/WorkspaceLspClient.*` implements an async JSON-RPC 2.0 client with initialize,
+    didOpen, didChange, didSave, didClose notifications and textDocument/hover,
+    textDocument/completion, textDocument/codeAction, textDocument/formatting,
+    textDocument/definition, and textDocument/references requests delivered back to the host
+    through SDL wake events
   - `workspace/WorkspaceLspManager.*` manages multiple LSP servers, one per language_id
   - `workspace/WorkspaceDapManager.*` manages multiple debug adapters, one per debugger type
   - `workspace/WorkspaceFormatterRegistry.*` stores declarative formatter specs (language_id,
@@ -357,11 +359,14 @@ Open work:
     task and test flows reuse the bottom panel and Tests sidebar instead of inventing parallel UI
   - runtime and shell wiring are covered in `tests/PluginHostTests.cpp` and
     `tests/WorkspaceShellPluginTests.cpp`, in addition to `tests/Phase3Tests.cpp`
+  - Phase 5 validation now exercises plugin-declared language servers end to end for diagnostics,
+    completion, code actions, go-to-definition, references, and editable merge-buffer lifecycle
+    in `tests/Phase5Tests.cpp`
 
 Open work:
 
-- validate real LSP and DAP server communication before promising broader language-server or
-  debugger coverage
+- keep validating real LSP and DAP server communication beyond the shipped end-to-end fake-server
+  coverage before promising broader language-server or debugger coverage
 - keep the completion and code-action overlays host-owned and minimal; do not fork the command
   prompt into a second editor interaction model
 - extend test UX only after real controller state exists for richer tree, gutter, and per-test

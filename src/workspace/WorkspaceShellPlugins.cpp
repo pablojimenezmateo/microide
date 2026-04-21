@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <filesystem>
+#include <set>
 #include <string_view>
 
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -12,6 +13,40 @@ namespace {
 
 bool IsVirtualDocumentUri(std::string_view text) {
   return text.starts_with("virtual://");
+}
+
+template <typename Callback>
+void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& callback) {
+  for (const auto& tab : state.open_tabs) {
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      for (const auto& view : tab.editor_state->views) {
+        const std::filesystem::path path =
+            (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
+        if (path.empty()) {
+          continue;
+        }
+        if (view.needs_restore) {
+          editor::TextViewport restored_view;
+          if (!restored_view.OpenFile(path)) {
+            continue;
+          }
+          callback(path, restored_view);
+        } else {
+          callback(path, view.viewport);
+        }
+      }
+      continue;
+    }
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
+      callback(tab.compare->right_viewport.path().lexically_normal(), tab.compare->right_viewport);
+      continue;
+    }
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+        !tab.merge->result_viewport.path().empty()) {
+      callback(tab.merge->result_viewport.path().lexically_normal(), tab.merge->result_viewport);
+    }
+  }
 }
 
 }  // namespace
@@ -110,6 +145,8 @@ void WorkspaceShell::RebuildPhase3Registries() {
   tool_registry_ = ToolRegistry{};
   test_controller_.Clear();
   dap_manager_.ShutdownAll();
+  lsp_manager_.ShutdownAll();
+  context_.current_project_state.diagnostics_store.ClearOwner("lsp");
 
   const auto& host = plugin_runtime_.Host();
   for (const auto& formatter : host.ContributedFormatters()) {
@@ -139,6 +176,13 @@ void WorkspaceShell::RebuildPhase3Registries() {
         .plugin_id = code_action.plugin_id,
         .language_id = code_action.language_id,
     });
+  }
+  for (const auto& language_server : host.ContributedLanguageServers()) {
+    if (language_server.command.empty()) {
+      continue;
+    }
+    lsp_manager_.RegisterServer(language_server.language_id, language_server.command,
+                                "file://" + context_.current_project_state.root.generic_string());
   }
   for (const auto& task : host.ContributedTasks()) {
     task_registry_.Register(TaskSpec{
@@ -321,26 +365,87 @@ void WorkspaceShell::NotifyPluginsAboutOpenBuffers() {
   if (!plugin_runtime_.enabled()) {
     return;
   }
-  for (const auto& tab : context_.current_project_state.open_tabs) {
-    if (tab.kind != TabEntry::Kind::Editor || tab.path.empty()) {
-      continue;
-    }
-    NotifyPluginBufferOpen(tab.path);
-  }
+  std::set<std::filesystem::path> opened_paths;
+  ForEachOpenEditableBuffer(context_.current_project_state,
+                            [&](const std::filesystem::path& path,
+                                const editor::TextViewport& viewport) {
+                              if (!opened_paths.insert(path).second) {
+                                return;
+                              }
+                              plugin_runtime_.Host().OnBufferOpen(path);
+                              std::string language_id;
+                              LspClient* client = LspClientForViewport(viewport, &language_id);
+                              if (client != nullptr) {
+                                EnsureLspDocumentOpen(viewport, *client, language_id);
+                              }
+                            });
 }
 
 void WorkspaceShell::NotifyPluginBufferOpen(const std::filesystem::path& path) {
-  if (!plugin_runtime_.enabled() || path.empty()) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (!plugin_runtime_.enabled() && normalized_path.empty()) {
     return;
   }
-  plugin_runtime_.Host().OnBufferOpen(path.lexically_normal());
+  if (plugin_runtime_.enabled() && !normalized_path.empty()) {
+    plugin_runtime_.Host().OnBufferOpen(normalized_path);
+  }
+  if (normalized_path.empty()) {
+    return;
+  }
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
 }
 
 void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
-  if (!plugin_runtime_.enabled() || path.empty()) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (plugin_runtime_.enabled() && !normalized_path.empty()) {
+    plugin_runtime_.Host().OnBufferSave(normalized_path);
+  }
+  if (normalized_path.empty()) {
     return;
   }
-  plugin_runtime_.Host().OnBufferSave(path.lexically_normal());
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  client->DidSave("file://" + normalized_path.generic_string());
+}
+
+void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (normalized_path.empty()) {
+    return;
+  }
+  editor::TextViewport viewport;
+  if (!viewport.OpenFile(normalized_path)) {
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(viewport, &language_id);
+  if (client == nullptr) {
+    return;
+  }
+  const std::string uri = "file://" + normalized_path.generic_string();
+  if (client->HasOpenDocument(uri)) {
+    client->DidClose(uri);
+  }
+  context_.current_project_state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
+  RefreshProblemsSidebar();
+  RequestEditorSurfaceRedraw();
 }
 
 }  // namespace microide::workspace

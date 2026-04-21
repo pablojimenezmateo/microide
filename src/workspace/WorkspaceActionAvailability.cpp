@@ -27,7 +27,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Tasks:
       return !context_.current_project_state.root.empty();
     case ActionId::CodeActions:
+      return active_viewport != nullptr && operations_.active_code_actions_available();
     case ActionId::Completion:
+      return active_viewport != nullptr && operations_.active_completion_available();
+    case ActionId::FindReferences:
+      return active_viewport != nullptr && operations_.active_references_available();
+    case ActionId::GoToDefinition:
+      return active_viewport != nullptr && operations_.active_definition_available();
     case ActionId::InlineCompletion:
       return active_viewport != nullptr;
     case ActionId::Colorscheme:

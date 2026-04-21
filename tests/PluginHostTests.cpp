@@ -797,6 +797,46 @@ return ide.plugin({
          "ctx.workspace.active_buffer should expose the active relative path and one-based cursor");
 }
 
+void TestPluginHostPhase5LspApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase5 lsp\n");
+
+  WritePluginInit(
+      global_plugins, "phase5-lsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase5-lsp",
+  setup = function(ctx)
+    ctx.lsp.add({
+      id = "markdown",
+      language_id = "markdown",
+      command = { "python3", "fake-lsp.py" }
+    })
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "phase5 lsp plugin should reload successfully");
+  Expect(host.ContributedLanguageServers().size() == 1,
+         "ctx.lsp.add should register one language server");
+  Expect(host.ContributedLanguageServers().front().id == "phase5-lsp.markdown" &&
+             host.ContributedLanguageServers().front().language_id == "markdown" &&
+             host.ContributedLanguageServers().front().command.size() == 2 &&
+             host.ContributedLanguageServers().front().command.front() == "python3",
+         "language server contributions should preserve ids, language ids, and commands");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -811,6 +851,7 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
+  AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
 }
 
 }  // namespace microide::tests

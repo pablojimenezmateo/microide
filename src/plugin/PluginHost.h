@@ -111,6 +111,13 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  struct ContributedLanguageServer {
+    std::string id;
+    std::string language_id;
+    std::vector<std::string> command;
+    std::string plugin_id;
+  };
+
   struct ContributedTask {
     std::string id;
     std::string label;
@@ -354,6 +361,7 @@ class PluginHost {
   const std::vector<ContributedSaveParticipant>& ContributedSaveParticipants() const;
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
+  const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;
   const std::vector<ContributedTask>& ContributedTasks() const;
   const std::vector<ContributedTool>& ContributedTools() const;
   const std::vector<ContributedDebugger>& ContributedDebuggers() const;

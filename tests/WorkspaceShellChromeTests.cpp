@@ -521,17 +521,19 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
 void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path left = root / "left.txt";
-  const std::filesystem::path right = root / "right.txt";
-  WriteFile(left, "left\n");
-  WriteFile(right, "right\n");
+  const std::filesystem::path left = root / "alpha.cpp";
+  const std::filesystem::path right = root / "beta.cpp";
+  WriteFile(left, "int alpha() { return 1; }\n");
+  WriteFile(right, "int beta() { return 2; }\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  WorkspaceShellTestAccess::OpenFile(shell, left);
-  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, right),
-         "tab context-menu fixture should open a second editor tab");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, left);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, right);
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2,
+         "tab context-menu fixture should expose two editor tabs");
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
 
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
@@ -708,6 +710,32 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
 
   Expect(pixel_differences == 0,
          "retained tab-open redraws should match a full redraw");
+}
+
+void TestWorkspaceShellNewlineInsertionRequestsFullRedraw() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha();\nbeta();\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+
+  const std::size_t before_line_count =
+      WorkspaceShellTestAccess::ActiveEditor(shell).line_count();
+  SDL_Event event{};
+  event.type = SDL_EVENT_KEY_DOWN;
+  event.key.key = SDLK_RETURN;
+  const auto result = shell.HandleEvent(event);
+  Expect(result.handled,
+         "newline redraw regression fixture should insert a newline into the editor");
+  Expect(result.redraw.full,
+         "newline insertion should request a full redraw after changing the editor line count");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() == before_line_count + 1,
+         "newline insertion should split the current line in the active editor");
 }
 
 void TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender() {
@@ -924,6 +952,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenFileInNewTabRetainedRedrawMatchesFullRender",
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsFullRedraw",
+          TestWorkspaceShellNewlineInsertionRequestsFullRedraw);
   AddTest(tests, "WorkspaceShell/SidebarResizeRequestsFullRedrawAndMatchesFullRender",
           TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender);
   AddTest(tests, "WorkspaceShell/BottomPanelResizeRequestsFullRedrawAndSettleFrames",

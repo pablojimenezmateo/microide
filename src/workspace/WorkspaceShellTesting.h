@@ -395,6 +395,7 @@ struct WorkspaceShell::TestAccess {
     return conversation != nullptr ? conversation->provider_id : std::string{};
   }
   static void ConsumeAiRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeAiRuntimeUpdates(); }
+  static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
   static bool WaitForAiRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
     const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
     while (shell.ai_runtime_.active_request_id() != 0 && SDL_GetTicks() <= deadline) {
@@ -1209,6 +1210,10 @@ struct WorkspaceShell::TestAccess {
   static bool EditMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.menu_bar_open &&
            shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::Edit;
+  }
+  static bool EditorContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::EditorContext;
   }
   static bool FileMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.menu_bar_open &&

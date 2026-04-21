@@ -26,6 +26,18 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .active_tab_is_compare = [shell]() { return shell->ActiveTabIsCompare(); },
           .active_tab_is_merge = [shell]() { return shell->ActiveTabIsMerge(); },
           .active_compare_tab = [shell]() { return shell->ActiveCompareTab(); },
+          .active_completion_available = [shell]() {
+            return shell->HasActiveCompletionProvider();
+          },
+          .active_code_actions_available = [shell]() {
+            return shell->HasActiveCodeActionProvider();
+          },
+          .active_definition_available = [shell]() {
+            return shell->HasActiveDefinitionProvider();
+          },
+          .active_references_available = [shell]() {
+            return shell->HasActiveReferencesProvider();
+          },
       });
 }
 
@@ -36,6 +48,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .project_open_dialog_event_type = shell->project_open_dialog_event_type_,
           .git_blame_event_type = shell->git_blame_event_type_,
           .terminal_event_type = shell->terminal_event_type_,
+          .lsp_event_type = shell->lsp_event_type_,
       },
       WorkspaceEventDispatcher::State{
           .window_has_input_focus = shell->context_.interaction_state.window_has_input_focus,
@@ -66,6 +79,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->ConsumeAiRuntimeUpdates(); },
           .request_focused_editor_redraw =
               [shell]() { shell->RequestFocusedEditorRedraw(); },
+          .consume_lsp_callbacks =
+              [shell]() { shell->ConsumeLspCallbacks(); },
           .consume_terminal_session_updates =
               [shell]() { shell->ConsumeTerminalSessionUpdates(); },
           .sync_text_input_surface =

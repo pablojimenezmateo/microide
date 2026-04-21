@@ -99,18 +99,11 @@ inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
     return;
   }
 
-  const float center_x = std::floor(rect.x + rect.w * 0.5f);
-  const float center_y = std::floor(rect.y + rect.h * 0.5f);
-  const auto draw_dot = [&](float x, float y) {
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    const SDL_FRect dot = MakeRect(x, y, 1.0f, 1.0f);
-    SDL_RenderFillRect(renderer, &dot);
-  };
-
-  for (int offset = -3; offset <= 3; ++offset) {
-    draw_dot(center_x + static_cast<float>(offset), center_y + static_cast<float>(offset));
-    draw_dot(center_x + static_cast<float>(offset), center_y - static_cast<float>(offset));
-  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
+  SDL_RenderLine(renderer, cx + 3.0f, cy - 3.0f, cx - 3.0f, cy + 3.0f);
 }
 
 inline void DrawWindowControlGlyph(SDL_Renderer* renderer,

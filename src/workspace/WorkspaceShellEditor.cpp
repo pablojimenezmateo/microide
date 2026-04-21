@@ -303,8 +303,16 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
   NormalizeEditorSplitTree(*editor_tab);
   if (auto* active_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
       active_view != nullptr) {
+    const std::filesystem::path old_path = active_view->path().lexically_normal();
     *active_view = configured_view;
     context_.current_project_state.text_viewport = configured_view;
+    const std::filesystem::path new_path = configured_view.path().lexically_normal();
+    if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {
+      NotifyLspBufferClose(old_path);
+    }
+    if (!new_path.empty()) {
+      NotifyPluginBufferOpen(new_path);
+    }
     SyncActiveEditorTabMetadata();
     ResetCaretBlink();
     RequestActiveTabRedraw(!context_.current_project_state.text_viewport.path().empty());
@@ -451,9 +459,31 @@ void WorkspaceShell::CloseTab(std::size_t index) {
     return;
   }
   const bool closing_active = index == context_.current_project_state.active_tab_index;
+  const TabEntry& closing_tab = context_.current_project_state.open_tabs[index];
 
   if (context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() && index != context_.current_project_state.active_tab_index) {
     SyncActiveEditorTab();
+  }
+
+  if (closing_tab.kind == TabEntry::Kind::Editor && closing_tab.editor_state.has_value()) {
+    for (const auto& view : closing_tab.editor_state->views) {
+      const std::filesystem::path path = EditorViewPath(view);
+      if (!path.empty() && CountOpenBufferViews(path) == 1) {
+        NotifyLspBufferClose(path);
+      }
+    }
+  } else if (closing_tab.kind == TabEntry::Kind::Compare && closing_tab.compare.has_value()) {
+    const auto& compare_tab = *closing_tab.compare;
+    if (compare_tab.right_editable && !compare_tab.right_viewport.path().empty() &&
+        CountOpenBufferViews(compare_tab.right_viewport.path()) == 1) {
+      NotifyLspBufferClose(compare_tab.right_viewport.path());
+    }
+  } else if (closing_tab.kind == TabEntry::Kind::Merge && closing_tab.merge.has_value()) {
+    const auto& merge_tab = *closing_tab.merge;
+    if (!merge_tab.result_viewport.path().empty() &&
+        CountOpenBufferViews(merge_tab.result_viewport.path()) == 1) {
+      NotifyLspBufferClose(merge_tab.result_viewport.path());
+    }
   }
 
   context_.current_project_state.open_tabs.erase(context_.current_project_state.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));

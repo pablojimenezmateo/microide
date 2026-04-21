@@ -65,6 +65,10 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     operations_.consume_ai_runtime_updates();
     return finish(true);
   }
+  if (runtime_.lsp_event_type != 0 && event.type == runtime_.lsp_event_type) {
+    operations_.consume_lsp_callbacks();
+    return finish(true);
+  }
   if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
     operations_.request_focused_editor_redraw();
     return finish(true);

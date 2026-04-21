@@ -40,6 +40,7 @@
 #include "workspace/WorkspaceToolRegistry.h"
 #include "workspace/WorkspaceToolDownloader.h"
 #include "workspace/WorkspaceDapManager.h"
+#include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceTestController.h"
 #include "workspace/WorkspaceScmRegistry.h"
 #include "workspace/WorkspaceAnnotationRegistry.h"
@@ -527,6 +528,7 @@ class WorkspaceShell {
   bool IsReadOnlyVirtualDocument(const std::filesystem::path& path) const;
   void NotifyPluginBufferOpen(const std::filesystem::path& path);
   void NotifyPluginBufferSave(const std::filesystem::path& path);
+  void NotifyLspBufferClose(const std::filesystem::path& path);
   void ResetProjectScopedState(bool show_welcome);
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
@@ -913,6 +915,8 @@ class WorkspaceShell {
   void OpenProjectSearch();
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
   bool ShowCodeActionsOverlay(std::string* error_message = nullptr);
+  bool GoToLspDefinition(std::string* error_message = nullptr);
+  bool FindLspReferences(std::string* error_message = nullptr);
   bool ShowTaskPickerOverlay();
   bool RunTaskById(std::string_view id, std::string* error_message = nullptr);
   bool ApplySelectedCompletion();
@@ -980,6 +984,7 @@ class WorkspaceShell {
                          std::string* error_message = nullptr);
   bool StartChatRequest(std::string message, std::string* error_message = nullptr);
   void ConsumeAiRuntimeUpdates();
+  void ConsumeLspCallbacks();
   bool RequestInlineCompletion(std::string* error_message = nullptr);
   bool AcceptInlineCompletion();
   void DismissInlineCompletion();
@@ -1000,6 +1005,20 @@ class WorkspaceShell {
   std::optional<std::string> SelectionTextWithContext() const;
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
+  std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
+  bool HasActiveCompletionProvider() const;
+  bool HasActiveCodeActionProvider() const;
+  bool HasActiveDefinitionProvider() const;
+  bool HasActiveReferencesProvider() const;
+  LspClient* LspClientForViewport(const editor::TextViewport& viewport,
+                                  std::string* language_id = nullptr);
+  void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
+                             LspClient& client,
+                             std::string_view language_id);
+  void PublishLspDiagnostics(std::string uri,
+                             std::vector<LspClient::Diagnostic> diagnostics);
+  void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
+                                      const std::vector<std::string>& after_lines);
   void CloseAllTabs();
   void ReloadCleanOpenBuffersFromDisk();
   void AppendTerminalPendingInput(std::string_view input);
@@ -1216,6 +1235,7 @@ class WorkspaceShell {
   ToolRegistry tool_registry_;
   ToolDownloader tool_downloader_;
   DapManager dap_manager_;
+  LspManager lsp_manager_;
   TestController test_controller_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
@@ -1233,6 +1253,7 @@ class WorkspaceShell {
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
+  Uint32 lsp_event_type_ = 0;
   project::GitBlameService git_blame_service_;
   std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;

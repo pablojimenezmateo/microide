@@ -64,6 +64,8 @@ class WorkspaceActionContext {
     std::function<void()> open_buffer_replace;
     std::function<bool(std::string*)> show_completion_overlay;
     std::function<bool(std::string*)> show_code_actions_overlay;
+    std::function<bool(std::string*)> go_to_lsp_definition;
+    std::function<bool(std::string*)> find_lsp_references;
     std::function<bool()> show_task_picker_overlay;
     std::function<bool(std::string_view, std::string*)> run_task_by_id;
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
@@ -198,6 +200,8 @@ class WorkspaceActionContext {
   void ShowProjectSearchSidebar(std::string query);
   bool ShowCompletionOverlay(std::string* error_message);
   bool ShowCodeActionsOverlay(std::string* error_message);
+  bool GoToLspDefinition(std::string* error_message);
+  bool FindLspReferences(std::string* error_message);
   bool ShowTaskPickerOverlay();
   bool RunTaskById(std::string_view id, std::string* error_message);
   bool DiscoverTestsForActiveBuffer(std::string* error_message);

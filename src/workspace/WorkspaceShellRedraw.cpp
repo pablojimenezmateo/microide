@@ -203,6 +203,12 @@ void WorkspaceShell::RequestEditorLineToBottomRedraw(std::size_t start_line) {
 
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                                        const std::vector<std::string>& after_lines) {
+  SyncLspForActiveEditableChange(before_lines, after_lines);
+  if (before_lines.size() != after_lines.size()) {
+    RequestFullRedraw();
+    return;
+  }
+
   const auto changed_span = ComputeChangedLineSpan(before_lines, after_lines);
   if (!changed_span.has_value()) {
     RequestFocusedEditorRedraw();
@@ -211,28 +217,16 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
 
   const std::size_t start_line = changed_span->old_start;
   if (ActiveTabIsCompare()) {
-    if (before_lines.size() != after_lines.size()) {
-      RequestCompareRightLineToBottomRedraw(start_line);
-    } else {
-      RequestCompareRightLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
-    }
+    RequestCompareRightLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
     return;
   }
 
   if (ActiveTabIsMerge()) {
-    if (before_lines.size() != after_lines.size()) {
-      RequestMergeResultLineToBottomRedraw(start_line);
-    } else {
-      RequestMergeResultLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
-    }
+    RequestMergeResultLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
     return;
   }
 
-  if (before_lines.size() != after_lines.size()) {
-    RequestEditorLineToBottomRedraw(start_line);
-  } else {
-    RequestEditorLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
-  }
+  RequestEditorLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
 }
 
 void WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,

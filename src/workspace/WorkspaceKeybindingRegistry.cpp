@@ -252,6 +252,26 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      KeybindingSpec{
+          .id = "goto-definition",
+          .action = ActionId::GoToDefinition,
+          .key = SDLK_F12,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "find-references",
+          .action = ActionId::FindReferences,
+          .key = SDLK_F12,
+          .modifiers = SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
   });
   return kSpecs;
 }

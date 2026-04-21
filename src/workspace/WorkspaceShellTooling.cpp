@@ -1,12 +1,16 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <ctime>
+#include <iomanip>
+#include <optional>
 #include <sstream>
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 
@@ -53,6 +57,84 @@ std::string OutputChannelIdForTask(const TaskSpec& spec) {
 
 std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
   return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
+}
+
+std::string SerializeViewportText(const editor::TextViewport& viewport) {
+  return SerializeLines(viewport.lines(), viewport.line_ending());
+}
+
+bool IsUnreservedUriByte(unsigned char ch) {
+  return std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/';
+}
+
+std::string FileUriForPath(const std::filesystem::path& path) {
+  const std::string raw = path.lexically_normal().generic_string();
+  std::ostringstream encoded;
+  encoded << "file://";
+  for (unsigned char ch : raw) {
+    if (IsUnreservedUriByte(ch)) {
+      encoded << static_cast<char>(ch);
+      continue;
+    }
+    encoded << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(ch) << std::nouppercase << std::dec;
+  }
+  return encoded.str();
+}
+
+std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
+  static constexpr std::string_view kFileScheme = "file://";
+  if (!uri.starts_with(kFileScheme)) {
+    return std::nullopt;
+  }
+
+  std::string_view encoded = uri.substr(kFileScheme.size());
+  if (encoded.starts_with("localhost/")) {
+    encoded.remove_prefix(std::string_view("localhost").size());
+  }
+
+  std::string decoded;
+  decoded.reserve(encoded.size());
+  for (std::size_t i = 0; i < encoded.size(); ++i) {
+    if (encoded[i] == '%' && i + 2 < encoded.size()) {
+      const auto hex_value = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
+        if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
+        return -1;
+      };
+      const int hi = hex_value(encoded[i + 1]);
+      const int lo = hex_value(encoded[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        decoded.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+        continue;
+      }
+    }
+    decoded.push_back(encoded[i]);
+  }
+  if (decoded.empty()) {
+    return std::nullopt;
+  }
+  return std::filesystem::path(decoded).lexically_normal();
+}
+
+editor::DiagnosticSeverity DiagnosticSeverityFromLsp(int severity) {
+  switch (severity) {
+    case 2:
+      return editor::DiagnosticSeverity::Warning;
+    case 3:
+      return editor::DiagnosticSeverity::Info;
+    case 4:
+      return editor::DiagnosticSeverity::Hint;
+    case 1:
+    default:
+      return editor::DiagnosticSeverity::Error;
+  }
+}
+
+std::string JsonValueToArgumentString(const util::JsonValue& value) {
+  return value.IsString() ? value.AsString() : util::SerializeJson(value);
 }
 
 editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& viewport) {
@@ -105,6 +187,183 @@ void UpdateMessageContent(Conversation* conversation,
 
 const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceShell::OutputChannels() const {
   return output_channels_.Channels();
+}
+
+std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& path) const {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (normalized_path.empty()) {
+    return 0;
+  }
+
+  std::size_t count = 0;
+  for (const auto& tab : context_.current_project_state.open_tabs) {
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      for (const auto& view : tab.editor_state->views) {
+        if (EditorViewPath(view) == normalized_path) {
+          ++count;
+        }
+      }
+      continue;
+    }
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+      if (tab.compare->right_editable &&
+          tab.compare->right_viewport.path().lexically_normal() == normalized_path) {
+        ++count;
+      }
+      continue;
+    }
+    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+        tab.merge->result_viewport.path().lexically_normal() == normalized_path) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+bool WorkspaceShell::HasActiveCompletionProvider() const {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return false;
+  }
+  const std::string language_id = DetectActiveLanguageId(*viewport);
+  if (language_id.empty()) {
+    return false;
+  }
+  return completion_registry_.FindProvider(language_id) != nullptr || lsp_manager_.HasServer(language_id);
+}
+
+bool WorkspaceShell::HasActiveCodeActionProvider() const {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return false;
+  }
+  const std::string language_id = DetectActiveLanguageId(*viewport);
+  if (language_id.empty()) {
+    return false;
+  }
+  return code_action_registry_.FindProvider(language_id) != nullptr || lsp_manager_.HasServer(language_id);
+}
+
+bool WorkspaceShell::HasActiveDefinitionProvider() const {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return false;
+  }
+  const std::string language_id = DetectActiveLanguageId(*viewport);
+  return !language_id.empty() && lsp_manager_.HasServer(language_id);
+}
+
+bool WorkspaceShell::HasActiveReferencesProvider() const {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return false;
+  }
+  const std::string language_id = DetectActiveLanguageId(*viewport);
+  return !language_id.empty() && lsp_manager_.HasServer(language_id);
+}
+
+LspClient* WorkspaceShell::LspClientForViewport(const editor::TextViewport& viewport,
+                                                std::string* language_id) {
+  if (language_id != nullptr) {
+    *language_id = DetectActiveLanguageId(viewport);
+  }
+  const std::string detected_language =
+      language_id != nullptr ? *language_id : DetectActiveLanguageId(viewport);
+  if (detected_language.empty()) {
+    return nullptr;
+  }
+
+  LspClient* client = lsp_manager_.GetServer(detected_language);
+  if (client == nullptr) {
+    return nullptr;
+  }
+  client->SetDiagnosticsCallback([this](std::string uri,
+                                        std::vector<LspClient::Diagnostic> diagnostics) {
+    PublishLspDiagnostics(std::move(uri), std::move(diagnostics));
+  });
+  return client;
+}
+
+void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
+                                           LspClient& client,
+                                           std::string_view language_id) {
+  if (viewport.path().empty() || language_id.empty()) {
+    return;
+  }
+  const std::string uri = FileUriForPath(viewport.path());
+  if (client.HasOpenDocument(uri)) {
+    return;
+  }
+  client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
+}
+
+void WorkspaceShell::PublishLspDiagnostics(std::string uri,
+                                           std::vector<LspClient::Diagnostic> diagnostics) {
+  const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+  if (!path.has_value()) {
+    return;
+  }
+
+  std::vector<editor::Diagnostic> converted;
+  converted.reserve(diagnostics.size());
+  for (const auto& diagnostic : diagnostics) {
+    converted.push_back(editor::Diagnostic{
+        .range =
+            editor::SelectionRange{
+                .start =
+                    editor::TextPosition{
+                        static_cast<std::size_t>(std::max(diagnostic.range.start.line, 0)),
+                        static_cast<std::size_t>(std::max(diagnostic.range.start.character, 0)),
+                    },
+                .end =
+                    editor::TextPosition{
+                        static_cast<std::size_t>(std::max(diagnostic.range.end.line, 0)),
+                        static_cast<std::size_t>(std::max(diagnostic.range.end.character, 0)),
+                    },
+            },
+        .severity = DiagnosticSeverityFromLsp(diagnostic.severity),
+        .message = diagnostic.message,
+    });
+  }
+
+  if (context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(
+          "lsp", *path, std::move(converted))) {
+    RefreshProblemsSidebar();
+    RequestEditorSurfaceRedraw();
+  }
+}
+
+void WorkspaceShell::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
+                                                    const std::vector<std::string>& after_lines) {
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return;
+  }
+
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+
+  const std::string uri = FileUriForPath(viewport->path());
+  const std::string full_text = SerializeLines(after_lines, viewport->line_ending());
+  if (!client->SupportsIncrementalSync()) {
+    client->DidChange(uri, full_text);
+    return;
+  }
+
+  const std::size_t end_line = before_lines.empty() ? 0 : before_lines.size() - 1;
+  const std::size_t end_column = before_lines.empty() ? 0 : before_lines.back().size();
+  client->DidChangeIncremental(
+      uri,
+      LspClient::Range{
+          .start = LspClient::Position{0, 0},
+          .end =
+              LspClient::Position{static_cast<int>(end_line), static_cast<int>(end_column)},
+      },
+      full_text);
 }
 
 const std::vector<std::string>* WorkspaceShell::OutputChannelEntries(std::string_view id) const {
@@ -237,13 +496,51 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
             .insert_text = item.insert_text,
         });
   }
-  if (context_.current_project_state.overlay.workflow.completion.items.empty()) {
+  if (!context_.current_project_state.overlay.workflow.completion.items.empty()) {
+    ShowOverlay(OverlayMode::Completion);
+    return true;
+  }
+
+  LspClient* client = LspClientForViewport(*viewport, nullptr);
+  if (client == nullptr) {
     if (error_message != nullptr) {
       *error_message = provider_error.empty() ? "No completions available" : provider_error;
     }
     return false;
   }
+
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  auto& session = context_.current_project_state.overlay.workflow.completion;
+  session.items.clear();
+  session.selected_index = 0;
+  session.replacement_range = CompletionReplacementRange(*viewport);
+  session.source = "lsp";
+  session.error = "Loading...";
   ShowOverlay(OverlayMode::Completion);
+  client->RequestCompletionAsync(
+      FileUriForPath(viewport->path()),
+      LspClient::Position{static_cast<int>(viewport->cursor_line()),
+                          static_cast<int>(viewport->cursor_column())},
+      [this](std::optional<std::vector<LspClient::CompletionItem>> items) {
+        auto& current_session = context_.current_project_state.overlay.workflow.completion;
+        current_session.items.clear();
+        current_session.selected_index = 0;
+        current_session.source = "lsp";
+        if (!items.has_value() || items->empty()) {
+          current_session.error = "No completions available";
+        } else {
+          current_session.error.clear();
+          for (const auto& item : *items) {
+            current_session.items.push_back(CompletionSessionItem{
+                .label = item.label,
+                .detail = item.detail,
+                .documentation = item.documentation,
+                .insert_text = item.insert_text,
+            });
+          }
+        }
+        RequestOverlayRedraw();
+      });
   return true;
 }
 
@@ -317,13 +614,57 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
         .arguments = item.arguments,
     });
   }
-  if (session.items.empty()) {
+  if (!session.items.empty()) {
+    ShowOverlay(OverlayMode::CodeActions);
+    return true;
+  }
+
+  LspClient* client = LspClientForViewport(*viewport, nullptr);
+  if (client == nullptr) {
     if (error_message != nullptr) {
       *error_message = provider_error.empty() ? "No code actions available" : provider_error;
     }
     return false;
   }
+
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  session.items.clear();
+  session.selected_index = 0;
+  session.source = "lsp";
+  session.error = "Loading...";
   ShowOverlay(OverlayMode::CodeActions);
+  client->RequestCodeActionAsync(
+      FileUriForPath(viewport->path()),
+      LspClient::Range{
+          .start = LspClient::Position{static_cast<int>(range.start.line),
+                                       static_cast<int>(range.start.column)},
+          .end = LspClient::Position{static_cast<int>(range.end.line),
+                                     static_cast<int>(range.end.column)},
+      },
+      [this](std::optional<std::vector<LspClient::CodeAction>> actions) {
+        auto& current_session = context_.current_project_state.overlay.workflow.code_actions;
+        current_session.items.clear();
+        current_session.selected_index = 0;
+        current_session.source = "lsp";
+        if (!actions.has_value() || actions->empty()) {
+          current_session.error = "No code actions available";
+        } else {
+          current_session.error.clear();
+          for (const auto& action : *actions) {
+            std::vector<std::string> arguments;
+            arguments.reserve(action.arguments.size());
+            for (const auto& argument : action.arguments) {
+              arguments.push_back(JsonValueToArgumentString(argument));
+            }
+            current_session.items.push_back(CodeActionSessionItem{
+                .title = action.title,
+                .command = action.command,
+                .arguments = std::move(arguments),
+            });
+          }
+        }
+        RequestOverlayRedraw();
+      });
   return true;
 }
 
@@ -347,6 +688,108 @@ bool WorkspaceShell::ExecuteSelectedCodeAction() {
     RequestOverlayRedraw();
   }
   return executed;
+}
+
+bool WorkspaceShell::GoToLspDefinition(std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No active file";
+    }
+    return false;
+  }
+
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "No language server registered for " + language_id;
+    }
+    return false;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  client->RequestGoToDefinitionAsync(
+      FileUriForPath(viewport->path()),
+      LspClient::Position{static_cast<int>(viewport->cursor_line()),
+                          static_cast<int>(viewport->cursor_column())},
+      [this](std::optional<std::vector<LspClient::Location>> locations) {
+        if (!locations.has_value() || locations->empty()) {
+          output_channels_.AppendLine("lsp.definition", "LSP Definition", "No definition found");
+          ShowOutputChannel("lsp.definition");
+          return;
+        }
+        const std::optional<std::filesystem::path> path = PathFromFileUri(locations->front().uri);
+        if (!path.has_value()) {
+          return;
+        }
+        if (!OpenFileInNewTab(*path)) {
+          return;
+        }
+        if (editor::TextViewport* active = ActiveEditorViewport(); active != nullptr) {
+          active->MoveCursorTo(
+              static_cast<std::size_t>(std::max(locations->front().range.start.line, 0)),
+              static_cast<std::size_t>(std::max(locations->front().range.start.character, 0)));
+          ResetCaretBlink();
+          RequestFocusedEditorRedraw();
+        }
+      });
+  return true;
+}
+
+bool WorkspaceShell::FindLspReferences(std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No active file";
+    }
+    return false;
+  }
+
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "No language server registered for " + language_id;
+    }
+    return false;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  client->RequestFindReferencesAsync(
+      FileUriForPath(viewport->path()),
+      LspClient::Position{static_cast<int>(viewport->cursor_line()),
+                          static_cast<int>(viewport->cursor_column())},
+      true,
+      [this](std::optional<std::vector<LspClient::Location>> locations) {
+        output_channels_.Clear("lsp.references");
+        if (!locations.has_value() || locations->empty()) {
+          output_channels_.AppendLine("lsp.references", "LSP References", "No references found");
+          ShowOutputChannel("lsp.references");
+          return;
+        }
+        for (const auto& location : *locations) {
+          const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
+          if (!path.has_value()) {
+            continue;
+          }
+          const std::string label =
+              context_.current_project_state.root.empty()
+                  ? path->generic_string()
+                  : std::filesystem::relative(*path, context_.current_project_state.root)
+                        .generic_string();
+          output_channels_.AppendLine(
+              "lsp.references", "LSP References",
+              label + ":" + std::to_string(location.range.start.line + 1) + ":" +
+                  std::to_string(location.range.start.character + 1));
+        }
+        ShowOutputChannel("lsp.references");
+      });
+  return true;
 }
 
 bool WorkspaceShell::DiscoverTestsForActiveBuffer(std::string* error_message) {
@@ -640,6 +1083,11 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
   });
   RequestBottomPanelRedraw();
   return true;
+}
+
+void WorkspaceShell::ConsumeLspCallbacks() {
+  lsp_manager_.DrainCallbacks();
+  RequestFullRedraw();
 }
 
 void WorkspaceShell::ConsumeAiRuntimeUpdates() {

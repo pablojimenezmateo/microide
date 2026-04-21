@@ -116,6 +116,13 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
     project_open_dialog_event_type_ = 0;
   }
+
+  lsp_event_type_ = SDL_RegisterEvents(1);
+  if (lsp_event_type_ != static_cast<Uint32>(-1)) {
+    lsp_manager_.SetWakeEventType(lsp_event_type_);
+  } else {
+    lsp_event_type_ = 0;
+  }
 }
 
 void WorkspaceShell::DestroyLifecycleCursors() {

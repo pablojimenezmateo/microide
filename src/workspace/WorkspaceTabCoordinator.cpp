@@ -760,6 +760,16 @@ void WorkspaceShell::OpenFile(const std::filesystem::path& path) {
   if (!OpenFileInNewTab(path)) {
     return;
   }
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().lexically_normal() != path.lexically_normal()) {
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
 }
 
 bool WorkspaceShell::ReopenActiveTab() {

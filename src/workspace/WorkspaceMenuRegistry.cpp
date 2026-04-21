@@ -52,6 +52,23 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::Completion),
       MenuItem(ActionId::CodeActions),
+      MenuItem(ActionId::GoToDefinition),
+      MenuItem(ActionId::FindReferences),
+  });
+  static const auto kEditorContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::Undo),
+      MenuItem(ActionId::Redo),
+      MenuSeparator(),
+      MenuItem(ActionId::CutSelection),
+      MenuItem(ActionId::CopySelection),
+      MenuItem(ActionId::CopySelectionWithContext),
+      MenuItem(ActionId::PasteClipboard),
+      MenuItem(ActionId::SelectAll),
+      MenuSeparator(),
+      MenuItem(ActionId::Completion),
+      MenuItem(ActionId::CodeActions),
+      MenuItem(ActionId::GoToDefinition),
+      MenuItem(ActionId::FindReferences),
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
@@ -98,6 +115,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
+      MenuSpec{MenuId::EditorContext, "Editor", kEditorContextItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
       MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},

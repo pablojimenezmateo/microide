@@ -1,5 +1,6 @@
 #include "util/TaskExecutor.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace microide::util {
@@ -7,23 +8,27 @@ namespace microide::util {
 CancellationToken::CancellationToken(std::shared_ptr<State> state) : state_(std::move(state)) {}
 
 bool CancellationToken::IsCancellationRequested() const {
-  return state_ != nullptr && state_->cancelled.load();
+  return state_ != nullptr && state_->cancelled.load(std::memory_order_relaxed);
 }
 
-TaskExecutor::TaskExecutor() : worker_(&TaskExecutor::WorkerMain, this) {}
+TaskExecutor::TaskExecutor(std::size_t thread_count) {
+  const std::size_t n = thread_count > 0 ? thread_count : 1;
+  active_states_.resize(n);
+  workers_.reserve(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    workers_.emplace_back(&TaskExecutor::WorkerMain, this, i);
+  }
+}
 
 TaskExecutor::~TaskExecutor() {
   RequestShutdown();
-  if (worker_.joinable()) {
-    worker_.join();
+  for (auto& t : workers_) {
+    if (t.joinable()) t.join();
   }
 }
 
 void TaskExecutor::Submit(Task task) {
-  if (!task) {
-    return;
-  }
-
+  if (!task) return;
   auto state = std::make_shared<CancellationToken::State>();
   {
     std::lock_guard lock(mutex_);
@@ -31,48 +36,45 @@ void TaskExecutor::Submit(Task task) {
       state->cancelled.store(true);
       return;
     }
-    pending_.push_back(TaskEntry{
-        .task = std::move(task),
-        .state = std::move(state),
-    });
+    pending_.push_back(TaskEntry{.task = std::move(task), .state = std::move(state)});
   }
   cv_.notify_one();
 }
 
 void TaskExecutor::CancelAll() {
   std::lock_guard lock(mutex_);
-  if (active_state_ != nullptr) {
-    active_state_->cancelled.store(true);
+  for (auto& s : active_states_) {
+    if (s != nullptr) s->cancelled.store(true);
   }
   for (auto& task : pending_) {
-    if (task.state != nullptr) {
-      task.state->cancelled.store(true);
-    }
+    if (task.state != nullptr) task.state->cancelled.store(true);
   }
   pending_.clear();
-  if (active_state_ == nullptr) {
-    idle_cv_.notify_all();
-  }
+  const bool all_idle = std::all_of(active_states_.begin(), active_states_.end(),
+                                    [](const auto& s) { return s == nullptr; });
+  if (all_idle) idle_cv_.notify_all();
 }
 
 void TaskExecutor::WaitForIdle() {
   std::unique_lock lock(mutex_);
-  idle_cv_.wait(lock, [&]() { return pending_.empty() && active_state_ == nullptr; });
+  idle_cv_.wait(lock, [&]() {
+    if (!pending_.empty()) return false;
+    return std::all_of(active_states_.begin(), active_states_.end(),
+                       [](const auto& s) { return s == nullptr; });
+  });
 }
 
-void TaskExecutor::WorkerMain() {
+void TaskExecutor::WorkerMain(std::size_t slot) {
   while (true) {
     TaskEntry entry;
     {
       std::unique_lock lock(mutex_);
       cv_.wait(lock, [&]() { return shutdown_requested_ || !pending_.empty(); });
-      if (shutdown_requested_ && pending_.empty()) {
-        return;
-      }
+      if (shutdown_requested_ && pending_.empty()) return;
 
       entry = std::move(pending_.front());
       pending_.pop_front();
-      active_state_ = entry.state;
+      active_states_[slot] = entry.state;
     }
 
     CancellationToken token(entry.state);
@@ -82,12 +84,13 @@ void TaskExecutor::WorkerMain() {
 
     {
       std::lock_guard lock(mutex_);
-      if (active_state_ == entry.state) {
-        active_state_.reset();
+      if (active_states_[slot] == entry.state) {
+        active_states_[slot].reset();
       }
-      if (pending_.empty() && active_state_ == nullptr) {
-        idle_cv_.notify_all();
-      }
+      const bool all_idle = pending_.empty() &&
+          std::all_of(active_states_.begin(), active_states_.end(),
+                      [](const auto& s) { return s == nullptr; });
+      if (all_idle) idle_cv_.notify_all();
     }
   }
 }
@@ -96,18 +99,16 @@ void TaskExecutor::RequestShutdown() {
   {
     std::lock_guard lock(mutex_);
     shutdown_requested_ = true;
-    if (active_state_ != nullptr) {
-      active_state_->cancelled.store(true);
+    for (auto& s : active_states_) {
+      if (s != nullptr) s->cancelled.store(true);
     }
     for (auto& task : pending_) {
-      if (task.state != nullptr) {
-        task.state->cancelled.store(true);
-      }
+      if (task.state != nullptr) task.state->cancelled.store(true);
     }
     pending_.clear();
-    if (active_state_ == nullptr) {
-      idle_cv_.notify_all();
-    }
+    const bool all_idle = std::all_of(active_states_.begin(), active_states_.end(),
+                                      [](const auto& s) { return s == nullptr; });
+    if (all_idle) idle_cv_.notify_all();
   }
   cv_.notify_all();
 }

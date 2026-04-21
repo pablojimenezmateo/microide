@@ -36,6 +36,20 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::GoToDefinition: {
+      std::string error_message;
+      if (!context_.GoToLspDefinition(&error_message)) {
+        return reject(error_message.empty() ? "Definition unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::FindReferences: {
+      std::string error_message;
+      if (!context_.FindLspReferences(&error_message)) {
+        return reject(error_message.empty() ? "References unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Goto:
     case ActionId::Jump: {
       if (context_.ActiveTabIsCompare() || context_.ActiveTabIsMerge()) {

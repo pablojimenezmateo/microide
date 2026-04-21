@@ -15,6 +15,7 @@ class DiffTabCoordinator {
  public:
   struct Operations {
     std::function<void()> sync_active_editor_tab;
+    std::function<void(const std::filesystem::path&)> notify_plugin_buffer_open;
     std::function<void()> reveal_active_compare_selection;
     std::function<void()> reveal_active_merge_selection;
     std::function<void()> ensure_active_tab_visible;

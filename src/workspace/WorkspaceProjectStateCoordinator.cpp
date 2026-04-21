@@ -87,6 +87,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   StopProjectSearch();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
+  lsp_manager_.ShutdownAll();
 
   ResetCurrentProjectStateStorage();
 
@@ -200,6 +201,8 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
   SyncActiveEditorTab();
   StopProjectSearch();
   MakeMenuCoordinator().CloseTreeContextMenu();
+  lsp_manager_.ShutdownAll();
+  context_.current_project_state.diagnostics_store.ClearOwner("lsp");
 
   context_.current_project_state.initialized = true;
   context_.current_project_state.restore_persistence_on_activate = false;
@@ -214,9 +217,11 @@ void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   StopProjectSearch();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
+  lsp_manager_.ShutdownAll();
 
   context_.current_project_state = std::move(state);
   context_.current_project_state.overlay.workflow.project_search.running = false;
+  context_.current_project_state.diagnostics_store.ClearOwner("lsp");
   RebindProjectState(context_.current_project_state);
   ResetTransientInteractionState();
 

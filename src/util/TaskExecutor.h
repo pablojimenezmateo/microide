@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace microide::util {
 
@@ -28,11 +29,15 @@ class CancellationToken {
   friend class TaskExecutor;
 };
 
+// Thread pool executor. Default thread count is 1 (single background worker,
+// preserving the original FIFO, single-task-at-a-time semantics). Pass a
+// larger thread_count for parallel work (e.g. project-wide search + git blame
+// running concurrently without serialising).
 class TaskExecutor {
  public:
   using Task = std::function<void(const CancellationToken&)>;
 
-  TaskExecutor();
+  explicit TaskExecutor(std::size_t thread_count = 1);
   ~TaskExecutor();
   TaskExecutor(const TaskExecutor&) = delete;
   TaskExecutor& operator=(const TaskExecutor&) = delete;
@@ -47,15 +52,15 @@ class TaskExecutor {
     std::shared_ptr<CancellationToken::State> state;
   };
 
-  void WorkerMain();
+  void WorkerMain(std::size_t slot);
   void RequestShutdown();
 
   std::mutex mutex_;
   std::condition_variable cv_;
   std::condition_variable idle_cv_;
   std::deque<TaskEntry> pending_;
-  std::shared_ptr<CancellationToken::State> active_state_;
-  std::thread worker_;
+  std::vector<std::shared_ptr<CancellationToken::State>> active_states_;
+  std::vector<std::thread> workers_;
   bool shutdown_requested_ = false;
 };
 

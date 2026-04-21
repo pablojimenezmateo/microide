@@ -251,6 +251,14 @@ bool WorkspaceActionContext::ShowCodeActionsOverlay(std::string* error_message) 
   return operations_.show_code_actions_overlay(error_message);
 }
 
+bool WorkspaceActionContext::GoToLspDefinition(std::string* error_message) {
+  return operations_.go_to_lsp_definition(error_message);
+}
+
+bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
+  return operations_.find_lsp_references(error_message);
+}
+
 bool WorkspaceActionContext::ShowTaskPickerOverlay() {
   return operations_.show_task_picker_overlay();
 }
@@ -853,6 +861,14 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_code_actions_overlay =
               [this](std::string* error_message) {
                 return ShowCodeActionsOverlay(error_message);
+              },
+          .go_to_lsp_definition =
+              [this](std::string* error_message) {
+                return GoToLspDefinition(error_message);
+              },
+          .find_lsp_references =
+              [this](std::string* error_message) {
+                return FindLspReferences(error_message);
               },
           .show_task_picker_overlay = [this]() { return ShowTaskPickerOverlay(); },
           .run_task_by_id =

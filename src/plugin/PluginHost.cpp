@@ -233,6 +233,7 @@ struct PluginHost::Impl {
   std::vector<CompletionRuntime> completion_runtimes;
   std::vector<PluginHost::ContributedCodeAction> code_actions;
   std::vector<CodeActionRuntime> code_action_runtimes;
+  std::vector<PluginHost::ContributedLanguageServer> language_servers;
   std::vector<PluginHost::ContributedTask> tasks;
   std::vector<PluginHost::ContributedTool> tools;
   std::vector<PluginHost::ContributedDebugger> debuggers;
@@ -1390,6 +1391,65 @@ struct PluginHost::Impl {
     return 0;
   }
 
+  static int LuaLspAdd(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host->FindPluginByState(state);
+    if (plugin == nullptr) {
+      return luaL_error(state, "language server registration requires an active plugin state");
+    }
+
+    auto read_string = [&](const char* field) -> std::optional<std::string> {
+      lua_getfield(state, 1, field);
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::string val = lua_tostring(state, -1);
+      lua_pop(state, 1);
+      return val;
+    };
+
+    auto id_opt = read_string("id");
+    auto language_id_opt = read_string("language_id");
+    if (!id_opt || !language_id_opt) {
+      return luaL_error(state, "language server requires id and language_id");
+    }
+
+    lua_getfield(state, 1, "command");
+    if (!lua_istable(state, -1)) {
+      lua_pop(state, 1);
+      return luaL_error(state, "language server command must be an array");
+    }
+    std::vector<std::string> command;
+    for (lua_Integer i = 1; ; ++i) {
+      lua_geti(state, -1, i);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        break;
+      }
+      if (!lua_isstring(state, -1)) {
+        lua_pop(state, 2);
+        return luaL_error(state, "language server command must be a string array");
+      }
+      command.push_back(lua_tostring(state, -1));
+      lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+
+    if (command.empty()) {
+      return luaL_error(state, "language server command cannot be empty");
+    }
+
+    host->language_servers.push_back(PluginHost::ContributedLanguageServer{
+        .id = plugin->id + "." + *id_opt,
+        .language_id = std::move(*language_id_opt),
+        .command = std::move(command),
+        .plugin_id = plugin->id,
+    });
+    return 0;
+  }
+
   static int LuaToolAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -2459,6 +2519,12 @@ struct PluginHost::Impl {
 
     lua_createtable(state, 0, 1);
     lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaLspAdd, 1);
+    lua_setfield(state, -2, "add");
+    lua_setfield(state, -2, "lsp");
+
+    lua_createtable(state, 0, 1);
+    lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaTaskAdd, 1);
     lua_setfield(state, -2, "add");
     lua_setfield(state, -2, "tasks");
@@ -2967,6 +3033,12 @@ struct PluginHost::Impl {
         luaL_unref(state, LUA_REGISTRYINDEX, it->provide_ref);
         it = code_action_runtimes.erase(it);
       }
+      language_servers.erase(
+          std::remove_if(language_servers.begin(), language_servers.end(),
+                         [&](const PluginHost::ContributedLanguageServer& e) {
+                           return e.plugin_id == plugin_id;
+                         }),
+          language_servers.end());
       tasks.erase(
           std::remove_if(tasks.begin(), tasks.end(),
                          [&](const PluginHost::ContributedTask& e) {
@@ -4606,6 +4678,11 @@ const std::vector<PluginHost::ContributedCompletion>& PluginHost::ContributedCom
 
 const std::vector<PluginHost::ContributedCodeAction>& PluginHost::ContributedCodeActions() const {
   return impl_->code_actions;
+}
+
+const std::vector<PluginHost::ContributedLanguageServer>&
+PluginHost::ContributedLanguageServers() const {
+  return impl_->language_servers;
 }
 
 const std::vector<PluginHost::ContributedTask>& PluginHost::ContributedTasks() const {

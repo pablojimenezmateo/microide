@@ -72,10 +72,12 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
     return analysis;
   }
 
+  // Iterative merge: O(n²) worst case but n is always small in practice (< 20).
+  // Uses swap+pop_back instead of mid-vector erase to keep each removal O(1).
   bool merged_any = true;
   while (merged_any) {
     merged_any = false;
-    for (std::size_t i = 0; i < analysis.merged_clip_rects.size() && !merged_any; ++i) {
+    for (std::size_t i = 0; i < analysis.merged_clip_rects.size(); ++i) {
       for (std::size_t j = i + 1; j < analysis.merged_clip_rects.size(); ++j) {
         if (!RectsOverlapOrNearlyTouch(analysis.merged_clip_rects[i],
                                        analysis.merged_clip_rects[j])) {
@@ -83,9 +85,14 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
         }
         analysis.merged_clip_rects[i] =
             UnionRects(analysis.merged_clip_rects[i], analysis.merged_clip_rects[j]);
-        analysis.merged_clip_rects.erase(analysis.merged_clip_rects.begin() +
-                                         static_cast<std::ptrdiff_t>(j));
+        if (j + 1 < analysis.merged_clip_rects.size()) {
+          analysis.merged_clip_rects[j] = analysis.merged_clip_rects.back();
+        }
+        analysis.merged_clip_rects.pop_back();
         merged_any = true;
+        break;
+      }
+      if (merged_any) {
         break;
       }
     }

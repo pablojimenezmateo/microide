@@ -14,7 +14,7 @@ namespace microide::render {
 
 namespace {
 
-constexpr std::size_t kWidthCacheCapacity = 512;
+constexpr std::size_t kWidthCacheCapacity = 4096;
 
 std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset) {
   if (offset >= text.size()) {
@@ -132,7 +132,7 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
   }
 
   ++width_cache_queries_;
-  const auto cached = width_cache_.find(std::string(text));
+  const auto cached = width_cache_.find(text);
   if (cached != width_cache_.end()) {
     ++width_cache_hits_;
     return cached->second;
@@ -162,6 +162,9 @@ std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width
     return {};
   }
 
+  const float budget = max_width - ellipsis_width;
+
+  // Collect UTF-8 code-point boundary offsets.
   std::vector<std::size_t> boundaries;
   boundaries.reserve(text.size());
   for (std::size_t offset = 0; offset < text.size();) {
@@ -169,23 +172,27 @@ std::string TextRenderer::TruncateToWidth(std::string_view text, float max_width
     boundaries.push_back(offset);
   }
 
+  // Binary search for the longest prefix that fits within budget, measuring
+  // only the prefix (not prefix+ellipsis) to avoid per-step string allocation.
   std::size_t fit_length = 0;
   std::size_t low = 0;
   std::size_t high = boundaries.size();
   while (low < high) {
     const std::size_t mid = low + (high - low) / 2;
-    const std::size_t prefix_length = boundaries[mid];
-    const std::string candidate =
-        std::string(text.substr(0, prefix_length)) + std::string(kEllipsis);
-    if (MeasureWidth(candidate) <= max_width) {
-      fit_length = prefix_length;
+    const std::string_view prefix = text.substr(0, boundaries[mid]);
+    if (MeasureWidth(prefix) <= budget) {
+      fit_length = boundaries[mid];
       low = mid + 1;
     } else {
       high = mid;
     }
   }
 
-  return std::string(text.substr(0, fit_length)) + std::string(kEllipsis);
+  std::string result;
+  result.reserve(fit_length + kEllipsis.size());
+  result.append(text, 0, fit_length);
+  result.append(kEllipsis);
+  return result;
 }
 
 TextRendererCacheStats TextRenderer::CacheStats() const {

@@ -302,7 +302,6 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       break;
   }
 
-  UpdateRendererPresentation();
   SDL_Event converted_event = event;
   if (renderer_ != nullptr && EventUsesRenderCoordinates(event.type)) {
     SDL_ConvertEventToRenderCoordinates(renderer_, &converted_event);
