@@ -540,6 +540,7 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
                                 platform::SubprocessOptions{
                                     .cwd = context_.current_project_state.root,
                                     .stdin_text = text,
+                                    .environment_overrides = {},
                                 });
     if (!result.success()) {
       if (error_message != nullptr) {

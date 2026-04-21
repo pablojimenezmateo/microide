@@ -122,6 +122,10 @@ void WorkspaceTaskRuntime::RunTask(TaskSpec spec,
       .task_id = spec.id,
       .channel_id = "task." + spec.id,
       .channel_label = spec.label.empty() ? spec.id : spec.label,
+      .appended_lines = {},
+      .finished = false,
+      .succeeded = false,
+      .status_text = {},
   };
 
   const std::vector<std::string> command = BuildTaskCommand(spec);
@@ -181,6 +185,9 @@ void WorkspaceTaskRuntime::RunTask(TaskSpec spec,
             .channel_id = update.channel_id,
             .channel_label = update.channel_label,
             .appended_lines = std::move(update.appended_lines),
+            .finished = false,
+            .succeeded = false,
+            .status_text = {},
         });
         update.appended_lines.clear();
       }

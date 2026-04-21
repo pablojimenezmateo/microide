@@ -42,6 +42,10 @@ void SidebarCoordinator::RefreshGit() {
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
         .conflicted = entry.conflicted,
         .staged = entry.staged,
+        .provider_id = {},
+        .provider_label = {},
+        .supports_stage = true,
+        .supports_discard = true,
     });
   }
 
@@ -58,6 +62,12 @@ void SidebarCoordinator::RefreshGit() {
           .path = (project_root_ / entry.relative_path).lexically_normal(),
           .relative_path = entry.relative_path,
           .status = entry.status,
+          .conflicted = false,
+          .staged = false,
+          .provider_id = {},
+          .provider_label = {},
+          .supports_stage = true,
+          .supports_discard = true,
       });
     }
   } else {

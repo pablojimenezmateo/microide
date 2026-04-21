@@ -400,8 +400,16 @@ void TestWorkspaceSharedChromeTextModel() {
 }
 
 void TestWorkspaceSharedPersistenceSerializers() {
-  PersistedUserConfigState user_config{.ui_scale = 1.75f};
-  PersistedUserConfigState parsed_user_config{.ui_scale = 1.0f};
+  PersistedUserConfigState user_config{
+      .ui_scale = 1.75f,
+      .settings = {},
+      .disabled_keybinding_ids = {},
+  };
+  PersistedUserConfigState parsed_user_config{
+      .ui_scale = 1.0f,
+      .settings = {},
+      .disabled_keybinding_ids = {},
+  };
   Expect(ParseUserConfigText(SerializeUserConfig(user_config), &parsed_user_config),
          "user-config serializer should round-trip");
   Expect(parsed_user_config.ui_scale == 1.75f,
@@ -413,6 +421,8 @@ void TestWorkspaceSharedPersistenceSerializers() {
       .editor_soft_tabs = true,
       .colorscheme_name = "sunny-day custom",
       .project_base_color = SDL_Color{0x12, 0x34, 0x56, 0xff},
+      .settings = {},
+      .sidebar_policies = {},
   };
   PersistedProjectConfigState parsed_project_config;
   Expect(ParseProjectConfigText(SerializeProjectConfig(project_config), &parsed_project_config),

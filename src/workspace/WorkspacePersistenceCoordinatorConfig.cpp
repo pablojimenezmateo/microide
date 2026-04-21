@@ -158,7 +158,11 @@ bool PersistenceCoordinator::RestoreUserConfig() {
     return false;
   }
 
-  PersistedUserConfigState state{.ui_scale = ui_scale_};
+  PersistedUserConfigState state{
+      .ui_scale = ui_scale_,
+      .settings = {},
+      .disabled_keybinding_ids = {},
+  };
   if (!ParseUserConfigText(*text, &state)) {
     return false;
   }
@@ -207,6 +211,8 @@ bool PersistenceCoordinator::RestoreConfigState() {
       .editor_soft_tabs = current.editor_preferences.soft_tabs,
       .colorscheme_name = current.active_colorscheme_name,
       .project_base_color = current.project_base_color,
+      .settings = {},
+      .sidebar_policies = {},
   };
   if (!ParseProjectConfigText(*text, &persisted_state)) {
     return false;

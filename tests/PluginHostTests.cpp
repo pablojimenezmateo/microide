@@ -18,6 +18,22 @@ void WritePluginInit(const std::filesystem::path& root,
   WriteFile(root / directory_name / "init.lua", std::string(content));
 }
 
+PluginHost::Callbacks MakePluginHostCallbacks() {
+  return PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .active_buffer = {},
+      .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
+      .error_sink = {},
+      .log_sink = {},
+      .get_setting = {},
+      .request_status_redraw = {},
+  };
+}
+
 void TestPluginHostLoadsPluginsAndDispatchesLifecycle() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -92,21 +108,13 @@ return ide.plugin({
 
   std::vector<std::filesystem::path> opened_paths;
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view name) { return name != "quit"; },
-      .open_file =
-          [&](const PluginHost::OpenFileRequest& request) {
-            opened_paths.push_back(request.path.lexically_normal());
-            return true;
-          },
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-  });
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.is_command_name_available = [](std::string_view name) { return name != "quit"; };
+  callbacks.open_file = [&](const PluginHost::OpenFileRequest& request) {
+    opened_paths.push_back(request.path.lexically_normal());
+    return true;
+  };
+  host.SetCallbacks(std::move(callbacks));
 
   Expect(host.enabled(), "plugin host should be enabled when Lua support is compiled in");
   Expect(host.Reload(project_root), "plugin reload should succeed for valid plugins");
@@ -199,20 +207,9 @@ return ide.plugin({
 
   std::vector<std::string> sink_errors;
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink =
-          [&](const std::string& error) {
-            sink_errors.push_back(error);
-          },
-      .log_sink = {},
-  });
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.error_sink = [&](const std::string& error) { sink_errors.push_back(error); };
+  host.SetCallbacks(std::move(callbacks));
 
   Expect(!host.Reload(project_root),
          "plugin reload should report failure when duplicate ids are discovered");
@@ -292,25 +289,16 @@ return ide.plugin({
   std::optional<PluginHost::OpenFileRequest> opened_file;
   std::string shown_sidebar;
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file =
-          [&](const PluginHost::OpenFileRequest& request) {
-            opened_file = request;
-            return true;
-          },
-      .active_buffer = {},
-      .show_sidebar =
-          [&](std::string_view id) {
-            shown_sidebar = std::string(id);
-            return true;
-          },
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-  });
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.open_file = [&](const PluginHost::OpenFileRequest& request) {
+    opened_file = request;
+    return true;
+  };
+  callbacks.show_sidebar = [&](std::string_view id) {
+    shown_sidebar = std::string(id);
+    return true;
+  };
+  host.SetCallbacks(std::move(callbacks));
 
   Expect(host.Reload(project_root), "phase2 plugin fixture should reload successfully");
   Expect(host.SidebarProviders().size() == 1,
@@ -416,26 +404,20 @@ return ide.plugin({
 
   microide::editor::DiagnosticsStore diagnostics_store;
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics =
-          [&](std::string_view owner,
-              const std::filesystem::path& path,
-              std::vector<microide::editor::Diagnostic> diagnostics) {
-            diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
-          },
-      .clear_file_diagnostics =
-          [&](std::string_view owner, const std::filesystem::path& path) {
-            diagnostics_store.ClearOwnerFile(owner, path);
-          },
-      .clear_owner_diagnostics =
-          [&](std::string_view owner) { diagnostics_store.ClearOwner(owner); },
-      .error_sink = {},
-      .log_sink = {},
-  });
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.publish_diagnostics =
+      [&](std::string_view owner,
+          const std::filesystem::path& path,
+          std::vector<microide::editor::Diagnostic> diagnostics) {
+        diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics));
+      };
+  callbacks.clear_file_diagnostics =
+      [&](std::string_view owner, const std::filesystem::path& path) {
+        diagnostics_store.ClearOwnerFile(owner, path);
+      };
+  callbacks.clear_owner_diagnostics =
+      [&](std::string_view owner) { diagnostics_store.ClearOwner(owner); };
+  host.SetCallbacks(std::move(callbacks));
 
   Expect(host.Reload(project_root), "phase3 diagnostics plugin should reload successfully");
   const auto* startup_diagnostics = diagnostics_store.FindByPath(project_root / "README.md");
@@ -504,19 +486,9 @@ return ide.plugin({
 
   int redraw_requests = 0;
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-      .get_setting = {},
-      .request_status_redraw = [&]() { ++redraw_requests; },
-  });
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.request_status_redraw = [&]() { ++redraw_requests; };
+  host.SetCallbacks(std::move(callbacks));
 
   Expect(host.Reload(project_root), "phase2 status plugin should reload successfully");
   Expect(host.ContributedStatusItems().size() == 1,
@@ -569,17 +541,7 @@ return ide.plugin({
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-  });
+  host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "phase3 hover plugin should reload successfully");
   PluginHost::HoverResult hover;
@@ -689,19 +651,7 @@ return ide.plugin({
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-      .get_setting = {},
-      .request_status_redraw = {},
-  });
+  host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "phase3 runtime plugin should reload successfully");
 
@@ -780,19 +730,7 @@ return ide.plugin({
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer = {},
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-      .get_setting = {},
-      .request_status_redraw = {},
-  });
+  host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "phase4 contribution plugin should reload successfully");
   Expect(host.ContributedScmProviders().size() == 1,
@@ -839,24 +777,15 @@ return ide.plugin({
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   PluginHost host;
-  host.SetCallbacks(PluginHost::Callbacks{
-      .is_command_name_available = [](std::string_view) { return true; },
-      .open_file = {},
-      .active_buffer =
-          [&]() -> std::optional<PluginHost::ActiveBuffer> {
-            return PluginHost::ActiveBuffer{
-                .path = (project_root / "README.md").lexically_normal(),
-                .line = 2,
-                .column = 5,
-            };
-          },
-      .show_sidebar = {},
-      .publish_diagnostics = {},
-      .clear_file_diagnostics = {},
-      .clear_owner_diagnostics = {},
-      .error_sink = {},
-      .log_sink = {},
-  });
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.active_buffer = [&]() -> std::optional<PluginHost::ActiveBuffer> {
+    return PluginHost::ActiveBuffer{
+        .path = (project_root / "README.md").lexically_normal(),
+        .line = 2,
+        .column = 5,
+    };
+  };
+  host.SetCallbacks(std::move(callbacks));
 
   Expect(host.Reload(project_root), "phase5 workspace plugin should reload successfully");
   std::string command_error;

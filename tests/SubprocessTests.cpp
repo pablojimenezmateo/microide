@@ -14,7 +14,12 @@ using microide::platform::SubprocessOptions;
 
 void TestSubprocessCapturesStdoutAndStdin() {
   const auto result = RunSubprocess({"cat"}, SubprocessOptions{
+                                                 .cwd = {},
                                                  .stdin_text = "stdin payload\n",
+                                                 .environment_overrides = {},
+                                                 .capture_stdout = true,
+                                                 .capture_stderr = true,
+                                                 .silence_stderr = false,
                                              });
   Expect(result.exit_code == 0, "subprocess cat fixture should exit successfully");
   Expect(result.stdout_text == "stdin payload\n",
@@ -27,6 +32,11 @@ void TestSubprocessCapturesStderrAndCwd() {
   TemporaryDirectory temp_dir;
   const auto pwd_result = RunSubprocess({"pwd"}, SubprocessOptions{
                                                      .cwd = temp_dir.path(),
+                                                     .stdin_text = {},
+                                                     .environment_overrides = {},
+                                                     .capture_stdout = true,
+                                                     .capture_stderr = true,
+                                                     .silence_stderr = false,
                                                  });
   Expect(pwd_result.exit_code == 0, "subprocess pwd fixture should exit successfully");
   Expect(pwd_result.stdout_text.find(temp_dir.path().lexically_normal().string()) != std::string::npos,
@@ -39,8 +49,14 @@ void TestSubprocessCapturesStderrAndCwd() {
          "subprocess execution should capture stderr output");
 
   const auto silent_result = RunSubprocess({"git", "definitely-not-a-command"},
-                                           SubprocessOptions{.capture_stderr = false,
-                                                             .silence_stderr = true});
+                                           SubprocessOptions{
+                                               .cwd = {},
+                                               .stdin_text = {},
+                                               .environment_overrides = {},
+                                               .capture_stdout = true,
+                                               .capture_stderr = false,
+                                               .silence_stderr = true,
+                                           });
   Expect(silent_result.exit_code != 0,
          "silenced stderr subprocess fixture should still preserve the command exit code");
   Expect(silent_result.stderr_text.empty(),
@@ -54,6 +70,8 @@ void TestSubprocessAppliesEnvironmentOverrides() {
   const auto override_result = RunSubprocess(
       {"sh", "-c", "printf '%s' \"$MICROIDE_SUBPROCESS_TEST_ENV\""},
       SubprocessOptions{
+          .cwd = {},
+          .stdin_text = {},
           .environment_overrides =
               {
                   SubprocessEnvironmentOverride{
@@ -61,6 +79,9 @@ void TestSubprocessAppliesEnvironmentOverrides() {
                       .value = std::string("inner"),
                   },
               },
+          .capture_stdout = true,
+          .capture_stderr = true,
+          .silence_stderr = false,
       });
   Expect(override_result.exit_code == 0,
          "subprocess env override fixture should exit successfully");
@@ -71,6 +92,8 @@ void TestSubprocessAppliesEnvironmentOverrides() {
       {"sh", "-c",
        "if [ -n \"${MICROIDE_SUBPROCESS_TEST_ENV+x}\" ]; then printf set; else printf unset; fi"},
       SubprocessOptions{
+          .cwd = {},
+          .stdin_text = {},
           .environment_overrides =
               {
                   SubprocessEnvironmentOverride{
@@ -78,6 +101,9 @@ void TestSubprocessAppliesEnvironmentOverrides() {
                       .value = std::nullopt,
                   },
               },
+          .capture_stdout = true,
+          .capture_stderr = true,
+          .silence_stderr = false,
       });
   Expect(unset_result.exit_code == 0,
          "subprocess env unset fixture should exit successfully");

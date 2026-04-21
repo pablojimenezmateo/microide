@@ -51,8 +51,7 @@ std::string OutputChannelIdForTask(const TaskSpec& spec) {
   return "task." + spec.id;
 }
 
-std::string DetectActiveLanguageId(const WorkspaceShell& shell,
-                                   const editor::TextViewport& viewport) {
+std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
   return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
 }
 
@@ -217,7 +216,7 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
     return false;
   }
 
-  const std::string language_id = DetectActiveLanguageId(*this, *viewport);
+  const std::string language_id = DetectActiveLanguageId(*viewport);
   std::string provider_error;
   const auto items =
       plugin_runtime_.Host().QueryCompletions(language_id, viewport->path(),
@@ -296,7 +295,7 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
     return false;
   }
 
-  const std::string language_id = DetectActiveLanguageId(*this, *viewport);
+  const std::string language_id = DetectActiveLanguageId(*viewport);
   const std::optional<editor::SelectionRange> selection = viewport->selection_range();
   const editor::SelectionRange range = selection.value_or(editor::SelectionRange{
       .start = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
@@ -359,7 +358,7 @@ bool WorkspaceShell::DiscoverTestsForActiveBuffer(std::string* error_message) {
     return false;
   }
 
-  const std::string language_id = DetectActiveLanguageId(*this, *viewport);
+  const std::string language_id = DetectActiveLanguageId(*viewport);
   const auto provider_it =
       std::find_if(plugin_runtime_.Host().ContributedTestProviders().begin(),
                    plugin_runtime_.Host().ContributedTestProviders().end(),

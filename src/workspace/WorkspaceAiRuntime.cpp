@@ -69,7 +69,13 @@ std::optional<WorkspaceAiRuntime::Update> WorkspaceAiRuntime::ConsumeActiveUpdat
 void WorkspaceAiRuntime::RunRequest(Request request,
                                     std::uint64_t request_id,
                                     const util::CancellationToken& token) {
-  Update update{.request_id = request_id};
+  Update update{
+      .request_id = request_id,
+      .chunk = {},
+      .finished = false,
+      .succeeded = false,
+      .status_text = {},
+  };
   if (request.command.empty()) {
     update.finished = true;
     update.succeeded = false;
@@ -83,6 +89,7 @@ void WorkspaceAiRuntime::RunRequest(Request request,
                               platform::SubprocessOptions{
                                   .cwd = request.cwd,
                                   .stdin_text = request.stdin_text,
+                                  .environment_overrides = {},
                               });
   if (token.IsCancellationRequested()) {
     update.finished = true;
