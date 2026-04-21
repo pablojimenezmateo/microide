@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <limits>
 
@@ -184,9 +186,16 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
     CompareSurfaceLayout layout;
     layout.line_height = text_renderer_.LineHeight();
+    std::array<char, 20> line_count_buf;
+    const auto [line_count_end, _] = std::to_chars(
+        line_count_buf.data(), line_count_buf.data() + line_count_buf.size(),
+        compare_tab.model.rows.size() + 1);
     layout.gutter_width = std::max(
         28.0f,
-        text_renderer_.MeasureWidth(std::to_string(compare_tab.model.rows.size() + 1)) + 12.0f);
+        text_renderer_.MeasureWidth(std::string_view{
+            line_count_buf.data(),
+            static_cast<std::size_t>(line_count_end - line_count_buf.data())}) +
+            12.0f);
     layout.divider_width = std::max(1.0f, std::ceil(text_renderer_.CharWidth()));
     layout.left_x = rect.x + 8.0f;
     layout.header_y = rect.y + 6.0f;

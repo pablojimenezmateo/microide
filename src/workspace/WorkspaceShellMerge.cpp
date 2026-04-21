@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -87,8 +88,16 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     const std::size_t max_line_count =
         std::max({merge_tab.model.incoming_lines.size(), merge_tab.result_viewport.lines().size(),
                   merge_tab.model.current_lines.size(), std::size_t{1}});
+    std::array<char, 20> line_count_buf;
+    const auto [line_count_end, _] =
+        std::to_chars(line_count_buf.data(), line_count_buf.data() + line_count_buf.size(),
+                      max_line_count + 1);
     layout.gutter_width =
-        std::max(28.0f, text_renderer_.MeasureWidth(std::to_string(max_line_count + 1)) + 12.0f);
+        std::max(28.0f,
+                 text_renderer_.MeasureWidth(std::string_view{
+                     line_count_buf.data(),
+                     static_cast<std::size_t>(line_count_end - line_count_buf.data())}) +
+                     12.0f);
     layout.divider_width = 16.0f;
     layout.left_x = rect.x + 8.0f;
     layout.button_y = rect.y + 6.0f;

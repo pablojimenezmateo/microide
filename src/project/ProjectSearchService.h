@@ -31,6 +31,7 @@ struct ProjectSearchOptions {
 
 struct ProjectSearchResult {
   std::filesystem::path relative_path;
+  std::string relative_path_string;
   std::size_t line = 0;
   std::size_t column = 0;
   std::string preview;

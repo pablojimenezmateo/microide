@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <optional>
 #include <string_view>
@@ -100,6 +101,16 @@ void DrawScrollbar(SDL_Renderer* renderer,
                    bool active = false) {
   DrawScrollbarTrack(renderer, theme, track);
   DrawScrollbarThumb(renderer, theme, thumb, active);
+}
+
+std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
+  const auto [end, ec] =
+      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
+  if (ec != std::errc{}) {
+    return {};
+  }
+  return std::string_view(scratch.data(),
+                          static_cast<std::size_t>(end - scratch.data()));
 }
 
 }  // namespace
@@ -336,6 +347,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
         static_cast<std::size_t>(current_conflict - merge_tab->conflicts.data()) == selected_hunk;
 
     if (line_index < merge_tab->model.incoming_lines.size()) {
+      std::array<char, 20> line_number_buf;
       const SDL_Color background =
           incoming_conflict != nullptr
               ? BlendColor(selected_incoming ? theme_.row_highlight : theme_.editor_background,
@@ -360,10 +372,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           incoming_conflict != nullptr ? theme_.diff_added : theme_.text_secondary, tokens);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
       text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
-                                std::to_string(line_index + 1));
+                                FormatLineNumber(line_index + 1, line_number_buf));
     }
 
     if (line_index < merge_tab->model.current_lines.size()) {
+      std::array<char, 20> line_number_buf;
       const SDL_Color background =
           current_conflict != nullptr
               ? BlendColor(selected_current ? theme_.row_highlight : theme_.editor_background,
@@ -388,7 +401,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           current_conflict != nullptr ? theme_.diff_modified : theme_.text_secondary, tokens);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
       text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
-                                std::to_string(line_index + 1));
+                                FormatLineNumber(line_index + 1, line_number_buf));
     }
   }
 
@@ -440,6 +453,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
         DrawFilledRect(renderer, *preview_rect,
                        BlendColor(theme_.editor_background, theme_.diff_modified, 0.18f));
         for (std::size_t line = 0; line < preview_lines.size(); ++line) {
+          std::array<char, 20> line_number_buf;
           const float y =
               interaction.result.lines.first_line_y +
               static_cast<float>(std::max(conflict.start_line, interaction.result.lines.scroll_line) -
@@ -447,7 +461,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
                   interaction.result.lines.line_height;
           text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
                                       theme_.editor_background,
-                                      std::to_string(conflict.start_line + line + 1));
+                                      FormatLineNumber(conflict.start_line + line + 1,
+                                                       line_number_buf));
           const editor::VisibleTextWindow window =
               editor::SliceVisibleColumns(preview_lines[line], merge_tab->horizontal_scroll,
                                           interaction.result.metrics.visible_columns);

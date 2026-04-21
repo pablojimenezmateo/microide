@@ -2,6 +2,7 @@
 
 #include <array>
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <string_view>
 #include <vector>
@@ -93,6 +94,16 @@ void DrawScrollbar(SDL_Renderer* renderer,
                    bool active = false) {
   DrawScrollbarTrack(renderer, theme, track);
   DrawScrollbarThumb(renderer, theme, thumb, active);
+}
+
+std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
+  const auto [end, ec] =
+      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
+  if (ec != std::errc{}) {
+    return {};
+  }
+  return std::string_view(scratch.data(),
+                          static_cast<std::size_t>(end - scratch.data()));
 }
 
 }  // namespace
@@ -234,7 +245,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
                      theme_.accent);
     }
 
-    const auto draw_text = [&](float x, float width, SDL_Color color, const std::string& text) {
+    const auto draw_text = [&](float x, float width, SDL_Color color, std::string_view text) {
       const std::string display_text = TruncateLabel(text, width);
       if (display_text.empty()) {
         return;
@@ -342,6 +353,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
     }();
 
     if (compare_row.left_line > 0) {
+      std::array<char, 20> line_number_buf;
       editor::DecoratedTextRow left_row;
       left_row.fills.push_back(editor::DecoratedTextFill{
           .rect = MakeRect(surface.left_x, y - 1.0f,
@@ -364,9 +376,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
       draw_text(surface.left_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,
-                std::to_string(compare_row.left_line));
+                FormatLineNumber(static_cast<std::size_t>(compare_row.left_line), line_number_buf));
     }
     if (compare_row.right_line > 0) {
+      std::array<char, 20> line_number_buf;
       editor::DecoratedTextRow right_row;
       right_row.fills.push_back(editor::DecoratedTextFill{
           .rect = MakeRect(surface.right_x, y - 1.0f,
@@ -437,7 +450,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       }
       draw_text(surface.right_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,
-                std::to_string(compare_row.right_line));
+                FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
         const std::size_t caret_visual =
             editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text,

@@ -1,9 +1,11 @@
 #include "workspace/WorkspaceConversation.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <string_view>
 
 namespace microide::workspace {
 
@@ -19,6 +21,47 @@ std::string GetTimestamp() {
 std::string GenerateId() {
   static int counter = 0;
   return "conv_" + std::to_string(++counter);
+}
+
+std::string_view MessageRolePrefix(MessageRole role) {
+  switch (role) {
+    case MessageRole::User:
+      return "You";
+    case MessageRole::Assistant:
+      return "Assistant";
+    case MessageRole::System:
+    default:
+      return "System";
+  }
+}
+
+std::string CollapseWhitespaceForRender(std::string_view text) {
+  std::string collapsed;
+  collapsed.reserve(text.size());
+  bool space = false;
+  for (unsigned char c : text) {
+    if (std::isspace(c)) {
+      space = !collapsed.empty();
+      continue;
+    }
+    if (space) {
+      collapsed.push_back(' ');
+      space = false;
+    }
+    collapsed.push_back(static_cast<char>(c));
+  }
+  return collapsed;
+}
+
+std::string BuildRenderLine(MessageRole role, std::string_view content) {
+  const std::string_view prefix = MessageRolePrefix(role);
+  const std::string collapsed = CollapseWhitespaceForRender(content);
+  std::string line;
+  line.reserve(prefix.size() + 2 + collapsed.size());
+  line += prefix;
+  line += ": ";
+  line += collapsed;
+  return line;
 }
 }  // namespace
 
@@ -59,7 +102,9 @@ void ConversationRegistry::AddMessage(const std::string& conversation_id,
                                       const Message& message) {
   auto conv = GetConversation(conversation_id);
   if (conv != nullptr) {
-    conv->messages.push_back(message);
+    Message stored = message;
+    stored.render_line = BuildRenderLine(stored.role, stored.content);
+    conv->messages.push_back(std::move(stored));
     conv->updated_at = GetTimestamp();
   }
 }

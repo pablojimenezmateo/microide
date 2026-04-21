@@ -105,6 +105,18 @@ void TestWorkspaceSharedLiteralSearchHelpers() {
          "literal replace helper should respect case-sensitive replacement mode");
   Expect(case_sensitive == "Beta alpha",
          "literal replace helper should preserve non-matching case variants");
+
+  std::string expanded = "Alpha alpha ALPHA";
+  Expect(ReplaceLiteralMatchesInText(expanded, "alpha", "replacement", false) == 3,
+         "literal replace helper should replace all case-insensitive matches when expanding text");
+  Expect(expanded == "replacement replacement replacement",
+         "literal replace helper should keep replacement offsets correct when replacement is longer");
+
+  std::string shrunk = "Alpha alpha ALPHA";
+  Expect(ReplaceLiteralMatchesInText(shrunk, "alpha", "x", false) == 3,
+         "literal replace helper should replace all case-insensitive matches when shrinking text");
+  Expect(shrunk == "x x x",
+         "literal replace helper should keep replacement offsets correct when replacement is shorter");
 }
 
 void TestWorkspaceSharedLiteralReplaceModeHelpers() {
@@ -122,9 +134,21 @@ void TestWorkspaceSharedLiteralReplaceModeHelpers() {
 
 void TestWorkspaceSharedProjectSearchLineMapHelpers() {
   const std::vector<microide::project::ProjectSearchResult> results = {
-      {.relative_path = std::filesystem::path("src/a.cpp"), .line = 0, .column = 1, .preview = "first"},
-      {.relative_path = std::filesystem::path("src/a.cpp"), .line = 3, .column = 2, .preview = "second"},
-      {.relative_path = std::filesystem::path("src/b.cpp"), .line = 1, .column = 0, .preview = "third"},
+      {.relative_path = std::filesystem::path("src/a.cpp"),
+       .relative_path_string = "src/a.cpp",
+       .line = 0,
+       .column = 1,
+       .preview = "first"},
+      {.relative_path = std::filesystem::path("src/a.cpp"),
+       .relative_path_string = "src/a.cpp",
+       .line = 3,
+       .column = 2,
+       .preview = "second"},
+      {.relative_path = std::filesystem::path("src/b.cpp"),
+       .relative_path_string = "src/b.cpp",
+       .line = 1,
+       .column = 0,
+       .preview = "third"},
   };
   const auto line_map = BuildProjectSearchResultLineMap(results);
   Expect(line_map.size() == 5, "project search line map should insert header rows per file");

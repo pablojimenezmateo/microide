@@ -16,7 +16,7 @@ using namespace detail;
 
 namespace {
 
-std::string MessageRoleLabel(MessageRole role) {
+std::string_view MessageRoleLabel(MessageRole role) {
   switch (role) {
     case MessageRole::User:
       return "You";
@@ -228,7 +228,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
               ? theme_.text_primary
               : message.role == MessageRole::User ? theme_.accent : theme_.text_muted;
       const std::string line =
-          MessageRoleLabel(message.role) + ": " + CollapseWhitespace(message.content);
+          message.render_line.empty()
+              ? std::string(MessageRoleLabel(message.role)) + ": " +
+                    CollapseWhitespace(message.content)
+              : message.render_line;
       DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, color,
                  theme_.surface_background,
                  text_renderer_.TruncateToWidth(line, panel_layout.text_width));

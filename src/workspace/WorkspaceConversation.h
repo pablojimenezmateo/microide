@@ -16,6 +16,7 @@ struct Message {
   std::string id;
   MessageRole role;
   std::string content;
+  std::string render_line;  // cached "Role: collapsed-content" for panel rendering
   std::string timestamp;
   std::string model;  // which model/provider generated this (for assistant messages)
 };

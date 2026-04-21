@@ -1,10 +1,38 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
+#include <array>
+#include <charconv>
 #include <string>
 
 namespace microide::workspace {
 
 using namespace detail;
+
+namespace {
+
+void AppendUnsigned(std::string& out, std::size_t value) {
+  std::array<char, 20> scratch;
+  const auto [end, ec] =
+      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
+  if (ec == std::errc{}) {
+    out.append(scratch.data(),
+               static_cast<std::size_t>(end - scratch.data()));
+  }
+}
+
+std::string BuildSelectionSummary(std::size_t selected,
+                                  std::size_t total,
+                                  std::string_view suffix) {
+  std::string summary;
+  summary.reserve(48 + suffix.size());
+  AppendUnsigned(summary, selected + 1);
+  summary += " / ";
+  AppendUnsigned(summary, total);
+  summary += suffix;
+  return summary;
+}
+
+}  // namespace
 
 void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
   if (!context_.current_project_state.overlay.visible) {
@@ -59,8 +87,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
-            : std::to_string(context_.current_project_state.overlay.workflow.buffer_search.selected_index + 1) + " / " +
-                  std::to_string(context_.current_project_state.overlay.workflow.buffer_search.matches.size()) + " matches";
+            : BuildSelectionSummary(
+                  context_.current_project_state.overlay.workflow.buffer_search.selected_index,
+                  context_.current_project_state.overlay.workflow.buffer_search.matches.size(),
+                  " matches");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
                theme_.text_muted, theme_.overlay_background, summary);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
@@ -70,12 +100,17 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       }
       const auto& match =
           context_.current_project_state.overlay.workflow.buffer_search.matches[static_cast<std::size_t>(item_index)];
-      const std::string label = "Ln " + std::to_string(match.start.line + 1) + ", Col " +
-                                std::to_string(match.start.column + 1) + "  " +
-                                TruncateLabel(active_viewport != nullptr
-                                                  ? active_viewport->lines()[match.start.line]
-                                                  : std::string_view{},
-                                              overlay.w - 150.0f);
+      std::string label;
+      label.reserve(64);
+      label += "Ln ";
+      AppendUnsigned(label, match.start.line + 1);
+      label += ", Col ";
+      AppendUnsigned(label, match.start.column + 1);
+      label += "  ";
+      label += TruncateLabel(active_viewport != nullptr
+                                 ? active_viewport->lines()[match.start.line]
+                                 : std::string_view{},
+                             overlay.w - 150.0f);
       draw_overlay_row(row,
                        static_cast<int>(context_.current_project_state.overlay.workflow.buffer_search.selected_index) -
                            context_.current_project_state.overlay.scroll_row,
@@ -97,9 +132,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
-            : std::to_string(context_.current_project_state.overlay.workflow.buffer_search.selected_index + 1) + " / " +
-                  std::to_string(context_.current_project_state.overlay.workflow.buffer_search.matches.size()) +
-                  " matches  |  Enter replace  Ctrl+Enter replace all";
+            : BuildSelectionSummary(
+                  context_.current_project_state.overlay.workflow.buffer_search.selected_index,
+                  context_.current_project_state.overlay.workflow.buffer_search.matches.size(),
+                  " matches  |  Enter replace  Ctrl+Enter replace all");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 82.0f,
                theme_.text_muted, theme_.overlay_background,
                TruncateLabel(summary, overlay.w - 36.0f));
@@ -110,12 +146,17 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       }
       const auto& match =
           context_.current_project_state.overlay.workflow.buffer_search.matches[static_cast<std::size_t>(item_index)];
-      const std::string label = "Ln " + std::to_string(match.start.line + 1) + ", Col " +
-                                std::to_string(match.start.column + 1) + "  " +
-                                TruncateLabel(active_viewport != nullptr
-                                                  ? active_viewport->lines()[match.start.line]
-                                                  : std::string_view{},
-                                              overlay.w - 150.0f);
+      std::string label;
+      label.reserve(64);
+      label += "Ln ";
+      AppendUnsigned(label, match.start.line + 1);
+      label += ", Col ";
+      AppendUnsigned(label, match.start.column + 1);
+      label += "  ";
+      label += TruncateLabel(active_viewport != nullptr
+                                 ? active_viewport->lines()[match.start.line]
+                                 : std::string_view{},
+                             overlay.w - 150.0f);
       draw_overlay_row(row,
                        static_cast<int>(context_.current_project_state.overlay.workflow.buffer_search.selected_index) -
                            context_.current_project_state.overlay.scroll_row,
@@ -131,10 +172,14 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         context_.current_project_state.overlay.workflow.project_search.results.empty()
             ? "No results"
         : context_.current_project_state.overlay.workflow.project_search.truncated
-            ? std::to_string(context_.current_project_state.overlay.workflow.project_search.selected_index + 1) + " / " +
-                  std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) + " shown (capped)"
-            : std::to_string(context_.current_project_state.overlay.workflow.project_search.selected_index + 1) + " / " +
-                  std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) + " results";
+            ? BuildSelectionSummary(
+                  context_.current_project_state.overlay.workflow.project_search.selected_index,
+                  context_.current_project_state.overlay.workflow.project_search.results.size(),
+                  " shown (capped)")
+            : BuildSelectionSummary(
+                  context_.current_project_state.overlay.workflow.project_search.selected_index,
+                  context_.current_project_state.overlay.workflow.project_search.results.size(),
+                  " results");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
                theme_.text_muted, theme_.overlay_background, summary);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
@@ -144,9 +189,16 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       }
       const auto& result =
           context_.current_project_state.overlay.workflow.project_search.results[static_cast<std::size_t>(item_index)];
-      const std::string label =
-          result.relative_path.string() + ":" + std::to_string(result.line + 1) + ":" +
-          std::to_string(result.column + 1) + "  " + TruncateLabel(result.preview, overlay.w - 220.0f);
+      std::string label =
+          result.relative_path_string.empty() ? result.relative_path.string()
+                                              : result.relative_path_string;
+      label.reserve(label.size() + 64);
+      label += ":";
+      AppendUnsigned(label, result.line + 1);
+      label += ":";
+      AppendUnsigned(label, result.column + 1);
+      label += "  ";
+      label += TruncateLabel(result.preview, overlay.w - 220.0f);
       draw_overlay_row(row,
                        static_cast<int>(context_.current_project_state.overlay.workflow.project_search.selected_index) -
                            context_.current_project_state.overlay.scroll_row,
@@ -184,9 +236,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     const std::string summary =
         context_.current_project_state.overlay.workflow.completion.items.empty()
             ? "No completions"
-            : std::to_string(context_.current_project_state.overlay.workflow.completion.selected_index + 1) + " / " +
-                  std::to_string(context_.current_project_state.overlay.workflow.completion.items.size()) +
-                  " completions";
+            : BuildSelectionSummary(
+                  context_.current_project_state.overlay.workflow.completion.selected_index,
+                  context_.current_project_state.overlay.workflow.completion.items.size(),
+                  " completions");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                theme_.text_muted, theme_.overlay_background,
                TruncateLabel(summary, overlay.w - 36.0f));
@@ -217,9 +270,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     const std::string summary =
         context_.current_project_state.overlay.workflow.code_actions.items.empty()
             ? "No actions"
-            : std::to_string(context_.current_project_state.overlay.workflow.code_actions.selected_index + 1) + " / " +
-                  std::to_string(context_.current_project_state.overlay.workflow.code_actions.items.size()) +
-                  " actions";
+            : BuildSelectionSummary(
+                  context_.current_project_state.overlay.workflow.code_actions.selected_index,
+                  context_.current_project_state.overlay.workflow.code_actions.items.size(),
+                  " actions");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                theme_.text_muted, theme_.overlay_background,
                TruncateLabel(summary, overlay.w - 36.0f));
@@ -284,7 +338,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       draw_overlay_row(
           row,
           static_cast<int>(context_.current_project_state.file_finder.selected_index()) - context_.current_project_state.overlay.scroll_row,
-          results[static_cast<std::size_t>(item_index)].relative_path.string());
+          results[static_cast<std::size_t>(item_index)].path_string);
     }
     if (results.empty()) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 80.0f,

@@ -174,9 +174,23 @@ void UpdateMessageContent(Conversation* conversation,
   if (conversation == nullptr) {
     return;
   }
+  const auto build_render_line = [](MessageRole role, std::string_view raw_content) {
+    const std::string_view prefix =
+        role == MessageRole::Assistant ? std::string_view{"Assistant"}
+        : role == MessageRole::User   ? std::string_view{"You"}
+                                       : std::string_view{"System"};
+    const std::string collapsed = CollapseWhitespace(raw_content);
+    std::string line;
+    line.reserve(prefix.size() + 2 + collapsed.size());
+    line += prefix;
+    line += ": ";
+    line += collapsed;
+    return line;
+  };
   for (auto& message : conversation->messages) {
     if (message.id == message_id) {
       message.content = std::move(content);
+      message.render_line = build_render_line(message.role, message.content);
       message.timestamp = CurrentUtcTimestamp();
       return;
     }
@@ -1053,6 +1067,7 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
           .id = user_id,
           .role = MessageRole::User,
           .content = message,
+          .render_line = {},
           .timestamp = CurrentUtcTimestamp(),
           .model = {},
       });
@@ -1062,6 +1077,7 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
           .id = assistant_id,
           .role = MessageRole::Assistant,
           .content = {},
+          .render_line = {},
           .timestamp = CurrentUtcTimestamp(),
           .model = agent->id,
       });

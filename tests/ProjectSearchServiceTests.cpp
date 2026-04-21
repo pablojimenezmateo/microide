@@ -69,6 +69,8 @@ void TestProjectSearchServiceLiteralModesAndCaseControls() {
          "default literal smart-case search should match every case variant");
   Expect(smart_literal.results[0].relative_path == std::filesystem::path("notes.txt"),
          "default literal search should report the first matching file");
+  Expect(smart_literal.results[0].relative_path_string == "notes.txt",
+         "project search should populate cached relative path display strings");
   Expect(smart_literal.results[0].line == 0 && smart_literal.results[0].column == 0,
          "default literal search should report the first line-leading match");
 
@@ -101,6 +103,20 @@ void TestProjectSearchServiceLiteralModesAndCaseControls() {
          "default literal project search should treat dots as plain characters");
   Expect(literal_metacharacters.results[0].relative_path == std::filesystem::path("special.txt"),
          "literal metacharacter search should find the literal text");
+}
+
+void TestProjectSearchServiceNormalizesPreviewWhitespace() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "notes.txt", "alpha\t\tbeta   gamma\n");
+
+  const auto result = RunProjectSearch(root, "alpha");
+  Expect(result.finished, "preview-normalizing project search should finish");
+  Expect(result.error.empty(), "preview-normalizing project search should not error");
+  Expect(result.results.size() == 1,
+         "preview-normalizing project search should return one literal match");
+  Expect(result.results[0].preview == "alpha beta gamma",
+         "project search preview should collapse repeated whitespace for render-time reuse");
 }
 
 void TestProjectSearchServiceRegexModeAndInvalidRegex() {
@@ -314,6 +330,8 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectSearchService/LiteralModesAndCaseControls",
           TestProjectSearchServiceLiteralModesAndCaseControls);
+  AddTest(tests, "ProjectSearchService/NormalizesPreviewWhitespace",
+          TestProjectSearchServiceNormalizesPreviewWhitespace);
   AddTest(tests, "ProjectSearchService/RegexModeAndInvalidRegex",
           TestProjectSearchServiceRegexModeAndInvalidRegex);
   AddTest(tests, "ProjectSearchService/HiddenAndBinaryFiles",

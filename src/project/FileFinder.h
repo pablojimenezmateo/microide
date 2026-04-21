@@ -12,6 +12,7 @@ namespace microide::project {
 
 struct FileFinderResult {
   std::filesystem::path relative_path;
+  std::string path_string;
   int score = 0;
 };
 

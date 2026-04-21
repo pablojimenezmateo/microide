@@ -1,12 +1,13 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <string>
 
 #include "editor/DiagnosticsRender.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
-#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
 
@@ -17,6 +18,39 @@ namespace {
 constexpr float kSidebarInset = 10.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
+
+void AppendUnsigned(std::string& out, std::size_t value) {
+  std::array<char, 20> scratch;
+  const auto [end, ec] =
+      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
+  if (ec == std::errc{}) {
+    out.append(scratch.data(), static_cast<std::size_t>(end - scratch.data()));
+  }
+}
+
+std::string BuildCountStatus(std::string_view prefix,
+                             std::size_t count,
+                             std::string_view suffix) {
+  std::string text;
+  text.reserve(prefix.size() + suffix.size() + 24);
+  text += prefix;
+  AppendUnsigned(text, count);
+  text += suffix;
+  return text;
+}
+
+std::string BuildProjectSearchResultLabel(std::size_t line,
+                                          std::size_t column,
+                                          std::string_view snippet) {
+  std::string label;
+  label.reserve(snippet.size() + 32);
+  AppendUnsigned(label, line + 1);
+  label += ":";
+  AppendUnsigned(label, column + 1);
+  label += "  ";
+  label += snippet;
+  return label;
+}
 
 }  // namespace
 
@@ -146,18 +180,23 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
             : !context_.current_project_state.overlay.workflow.project_search.error.empty()
                 ? "Error  |  / query  = replace  r rerun"
             : context_.current_project_state.overlay.workflow.project_search.running
-                ? "Searching " +
-                      std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) + " matches"
+                ? BuildCountStatus(
+                      "Searching ",
+                      context_.current_project_state.overlay.workflow.project_search.results.size(),
+                      " matches")
             : context_.current_project_state.overlay.workflow.project_search.results.empty()
                 ? (context_.current_project_state.overlay.workflow.project_search.query.empty()
                        ? "/ query  = replace  |  buttons change mode, case, hidden"
                        : "No matches  |  " + match_actions)
             : context_.current_project_state.overlay.workflow.project_search.truncated
-                ? "Showing first " +
-                      std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) +
-                      " matches  |  " + match_actions
-                : std::to_string(context_.current_project_state.overlay.workflow.project_search.results.size()) +
-                      " matches  |  " + match_actions;
+                ? BuildCountStatus(
+                      "Showing first ",
+                      context_.current_project_state.overlay.workflow.project_search.results.size(),
+                      " matches  |  " + match_actions)
+                : BuildCountStatus(
+                      "",
+                      context_.current_project_state.overlay.workflow.project_search.results.size(),
+                      " matches  |  " + match_actions);
     DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                layout.sidebar.y + kProjectSearchStatusTop, theme_.text_muted,
                theme_.surface_background,
@@ -187,7 +226,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 .results[static_cast<std::size_t>(line_map[next_result_index])];
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_primary,
                             theme_.surface_background,
-                            TruncateLabel(file_result.relative_path.string(), row_rect.w - 8.0f));
+                            TruncateLabel(file_result.relative_path_string.empty()
+                                              ? file_result.relative_path.string()
+                                              : std::string_view(file_result.relative_path_string),
+                                          row_rect.w - 8.0f));
         continue;
       }
 
@@ -200,9 +242,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         DrawFilledRect(renderer, row_rect, theme_.row_highlight);
       }
 
-      const std::string snippet = CollapseWhitespace(result.preview);
-      const std::string label = std::to_string(result.line + 1) + ":" +
-                                std::to_string(result.column + 1) + "  " + snippet;
+      const std::string label =
+          BuildProjectSearchResultLabel(result.line, result.column, result.preview);
       DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 6.0f,
                           selected ? theme_.text_primary : theme_.text_secondary,
                           selected ? theme_.row_highlight : theme_.surface_background,
@@ -451,7 +492,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       if (!item.file.empty()) {
         detail = item.file.filename().string();
         if (item.line > 0) {
-          detail += ":" + std::to_string(item.line);
+          detail.push_back(':');
+          AppendUnsigned(detail, static_cast<std::size_t>(item.line));
         }
       }
       if (!detail.empty()) {

@@ -148,8 +148,8 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
   }
 
   std::size_t replacements = 0;
-  std::size_t search_from = 0;
   if (case_sensitive) {
+    std::size_t search_from = 0;
     while (true) {
       const std::size_t position = content.find(query, search_from);
       if (position == std::string::npos) {
@@ -164,17 +164,24 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
 
   const std::string lowered_query = ToLower(query);
   std::string lowered_content = ToLower(content);
-  const std::string lowered_replacement = ToLower(replacement);
+  std::string rebuilt_content;
+  rebuilt_content.reserve(content.size());
+  std::size_t copy_from = 0;
   while (true) {
-    const std::size_t position = lowered_content.find(lowered_query, search_from);
+    const std::size_t position = lowered_content.find(lowered_query, copy_from);
     if (position == std::string::npos) {
       break;
     }
-    content.replace(position, query.size(), replacement);
-    lowered_content.replace(position, query.size(), lowered_replacement);
-    search_from = position + replacement.size();
+    rebuilt_content.append(content, copy_from, position - copy_from);
+    rebuilt_content.append(replacement);
+    copy_from = position + query.size();
     ++replacements;
   }
+  if (replacements == 0) {
+    return 0;
+  }
+  rebuilt_content.append(content, copy_from);
+  content = std::move(rebuilt_content);
   return replacements;
 }
 
@@ -187,8 +194,13 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
   }
 
   const std::string lowered_query = ToLower(query);
+  std::string lowered_line;
   for (std::size_t line_index = 0; line_index < lines.size(); ++line_index) {
-    const std::string lowered_line = ToLower(lines[line_index]);
+    const std::string& line = lines[line_index];
+    lowered_line.resize(line.size());
+    std::transform(line.begin(), line.end(), lowered_line.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
     std::size_t offset = lowered_line.find(lowered_query);
     while (offset != std::string::npos) {
       matches.push_back(editor::SelectionRange{

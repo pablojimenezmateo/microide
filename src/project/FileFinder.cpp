@@ -86,6 +86,7 @@ void FileFinder::Refresh() {
     }
     results_.push_back(FileFinderResult{
         .relative_path = files[i],
+        .path_string = cached_entries_[i].path_string,
         .score = score,
     });
   }
@@ -94,7 +95,7 @@ void FileFinder::Refresh() {
     if (lhs.score != rhs.score) {
       return lhs.score < rhs.score;
     }
-    return lhs.relative_path.string() < rhs.relative_path.string();
+    return lhs.path_string < rhs.path_string;
   });
 }
 

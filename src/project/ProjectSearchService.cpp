@@ -45,6 +45,24 @@ std::string ToLowerAscii(std::string_view text) {
   return lowered;
 }
 
+std::string CollapseAsciiWhitespace(std::string_view text) {
+  std::string collapsed;
+  collapsed.reserve(text.size());
+  bool saw_whitespace = false;
+  for (unsigned char c : text) {
+    if (std::isspace(c)) {
+      saw_whitespace = !collapsed.empty();
+      continue;
+    }
+    if (saw_whitespace) {
+      collapsed.push_back(' ');
+      saw_whitespace = false;
+    }
+    collapsed.push_back(static_cast<char>(c));
+  }
+  return collapsed;
+}
+
 
 bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::string_view line,
@@ -271,6 +289,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       return {};
     }
 
+    const std::string relative_path_string = relative_path.string();
     std::ifstream file(absolute_root / relative_path, std::ios::binary);
     if (!file) {
       continue;
@@ -302,16 +321,23 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       std::size_t search_from = 0;
       std::size_t match_start = 0;
       std::size_t match_end = 0;
+      std::string preview;
+      bool preview_ready = false;
       while ((regex_pattern.has_value() &&
               FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data, &match_start,
                                  &match_end)) ||
              (literal_query != nullptr &&
               literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
+        if (!preview_ready) {
+          preview = CollapseAsciiWhitespace(line);
+          preview_ready = true;
+        }
         batch.push_back(ProjectSearchResult{
             .relative_path = relative_path,
+            .relative_path_string = relative_path_string,
             .line = line_index,
             .column = match_start,
-            .preview = line,
+            .preview = preview,
         });
         ++total_results;
         if (batch.size() >= kBatchSize) {
