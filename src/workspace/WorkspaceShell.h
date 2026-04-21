@@ -1059,6 +1059,7 @@ class WorkspaceShell {
                                     bool draw_editor_caret,
                                     std::optional<SDL_FRect>* active_editor_pane_rect);
   void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderChromeTooltips(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   void RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   void RenderBottomPanelSurface(SDL_Renderer* renderer,
@@ -1087,7 +1088,9 @@ class WorkspaceShell {
   void EnsureActiveTabVisible();
   std::vector<VisibleStripTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
   std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
+  std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
+  std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
   std::vector<VisibleStripTab> ComputeVisibleTerminalTabs(
       const SDL_FRect& panel_header) const;
   static std::vector<VisibleStripTab> BuildVisibleStripTabs(

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "TerminalSessionTestAccess.h"
+#include "render/Theme.h"
 #include "workspace/WorkspaceShellTesting.h"
 
 #include <algorithm>
@@ -32,6 +33,17 @@ float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
     max_height = std::max(max_height, rect.h);
   }
   return max_height;
+}
+
+SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  Expect(surface != nullptr, "pixel reads require a valid surface");
+  Expect(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
+         "workspace chrome tests should read rendered pixels");
+  return SDL_Color{r, g, b, a};
 }
 
 #if MICROIDE_HAS_SDL3_TTF
@@ -372,6 +384,62 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
          "command prompt typing redraws should include the command area");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == text,
          "command prompt typing should append to the visible command input");
+}
+
+void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  (void)WorkspaceShellTestAccess::HandleMouseMotion(shell, tab_rect.x + tab_rect.w * 0.25f,
+                                                    tab_rect.y + tab_rect.h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+         "tooltip layering fixture should produce the hovered tab tooltip");
+
+  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredTabTooltipRect(shell);
+  Expect(tooltip_rect.has_value(), "hovered tabs should compute a tooltip rect");
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const float overlap_x = std::max(tooltip_rect->x, layout.sidebar.x);
+  const float overlap_y = std::max(tooltip_rect->y, layout.sidebar.y);
+  const float overlap_right =
+      std::min(tooltip_rect->x + tooltip_rect->w, layout.sidebar.x + layout.sidebar.w);
+  const float overlap_bottom =
+      std::min(tooltip_rect->y + tooltip_rect->h, layout.sidebar.y + layout.sidebar.h);
+  const SDL_FRect overlap{
+      .x = overlap_x,
+      .y = overlap_y,
+      .w = std::max(0.0f, overlap_right - overlap_x),
+      .h = std::max(0.0f, overlap_bottom - overlap_y),
+  };
+  Expect(overlap.w > 4.0f && overlap.h > 4.0f,
+         "tooltip layering fixture should overlap the sidebar to exercise draw order");
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "tooltip layering fixture should capture rendered pixels");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  const SDL_Color actual =
+      ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(overlap.x + 2.0f)),
+                              static_cast<int>(std::floor(overlap.y + 2.0f)));
+  Expect(actual.r == theme.surface_raised.r && actual.g == theme.surface_raised.g &&
+             actual.b == theme.surface_raised.b && actual.a == theme.surface_raised.a,
+         "hovered tab tooltips should render above the sidebar fill");
+
+  SDL_DestroySurface(pixels);
 }
 
 void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
@@ -843,6 +911,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
   AddTest(tests, "WorkspaceShell/CommandTextInputReturnsPartialCommandInvalidation",
           TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation);
+  AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",
+          TestWorkspaceShellTabTooltipRendersAboveSidebar);
   AddTest(tests, "WorkspaceShell/ShortcutEditActionsReturnEditorInvalidation",
           TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation);
   AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",

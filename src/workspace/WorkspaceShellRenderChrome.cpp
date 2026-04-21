@@ -114,13 +114,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
   }
 
-  const auto hovered_tab = std::find_if(
-      visible_tabs.begin(), visible_tabs.end(),
-      [this](const VisibleStripTab& tab) {
-        return last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_);
-      });
-  const std::string hovered_tab_tooltip =
-      hovered_tab != visible_tabs.end() ? hovered_tab->tooltip_label : std::string{};
   const auto status_items = ComputeVisibleStatusItems(layout.breadcrumb);
   float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
   float breadcrumb_text_right = layout.breadcrumb.x + layout.breadcrumb.w - 12.0f;
@@ -146,43 +139,73 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
       0.0f, theme_.chrome_text, theme_.chrome_background,
       TruncateLabel(BreadcrumbLabel(), breadcrumb_text_width));
-  if (!hovered_tab_tooltip.empty() && hovered_tab != visible_tabs.end()) {
-    const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLayout& layout) const {
+  if (!last_mouse_position_valid_ || context_.current_project_state.root.empty()) {
+    return std::nullopt;
+  }
+
+  const auto visible_tabs = ComputeVisibleTabs(layout.tab_strip);
+  const auto hovered_tab = std::find_if(
+      visible_tabs.begin(), visible_tabs.end(),
+      [this](const VisibleStripTab& tab) {
+        return Contains(tab.rect, last_mouse_x_, last_mouse_y_);
+      });
+  if (hovered_tab == visible_tabs.end() || hovered_tab->tooltip_label.empty()) {
+    return std::nullopt;
+  }
+
+  const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
+  const std::string tooltip_text =
+      text_renderer_.TruncateToWidth(hovered_tab->tooltip_label, max_tooltip_width - 16.0f);
+  const float tooltip_width =
+      std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+  const float hovered_tab_center_x = hovered_tab->rect.x + hovered_tab->rect.w * 0.5f;
+  const float tooltip_x =
+      std::clamp(hovered_tab_center_x - tooltip_width * 0.5f, layout.full.x + 8.0f,
+                 layout.full.x + layout.full.w - tooltip_width - 8.0f);
+  return MakeRect(tooltip_x, hovered_tab->rect.y + hovered_tab->rect.h + 6.0f, tooltip_width,
+                  text_renderer_.LineHeight() + 10.0f);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::HoveredStatusTooltipRect(const WorkspaceLayout& layout) const {
+  const std::string status_tooltip = HoveredStatusTooltip(layout.breadcrumb);
+  if (status_tooltip.empty()) {
+    return std::nullopt;
+  }
+
+  const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
+  const std::string tooltip_text =
+      text_renderer_.TruncateToWidth(status_tooltip, max_tooltip_width - 16.0f);
+  const float tooltip_width =
+      std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+  const float tooltip_x =
+      std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                 layout.full.x + layout.full.w - tooltip_width - 8.0f);
+  return MakeRect(tooltip_x, layout.breadcrumb.y + layout.breadcrumb.h + 6.0f, tooltip_width,
+                  text_renderer_.LineHeight() + 10.0f);
+}
+
+void WorkspaceShell::RenderChromeTooltips(SDL_Renderer* renderer,
+                                          const WorkspaceLayout& layout) const {
+  if (const auto tooltip_rect = HoveredTabTooltipRect(layout); tooltip_rect.has_value()) {
+    const std::string tooltip_label = HoveredTabTooltipLabel(layout.tab_strip);
     const std::string tooltip_text =
-        text_renderer_.TruncateToWidth(hovered_tab_tooltip, max_tooltip_width - 16.0f);
-    const float tooltip_width =
-        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
-    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
-    const float hovered_tab_center_x = hovered_tab->rect.x + hovered_tab->rect.w * 0.5f;
-    const float tooltip_x =
-        std::clamp(hovered_tab_center_x - tooltip_width * 0.5f, layout.full.x + 8.0f,
-                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
-    const SDL_FRect tooltip_rect =
-        MakeRect(tooltip_x, hovered_tab->rect.y + hovered_tab->rect.h + 6.0f, tooltip_width,
-                 tooltip_height);
-    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
-    DrawRect(renderer, tooltip_rect, theme_.border);
-    DrawVCenteredTextOn(text_renderer_, renderer, tooltip_rect, 8.0f, theme_.text_primary,
+        text_renderer_.TruncateToWidth(tooltip_label, tooltip_rect->w - 16.0f);
+    DrawFilledRect(renderer, *tooltip_rect, theme_.surface_raised);
+    DrawRect(renderer, *tooltip_rect, theme_.border);
+    DrawVCenteredTextOn(text_renderer_, renderer, *tooltip_rect, 8.0f, theme_.text_primary,
                         theme_.surface_raised, tooltip_text);
   }
 
-  const std::string status_tooltip = HoveredStatusTooltip(layout.breadcrumb);
-  if (!status_tooltip.empty()) {
-    const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
+  if (const auto tooltip_rect = HoveredStatusTooltipRect(layout); tooltip_rect.has_value()) {
+    const std::string tooltip_label = HoveredStatusTooltip(layout.breadcrumb);
     const std::string tooltip_text =
-        text_renderer_.TruncateToWidth(status_tooltip, max_tooltip_width - 16.0f);
-    const float tooltip_width =
-        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
-    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
-    const float tooltip_x =
-        std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
-                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
-    const SDL_FRect tooltip_rect =
-        MakeRect(tooltip_x, layout.breadcrumb.y + layout.breadcrumb.h + 6.0f, tooltip_width,
-                 tooltip_height);
-    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
-    DrawRect(renderer, tooltip_rect, theme_.border);
-    DrawVCenteredTextOn(text_renderer_, renderer, tooltip_rect, 8.0f, theme_.text_primary,
+        text_renderer_.TruncateToWidth(tooltip_label, tooltip_rect->w - 16.0f);
+    DrawFilledRect(renderer, *tooltip_rect, theme_.surface_raised);
+    DrawRect(renderer, *tooltip_rect, theme_.border);
+    DrawVCenteredTextOn(text_renderer_, renderer, *tooltip_rect, 8.0f, theme_.text_primary,
                         theme_.surface_raised, tooltip_text);
   }
 }

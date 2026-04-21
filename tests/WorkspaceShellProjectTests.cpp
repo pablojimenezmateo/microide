@@ -127,6 +127,16 @@ void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
          "unknown commands should report an explicit prompt error");
 }
 
+void TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_LCTRL),
+         "left-control Ctrl+E should open the command prompt");
+  Expect(WorkspaceShellTestAccess::CommandMode(shell),
+         "left-control Ctrl+E should enter command mode");
+}
+
 void TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
@@ -1251,6 +1261,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
+  AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",
+          TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt);
   AddTest(tests, "WorkspaceShell/CommandReportsMissingProjectInsteadOfSilentNoOp",
           TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp);
   AddTest(tests, "WorkspaceShell/OpenCommandRequiresPath",

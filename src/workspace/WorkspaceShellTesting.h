@@ -727,6 +727,10 @@ struct WorkspaceShell::TestAccess {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredTabTooltipLabel(layout.tab_strip);
   }
+  static std::optional<SDL_FRect> HoveredTabTooltipRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.HoveredTabTooltipRect(layout);
+  }
   static std::vector<WorkspaceShell::VisibleStatusItem> VisibleStatusItems(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeVisibleStatusItems(layout.breadcrumb);

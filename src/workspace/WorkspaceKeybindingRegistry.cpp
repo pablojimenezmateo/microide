@@ -19,6 +19,23 @@ std::string ToLowerAscii(std::string_view text) {
   return lower;
 }
 
+SDL_Keymod NormalizeRelevantModifiers(SDL_Keymod modifiers) {
+  SDL_Keymod normalized = SDL_KMOD_NONE;
+  if ((modifiers & SDL_KMOD_CTRL) != 0) {
+    normalized = static_cast<SDL_Keymod>(normalized | SDL_KMOD_CTRL);
+  }
+  if ((modifiers & SDL_KMOD_SHIFT) != 0) {
+    normalized = static_cast<SDL_Keymod>(normalized | SDL_KMOD_SHIFT);
+  }
+  if ((modifiers & SDL_KMOD_ALT) != 0) {
+    normalized = static_cast<SDL_Keymod>(normalized | SDL_KMOD_ALT);
+  }
+  if ((modifiers & SDL_KMOD_GUI) != 0) {
+    normalized = static_cast<SDL_Keymod>(normalized | SDL_KMOD_GUI);
+  }
+  return normalized;
+}
+
 }  // namespace
 
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
@@ -249,8 +266,7 @@ const KeybindingSpec* FindBuiltinKeybinding(std::string_view id) {
 const KeybindingSpec* FindBuiltinKeybindingByKey(SDL_Keycode key,
                                                   SDL_Keymod modifiers,
                                                   KeybindingContext context) {
-  const SDL_Keymod relevant = static_cast<SDL_Keymod>(modifiers &
-      (SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI));
+  const SDL_Keymod relevant = NormalizeRelevantModifiers(modifiers);
   const auto specs = BuiltinKeybindingSpecs();
   for (const KeybindingSpec& spec : specs) {
     if (spec.key != key) {
@@ -333,8 +349,7 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
                                           SDL_Keycode key,
                                           SDL_Keymod modifiers,
                                           KeybindingContext context) {
-  const SDL_Keymod relevant = static_cast<SDL_Keymod>(modifiers &
-      (SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI));
+  const SDL_Keymod relevant = NormalizeRelevantModifiers(modifiers);
   for (const ResolvedKeybinding& rb : bindings) {
     if (rb.key != key) {
       continue;

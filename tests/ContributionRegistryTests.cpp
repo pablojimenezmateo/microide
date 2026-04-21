@@ -114,6 +114,16 @@ void TestFindBuiltinKeybindingByKey() {
   Expect(found->id == save_spec->id, "found spec should be save");
 }
 
+void TestFindBuiltinKeybindingByLeftCtrlKey() {
+  const auto* command_prompt_spec = FindBuiltinKeybinding("command-prompt");
+  Expect(command_prompt_spec != nullptr, "command prompt spec should exist");
+  const auto* found = FindBuiltinKeybindingByKey(command_prompt_spec->key, SDL_KMOD_LCTRL,
+                                                 KeybindingContext::Global);
+  Expect(found != nullptr, "left control should match Ctrl bindings");
+  Expect(found->id == command_prompt_spec->id,
+         "left control should resolve the command prompt shortcut");
+}
+
 void TestResolveKeybindingsEmpty() {
   PluginHost host;
   const auto bindings = ResolveKeybindings(host);
@@ -128,6 +138,15 @@ void TestResolveKeybindingsDisabled() {
   const bool has_save = std::any_of(without_save.begin(), without_save.end(),
                                      [](const auto& rb) { return rb.id == "save"; });
   Expect(!has_save, "disabled keybinding should not appear in resolved list");
+}
+
+void TestResolveKeybindingsFindLeftCtrlMatch() {
+  PluginHost host;
+  const auto bindings = ResolveKeybindings(host);
+  const auto* found = FindKeybinding(bindings, SDLK_E, SDL_KMOD_LCTRL, KeybindingContext::Global);
+  Expect(found != nullptr, "resolved bindings should match left-control shortcuts");
+  Expect(found->id == "command-prompt",
+         "left control should resolve to the command prompt shortcut");
 }
 
 // ---------------------------------------------------------------------------
@@ -513,8 +532,12 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/FormatKeyChordRoundTrip",
           TestFormatKeyChordRoundTrip);
   AddTest(tests, "KeybindingRegistry/FindByKey", TestFindBuiltinKeybindingByKey);
+  AddTest(tests, "KeybindingRegistry/FindByLeftCtrlKey",
+          TestFindBuiltinKeybindingByLeftCtrlKey);
   AddTest(tests, "KeybindingRegistry/ResolveEmpty", TestResolveKeybindingsEmpty);
   AddTest(tests, "KeybindingRegistry/ResolveDisabled", TestResolveKeybindingsDisabled);
+  AddTest(tests, "KeybindingRegistry/ResolveLeftCtrlMatch",
+          TestResolveKeybindingsFindLeftCtrlMatch);
   AddTest(tests, "SettingsRegistry/BuiltinsNonEmpty", TestSettingsRegistryBuiltinsNonEmpty);
   AddTest(tests, "SettingsRegistry/FindById", TestSettingsRegistryFindById);
   AddTest(tests, "SettingsRegistry/FindUnknown", TestSettingsRegistryFindUnknown);
