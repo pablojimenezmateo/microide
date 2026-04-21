@@ -276,7 +276,7 @@ Current state:
 - `WorkspaceShell` render entry points now delegate the ordered frame composition path to
   `WorkspaceRootView`, which now composes dedicated active-surface, chrome, sidebar, overlay,
   panel, menu, and prompt views instead of acting as a single minimal placeholder seam
-- repo-owned dogfood plugins now cover a save-driven ESLint diagnostics flow and a small project-local bookmarks sidebar
+- repo-owned dogfood plugins now cover a session-scoped ESLint diagnostics flow and configurable host-owned LLM chat or inline completion agents
 
 - Phase 2 contribution and override model is now shipped:
   - `WorkspaceKeybindingRegistry*` defines named built-in keybinding specs with stable IDs,

@@ -793,7 +793,24 @@ void TestWorkspaceShellSidebarModeMenuListsPluginSidebars() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "sidebar menu fixture\n");
-  CopyRepoPlugin(plugins_root, "bookmarks");
+  WritePluginInit(
+      plugins_root, "menu-sidebar",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "menu-sidebar",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = "menu-sidebar",
+      label = "Example Sidebar",
+      snapshot = function()
+        return {
+          { label = "README.md", path = "README.md" }
+        }
+      end
+    })
+  end
+})
+)");
 
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
@@ -811,19 +828,20 @@ void TestWorkspaceShellSidebarModeMenuListsPluginSidebars() {
          "clicking the sidebar mode control should open the anchored sidebar menu");
 
   const auto labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
-  Expect(std::find(labels.begin(), labels.end(), "Bookmarks") != labels.end(),
+  Expect(std::find(labels.begin(), labels.end(), "Example Sidebar") != labels.end(),
          "sidebar mode menu should list loaded plugin sidebars by label");
 
-  const auto bookmarks_rect = WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Bookmarks");
-  Expect(bookmarks_rect.has_value(),
+  const auto example_rect =
+      WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Example Sidebar");
+  Expect(example_rect.has_value(),
          "sidebar mode menu should expose a clickable menu row for the plugin sidebar");
   Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
-             shell, bookmarks_rect->x + bookmarks_rect->w * 0.5f,
-             bookmarks_rect->y + bookmarks_rect->h * 0.5f, SDL_BUTTON_LEFT),
+             shell, example_rect->x + example_rect->w * 0.5f,
+             example_rect->y + example_rect->h * 0.5f, SDL_BUTTON_LEFT),
          "clicking the plugin sidebar menu row should be handled");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
          "selecting a plugin sidebar from the dropdown should activate plugin sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "menu-sidebar",
          "selecting a plugin sidebar from the dropdown should target the provider id");
 }
 
@@ -1055,8 +1073,10 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "src" / "main.js";
+  const std::filesystem::path unopened = project_root / "src" / "other.js";
   WriteFile(project_root / "README.md", "eslint fixture\n");
   WriteFile(source, "const answer = 1;\n");
+  WriteFile(unopened, "const other = 1;\n");
   CopyRepoPlugin(plugins_root, "eslint");
   WriteFakeEslint(project_root);
 
@@ -1066,6 +1086,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "eslint plugin fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor.SelectAll();
@@ -1079,12 +1100,29 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   Expect(broken_diagnostics->front().message == "Unexpected broken token (no-broken)",
          "ESLint plugin diagnostics should preserve the formatter message and rule id");
 
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float hover_x =
+      metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 1.0f;
+  const float hover_y = metrics.first_line_y + metrics.line_height - 1.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering the saved ESLint diagnostic should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell).has_value() &&
+             *WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell) ==
+                 "Unexpected broken token (no-broken)",
+         "repo ESLint diagnostics should surface through the host editor hover path");
+
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "eslint.show-problems"),
          "eslint.show-problems should open the built-in Problems sidebar");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
          "eslint.show-problems should route through the host Problems sidebar");
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
          "published ESLint diagnostics should appear in the Problems sidebar");
+
+  WriteFile(unopened, "broken();\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "eslint.run-opened"),
+         "eslint.run-opened should execute");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, unopened) == nullptr,
+         "eslint.run-opened should ignore dirty files that were never opened in this session");
 
   WorkspaceShellTestAccess::OpenFile(shell, source);
   auto& clean_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
@@ -1098,7 +1136,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
          "clearing ESLint diagnostics should refresh the Problems sidebar");
 }
 
-void TestWorkspaceShellRepoBookmarksPluginAddsSidebarItems() {
+void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
@@ -1106,45 +1144,45 @@ void TestWorkspaceShellRepoBookmarksPluginAddsSidebarItems() {
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path readme = project_root / "README.md";
-  const std::filesystem::path source = project_root / "src" / "main.txt";
-  WriteFile(readme, "bookmarks fixture\n");
-  WriteFile(source, "alpha\nbeta\n");
-  CopyRepoPlugin(plugins_root, "bookmarks");
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "llm fixture\n");
+  WriteFile(source, "value = ");
+  CopyRepoPlugin(plugins_root, "llm");
 
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "bookmarks plugin fixture should open the project");
+         "llm plugin fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
 
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "bookmarks.add Beta hotspot"),
-         "bookmarks.add should execute through the shell command prompt");
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
-         "bookmarks.add should show the plugin sidebar after writing the bookmark");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
-         "bookmarks.add should activate the repo plugin's sidebar id");
-  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
-         "bookmarks sidebar should expose the saved bookmark");
-  Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).front().label == "Beta hotspot" &&
-             WorkspaceShellTestAccess::PluginSidebarItems(shell).front().detail == "src/main.txt:2:3",
-         "bookmarks sidebar items should preserve the active buffer location");
-  Expect(ReadFile(project_root / ".microide" / "bookmarks.tsv") ==
-             "src/main.txt\t2\t3\tBeta hotspot\n",
-         "bookmarks plugin should persist project-local storage in .microide/bookmarks.tsv");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain this file"),
+         "repo llm plugin should enable the built-in chat command");
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
+         "repo llm chat command should complete");
+  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Chat,
+         "chat command should surface the host-owned chat panel");
+  Expect(messages.size() == 2 && messages.front().content == "explain this file" &&
+             messages.back().content == "LLM example reply",
+         "repo llm plugin should register a default chat agent response");
+  Expect(WorkspaceShellTestAccess::ActiveConversationProviderId(shell) == "llm.chat",
+         "repo llm chat conversations should record the repo plugin provider id");
 
-  WorkspaceShellTestAccess::OpenFile(shell, readme);
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "bookmarks.show"),
-         "bookmarks.show should reopen the plugin sidebar");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "pressing Enter in the bookmarks sidebar should confirm the selected item");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
-         "bookmark confirmation should reopen the target file");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 2,
-         "bookmark confirmation should restore the saved cursor location");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
+         "repo llm plugin should enable the built-in inline completion command");
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
+         "repo llm inline completion should complete");
+  Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
+             WorkspaceShellTestAccess::InlineCompletion(shell).text == "llm_inline_suggestion",
+         "repo llm plugin should surface inline completion ghost text");
+  Expect(WorkspaceShellTestAccess::AcceptInlineCompletion(shell),
+         "accepting the repo llm inline completion should succeed");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() ==
+             "value = llm_inline_suggestion",
+         "accepting the repo llm inline completion should edit the active buffer");
 }
 
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
@@ -1274,7 +1312,48 @@ void TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches() {
   WriteFile(project_a / "README.md", "alpha project\n");
   WriteFile(source_a, "alpha\nbeta\n");
   WriteFile(project_b / "README.md", "beta project\n");
-  CopyRepoPlugin(plugins_root, "bookmarks");
+  WritePluginInit(
+      plugins_root, "session-sidebar",
+      R"(local ide = require("microide")
+local SIDEBAR_ID = "session-sidebar"
+local STORAGE_PATH = ".microide/session-sidebar.txt"
+
+local function snapshot_items(ctx)
+  local label = ctx.files.read_text(STORAGE_PATH)
+  if type(label) ~= "string" then
+    return {}
+  end
+  label = label:gsub("%s+$", "")
+  if label == "" then
+    return {}
+  end
+  return {
+    { label = label, detail = "src/main.txt:2:3", path = "src/main.txt", line = 2, column = 3 }
+  }
+end
+
+return ide.plugin({
+  id = "session-sidebar",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = SIDEBAR_ID,
+      label = "Session Sidebar",
+      snapshot = function()
+        return snapshot_items(ctx)
+      end,
+      on_confirm = function(item)
+        ctx.workspace.open_file(item.path, item.line, item.column)
+      end,
+    })
+
+    ctx.commands.add("session-sidebar.add", function(ctx, args)
+      local label = table.concat(args, " ")
+      ctx.files.write_text(STORAGE_PATH, label .. "\n")
+      ctx.sidebar.show(SIDEBAR_ID)
+    end)
+  end,
+})
+)");
 
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
@@ -1283,14 +1362,14 @@ void TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches() {
          "plugin project-switch fixture should open the first project");
   WorkspaceShellTestAccess::OpenFile(shell, source_a);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "bookmarks.add Alpha bookmark"),
-         "plugin project-switch fixture should create one project-local bookmark");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "session-sidebar.add Alpha bookmark"),
+         "plugin project-switch fixture should create one project-local sidebar item");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
-         "adding the bookmark should activate the plugin sidebar");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
-         "adding the bookmark should record the plugin sidebar view id");
+         "adding the sidebar item should activate the plugin sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "session-sidebar",
+         "adding the sidebar item should record the plugin sidebar view id");
   Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1,
-         "adding the bookmark should populate the plugin sidebar");
+         "adding the sidebar item should populate the plugin sidebar");
 
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
          "plugin project-switch fixture should open the second project");
@@ -1303,7 +1382,7 @@ void TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches() {
          "plugin project-switch fixture should switch back to the first project");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Plugin,
          "switching back should restore the first project's plugin sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "project-bookmarks",
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "session-sidebar",
          "switching back should restore the first project's plugin sidebar view id");
   Expect(WorkspaceShellTestAccess::PluginSidebarItems(shell).size() == 1 &&
              WorkspaceShellTestAccess::PluginSidebarItems(shell).front().label ==
@@ -1350,8 +1429,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginHoverPopupShowsMessagesInComparePane);
   AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesDiagnosticsOnSave",
           TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave);
-  AddTest(tests, "WorkspaceShell/RepoBookmarksPluginAddsSidebarItems",
-          TestWorkspaceShellRepoBookmarksPluginAddsSidebarItems);
+  AddTest(tests, "WorkspaceShell/RepoLlmPluginDrivesChatAndInlineCompletion",
+          TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

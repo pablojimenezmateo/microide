@@ -10,6 +10,8 @@ local SUPPORTED_EXTENSIONS = {
   [".tsx"] = true,
 }
 
+local session_files = {}
+
 local function file_extension(path)
   local extension = path:match("^.+(%.[^./\\]+)$")
   if extension == nil then
@@ -83,7 +85,42 @@ local function build_diagnostics(report)
   return diagnostics
 end
 
-local function lint_path(ctx, relative_path, quiet)
+local function ensure_session_entry(ctx, relative_path)
+  if type(relative_path) ~= "string" or relative_path == "" or not is_supported_path(relative_path) then
+    return nil
+  end
+
+  local entry = session_files[relative_path]
+  if entry ~= nil then
+    return entry
+  end
+
+  entry = {
+    baseline_text = ctx.files.read_text(relative_path) or "",
+    dirty = false,
+    issue_count = 0,
+  }
+  session_files[relative_path] = entry
+  return entry
+end
+
+local function refresh_session_entry(ctx, relative_path)
+  local entry = ensure_session_entry(ctx, relative_path)
+  if entry == nil then
+    return nil
+  end
+
+  local text = ctx.files.read_text(relative_path)
+  if type(text) ~= "string" then
+    session_files[relative_path] = nil
+    return nil
+  end
+
+  entry.dirty = text ~= entry.baseline_text
+  return entry
+end
+
+local function lint_path(ctx, relative_path, quiet, force)
   if type(relative_path) ~= "string" or relative_path == "" then
     if not quiet then
       ctx.log("eslint: no target file")
@@ -95,6 +132,18 @@ local function lint_path(ctx, relative_path, quiet)
       ctx.log("eslint: unsupported file type for " .. relative_path)
     end
     return false
+  end
+
+  local entry = force and ensure_session_entry(ctx, relative_path) or refresh_session_entry(ctx, relative_path)
+  if not force and (entry == nil or not entry.dirty) then
+    ctx.diagnostics.clear(relative_path)
+    if entry ~= nil then
+      entry.issue_count = 0
+    end
+    if not quiet then
+      ctx.log("eslint: " .. relative_path .. " is clean for this session")
+    end
+    return true
   end
 
   local result = ctx.process.run({
@@ -126,10 +175,27 @@ local function lint_path(ctx, relative_path, quiet)
     ctx.diagnostics.publish(relative_path, diagnostics)
   end
 
+  if entry ~= nil then
+    entry.issue_count = #diagnostics
+  end
   if not quiet then
     ctx.log("eslint: " .. relative_path .. ": " .. tostring(#diagnostics) .. " issue(s)")
   end
   return true
+end
+
+local function dirty_opened_paths(ctx)
+  local paths = {}
+  for relative_path, entry in pairs(session_files) do
+    if is_supported_path(relative_path) then
+      local refreshed = refresh_session_entry(ctx, relative_path)
+      if refreshed ~= nil and refreshed.dirty then
+        paths[#paths + 1] = relative_path
+      end
+    end
+  end
+  table.sort(paths)
+  return paths
 end
 
 return ide.plugin({
@@ -138,7 +204,23 @@ return ide.plugin({
   setup = function(ctx)
     ctx.commands.add("eslint.run", function(ctx, args)
       local relative_path = args[1] or active_relative_path(ctx)
-      lint_path(ctx, relative_path, false)
+      lint_path(ctx, relative_path, false, true)
+    end)
+
+    ctx.commands.add("eslint.run-opened", function(ctx, args)
+      local paths = dirty_opened_paths(ctx)
+      if #paths == 0 then
+        ctx.log("eslint: no dirty opened files")
+        return
+      end
+
+      local ok_count = 0
+      for _, relative_path in ipairs(paths) do
+        if lint_path(ctx, relative_path, true, false) then
+          ok_count = ok_count + 1
+        end
+      end
+      ctx.log("eslint: linted " .. tostring(ok_count) .. " dirty opened file(s)")
     end)
 
     ctx.commands.add("eslint.clear", function(ctx, args)
@@ -148,6 +230,10 @@ return ide.plugin({
         return
       end
       ctx.diagnostics.clear(relative_path)
+      local entry = session_files[relative_path]
+      if entry ~= nil then
+        entry.issue_count = 0
+      end
       ctx.log("eslint: cleared diagnostics for " .. relative_path)
     end)
 
@@ -156,9 +242,15 @@ return ide.plugin({
     end)
   end,
 
+  on_buffer_open = function(ctx, buffer)
+    if buffer ~= nil and type(buffer.relative_path) == "string" then
+      ensure_session_entry(ctx, buffer.relative_path)
+    end
+  end,
+
   on_buffer_save = function(ctx, buffer)
     if buffer ~= nil and type(buffer.relative_path) == "string" then
-      lint_path(ctx, buffer.relative_path, true)
+      lint_path(ctx, buffer.relative_path, true, false)
     end
   end,
 })

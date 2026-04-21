@@ -56,7 +56,7 @@ The current SDL shell already includes:
 - runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets plus runtime-loaded plugin syntax contributions
 - a host-owned plugin runtime service for plugin lifecycle, syntax-asset reload bookkeeping,
   asset watching, and plugin output logging
-- repo-owned Lua dogfood plugins for ESLint diagnostics and project-local bookmarks, exercising the same narrow host APIs exposed to user plugins
+- repo-owned Lua dogfood plugins for ESLint diagnostics and host-owned LLM chat or inline completion, exercising the same narrow host APIs exposed to user plugins
 - an optional `SDL3_ttf` backend with a debug-text fallback
 
 Current implementation status and active priorities are tracked in `docs/active-work.md`.

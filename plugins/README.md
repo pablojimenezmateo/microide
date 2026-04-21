@@ -16,7 +16,8 @@ ln -s /path/to/microide/plugins/eslint ~/.config/microide/plugins/eslint
 
 Current examples:
 
-- `eslint`: runs ESLint on saved JavaScript and TypeScript files, then publishes diagnostics to the host Problems flow
-- `bookmarks`: adds a small project-local bookmarks sidebar backed by `.microide/bookmarks.tsv`
+- `eslint`: tracks JavaScript and TypeScript files opened in the current session, lints the ones dirtied in-session on save, and publishes diagnostics to the host Problems and editor flows
+- `llm`: registers stdio-backed chat and inline-completion agents; defaults to `demo` provider (no credentials needed); set `llm.provider` to `claude` or `openai` in user settings and export `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; configure models via `llm.claude.model` (default `claude-sonnet-4-6`) or `llm.openai.model` (default `gpt-4o`); override either command directly via `llm.chat_command` or `llm.inline_command`
+- `prettier`: registers stdin-based formatters for JavaScript, TypeScript, CSS, HTML, JSON, and Markdown; formats automatically on save via the host save pipeline; uses `node_modules/.bin/prettier` if present, otherwise `prettier` from PATH; override the binary path with project setting `prettier.binary`
 
 After installing or editing a plugin, run `plugins-reload` inside microide.

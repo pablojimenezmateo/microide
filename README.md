@@ -214,7 +214,7 @@ Plugin runtime:
 - the current host API includes `ctx.log(...)`, `ctx.commands.add(name, fn)`, `ctx.sidebar.add({...})`, `ctx.sidebar.show(id)`, `ctx.workspace.project_root()`, `ctx.workspace.open_file(path, line, column)`, `ctx.workspace.active_buffer()`, `ctx.files.read_text(path)`, `ctx.files.write_text(path, text)`, `ctx.files.exists(path)`, `ctx.process.run(argv, { cwd = ..., stdin = ... })`, `ctx.diagnostics.publish(path, diagnostics)`, `ctx.diagnostics.clear(path_or_nil)`, and `ctx.hover.add({ id, provide })`
 - plugin sidebars use host-owned rendering, appear in the sidebar-mode dropdown when loaded, and can also be opened from the command line with `sidebar-show <sidebar-id>`
 - plugin syntax definitions load from `syntax/*.lua` inside plugin directories on project open and `plugins-reload`
-- the repo-owned `plugins/eslint` and `plugins/bookmarks` directories are the current dogfood examples for diagnostics and sidebar-driven workflows
+- the repo-owned `plugins/eslint` and `plugins/llm` directories are the current dogfood examples for diagnostics and host-owned AI workflows
 - `plugins-reload` rebuilds the active plugin host and reloads commands for the current project
 
 Diff benchmark:

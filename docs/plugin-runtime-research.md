@@ -957,8 +957,8 @@ Implemented on 2026-04-17 in a repo-owned dogfooding pass:
 
 - added `ctx.workspace.active_buffer()` so command-driven plugins can read the current editable file and one-based cursor without receiving `WorkspaceShell`
 - added repo-owned example plugins under `plugins/`
-- `plugins/eslint` now runs ESLint against saved JavaScript and TypeScript buffers, publishes diagnostics into the host-owned Problems flow, and reuses the built-in Problems sidebar through `eslint.show-problems`
-- `plugins/bookmarks` now stores project-local bookmarks in `.microide/bookmarks.tsv`, contributes a plugin sidebar, and reopens files at saved line and column locations
+- `plugins/eslint` now tracks the current session's opened JavaScript and TypeScript files, lints the ones dirtied in-session on save, publishes diagnostics into the host-owned Problems flow, and reuses the built-in Problems sidebar through `eslint.show-problems`
+- `plugins/llm` now registers configurable stdio chat and inline-completion agents against the host-owned `chat` and `inline-complete` surfaces
 
 ### Phase 5: Remaining Plugin Dogfooding
 
