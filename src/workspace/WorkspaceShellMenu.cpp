@@ -169,6 +169,17 @@ std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   if (!item.label.empty()) {
     return std::string(item.label);
   }
+  if (!item.command_name.empty()) {
+    if (const ActionSpec* action = FindActionByCommand(item.command_name);
+        action != nullptr && !action->label.empty()) {
+      return std::string(action->label);
+    }
+    if (const ActionSpec* action = FindActionByCommand(item.command_name);
+        action != nullptr && !action->command_name.empty()) {
+      return std::string(action->command_name);
+    }
+    return std::string(item.command_name);
+  }
   if (const ActionSpec* action = FindActionSpec(item.action);
       action != nullptr && !action->label.empty()) {
     return std::string(action->label);
@@ -187,6 +198,12 @@ std::string WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) const 
   if (!item.accelerator.empty()) {
     return std::string(item.accelerator);
   }
+  if (!item.command_name.empty()) {
+    if (const ActionSpec* action = FindActionByCommand(item.command_name);
+        action != nullptr && !action->accelerator.empty()) {
+      return std::string(action->accelerator);
+    }
+  }
   if (const ActionSpec* action = FindActionSpec(item.action);
       action != nullptr && !action->accelerator.empty()) {
     return std::string(action->accelerator);
@@ -199,10 +216,21 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     return false;
   }
 
-  if (item.action == ActionId::Files) {
+  const ActionSpec* command_action =
+      item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);
+  const ActionId effective_action =
+      command_action != nullptr ? command_action->id : item.action;
+
+  if (!item.command_name.empty() && command_action == nullptr) {
+    const auto& plugin_commands = plugin_runtime_.Host().CommandNames();
+    return std::find(plugin_commands.begin(), plugin_commands.end(),
+                     std::string(item.command_name)) != plugin_commands.end();
+  }
+
+  if (effective_action == ActionId::Files) {
     return !context_.current_project_state.root.empty();
   }
-  if (item.action == ActionId::Focus && item.arg_count > 0) {
+  if (effective_action == ActionId::Focus && item.arg_count > 0) {
     if (item.args[0] == "sidebar") {
       return context_.current_project_state.sidebar.visible;
     }
@@ -211,7 +239,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     }
     return true;
   }
-  if ((item.action == ActionId::SidebarShow || item.action == ActionId::SidebarToggle) &&
+  if ((effective_action == ActionId::SidebarShow || effective_action == ActionId::SidebarToggle) &&
       item.arg_count > 0) {
     if (FindBuiltinSidebarView(item.args[0]) != nullptr) {
       return !context_.current_project_state.root.empty();
@@ -219,7 +247,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     return FindSidebarView(item.args[0], plugin_runtime_.Host()).has_value();
   }
 
-  return MakeActionAvailability().IsEnabled(item.action);
+  return MakeActionAvailability().IsEnabled(effective_action);
 }
 
 bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {

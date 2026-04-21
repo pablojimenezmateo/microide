@@ -30,6 +30,7 @@ struct KeybindingSpec {
   KeybindingContext context = KeybindingContext::Global;
   std::array<std::string_view, 2> args{};
   std::size_t arg_count = 0;
+  std::string_view command_name;
 };
 
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs();
@@ -45,6 +46,7 @@ struct ResolvedKeybinding {
   SDL_Keymod modifiers = SDL_KMOD_NONE;
   KeybindingContext context = KeybindingContext::Global;
   std::vector<std::string> args;
+  std::string command_name;
   bool from_plugin = false;
 };
 

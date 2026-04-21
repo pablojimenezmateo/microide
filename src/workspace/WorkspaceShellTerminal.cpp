@@ -158,15 +158,32 @@ std::size_t FindWrappedInvocationStartRow(const terminal::TerminalSession& sessi
 }
 
 }  // namespace
+
+bool WorkspaceShell::BottomPanelShowsTerminal() const {
+  return context_.current_project_state.panel.content == PanelContentKind::Terminal &&
+         ActiveTerminalTab() != nullptr;
+}
+
+bool WorkspaceShell::BottomPanelShowsOutput() const {
+  return context_.current_project_state.panel.content == PanelContentKind::Output;
+}
+
+bool WorkspaceShell::BottomPanelShowsChat() const {
+  return context_.current_project_state.panel.content == PanelContentKind::Chat;
+}
+
 bool WorkspaceShell::BottomPanelVisible() const {
-  return context_.current_project_state.panel.command_mode || !context_.current_project_state.terminal_tabs.empty();
+  return context_.current_project_state.panel.command_mode ||
+         BottomPanelShowsTerminal() || BottomPanelShowsOutput() || BottomPanelShowsChat();
 }
 
 WorkspaceShell::BottomPanelLogLayout WorkspaceShell::ComputeBottomPanelLogLayout(
     const WorkspaceLayout& layout,
     std::size_t line_count) const {
   BottomPanelLogLayout panel_layout;
-  panel_layout.content_rect = BottomPanelContentRect(layout, context_.current_project_state.panel.command_mode);
+  const bool reserve_prompt =
+      context_.current_project_state.panel.command_mode || BottomPanelShowsChat();
+  panel_layout.content_rect = BottomPanelContentRect(layout, reserve_prompt);
   panel_layout.text_x = panel_layout.content_rect.x + kBottomPanelTextInset;
   panel_layout.text_y = panel_layout.content_rect.y + kBottomPanelTextTopInset;
   panel_layout.line_height = text_renderer_.LineHeight();
@@ -183,11 +200,30 @@ WorkspaceShell::BottomPanelLogLayout WorkspaceShell::ComputeBottomPanelLogLayout
 }
 
 int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
-  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight(), context_.current_project_state.panel.command_mode);
+  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight(),
+                                         context_.current_project_state.panel.command_mode ||
+                                             BottomPanelShowsChat());
 }
 
 int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_rows) const {
   const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
+  if (BottomPanelShowsTerminal()) {
+    if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+      return terminal_tab->follow_tail ? max_scroll
+                                       : ClampScrollRowToContent(terminal_tab->scroll_row,
+                                                                 line_count,
+                                                                 visible_rows);
+    }
+    return 0;
+  }
+  if (BottomPanelShowsOutput()) {
+    return ClampScrollRowToContent(context_.current_project_state.panel.output.scroll_row,
+                                   line_count, visible_rows);
+  }
+  if (BottomPanelShowsChat()) {
+    return ClampScrollRowToContent(context_.current_project_state.panel.chat.scroll_row,
+                                   line_count, visible_rows);
+  }
   if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     return terminal_tab->follow_tail ? max_scroll
                                      : ClampScrollRowToContent(terminal_tab->scroll_row,
@@ -240,6 +276,21 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
                                              int visible_rows) {
   const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
   const int clamped_scroll = ClampScrollRowToContent(scroll_row, line_count, visible_rows);
+  if (BottomPanelShowsTerminal()) {
+    if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+      terminal_tab->scroll_row = clamped_scroll;
+      terminal_tab->follow_tail = clamped_scroll >= max_scroll;
+    }
+    return;
+  }
+  if (BottomPanelShowsOutput()) {
+    context_.current_project_state.panel.output.scroll_row = clamped_scroll;
+    return;
+  }
+  if (BottomPanelShowsChat()) {
+    context_.current_project_state.panel.chat.scroll_row = clamped_scroll;
+    return;
+  }
   if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     terminal_tab->scroll_row = clamped_scroll;
     terminal_tab->follow_tail = clamped_scroll >= max_scroll;
@@ -425,7 +476,9 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  const SDL_FRect panel_content = BottomPanelContentRect(layout, context_.current_project_state.panel.command_mode);
+  const SDL_FRect panel_content =
+      BottomPanelContentRect(layout, context_.current_project_state.panel.command_mode ||
+                                         BottomPanelShowsChat());
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;
   }

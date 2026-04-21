@@ -46,6 +46,15 @@ Conversation* ConversationRegistry::GetConversation(const std::string& id) {
   return nullptr;
 }
 
+const Conversation* ConversationRegistry::GetConversation(const std::string& id) const {
+  for (const auto& conv : conversations_) {
+    if (conv.id == id) {
+      return &conv;
+    }
+  }
+  return nullptr;
+}
+
 void ConversationRegistry::AddMessage(const std::string& conversation_id,
                                       const Message& message) {
   auto conv = GetConversation(conversation_id);

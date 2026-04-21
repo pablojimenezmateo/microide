@@ -29,12 +29,14 @@ class AuthProviderRegistry {
 
   // Register an auth provider.
   void RegisterProvider(const AuthProviderSpec& spec);
+  const std::vector<AuthProviderSpec>& Providers() const { return providers_; }
 
   // Get provider by id.
   const AuthProviderSpec* GetProvider(const std::string& id) const;
 
   // Add auth session.
   void AddSession(const AuthSession& session);
+  const std::vector<AuthSession>& Sessions() const { return sessions_; }
 
   // Get sessions for a provider.
   std::vector<AuthSession> GetSessions(const std::string& provider_id) const;

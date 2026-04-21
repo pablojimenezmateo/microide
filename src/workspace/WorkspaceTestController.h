@@ -58,6 +58,7 @@ class TestController {
  private:
   std::vector<TestItem> test_items_;
   std::vector<TestResult> results_;
+  mutable std::vector<TestResult> filtered_results_;
 };
 
 }  // namespace microide::workspace

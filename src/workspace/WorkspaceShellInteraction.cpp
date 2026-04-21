@@ -50,6 +50,10 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
         return TextInputSurface::ProjectSearchOverlay;
       case OverlayMode::CommitPicker:
         return TextInputSurface::CommitPicker;
+      case OverlayMode::Completion:
+      case OverlayMode::CodeActions:
+      case OverlayMode::TaskPicker:
+        return TextInputSurface::None;
       case OverlayMode::FileFinder:
       default:
         return TextInputSurface::FileFinder;
@@ -68,8 +72,13 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::Editor;
   }
 
-  if (context_.current_project_state.surface.focus == FocusTarget::Panel && ActiveTerminalTab() != nullptr) {
-    return TextInputSurface::Terminal;
+  if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
+    if (BottomPanelShowsChat()) {
+      return TextInputSurface::ChatComposer;
+    }
+    if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
+      return TextInputSurface::Terminal;
+    }
   }
 
   return TextInputSurface::None;

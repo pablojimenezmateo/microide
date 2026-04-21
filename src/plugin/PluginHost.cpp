@@ -131,6 +131,87 @@ struct PluginHost::Impl {
 #endif
   };
 
+  struct SaveParticipantRuntime {
+    std::string id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int function_ref = LUA_NOREF;
+#endif
+  };
+
+  struct CompletionRuntime {
+    std::string id;
+    std::string language_id;
+    std::string trigger_characters;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int provide_ref = LUA_NOREF;
+#endif
+  };
+
+  struct CodeActionRuntime {
+    std::string id;
+    std::string language_id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int provide_ref = LUA_NOREF;
+#endif
+  };
+
+  struct TestProviderRuntime {
+    std::string id;
+    std::string language_id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int discover_ref = LUA_NOREF;
+    int run_ref = LUA_NOREF;
+#endif
+  };
+
+  struct ScmProviderRuntime {
+    std::string id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int snapshot_ref = LUA_NOREF;
+#endif
+  };
+
+  struct AnnotationProviderRuntime {
+    std::string id;
+    std::string language_id;
+    std::string type;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int provide_ref = LUA_NOREF;
+#endif
+  };
+
+  struct AuthProviderRuntime {
+    std::string id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int login_ref = LUA_NOREF;
+    int refresh_ref = LUA_NOREF;
+    int logout_ref = LUA_NOREF;
+#endif
+  };
+
+  struct McpToolRuntime {
+    std::string id;
+    std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+    lua_State* state = nullptr;
+    int run_ref = LUA_NOREF;
+#endif
+  };
+
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
   std::vector<PluginInstance> plugins;
@@ -147,18 +228,26 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedStatusItem> status_item_order;
   std::vector<PluginHost::ContributedFormatter> formatters;
   std::vector<PluginHost::ContributedSaveParticipant> save_participants;
+  std::vector<SaveParticipantRuntime> save_participant_runtimes;
   std::vector<PluginHost::ContributedCompletion> completions;
+  std::vector<CompletionRuntime> completion_runtimes;
   std::vector<PluginHost::ContributedCodeAction> code_actions;
+  std::vector<CodeActionRuntime> code_action_runtimes;
   std::vector<PluginHost::ContributedTask> tasks;
   std::vector<PluginHost::ContributedTool> tools;
   std::vector<PluginHost::ContributedDebugger> debuggers;
   std::vector<PluginHost::ContributedTestProvider> test_providers;
+  std::vector<TestProviderRuntime> test_provider_runtimes;
   std::vector<PluginHost::ContributedScmProvider> scm_providers;
+  std::vector<ScmProviderRuntime> scm_provider_runtimes;
   std::vector<PluginHost::ContributedAnnotationProvider> annotation_providers;
+  std::vector<AnnotationProviderRuntime> annotation_provider_runtimes;
   std::vector<PluginHost::ContributedAuthProvider> auth_providers;
+  std::vector<AuthProviderRuntime> auth_provider_runtimes;
   std::vector<PluginHost::ContributedAiProvider> ai_providers;
   std::vector<PluginHost::ContributedExternalAgent> external_agents;
   std::vector<PluginHost::ContributedMcpTool> mcp_tools;
+  std::vector<McpToolRuntime> mcp_tool_runtimes;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
@@ -229,6 +318,49 @@ struct PluginHost::Impl {
     }
     return relative.generic_string();
   }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  void PushBufferContext(lua_State* state,
+                         const std::filesystem::path& path,
+                         std::optional<std::string_view> text = std::nullopt) const {
+    lua_createtable(state, 0, 3);
+    const std::filesystem::path normalized_path = path.lexically_normal();
+    const std::string path_string = normalized_path.string();
+    lua_pushlstring(state, path_string.c_str(), path_string.size());
+    lua_setfield(state, -2, "path");
+
+    const std::string relative_path = RelativePathString(normalized_path).value_or(
+        normalized_path.filename().empty() ? normalized_path.string()
+                                           : normalized_path.filename().string());
+    lua_pushlstring(state, relative_path.c_str(), relative_path.size());
+    lua_setfield(state, -2, "relative_path");
+
+    if (text.has_value()) {
+      lua_pushlstring(state, text->data(), text->size());
+      lua_setfield(state, -2, "text");
+    }
+  }
+
+  static void PushPosition(lua_State* state, std::size_t line, std::size_t column) {
+    lua_createtable(state, 0, 2);
+    lua_pushinteger(state, static_cast<lua_Integer>(line));
+    lua_setfield(state, -2, "line");
+    lua_pushinteger(state, static_cast<lua_Integer>(column));
+    lua_setfield(state, -2, "column");
+  }
+
+  static void PushRange(lua_State* state,
+                        std::size_t start_line,
+                        std::size_t start_column,
+                        std::size_t end_line,
+                        std::size_t end_column) {
+    lua_createtable(state, 0, 2);
+    PushPosition(state, start_line, start_column);
+    lua_setfield(state, -2, "start");
+    PushPosition(state, end_line, end_column);
+    lua_setfield(state, -2, "end");
+  }
+#endif
 
   std::vector<std::pair<std::filesystem::path, bool>> DiscoverPluginRoots() const {
     std::vector<std::pair<std::filesystem::path, bool>> plugin_roots;
@@ -1053,9 +1185,17 @@ struct PluginHost::Impl {
     if (plugin == nullptr) {
       return luaL_error(state, "save participant registration requires an active plugin state");
     }
+    lua_pushvalue(state, 2);
+    const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
     host->save_participants.push_back(PluginHost::ContributedSaveParticipant{
         .id = plugin->id + "." + std::string(id),
         .plugin_id = plugin->id,
+    });
+    host->save_participant_runtimes.push_back(SaveParticipantRuntime{
+        .id = plugin->id + "." + std::string(id),
+        .plugin_id = plugin->id,
+        .state = state,
+        .function_ref = function_ref,
     });
     return 0;
   }
@@ -1090,12 +1230,32 @@ struct PluginHost::Impl {
       trigger_characters = std::move(*trigger_opt);
     }
 
+    lua_getfield(state, 1, "provide");
+    const bool has_provider = lua_isfunction(state, -1);
+    int provide_ref = LUA_NOREF;
+    if (has_provider) {
+      provide_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      lua_pop(state, 1);
+    }
+
     host->completions.push_back(PluginHost::ContributedCompletion{
         .id = plugin->id + "." + *id_opt,
         .language_id = std::move(*language_id_opt),
         .trigger_characters = std::move(trigger_characters),
         .plugin_id = plugin->id,
     });
+    if (has_provider) {
+      const auto& contributed = host->completions.back();
+      host->completion_runtimes.push_back(CompletionRuntime{
+          .id = contributed.id,
+          .language_id = contributed.language_id,
+          .trigger_characters = contributed.trigger_characters,
+          .plugin_id = contributed.plugin_id,
+          .state = state,
+          .provide_ref = provide_ref,
+      });
+    }
     return 0;
   }
 
@@ -1124,11 +1284,30 @@ struct PluginHost::Impl {
       return luaL_error(state, "code action requires id and language_id");
     }
 
+    lua_getfield(state, 1, "provide");
+    const bool has_provider = lua_isfunction(state, -1);
+    int provide_ref = LUA_NOREF;
+    if (has_provider) {
+      provide_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      lua_pop(state, 1);
+    }
+
     host->code_actions.push_back(PluginHost::ContributedCodeAction{
         .id = plugin->id + "." + *id_opt,
         .language_id = std::move(*language_id_opt),
         .plugin_id = plugin->id,
     });
+    if (has_provider) {
+      const auto& contributed = host->code_actions.back();
+      host->code_action_runtimes.push_back(CodeActionRuntime{
+          .id = contributed.id,
+          .language_id = contributed.language_id,
+          .plugin_id = contributed.plugin_id,
+          .state = state,
+          .provide_ref = provide_ref,
+      });
+    }
     return 0;
   }
 
@@ -1344,27 +1523,96 @@ struct PluginHost::Impl {
       return luaL_error(state, "test provider requires id and language_id");
     }
 
+    lua_getfield(state, 1, "discover");
+    const bool has_discover = lua_isfunction(state, -1);
+    int discover_ref = LUA_NOREF;
+    if (has_discover) {
+      discover_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      lua_pop(state, 1);
+    }
+
+    lua_getfield(state, 1, "run");
+    const bool has_run = lua_isfunction(state, -1);
+    int run_ref = LUA_NOREF;
+    if (has_run) {
+      run_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      lua_pop(state, 1);
+    }
+
     host->test_providers.push_back(PluginHost::ContributedTestProvider{
         .id = plugin->id + "." + *id_opt,
         .language_id = std::move(*language_id_opt),
         .plugin_id = plugin->id,
     });
+    if (has_discover || has_run) {
+      const auto& contributed = host->test_providers.back();
+      host->test_provider_runtimes.push_back(TestProviderRuntime{
+          .id = contributed.id,
+          .language_id = contributed.language_id,
+          .plugin_id = contributed.plugin_id,
+          .state = state,
+          .discover_ref = discover_ref,
+          .run_ref = run_ref,
+      });
+    }
     return 0;
   }
 
   static int LuaScmProviderAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* id = luaL_checkstring(state, 1);
-    const char* label = luaL_checkstring(state, 2);
     const PluginInstance* plugin = host->FindPluginByState(state);
     if (plugin == nullptr) {
       return luaL_error(state, "scm provider registration requires an active plugin state");
     }
+
+    std::string id;
+    std::string label;
+    int snapshot_ref = LUA_NOREF;
+    if (lua_istable(state, 1)) {
+      auto read_string = [&](const char* field) -> std::optional<std::string> {
+        lua_getfield(state, 1, field);
+        if (!lua_isstring(state, -1)) {
+          lua_pop(state, 1);
+          return std::nullopt;
+        }
+        std::string value = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        return value;
+      };
+      auto id_opt = read_string("id");
+      auto label_opt = read_string("label");
+      if (!id_opt || !label_opt) {
+        return luaL_error(state, "scm provider requires id and label");
+      }
+      id = std::move(*id_opt);
+      label = std::move(*label_opt);
+
+      lua_getfield(state, 1, "snapshot");
+      if (lua_isfunction(state, -1)) {
+        snapshot_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+      } else {
+        lua_pop(state, 1);
+      }
+    } else {
+      id = luaL_checkstring(state, 1);
+      label = luaL_checkstring(state, 2);
+    }
+
     host->scm_providers.push_back(PluginHost::ContributedScmProvider{
-        .id = plugin->id + "." + std::string(id),
-        .label = label,
+        .id = plugin->id + "." + id,
+        .label = std::move(label),
         .plugin_id = plugin->id,
     });
+    if (snapshot_ref != LUA_NOREF && snapshot_ref != LUA_REFNIL) {
+      host->scm_provider_runtimes.push_back(ScmProviderRuntime{
+          .id = host->scm_providers.back().id,
+          .plugin_id = plugin->id,
+          .state = state,
+          .snapshot_ref = snapshot_ref,
+      });
+    }
     return 0;
   }
 
@@ -1402,22 +1650,97 @@ struct PluginHost::Impl {
         .language_id = std::move(*language_id_opt),
         .plugin_id = plugin->id,
     });
+    lua_getfield(state, 1, "provide");
+    const bool has_provide = lua_isfunction(state, -1);
+    int provide_ref = LUA_NOREF;
+    if (has_provide) {
+      provide_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      lua_pop(state, 1);
+    }
+    if (has_provide) {
+      const auto& contributed = host->annotation_providers.back();
+      host->annotation_provider_runtimes.push_back(AnnotationProviderRuntime{
+          .id = contributed.id,
+          .language_id = contributed.language_id,
+          .type = contributed.type,
+          .plugin_id = contributed.plugin_id,
+          .state = state,
+          .provide_ref = provide_ref,
+      });
+    }
     return 0;
   }
 
   static int LuaAuthProviderAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* id = luaL_checkstring(state, 1);
-    const char* label = luaL_checkstring(state, 2);
     const PluginInstance* plugin = host->FindPluginByState(state);
     if (plugin == nullptr) {
       return luaL_error(state, "auth provider registration requires an active plugin state");
     }
+
+    std::string id;
+    std::string label;
+    int login_ref = LUA_NOREF;
+    int refresh_ref = LUA_NOREF;
+    int logout_ref = LUA_NOREF;
+    if (lua_istable(state, 1)) {
+      auto read_string = [&](const char* field) -> std::optional<std::string> {
+        lua_getfield(state, 1, field);
+        if (!lua_isstring(state, -1)) {
+          lua_pop(state, 1);
+          return std::nullopt;
+        }
+        std::string value = lua_tostring(state, -1);
+        lua_pop(state, 1);
+        return value;
+      };
+      auto id_opt = read_string("id");
+      auto label_opt = read_string("label");
+      if (!id_opt || !label_opt) {
+        return luaL_error(state, "auth provider requires id and label");
+      }
+      id = std::move(*id_opt);
+      label = std::move(*label_opt);
+
+      lua_getfield(state, 1, "login");
+      if (lua_isfunction(state, -1)) {
+        login_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+      } else {
+        lua_pop(state, 1);
+      }
+      lua_getfield(state, 1, "refresh");
+      if (lua_isfunction(state, -1)) {
+        refresh_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+      } else {
+        lua_pop(state, 1);
+      }
+      lua_getfield(state, 1, "logout");
+      if (lua_isfunction(state, -1)) {
+        logout_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+      } else {
+        lua_pop(state, 1);
+      }
+    } else {
+      id = luaL_checkstring(state, 1);
+      label = luaL_checkstring(state, 2);
+    }
+
     host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
-        .id = plugin->id + "." + std::string(id),
-        .label = label,
+        .id = plugin->id + "." + id,
+        .label = std::move(label),
         .plugin_id = plugin->id,
     });
+    if (login_ref != LUA_NOREF || refresh_ref != LUA_NOREF || logout_ref != LUA_NOREF) {
+      host->auth_provider_runtimes.push_back(AuthProviderRuntime{
+          .id = host->auth_providers.back().id,
+          .plugin_id = plugin->id,
+          .state = state,
+          .login_ref = login_ref,
+          .refresh_ref = refresh_ref,
+          .logout_ref = logout_ref,
+      });
+    }
     return 0;
   }
 
@@ -1565,6 +1888,22 @@ struct PluginHost::Impl {
         .input_schema = std::move(*schema_opt),
         .plugin_id = plugin->id,
     });
+    lua_getfield(state, 1, "run");
+    const bool has_run = lua_isfunction(state, -1);
+    int run_ref = LUA_NOREF;
+    if (has_run) {
+      run_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    } else {
+      lua_pop(state, 1);
+    }
+    if (has_run) {
+      host->mcp_tool_runtimes.push_back(McpToolRuntime{
+          .id = host->mcp_tools.back().id,
+          .plugin_id = plugin->id,
+          .state = state,
+          .run_ref = run_ref,
+      });
+    }
     return 0;
   }
 
@@ -2592,18 +2931,42 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           save_participants.end());
+      for (auto it = save_participant_runtimes.begin(); it != save_participant_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        luaL_unref(state, LUA_REGISTRYINDEX, it->function_ref);
+        it = save_participant_runtimes.erase(it);
+      }
       completions.erase(
           std::remove_if(completions.begin(), completions.end(),
                          [&](const PluginHost::ContributedCompletion& e) {
                            return e.plugin_id == plugin_id;
                          }),
           completions.end());
+      for (auto it = completion_runtimes.begin(); it != completion_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        luaL_unref(state, LUA_REGISTRYINDEX, it->provide_ref);
+        it = completion_runtimes.erase(it);
+      }
       code_actions.erase(
           std::remove_if(code_actions.begin(), code_actions.end(),
                          [&](const PluginHost::ContributedCodeAction& e) {
                            return e.plugin_id == plugin_id;
                          }),
           code_actions.end());
+      for (auto it = code_action_runtimes.begin(); it != code_action_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        luaL_unref(state, LUA_REGISTRYINDEX, it->provide_ref);
+        it = code_action_runtimes.erase(it);
+      }
       tasks.erase(
           std::remove_if(tasks.begin(), tasks.end(),
                          [&](const PluginHost::ContributedTask& e) {
@@ -2628,24 +2991,74 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           test_providers.end());
+      for (auto it = test_provider_runtimes.begin(); it != test_provider_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        if (it->discover_ref != LUA_NOREF && it->discover_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->discover_ref);
+        }
+        if (it->run_ref != LUA_NOREF && it->run_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->run_ref);
+        }
+        it = test_provider_runtimes.erase(it);
+      }
       scm_providers.erase(
           std::remove_if(scm_providers.begin(), scm_providers.end(),
                          [&](const PluginHost::ContributedScmProvider& e) {
                            return e.plugin_id == plugin_id;
                          }),
           scm_providers.end());
+      for (auto it = scm_provider_runtimes.begin(); it != scm_provider_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        if (it->snapshot_ref != LUA_NOREF && it->snapshot_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->snapshot_ref);
+        }
+        it = scm_provider_runtimes.erase(it);
+      }
       annotation_providers.erase(
           std::remove_if(annotation_providers.begin(), annotation_providers.end(),
                          [&](const PluginHost::ContributedAnnotationProvider& e) {
                            return e.plugin_id == plugin_id;
                          }),
           annotation_providers.end());
+      for (auto it = annotation_provider_runtimes.begin();
+           it != annotation_provider_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        if (it->provide_ref != LUA_NOREF && it->provide_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->provide_ref);
+        }
+        it = annotation_provider_runtimes.erase(it);
+      }
       auth_providers.erase(
           std::remove_if(auth_providers.begin(), auth_providers.end(),
                          [&](const PluginHost::ContributedAuthProvider& e) {
                            return e.plugin_id == plugin_id;
                          }),
           auth_providers.end());
+      for (auto it = auth_provider_runtimes.begin(); it != auth_provider_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        if (it->login_ref != LUA_NOREF && it->login_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->login_ref);
+        }
+        if (it->refresh_ref != LUA_NOREF && it->refresh_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->refresh_ref);
+        }
+        if (it->logout_ref != LUA_NOREF && it->logout_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->logout_ref);
+        }
+        it = auth_provider_runtimes.erase(it);
+      }
       ai_providers.erase(
           std::remove_if(ai_providers.begin(), ai_providers.end(),
                          [&](const PluginHost::ContributedAiProvider& e) {
@@ -2664,6 +3077,16 @@ struct PluginHost::Impl {
                            return e.plugin_id == plugin_id;
                          }),
           mcp_tools.end());
+      for (auto it = mcp_tool_runtimes.begin(); it != mcp_tool_runtimes.end();) {
+        if (it->plugin_id != plugin_id) {
+          ++it;
+          continue;
+        }
+        if (it->run_ref != LUA_NOREF && it->run_ref != LUA_REFNIL) {
+          luaL_unref(state, LUA_REGISTRYINDEX, it->run_ref);
+        }
+        it = mcp_tool_runtimes.erase(it);
+      }
     }
   }
 
@@ -3291,6 +3714,881 @@ bool PluginHost::UpdateStatusItem(std::string_view id, std::string text, std::st
     impl_->callbacks.request_status_redraw();
   }
   return true;
+}
+
+bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
+                                     std::string* text,
+                                     std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (text == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "save participants require mutable text";
+    }
+    return false;
+  }
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (const auto& participant : impl_->save_participant_runtimes) {
+    lua_State* state = participant.state;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, participant.function_ref);
+    impl_->PushBufferContext(state, path, *text);
+    if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message = "save participant '" + participant.id +
+                         "' failed: " + Impl::LuaErrorString(state);
+      }
+      lua_pop(state, 1);
+      return false;
+    }
+    if (lua_isstring(state, -1)) {
+      std::size_t size = 0;
+      const char* updated = lua_tolstring(state, -1, &size);
+      if (updated != nullptr) {
+        *text = std::string(updated, size);
+      }
+    } else if (lua_istable(state, -1)) {
+      lua_getfield(state, -1, "text");
+      if (lua_isstring(state, -1)) {
+        std::size_t size = 0;
+        const char* updated = lua_tolstring(state, -1, &size);
+        if (updated != nullptr) {
+          *text = std::string(updated, size);
+        }
+      }
+      lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+  }
+#endif
+  return true;
+}
+
+std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
+    std::string_view language_id,
+    const std::filesystem::path& path,
+    std::size_t line,
+    std::size_t column,
+    std::string_view trigger_character,
+    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+
+  std::vector<CompletionCandidate> results;
+  if (!impl_->enabled()) {
+    return results;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (const auto& provider : impl_->completion_runtimes) {
+    if (provider.language_id != language_id) {
+      continue;
+    }
+    lua_State* state = provider.state;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
+    impl_->PushBufferContext(state, path);
+    Impl::PushPosition(state, line, column);
+    lua_pushlstring(state, trigger_character.data(), trigger_character.size());
+    if (lua_pcall(state, 3, 1, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message = "completion provider '" + provider.id +
+                         "' failed: " + Impl::LuaErrorString(state);
+      }
+      lua_pop(state, 1);
+      return {};
+    }
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1; ; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (!lua_istable(state, -1)) {
+          lua_pop(state, 1);
+          continue;
+        }
+        CompletionCandidate candidate;
+        auto read_string = [&](const char* field) -> std::string {
+          lua_getfield(state, -1, field);
+          std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                      : std::string{};
+          lua_pop(state, 1);
+          return value;
+        };
+        candidate.label = read_string("label");
+        candidate.detail = read_string("detail");
+        candidate.documentation = read_string("documentation");
+        candidate.insert_text = read_string("insert_text");
+        if (candidate.insert_text.empty()) {
+          candidate.insert_text = read_string("insertText");
+        }
+        if (candidate.insert_text.empty()) {
+          candidate.insert_text = candidate.label;
+        }
+        if (!candidate.label.empty()) {
+          results.push_back(std::move(candidate));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  (void)trigger_character;
+#endif
+  return results;
+}
+
+std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
+    std::string_view language_id,
+    const std::filesystem::path& path,
+    std::size_t start_line,
+    std::size_t start_column,
+    std::size_t end_line,
+    std::size_t end_column,
+    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+
+  std::vector<CodeActionCandidate> results;
+  if (!impl_->enabled()) {
+    return results;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (const auto& provider : impl_->code_action_runtimes) {
+    if (provider.language_id != language_id) {
+      continue;
+    }
+    lua_State* state = provider.state;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
+    impl_->PushBufferContext(state, path);
+    Impl::PushRange(state, start_line, start_column, end_line, end_column);
+    if (lua_pcall(state, 2, 1, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message = "code action provider '" + provider.id +
+                         "' failed: " + Impl::LuaErrorString(state);
+      }
+      lua_pop(state, 1);
+      return {};
+    }
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1; ; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (!lua_istable(state, -1)) {
+          lua_pop(state, 1);
+          continue;
+        }
+        CodeActionCandidate action;
+        auto read_string = [&](const char* field) -> std::string {
+          lua_getfield(state, -1, field);
+          std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                      : std::string{};
+          lua_pop(state, 1);
+          return value;
+        };
+        action.title = read_string("title");
+        action.command = read_string("command");
+        lua_getfield(state, -1, "arguments");
+        if (lua_istable(state, -1)) {
+          for (lua_Integer arg_index = 1; ; ++arg_index) {
+            lua_geti(state, -1, arg_index);
+            if (lua_isnil(state, -1)) {
+              lua_pop(state, 1);
+              break;
+            }
+            if (lua_isstring(state, -1)) {
+              action.arguments.emplace_back(lua_tostring(state, -1));
+            }
+            lua_pop(state, 1);
+          }
+        }
+        lua_pop(state, 1);
+        if (!action.title.empty()) {
+          results.push_back(std::move(action));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+#else
+  (void)language_id;
+  (void)path;
+  (void)start_line;
+  (void)start_column;
+  (void)end_line;
+  (void)end_column;
+#endif
+  return results;
+}
+
+bool PluginHost::DiscoverTests(std::string_view provider_id,
+                               const std::filesystem::path& path,
+                               std::vector<TestCase>* tests,
+                               std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (tests == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "test discovery requires an output vector";
+    }
+    return false;
+  }
+  tests->clear();
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->test_provider_runtimes.begin(), impl_->test_provider_runtimes.end(),
+                   [provider_id](const auto& provider) { return provider.id == provider_id; });
+  if (it == impl_->test_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown test provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->discover_ref == LUA_NOREF || it->discover_ref == LUA_REFNIL) {
+    return true;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->discover_ref);
+  impl_->PushBufferContext(state, path);
+  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "test discovery provider '" + it->id +
+                       "' failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+  if (lua_istable(state, -1)) {
+    for (lua_Integer i = 1; ; ++i) {
+      lua_geti(state, -1, i);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        break;
+      }
+      if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        continue;
+      }
+      TestCase test;
+      auto read_string = [&](const char* field) -> std::string {
+        lua_getfield(state, -1, field);
+        std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                    : std::string{};
+        lua_pop(state, 1);
+        return value;
+      };
+      test.id = read_string("id");
+      test.label = read_string("label");
+      const std::string file = read_string("file");
+      if (!file.empty()) {
+        test.file = ResolveRuntimePath(impl_->current_project_root, std::filesystem::path(file));
+      } else {
+        test.file = path.lexically_normal();
+      }
+      test.parent_id = read_string("parent_id");
+      lua_getfield(state, -1, "line");
+      if (lua_isinteger(state, -1)) {
+        test.line = static_cast<int>(lua_tointeger(state, -1));
+      }
+      lua_pop(state, 1);
+      if (!test.id.empty()) {
+        tests->push_back(std::move(test));
+      }
+      lua_pop(state, 1);
+    }
+  }
+  lua_pop(state, 1);
+  return true;
+#else
+  (void)provider_id;
+  (void)path;
+  return false;
+#endif
+}
+
+bool PluginHost::RunTests(std::string_view provider_id,
+                          const std::vector<std::string>& test_ids,
+                          std::vector<TestRunResult>* results,
+                          std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (results == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "test execution requires an output vector";
+    }
+    return false;
+  }
+  results->clear();
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->test_provider_runtimes.begin(), impl_->test_provider_runtimes.end(),
+                   [provider_id](const auto& provider) { return provider.id == provider_id; });
+  if (it == impl_->test_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown test provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->run_ref == LUA_NOREF || it->run_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message = "test provider '" + std::string(provider_id) + "' does not support run";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
+  lua_createtable(state, static_cast<int>(test_ids.size()), 0);
+  for (std::size_t i = 0; i < test_ids.size(); ++i) {
+    lua_pushlstring(state, test_ids[i].c_str(), test_ids[i].size());
+    lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
+  }
+  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "test provider '" + it->id +
+                       "' run failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+  if (lua_istable(state, -1)) {
+    for (lua_Integer i = 1; ; ++i) {
+      lua_geti(state, -1, i);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        break;
+      }
+      if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        continue;
+      }
+      TestRunResult result;
+      auto read_string = [&](const char* field) -> std::string {
+        lua_getfield(state, -1, field);
+        std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                    : std::string{};
+        lua_pop(state, 1);
+        return value;
+      };
+      result.test_id = read_string("test_id");
+      result.state = read_string("state");
+      result.message = read_string("message");
+      lua_getfield(state, -1, "duration_ms");
+      if (lua_isinteger(state, -1)) {
+        result.duration_ms = static_cast<int>(lua_tointeger(state, -1));
+      }
+      lua_pop(state, 1);
+      if (!result.test_id.empty()) {
+        results->push_back(std::move(result));
+      }
+      lua_pop(state, 1);
+    }
+  }
+  lua_pop(state, 1);
+  return true;
+#else
+  (void)provider_id;
+  (void)test_ids;
+  return false;
+#endif
+}
+
+bool PluginHost::SnapshotScm(std::string_view provider_id,
+                             ScmSnapshot* snapshot,
+                             std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (snapshot == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "scm snapshot requires an output value";
+    }
+    return false;
+  }
+  *snapshot = ScmSnapshot{};
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->scm_provider_runtimes.begin(), impl_->scm_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == impl_->scm_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown scm provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->snapshot_ref);
+  if (lua_pcall(state, 0, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "scm provider '" + it->id +
+                       "' failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+
+  if (lua_istable(state, -1)) {
+    auto read_string = [&](const char* field) -> std::string {
+      lua_getfield(state, -1, field);
+      std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                  : std::string{};
+      lua_pop(state, 1);
+      return value;
+    };
+    snapshot->base_ref = read_string("base_ref");
+    snapshot->base_label = read_string("base_label");
+    lua_getfield(state, -1, "supports_mutations");
+    snapshot->supports_mutations = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+
+    lua_getfield(state, -1, "entries");
+    if (lua_istable(state, -1)) {
+      for (lua_Integer index = 1; ; ++index) {
+        lua_geti(state, -1, index);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (!lua_istable(state, -1)) {
+          lua_pop(state, 1);
+          continue;
+        }
+        ScmEntry entry;
+        auto read_entry_string = [&](const char* field) -> std::string {
+          lua_getfield(state, -1, field);
+          std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                      : std::string{};
+          lua_pop(state, 1);
+          return value;
+        };
+        const std::string path = read_entry_string("path");
+        const std::string relative_path = read_entry_string("relative_path");
+        entry.path = ResolveRuntimePath(impl_->current_project_root, std::filesystem::path(path));
+        entry.relative_path =
+            relative_path.empty() ? std::filesystem::path{} : std::filesystem::path(relative_path);
+        entry.status = read_entry_string("status");
+        lua_getfield(state, -1, "conflicted");
+        entry.conflicted = lua_toboolean(state, -1) != 0;
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "staged");
+        entry.staged = lua_toboolean(state, -1) != 0;
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "supports_stage");
+        entry.supports_stage = lua_toboolean(state, -1) != 0;
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "supports_discard");
+        entry.supports_discard = lua_toboolean(state, -1) != 0;
+        lua_pop(state, 1);
+        if (!entry.path.empty()) {
+          snapshot->entries.push_back(std::move(entry));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return true;
+#else
+  (void)provider_id;
+  return false;
+#endif
+}
+
+std::vector<PluginHost::AnnotationLine> PluginHost::QueryAnnotations(
+    std::string_view provider_id,
+    const std::filesystem::path& path,
+    std::string_view language_id,
+    std::size_t visible_start_line,
+    std::size_t visible_end_line,
+    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+
+  std::vector<AnnotationLine> lines;
+  if (!impl_->enabled()) {
+    return lines;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (const auto& provider : impl_->annotation_provider_runtimes) {
+    if ((!provider_id.empty() && provider.id != provider_id) ||
+        (!language_id.empty() && provider.language_id != language_id)) {
+      continue;
+    }
+
+    lua_State* state = provider.state;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
+    impl_->PushBufferContext(state, path);
+    lua_pushinteger(state, static_cast<lua_Integer>(visible_start_line));
+    lua_pushinteger(state, static_cast<lua_Integer>(visible_end_line));
+    if (lua_pcall(state, 3, 1, 0) != LUA_OK) {
+      if (error_message != nullptr) {
+        *error_message = "annotation provider '" + provider.id +
+                         "' failed: " + Impl::LuaErrorString(state);
+      }
+      lua_pop(state, 1);
+      return {};
+    }
+    if (lua_istable(state, -1)) {
+      for (lua_Integer index = 1; ; ++index) {
+        lua_geti(state, -1, index);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (!lua_istable(state, -1)) {
+          lua_pop(state, 1);
+          continue;
+        }
+        AnnotationLine line;
+        auto read_string = [&](const char* field) -> std::string {
+          lua_getfield(state, -1, field);
+          std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                      : std::string{};
+          lua_pop(state, 1);
+          return value;
+        };
+        lua_getfield(state, -1, "line");
+        if (lua_isinteger(state, -1)) {
+          line.line = static_cast<std::size_t>(std::max<lua_Integer>(0, lua_tointeger(state, -1)));
+        }
+        lua_pop(state, 1);
+        line.text = read_string("text");
+        line.author = read_string("author");
+        line.summary = read_string("summary");
+        line.date = read_string("date");
+        if (!line.text.empty()) {
+          lines.push_back(std::move(line));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+    if (!provider_id.empty()) {
+      break;
+    }
+  }
+#else
+  (void)provider_id;
+  (void)path;
+  (void)language_id;
+  (void)visible_start_line;
+  (void)visible_end_line;
+#endif
+  return lines;
+}
+
+bool PluginHost::LoginAuthProvider(std::string_view provider_id,
+                                   const std::vector<std::string>& scopes,
+                                   AuthSessionData* session,
+                                   std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (session == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "auth login requires an output session";
+    }
+    return false;
+  }
+  *session = AuthSessionData{};
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->auth_provider_runtimes.begin(), impl_->auth_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == impl_->auth_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown auth provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->login_ref == LUA_NOREF || it->login_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + std::string(provider_id) +
+                       "' does not support login";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->login_ref);
+  lua_createtable(state, static_cast<int>(scopes.size()), 0);
+  for (std::size_t i = 0; i < scopes.size(); ++i) {
+    lua_pushlstring(state, scopes[i].c_str(), scopes[i].size());
+    lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
+  }
+  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + it->id +
+                       "' login failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+  if (lua_istable(state, -1)) {
+    auto read_string = [&](const char* field) -> std::string {
+      lua_getfield(state, -1, field);
+      std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                  : std::string{};
+      lua_pop(state, 1);
+      return value;
+    };
+    session->id = read_string("id");
+    session->account = read_string("account");
+    session->access_token = read_string("access_token");
+    lua_getfield(state, -1, "scopes");
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1; ; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (lua_isstring(state, -1)) {
+          session->scopes.emplace_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return !session->id.empty();
+#else
+  (void)provider_id;
+  (void)scopes;
+  return false;
+#endif
+}
+
+bool PluginHost::RefreshAuthSession(std::string_view provider_id,
+                                    std::string_view session_id,
+                                    AuthSessionData* session,
+                                    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (session == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "auth refresh requires an output session";
+    }
+    return false;
+  }
+  *session = AuthSessionData{};
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->auth_provider_runtimes.begin(), impl_->auth_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == impl_->auth_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown auth provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->refresh_ref == LUA_NOREF || it->refresh_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + std::string(provider_id) +
+                       "' does not support refresh";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->refresh_ref);
+  lua_pushlstring(state, session_id.data(), session_id.size());
+  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + it->id +
+                       "' refresh failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+  if (lua_istable(state, -1)) {
+    auto read_string = [&](const char* field) -> std::string {
+      lua_getfield(state, -1, field);
+      std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
+                                                  : std::string{};
+      lua_pop(state, 1);
+      return value;
+    };
+    session->id = read_string("id");
+    if (session->id.empty()) {
+      session->id = std::string(session_id);
+    }
+    session->account = read_string("account");
+    session->access_token = read_string("access_token");
+    lua_getfield(state, -1, "scopes");
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1; ; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (lua_isstring(state, -1)) {
+          session->scopes.emplace_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return !session->id.empty();
+#else
+  (void)provider_id;
+  (void)session_id;
+  return false;
+#endif
+}
+
+bool PluginHost::LogoutAuthSession(std::string_view provider_id,
+                                   std::string_view session_id,
+                                   std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->auth_provider_runtimes.begin(), impl_->auth_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == impl_->auth_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown auth provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->logout_ref == LUA_NOREF || it->logout_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + std::string(provider_id) +
+                       "' does not support logout";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->logout_ref);
+  lua_pushlstring(state, session_id.data(), session_id.size());
+  if (lua_pcall(state, 1, 0, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + it->id +
+                       "' logout failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+  return true;
+#else
+  (void)provider_id;
+  (void)session_id;
+  return false;
+#endif
+}
+
+bool PluginHost::InvokeMcpTool(std::string_view tool_id,
+                               std::string_view input_json,
+                               std::string* output_json,
+                               std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (output_json == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "mcp invocation requires an output string";
+    }
+    return false;
+  }
+  output_json->clear();
+  if (!impl_->enabled()) {
+    return false;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const auto it =
+      std::find_if(impl_->mcp_tool_runtimes.begin(), impl_->mcp_tool_runtimes.end(),
+                   [tool_id](const auto& runtime) { return runtime.id == tool_id; });
+  if (it == impl_->mcp_tool_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown mcp tool: " + std::string(tool_id);
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
+  lua_pushlstring(state, input_json.data(), input_json.size());
+  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+    if (error_message != nullptr) {
+      *error_message = "mcp tool '" + it->id +
+                       "' failed: " + Impl::LuaErrorString(state);
+    }
+    lua_pop(state, 1);
+    return false;
+  }
+  if (lua_isstring(state, -1)) {
+    *output_json = lua_tostring(state, -1);
+  } else if (lua_istable(state, -1)) {
+    lua_getfield(state, -1, "output");
+    if (lua_isstring(state, -1)) {
+      *output_json = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return true;
+#else
+  (void)tool_id;
+  (void)input_json;
+  return false;
+#endif
 }
 
 const std::vector<PluginHost::ContributedFormatter>& PluginHost::ContributedFormatters() const {

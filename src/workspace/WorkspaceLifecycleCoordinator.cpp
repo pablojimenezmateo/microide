@@ -22,6 +22,8 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   operations_.reset_startup_state();
 
   operations_.initialize_project_search_runtime();
+  operations_.initialize_task_runtime();
+  operations_.initialize_ai_runtime();
   operations_.register_wake_events();
 
   {
@@ -62,6 +64,8 @@ void LifecycleCoordinator::Shutdown() {
   operations_.persist_inactive_projects_for_shutdown();
   operations_.save_workspace_session();
   operations_.shutdown_project_search_runtime();
+  operations_.shutdown_task_runtime();
+  operations_.shutdown_ai_runtime();
   operations_.clear_terminal_tabs();
   operations_.destroy_cursors();
 }
@@ -147,6 +151,8 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
       LifecycleCoordinator::Operations{
           .reset_startup_state = [this]() { ResetLifecycleStartupState(); },
           .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
+          .initialize_task_runtime = [this]() { task_runtime_.Initialize(); },
+          .initialize_ai_runtime = [this]() { ai_runtime_.Initialize(); },
           .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
           .restore_user_config = [this]() { MakePersistenceCoordinator().RestoreUserConfig(); },
           .refresh_available_colorscheme_names =
@@ -177,6 +183,8 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
+          .shutdown_task_runtime = [this]() { task_runtime_.Shutdown(); },
+          .shutdown_ai_runtime = [this]() { ai_runtime_.Shutdown(); },
           .clear_terminal_tabs =
               [this]() { context_.current_project_state.terminal_tabs.clear(); },
           .destroy_cursors = [this]() { DestroyLifecycleCursors(); },

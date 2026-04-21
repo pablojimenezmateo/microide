@@ -17,6 +17,19 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
   const editor::TextViewport* active_viewport = operations_.active_editable_viewport();
   const TerminalTabState* active_terminal_tab = operations_.active_terminal_tab();
   switch (id) {
+    case ActionId::AuthLogin:
+    case ActionId::AuthRefresh:
+    case ActionId::AuthLogout:
+    case ActionId::DebugStart:
+    case ActionId::McpTool:
+    case ActionId::ShowChat:
+    case ActionId::ShowOutput:
+    case ActionId::Tasks:
+      return !context_.current_project_state.root.empty();
+    case ActionId::CodeActions:
+    case ActionId::Completion:
+    case ActionId::InlineCompletion:
+      return active_viewport != nullptr;
     case ActionId::Colorscheme:
     case ActionId::Files:
     case ActionId::OpenCommandPrompt:
@@ -127,8 +140,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SidebarWidth:
     case ActionId::SoftTabs:
     case ActionId::TabSize:
+    case ActionId::TestsDiscover:
     case ActionId::UiScale:
       return true;
+    case ActionId::DebugStop:
+      return context_.current_project_state.debug_session.running;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev:
       return !context_.current_project_state.root.empty() &&
@@ -137,6 +153,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TabSwitch:
       return !context_.current_project_state.root.empty() &&
              !context_.current_project_state.open_tabs.empty();
+    case ActionId::TestsRun:
+      return !context_.current_project_state.sidebar.tests.entries.empty();
   }
 
   return true;

@@ -320,7 +320,7 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
                 const auto& names = plugin_runtime_.Host().CommandNames();
                 return std::vector<std::string>(names.begin(), names.end());
               },
-          .sidebar_view_ids = [this]() { return SidebarViewIds(plugin_runtime_.Host()); },
+          .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
                 CommandPromptCoordinator::PluginCommandResult result;

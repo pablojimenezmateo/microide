@@ -24,32 +24,43 @@ std::string ToLowerAscii(std::string_view text) {
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
   static const auto kSpecs = std::to_array<KeybindingSpec>({
       // Global — available everywhere except modals
+      KeybindingSpec{"new-tab", ActionId::Tab, SDLK_N, SDL_KMOD_CTRL},
       KeybindingSpec{"save", ActionId::Save, SDLK_S, SDL_KMOD_CTRL},
-      KeybindingSpec{"undo", ActionId::Undo, SDLK_Z, SDL_KMOD_CTRL},
-      KeybindingSpec{"redo-y", ActionId::Redo, SDLK_Y, SDL_KMOD_CTRL},
-      KeybindingSpec{"redo-z", ActionId::Redo, SDLK_Z,
-                     static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)},
-      KeybindingSpec{"copy", ActionId::CopySelection, SDLK_C, SDL_KMOD_CTRL},
-      KeybindingSpec{"cut", ActionId::CutSelection, SDLK_X, SDL_KMOD_CTRL},
-      KeybindingSpec{"paste", ActionId::PasteClipboard, SDLK_V, SDL_KMOD_CTRL},
-      KeybindingSpec{"select-all", ActionId::SelectAll, SDLK_A, SDL_KMOD_CTRL},
-      KeybindingSpec{"close-tab", ActionId::CloseActiveTab, SDLK_W, SDL_KMOD_CTRL},
       KeybindingSpec{"command-prompt", ActionId::OpenCommandPrompt, SDLK_E, SDL_KMOD_CTRL},
       KeybindingSpec{"zoom-reset", ActionId::UiScale, SDLK_0, SDL_KMOD_CTRL,
-                     KeybindingContext::Global, {"reset", {}}, 1},
+                     KeybindingContext::Global, {"reset", {}}, 1, {}},
       KeybindingSpec{"zoom-out", ActionId::UiScale, SDLK_MINUS, SDL_KMOD_CTRL,
-                     KeybindingContext::Global, {"down", {}}, 1},
+                     KeybindingContext::Global, {"down", {}}, 1, {}},
       KeybindingSpec{"zoom-in", ActionId::UiScale, SDLK_EQUALS, SDL_KMOD_CTRL,
-                     KeybindingContext::Global, {"up", {}}, 1},
+                     KeybindingContext::Global, {"up", {}}, 1, {}},
       KeybindingSpec{"sidebar-toggle", ActionId::SidebarToggle, SDLK_F8, SDL_KMOD_NONE},
       KeybindingSpec{"file-finder", ActionId::Files, SDLK_F6, SDL_KMOD_NONE},
       // Editor context
+      KeybindingSpec{"undo", ActionId::Undo, SDLK_Z, SDL_KMOD_CTRL, KeybindingContext::Editor},
+      KeybindingSpec{"redo-y", ActionId::Redo, SDLK_Y, SDL_KMOD_CTRL, KeybindingContext::Editor},
+      KeybindingSpec{"redo-z", ActionId::Redo, SDLK_Z,
+                     static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+                     KeybindingContext::Editor},
+      KeybindingSpec{"copy", ActionId::CopySelection, SDLK_C, SDL_KMOD_CTRL,
+                     KeybindingContext::Editor},
+      KeybindingSpec{"cut", ActionId::CutSelection, SDLK_X, SDL_KMOD_CTRL,
+                     KeybindingContext::Editor},
+      KeybindingSpec{"paste", ActionId::PasteClipboard, SDLK_V, SDL_KMOD_CTRL,
+                     KeybindingContext::Editor},
+      KeybindingSpec{"select-all", ActionId::SelectAll, SDLK_A, SDL_KMOD_CTRL,
+                     KeybindingContext::Editor},
+      KeybindingSpec{"close-tab", ActionId::CloseActiveTab, SDLK_W, SDL_KMOD_CTRL,
+                     KeybindingContext::Editor},
       KeybindingSpec{"find", ActionId::Search, SDLK_F, SDL_KMOD_CTRL,
-                     KeybindingContext::Editor},
+                     KeybindingContext::Editor, {}, 0, {}},
       KeybindingSpec{"replace", ActionId::ReplaceInBuffer, SDLK_H, SDL_KMOD_CTRL,
-                     KeybindingContext::Editor},
+                     KeybindingContext::Editor, {}, 0, {}},
       KeybindingSpec{"project-search", ActionId::ProjectSearch, SDLK_F,
                      static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+                     KeybindingContext::Editor, {}, 0, {}},
+      KeybindingSpec{"completion", ActionId::Completion, SDLK_SPACE, SDL_KMOD_CTRL,
+                     KeybindingContext::Editor},
+      KeybindingSpec{"code-actions", ActionId::CodeActions, SDLK_PERIOD, SDL_KMOD_CTRL,
                      KeybindingContext::Editor},
   });
   return kSpecs;
@@ -105,6 +116,7 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     for (std::size_t i = 0; i < spec.arg_count; ++i) {
       rb.args.emplace_back(spec.args[i]);
     }
+    rb.command_name = spec.command_name;
     rb.from_plugin = false;
     result.push_back(std::move(rb));
   }
@@ -126,14 +138,14 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     } else if (contrib.context == "terminal") {
       context = KeybindingContext::Terminal;
     }
-    // Resolve command name to ActionId if possible; skip if not a built-in command.
     const ActionSpec* spec = FindWorkspaceActionByCommand(contrib.action);
-    if (spec == nullptr) {
-      continue;
-    }
     ResolvedKeybinding rb;
     rb.id = contrib.id;
-    rb.action = spec->id;
+    if (spec != nullptr) {
+      rb.action = spec->id;
+    } else {
+      rb.command_name = contrib.action;
+    }
     rb.key = key;
     rb.modifiers = mods;
     rb.context = context;

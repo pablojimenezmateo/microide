@@ -144,10 +144,63 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  struct CompletionCandidate {
+    std::string label;
+    std::string detail;
+    std::string documentation;
+    std::string insert_text;
+  };
+
+  struct CodeActionCandidate {
+    std::string title;
+    std::string command;
+    std::vector<std::string> arguments;
+  };
+
+  struct TestCase {
+    std::string id;
+    std::string label;
+    std::filesystem::path file;
+    int line = 0;
+    std::string parent_id;
+  };
+
+  struct TestRunResult {
+    std::string test_id;
+    std::string state;
+    std::string message;
+    int duration_ms = 0;
+  };
+
+  struct ScmEntry {
+    std::filesystem::path path;
+    std::filesystem::path relative_path;
+    std::string status;
+    bool conflicted = false;
+    bool staged = false;
+    bool supports_stage = false;
+    bool supports_discard = false;
+  };
+
+  struct ScmSnapshot {
+    std::string base_ref;
+    std::string base_label;
+    std::vector<ScmEntry> entries;
+    bool supports_mutations = false;
+  };
+
   struct ContributedScmProvider {
     std::string id;
     std::string label;
     std::string plugin_id;
+  };
+
+  struct AnnotationLine {
+    std::size_t line = 0;
+    std::string text;
+    std::string author;
+    std::string summary;
+    std::string date;
   };
 
   struct ContributedAnnotationProvider {
@@ -162,6 +215,13 @@ class PluginHost {
     std::string id;
     std::string label;
     std::string plugin_id;
+  };
+
+  struct AuthSessionData {
+    std::string id;
+    std::string account;
+    std::string access_token;
+    std::vector<std::string> scopes;
   };
 
   struct ContributedAiProvider {
@@ -242,6 +302,54 @@ class PluginHost {
   const std::vector<ContributedSettingSpec>& ContributedSettings() const;
   const std::vector<ContributedStatusItem>& ContributedStatusItems() const;
   bool UpdateStatusItem(std::string_view id, std::string text, std::string tooltip = {});
+  bool RunSaveParticipants(const std::filesystem::path& path,
+                           std::string* text,
+                           std::string* error_message = nullptr) const;
+  std::vector<CompletionCandidate> QueryCompletions(std::string_view language_id,
+                                                    const std::filesystem::path& path,
+                                                    std::size_t line,
+                                                    std::size_t column,
+                                                    std::string_view trigger_character = {},
+                                                    std::string* error_message = nullptr) const;
+  std::vector<CodeActionCandidate> QueryCodeActions(std::string_view language_id,
+                                                    const std::filesystem::path& path,
+                                                    std::size_t start_line,
+                                                    std::size_t start_column,
+                                                    std::size_t end_line,
+                                                    std::size_t end_column,
+                                                    std::string* error_message = nullptr) const;
+  bool DiscoverTests(std::string_view provider_id,
+                     const std::filesystem::path& path,
+                     std::vector<TestCase>* tests,
+                     std::string* error_message = nullptr) const;
+  bool RunTests(std::string_view provider_id,
+                const std::vector<std::string>& test_ids,
+                std::vector<TestRunResult>* results,
+                std::string* error_message = nullptr) const;
+  bool SnapshotScm(std::string_view provider_id,
+                   ScmSnapshot* snapshot,
+                   std::string* error_message = nullptr) const;
+  std::vector<AnnotationLine> QueryAnnotations(std::string_view provider_id,
+                                               const std::filesystem::path& path,
+                                               std::string_view language_id,
+                                               std::size_t visible_start_line,
+                                               std::size_t visible_end_line,
+                                               std::string* error_message = nullptr) const;
+  bool LoginAuthProvider(std::string_view provider_id,
+                         const std::vector<std::string>& scopes,
+                         AuthSessionData* session,
+                         std::string* error_message = nullptr) const;
+  bool RefreshAuthSession(std::string_view provider_id,
+                          std::string_view session_id,
+                          AuthSessionData* session,
+                          std::string* error_message = nullptr) const;
+  bool LogoutAuthSession(std::string_view provider_id,
+                         std::string_view session_id,
+                         std::string* error_message = nullptr) const;
+  bool InvokeMcpTool(std::string_view tool_id,
+                     std::string_view input_json,
+                     std::string* output_json,
+                     std::string* error_message = nullptr) const;
   const std::vector<ContributedFormatter>& ContributedFormatters() const;
   const std::vector<ContributedSaveParticipant>& ContributedSaveParticipants() const;
   const std::vector<ContributedCompletion>& ContributedCompletions() const;

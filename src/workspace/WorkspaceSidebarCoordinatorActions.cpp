@@ -32,6 +32,17 @@ void SidebarCoordinator::MoveProblemsSelection(int delta) {
   RevealSelectedProblemsLine();
 }
 
+void SidebarCoordinator::MoveTestsSelection(int delta) {
+  if (state_.sidebar.tests.entries.empty() || delta == 0) {
+    return;
+  }
+  const int current = static_cast<int>(state_.sidebar.tests.selected_index);
+  const int max_index = static_cast<int>(state_.sidebar.tests.entries.size()) - 1;
+  state_.sidebar.tests.selected_index =
+      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  RevealSelectedTestsLine();
+}
+
 void SidebarCoordinator::MovePluginSelection(int delta) {
   if (state_.sidebar.plugin.items.empty() || delta == 0) {
     return;
@@ -90,6 +101,40 @@ bool SidebarCoordinator::OpenProblemItem() {
   }
   state_.surface.focus = FocusTarget::Editor;
   return true;
+}
+
+bool SidebarCoordinator::OpenTestItem() {
+  if (state_.sidebar.tests.entries.empty() ||
+      state_.sidebar.tests.selected_index >= state_.sidebar.tests.entries.size()) {
+    return false;
+  }
+  const auto& entry = state_.sidebar.tests.entries[state_.sidebar.tests.selected_index];
+  if (entry.file.empty()) {
+    return false;
+  }
+  operations_.open_file(entry.file);
+  if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr &&
+      entry.line > 0) {
+    viewport->MoveCursorTo(static_cast<std::size_t>(entry.line - 1), 0);
+  }
+  if (state_.sidebar.temporary) {
+    RestorePrevious();
+  }
+  state_.surface.focus = FocusTarget::Editor;
+  return true;
+}
+
+bool SidebarCoordinator::RunTestItem() {
+  if (state_.sidebar.tests.entries.empty() ||
+      state_.sidebar.tests.selected_index >= state_.sidebar.tests.entries.size() ||
+      !operations_.run_tests) {
+    return false;
+  }
+  const auto& entry = state_.sidebar.tests.entries[state_.sidebar.tests.selected_index];
+  if (entry.id.empty()) {
+    return false;
+  }
+  return operations_.run_tests({entry.id});
 }
 
 bool SidebarCoordinator::OpenPluginItem() {

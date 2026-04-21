@@ -19,6 +19,7 @@ constexpr float kGitSidebarActionRowTop = 34.0f;
 constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
 constexpr float kGitSidebarListGap = 8.0f;
+constexpr float kGitSidebarSummaryLineHeight = 14.0f;
 constexpr float kGitSidebarEntryButtonGap = 4.0f;
 constexpr float kGitSidebarEntryButtonHoverPadding = 4.0f;
 
@@ -77,8 +78,47 @@ SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sideba
                   row_rect.h);
 }
 
+std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
+  std::vector<std::string> lines;
+
+  std::string scm_line = "SCM: Git";
+  for (const ScmProviderSpec& provider : scm_registry_.Specs()) {
+    scm_line += ", ";
+    scm_line += provider.label.empty() ? provider.id : provider.label;
+  }
+  lines.push_back(std::move(scm_line));
+
+  if (!auth_provider_registry_.Providers().empty()) {
+    std::string auth_line = "Accounts: ";
+    bool first = true;
+    for (const AuthProviderSpec& provider : auth_provider_registry_.Providers()) {
+      if (!first) {
+        auth_line += ", ";
+      }
+      first = false;
+      const std::size_t session_count =
+          static_cast<std::size_t>(std::count_if(auth_provider_registry_.Sessions().begin(),
+                                                 auth_provider_registry_.Sessions().end(),
+                                                 [&](const AuthSession& session) {
+                                                   return session.provider_id == provider.id;
+                                                 }));
+      auth_line += provider.label.empty() ? provider.id : provider.label;
+      if (session_count > 0) {
+        auth_line += " (" + std::to_string(session_count) + ")";
+      }
+    }
+    lines.push_back(std::move(auth_line));
+  }
+
+  return lines;
+}
+
 float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
-  return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight + kGitSidebarListGap;
+  const float summary_height =
+      static_cast<float>(GitSidebarSummaryLines().size()) * kGitSidebarSummaryLineHeight;
+  return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight +
+         kGitSidebarListGap + summary_height +
+         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f);
 }
 
 float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const {
@@ -111,6 +151,11 @@ ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRec
 ScrollableListLayout WorkspaceShell::ComputeProblemsSidebarListLayout(
     const SDL_FRect& sidebar_rect,
     std::size_t line_count) const {
+  return ComputeTreeSidebarListLayout(sidebar_rect, line_count);
+}
+
+ScrollableListLayout WorkspaceShell::ComputeTestsSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                                   std::size_t line_count) const {
   return ComputeTreeSidebarListLayout(sidebar_rect, line_count);
 }
 

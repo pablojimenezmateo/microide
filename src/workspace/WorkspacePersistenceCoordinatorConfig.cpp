@@ -7,8 +7,92 @@
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "workspace/WorkspaceSettingsRegistry.h"
 
 namespace microide::workspace {
+
+namespace {
+
+void SetStoredSetting(std::vector<std::pair<std::string, std::string>>& settings,
+                      std::string id,
+                      std::string value) {
+  auto it = std::find_if(settings.begin(), settings.end(),
+                         [&](const auto& entry) { return entry.first == id; });
+  if (it != settings.end()) {
+    it->second = std::move(value);
+    return;
+  }
+  settings.emplace_back(std::move(id), std::move(value));
+}
+
+bool ApplyCanonicalProjectSetting(ProjectWorkspaceState& state,
+                                  std::string_view id,
+                                  std::string_view value) {
+  if (id == "editor.tab_size") {
+    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
+        state.editor_preferences.tab_size =
+            static_cast<std::size_t>(std::clamp(std::get<int>(*parsed), 1, 16));
+        return true;
+      }
+    }
+    return false;
+  }
+  if (id == "editor.indent_width") {
+    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
+        state.editor_preferences.indent_width =
+            static_cast<std::size_t>(std::clamp(std::get<int>(*parsed), 1, 16));
+        return true;
+      }
+    }
+    return false;
+  }
+  if (id == "editor.soft_tabs") {
+    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
+        state.editor_preferences.soft_tabs = std::get<bool>(*parsed);
+        return true;
+      }
+    }
+    return false;
+  }
+  if (id == "editor.colorscheme") {
+    state.active_colorscheme_name = std::string(value);
+    return true;
+  }
+  return false;
+}
+
+std::vector<PersistedSidebarViewPolicy> PersistedSidebarPolicies(
+    const std::vector<SidebarViewPolicy>& policies) {
+  std::vector<PersistedSidebarViewPolicy> persisted;
+  persisted.reserve(policies.size());
+  for (const SidebarViewPolicy& policy : policies) {
+    persisted.push_back(PersistedSidebarViewPolicy{
+        .view_id = policy.view_id,
+        .hidden = policy.hidden,
+        .order = policy.order,
+    });
+  }
+  return persisted;
+}
+
+std::vector<SidebarViewPolicy> RuntimeSidebarPolicies(
+    const std::vector<PersistedSidebarViewPolicy>& policies) {
+  std::vector<SidebarViewPolicy> runtime;
+  runtime.reserve(policies.size());
+  for (const PersistedSidebarViewPolicy& policy : policies) {
+    runtime.push_back(SidebarViewPolicy{
+        .view_id = policy.view_id,
+        .hidden = policy.hidden,
+        .order = policy.order,
+    });
+  }
+  return runtime;
+}
+
+}  // namespace
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
   available_colorscheme_names_ = render::ListAvailableThemeNames();
@@ -79,6 +163,15 @@ bool PersistenceCoordinator::RestoreUserConfig() {
     return false;
   }
 
+  context_.user_settings.clear();
+  context_.disabled_keybinding_ids = state.disabled_keybinding_ids;
+  for (const auto& [id, value] : state.settings) {
+    if (id == "ui.scale") {
+      continue;
+    }
+    SetStoredSetting(context_.user_settings, id, value);
+  }
+
   return ApplyUiScale(state.ui_scale, false, false);
 }
 
@@ -89,7 +182,12 @@ void PersistenceCoordinator::SaveUserConfig() const {
   }
 
   util::WriteTextFileAtomically(
-      config_path, SerializeUserConfig(PersistedUserConfigState{.ui_scale = ui_scale_}));
+      config_path,
+      SerializeUserConfig(PersistedUserConfigState{
+          .ui_scale = ui_scale_,
+          .settings = context_.user_settings,
+          .disabled_keybinding_ids = context_.disabled_keybinding_ids,
+      }));
 }
 
 bool PersistenceCoordinator::RestoreConfigState() {
@@ -115,10 +213,18 @@ bool PersistenceCoordinator::RestoreConfigState() {
   }
 
   auto& mutable_current = CurrentProjectState();
+  mutable_current.settings.clear();
   mutable_current.editor_preferences.tab_size = persisted_state.editor_tab_size;
   mutable_current.editor_preferences.indent_width = persisted_state.editor_indent_width;
   mutable_current.editor_preferences.soft_tabs = persisted_state.editor_soft_tabs;
   mutable_current.project_base_color = persisted_state.project_base_color;
+  mutable_current.sidebar_policies = RuntimeSidebarPolicies(persisted_state.sidebar_policies);
+  for (const auto& [id, value] : persisted_state.settings) {
+    if (ApplyCanonicalProjectSetting(mutable_current, id, value)) {
+      continue;
+    }
+    SetStoredSetting(mutable_current.settings, id, value);
+  }
   operations_.apply_editor_preferences_to_all_tabs();
   ApplyColorscheme(persisted_state.colorscheme_name, false, false);
   return true;
@@ -142,6 +248,8 @@ void PersistenceCoordinator::SaveConfigState() const {
           .editor_soft_tabs = state.editor_preferences.soft_tabs,
           .colorscheme_name = state.active_colorscheme_name,
           .project_base_color = state.project_base_color.value_or(DefaultProjectBaseColor(state.root)),
+          .settings = state.settings,
+          .sidebar_policies = PersistedSidebarPolicies(state.sidebar_policies),
       }));
 }
 

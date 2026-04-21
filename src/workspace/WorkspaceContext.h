@@ -17,6 +17,8 @@ struct WorkspaceContext {
   MenuSurfaceState menu_state;
   PromptState prompts;
   TextInputState text_input;
+  std::vector<std::pair<std::string, std::string>> user_settings;
+  std::vector<std::string> disabled_keybinding_ids;
 
   WorkspaceContext() { RebindProjectState(current_project_state); }
 

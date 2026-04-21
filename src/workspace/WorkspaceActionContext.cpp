@@ -122,6 +122,9 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Git:
       operations_.show_git_sidebar();
       return true;
+    case SidebarMode::Tests:
+      operations_.show_tests_sidebar();
+      return true;
     case SidebarMode::Plugin:
       return operations_.show_plugin_sidebar(view.id, false);
     case SidebarMode::None:
@@ -138,6 +141,7 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Tree:
     case SidebarMode::Problems:
     case SidebarMode::Git:
+    case SidebarMode::Tests:
     case SidebarMode::Plugin:
       if (same_view) {
         operations_.close_sidebar();
@@ -237,6 +241,83 @@ void WorkspaceActionContext::DismissOverlay() {
 
 void WorkspaceActionContext::ShowProjectSearchSidebar(std::string query) {
   operations_.show_search_sidebar(std::move(query), true);
+}
+
+bool WorkspaceActionContext::ShowCompletionOverlay(std::string* error_message) {
+  return operations_.show_completion_overlay(error_message);
+}
+
+bool WorkspaceActionContext::ShowCodeActionsOverlay(std::string* error_message) {
+  return operations_.show_code_actions_overlay(error_message);
+}
+
+bool WorkspaceActionContext::ShowTaskPickerOverlay() {
+  return operations_.show_task_picker_overlay();
+}
+
+bool WorkspaceActionContext::RunTaskById(std::string_view id, std::string* error_message) {
+  return operations_.run_task_by_id(id, error_message);
+}
+
+bool WorkspaceActionContext::DiscoverTestsForActiveBuffer(std::string* error_message) {
+  return operations_.discover_tests_for_active_buffer(error_message);
+}
+
+bool WorkspaceActionContext::RunTests(const std::vector<std::string>& test_ids,
+                                      std::string* error_message) {
+  return operations_.run_tests(test_ids, error_message);
+}
+
+bool WorkspaceActionContext::RunAllDiscoveredTests(std::string* error_message) {
+  return operations_.run_all_discovered_tests(error_message);
+}
+
+void WorkspaceActionContext::ShowOutputChannel(std::string_view id) {
+  operations_.show_output_channel(id);
+}
+
+void WorkspaceActionContext::ShowChatPanel() {
+  operations_.show_chat_panel();
+}
+
+bool WorkspaceActionContext::StartChatRequest(std::string message, std::string* error_message) {
+  return operations_.start_chat_request(std::move(message), error_message);
+}
+
+bool WorkspaceActionContext::RequestInlineCompletion(std::string* error_message) {
+  return operations_.request_inline_completion(error_message);
+}
+
+bool WorkspaceActionContext::StartDebugger(std::string_view type, std::string* error_message) {
+  return operations_.start_debugger(type, error_message);
+}
+
+void WorkspaceActionContext::StopDebugger() {
+  operations_.stop_debugger();
+}
+
+bool WorkspaceActionContext::LoginAuthProvider(std::string_view provider_id,
+                                               const std::vector<std::string>& scopes,
+                                               std::string* error_message) {
+  return operations_.login_auth_provider(provider_id, scopes, error_message);
+}
+
+bool WorkspaceActionContext::RefreshAuthSession(std::string_view provider_id,
+                                                std::string_view session_id,
+                                                std::string* error_message) {
+  return operations_.refresh_auth_session(provider_id, session_id, error_message);
+}
+
+bool WorkspaceActionContext::LogoutAuthSession(std::string_view provider_id,
+                                               std::string_view session_id,
+                                               std::string* error_message) {
+  return operations_.logout_auth_session(provider_id, session_id, error_message);
+}
+
+bool WorkspaceActionContext::InvokeMcpTool(std::string_view tool_id,
+                                           std::string_view input_json,
+                                           std::string* error_message) {
+  return operations_.invoke_mcp_tool(tool_id, input_json, error_message);
 }
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
@@ -738,6 +819,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               },
           .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
+          .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
           .show_plugin_sidebar =
               [this](std::string_view id, bool temporary) {
                 return ShowPluginSidebar(id, temporary);
@@ -764,6 +846,66 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .open_buffer_search = [this]() { OpenBufferSearch(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .open_buffer_replace = [this]() { OpenBufferReplace(); },
+          .show_completion_overlay =
+              [this](std::string* error_message) {
+                return ShowCompletionOverlay(error_message);
+              },
+          .show_code_actions_overlay =
+              [this](std::string* error_message) {
+                return ShowCodeActionsOverlay(error_message);
+              },
+          .show_task_picker_overlay = [this]() { return ShowTaskPickerOverlay(); },
+          .run_task_by_id =
+              [this](std::string_view id, std::string* error_message) {
+                return RunTaskById(id, error_message);
+              },
+          .discover_tests_for_active_buffer =
+              [this](std::string* error_message) {
+                return DiscoverTestsForActiveBuffer(error_message);
+              },
+          .run_tests =
+              [this](const std::vector<std::string>& test_ids, std::string* error_message) {
+                return RunTests(test_ids, error_message);
+              },
+          .run_all_discovered_tests =
+              [this](std::string* error_message) {
+                return RunAllDiscoveredTests(error_message);
+              },
+          .show_output_channel = [this](std::string_view id) { ShowOutputChannel(id); },
+          .show_chat_panel = [this]() { ShowChatPanel(); },
+          .start_chat_request =
+              [this](std::string message, std::string* error_message) {
+                return StartChatRequest(std::move(message), error_message);
+              },
+          .request_inline_completion =
+              [this](std::string* error_message) {
+                return RequestInlineCompletion(error_message);
+              },
+          .start_debugger =
+              [this](std::string_view type, std::string* error_message) {
+                return StartDebugger(type, error_message);
+              },
+          .stop_debugger = [this]() { StopDebugger(); },
+          .login_auth_provider =
+              [this](std::string_view provider_id, const std::vector<std::string>& scopes,
+                     std::string* error_message) {
+                return LoginAuthProvider(provider_id, scopes, error_message);
+              },
+          .refresh_auth_session =
+              [this](std::string_view provider_id, std::string_view session_id,
+                     std::string* error_message) {
+                return RefreshAuthSession(provider_id, session_id, error_message);
+              },
+          .logout_auth_session =
+              [this](std::string_view provider_id, std::string_view session_id,
+                     std::string* error_message) {
+                return LogoutAuthSession(provider_id, session_id, error_message);
+              },
+          .invoke_mcp_tool =
+              [this](std::string_view tool_id, std::string_view input_json,
+                     std::string* error_message) {
+                return InvokeMcpTool(tool_id, input_json, error_message);
+              },
           .open_compare_picker_for_path =
               [this](const std::filesystem::path& path, const std::string& commit_spec) {
                 OpenComparePickerForPath(path, commit_spec);

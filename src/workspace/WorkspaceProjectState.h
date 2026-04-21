@@ -14,6 +14,7 @@
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTabState.h"
 
@@ -32,6 +33,16 @@ enum class OverlayMode {
   BufferReplace,
   ProjectSearch,
   CommitPicker,
+  Completion,
+  CodeActions,
+  TaskPicker,
+};
+
+enum class PanelContentKind {
+  None,
+  Terminal,
+  Output,
+  Chat,
 };
 
 enum class BufferSearchField {
@@ -85,10 +96,53 @@ struct ComparePickerState {
   std::size_t selected_index = 0;
 };
 
+struct CompletionSessionItem {
+  std::string label;
+  std::string detail;
+  std::string documentation;
+  std::string insert_text;
+};
+
+struct CompletionSessionState {
+  std::vector<CompletionSessionItem> items;
+  std::size_t selected_index = 0;
+  editor::SelectionRange replacement_range{};
+  std::string source;
+  std::string error;
+};
+
+struct CodeActionSessionItem {
+  std::string title;
+  std::string command;
+  std::vector<std::string> arguments;
+};
+
+struct CodeActionSessionState {
+  std::vector<CodeActionSessionItem> items;
+  std::size_t selected_index = 0;
+  std::string source;
+  std::string error;
+};
+
+struct TaskPickerEntry {
+  std::string id;
+  std::string label;
+  std::string group;
+};
+
+struct TaskPickerState {
+  std::vector<TaskPickerEntry> entries;
+  std::size_t selected_index = 0;
+  std::string error;
+};
+
 struct OverlayWorkflowState {
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
+  CompletionSessionState completion;
+  CodeActionSessionState code_actions;
+  TaskPickerState task_picker;
 };
 
 struct OverlayState {
@@ -99,10 +153,45 @@ struct OverlayState {
   OverlayWorkflowState workflow;
 };
 
+struct OutputPanelState {
+  std::string channel_id = "plugins.log";
+  int scroll_row = 0;
+};
+
+struct ChatPanelState {
+  std::string conversation_id;
+  std::string pending_assistant_message_id;
+  std::string composer;
+  int scroll_row = 0;
+  bool request_in_flight = false;
+  std::string status_text;
+};
+
+struct InlineCompletionState {
+  bool visible = false;
+  bool request_in_flight = false;
+  std::string text;
+  std::size_t start_line = 0;
+  std::size_t start_column = 0;
+  std::string provider_id;
+  std::string model_id;
+  std::string error;
+};
+
+struct DebugSessionState {
+  bool running = false;
+  std::string type;
+  std::string channel_id;
+  std::string status_text;
+};
+
 struct PanelState {
+  PanelContentKind content = PanelContentKind::None;
   bool command_mode = false;
   float height = 184.0f;
   CommandState command;
+  OutputPanelState output;
+  ChatPanelState chat;
 };
 
 struct ProjectWorkspaceState {
@@ -122,10 +211,14 @@ struct ProjectWorkspaceState {
   PanelState panel;
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
+  InlineCompletionState inline_completion;
+  DebugSessionState debug_session;
   editor::DiagnosticsStore diagnostics_store;
   std::string active_colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
   EditorPreferences editor_preferences;
+  std::vector<std::pair<std::string, std::string>> settings;
+  std::vector<SidebarViewPolicy> sidebar_policies;
 };
 
 struct ProjectCatalogState {

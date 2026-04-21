@@ -75,6 +75,22 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .background = theme_.chrome_active,
       };
     }
+    case TextInputSurface::ChatComposer: {
+      const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
+      const float text_x = prompt_rect.x + 6.0f;
+      const float text_y = prompt_rect.y + 4.0f;
+      const float cursor_x =
+          text_x + text_renderer_.MeasureWidth("> " + context_.current_project_state.panel.chat.composer);
+      return TextInputVisual{
+          .surface = surface,
+          .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f), line_height),
+          .text_x = text_x,
+          .text_y = text_y,
+          .cursor_x = cursor_x,
+          .foreground = theme_.text_primary,
+          .background = theme_.chrome_active,
+      };
+    }
     case TextInputSurface::PromptInput: {
       const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);

@@ -31,17 +31,42 @@
 #include "workspace/WorkspaceActionAvailability.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceContext.h"
+#include "workspace/WorkspaceFormatterRegistry.h"
+#include "workspace/WorkspaceSaveParticipants.h"
+#include "workspace/WorkspaceCompletionRegistry.h"
+#include "workspace/WorkspaceCodeActionRegistry.h"
+#include "workspace/WorkspaceTaskRegistry.h"
+#include "workspace/WorkspaceTaskRuntime.h"
+#include "workspace/WorkspaceToolRegistry.h"
+#include "workspace/WorkspaceToolDownloader.h"
+#include "workspace/WorkspaceDapManager.h"
+#include "workspace/WorkspaceTestController.h"
+#include "workspace/WorkspaceScmRegistry.h"
+#include "workspace/WorkspaceAnnotationRegistry.h"
+#include "workspace/WorkspaceAuthProvider.h"
+#include "workspace/WorkspaceSecretStorage.h"
+#include "workspace/WorkspaceVirtualDocument.h"
+#include "workspace/WorkspaceReviewComments.h"
+#include "workspace/WorkspaceAiProvider.h"
+#include "workspace/WorkspaceInlineCompletion.h"
+#include "workspace/WorkspaceConversation.h"
+#include "workspace/WorkspaceExternalAgent.h"
+#include "workspace/WorkspaceMcpTool.h"
+#include "workspace/WorkspaceAiContext.h"
+#include "workspace/WorkspaceAiRuntime.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/WorkspaceProjectDialogState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspacePromptState.h"
 #include "workspace/WorkspaceRootView.h"
+#include "workspace/WorkspaceStatusRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/WorkspaceTextInputState.h"
@@ -84,11 +109,19 @@ class WorkspaceShell {
   using GitSidebarLine = workspace::GitSidebarLine;
   using GitSidebarEntryActionLayout = workspace::GitSidebarEntryActionLayout;
   using ProblemsSidebarEntry = workspace::ProblemsSidebarEntry;
+  using TestsSidebarEntry = workspace::TestsSidebarEntry;
   using GitSidebarState = workspace::GitSidebarState;
   using ProblemsSidebarState = workspace::ProblemsSidebarState;
+  using TestsSidebarState = workspace::TestsSidebarState;
   using PluginSidebarState = workspace::PluginSidebarState;
   using SidebarState = workspace::SidebarState;
   using DirtyPathResolution = workspace::DirtyPathResolution;
+  using OverlayMode = workspace::OverlayMode;
+  using CompletionSessionState = workspace::CompletionSessionState;
+  using CodeActionSessionState = workspace::CodeActionSessionState;
+  using TaskPickerState = workspace::TaskPickerState;
+  using InlineCompletionState = workspace::InlineCompletionState;
+  using PanelContentKind = workspace::PanelContentKind;
 
   enum class WindowAction {
     None,
@@ -166,7 +199,6 @@ class WorkspaceShell {
  private:
   class Bootstrapper;
   using FocusTarget = workspace::FocusTarget;
-  using OverlayMode = workspace::OverlayMode;
   using BufferSearchField = workspace::BufferSearchField;
   using EditorSplitOrientation = workspace::EditorSplitOrientation;
   using ProjectSearchEditField = workspace::ProjectSearchEditField;
@@ -186,6 +218,8 @@ class WorkspaceShell {
   using OverlayWorkflowState = workspace::OverlayWorkflowState;
   using OverlayState = workspace::OverlayState;
   using PanelState = workspace::PanelState;
+  using OutputPanelState = workspace::OutputPanelState;
+  using ChatPanelState = workspace::ChatPanelState;
   using ProjectWorkspaceState = workspace::ProjectWorkspaceState;
   using ProjectCatalogState = workspace::ProjectCatalogState;
   using WorkspaceContext = workspace::WorkspaceContext;
@@ -319,6 +353,12 @@ class WorkspaceShell {
     bool hovered = false;
   };
 
+  struct VisibleStatusItem {
+    StatusItemView item;
+    SDL_FRect rect{};
+    bool hovered = false;
+  };
+
   struct EditorPaneLayout {
     std::size_t leaf_id = 0;
     SDL_FRect rect{};
@@ -414,6 +454,18 @@ class WorkspaceShell {
   std::string MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
   bool IsMenuItemChecked(const MenuItemSpec& item) const;
+  bool ExecuteCommandName(std::string_view command_name,
+                          const std::vector<std::string>& args,
+                          ActionSource source,
+                          std::string* error_message = nullptr);
+  std::optional<std::string> GetSettingValue(std::string_view id) const;
+  std::vector<std::string> OrderedSidebarViewIds() const;
+  void NormalizeSidebarViewSelection();
+  void RebuildPhase3Registries();
+  void RebuildPhase4Registries();
+  void RebuildPhase5Registries();
+  std::vector<VisibleStatusItem> ComputeVisibleStatusItems(const SDL_FRect& breadcrumb) const;
+  std::string HoveredStatusTooltip(const SDL_FRect& breadcrumb) const;
   std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
   const project::TreeEntry* SelectedTreeEntry() const;
   std::filesystem::path SelectedTreePath() const;
@@ -467,6 +519,12 @@ class WorkspaceShell {
   void InvalidateRuntimeSyntaxStateCaches();
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers();
+  bool PrepareEditorViewportForSave(const std::filesystem::path& path,
+                                    editor::TextViewport& viewport,
+                                    std::string* error_message = nullptr);
+  bool OpenVirtualDocumentInNewTab(std::string_view uri);
+  void ReloadVirtualDocumentTabs(std::string_view uri);
+  bool IsReadOnlyVirtualDocument(const std::filesystem::path& path) const;
   void NotifyPluginBufferOpen(const std::filesystem::path& path);
   void NotifyPluginBufferSave(const std::filesystem::path& path);
   void ResetProjectScopedState(bool show_welcome);
@@ -708,6 +766,7 @@ class WorkspaceShell {
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
   void ShowProblemsSidebar();
   void ShowGitSidebar();
+  void ShowTestsSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
   std::string SidebarModeControlLabel() const;
   SDL_FRect SidebarModeControlRect(const SDL_FRect& sidebar_rect) const;
@@ -717,6 +776,7 @@ class WorkspaceShell {
   void RefreshProjectFiles();
   void RefreshGitSidebar();
   bool RefreshProblemsSidebar();
+  bool RefreshTestsSidebar();
   bool RefreshPluginSidebar();
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
@@ -724,6 +784,7 @@ class WorkspaceShell {
   SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
+  std::vector<std::string> GitSidebarSummaryLines() const;
   float GitSidebarListTop(const SDL_FRect& sidebar_rect) const;
   float GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const;
   ScrollableListLayout ComputeProjectSearchSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -734,6 +795,8 @@ class WorkspaceShell {
                                                     std::size_t line_count) const;
   ScrollableListLayout ComputeProblemsSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                         std::size_t line_count) const;
+  ScrollableListLayout ComputeTestsSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                     std::size_t line_count) const;
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
@@ -744,13 +807,17 @@ class WorkspaceShell {
   void RevealSelectedTreeSidebarLine();
   void RevealSelectedGitSidebarLine();
   void RevealSelectedProblemsSidebarLine();
+  void RevealSelectedTestsSidebarLine();
   void RevealSelectedPluginSidebarLine();
   void MoveGitSidebarSelection(int delta);
   void MoveProblemsSidebarSelection(int delta);
+  void MoveTestsSidebarSelection(int delta);
   void MovePluginSidebarSelection(int delta);
   bool OpenGitSidebarEntry(std::size_t entry_index);
   bool OpenSelectedProblemSidebarItem();
+  bool OpenSelectedTestSidebarItem();
   bool OpenSelectedPluginSidebarItem();
+  bool RunSelectedTestSidebarItem();
   bool CanStageAllGitSidebarEntries() const;
   bool CanDiscardAllGitSidebarEntries() const;
   bool StageAllGitSidebarEntries();
@@ -844,6 +911,13 @@ class WorkspaceShell {
   void OpenBufferSearch();
   void OpenBufferReplace();
   void OpenProjectSearch();
+  bool ShowCompletionOverlay(std::string* error_message = nullptr);
+  bool ShowCodeActionsOverlay(std::string* error_message = nullptr);
+  bool ShowTaskPickerOverlay();
+  bool RunTaskById(std::string_view id, std::string* error_message = nullptr);
+  bool ApplySelectedCompletion();
+  bool ExecuteSelectedCodeAction();
+  bool RunSelectedTask();
   FocusTarget PrimarySurfaceFocusTarget() const;
   void ShowOverlay(OverlayMode mode);
   void DismissOverlay(bool focus_editor = false);
@@ -885,6 +959,33 @@ class WorkspaceShell {
   void ReplaceCurrentBufferSearchMatch();
   void ReplaceAllBufferSearchMatches();
   std::optional<editor::SelectionRange> ActiveBufferSearchMatch() const;
+  bool DiscoverTestsForActiveBuffer(std::string* error_message = nullptr);
+  bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message = nullptr);
+  bool RunAllDiscoveredTests(std::string* error_message = nullptr);
+  bool StartDebugger(std::string_view type, std::string* error_message = nullptr);
+  void StopDebugger();
+  const std::vector<WorkspaceOutputChannels::ChannelInfo>& OutputChannels() const;
+  const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
+  void ShowOutputChannel(std::string_view id);
+  void ShowChatPanel();
+  void ConsumeTaskRuntimeUpdates();
+  bool LoginAuthProvider(std::string_view provider_id,
+                         const std::vector<std::string>& scopes,
+                         std::string* error_message = nullptr);
+  bool RefreshAuthSession(std::string_view provider_id,
+                          std::string_view session_id,
+                          std::string* error_message = nullptr);
+  bool LogoutAuthSession(std::string_view provider_id,
+                         std::string_view session_id,
+                         std::string* error_message = nullptr);
+  bool StartChatRequest(std::string message, std::string* error_message = nullptr);
+  void ConsumeAiRuntimeUpdates();
+  bool RequestInlineCompletion(std::string* error_message = nullptr);
+  bool AcceptInlineCompletion();
+  void DismissInlineCompletion();
+  bool InvokeMcpTool(std::string_view tool_id,
+                     std::string_view input_json,
+                     std::string* error_message = nullptr);
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
@@ -915,6 +1016,9 @@ class WorkspaceShell {
   void ConsumeTerminalSessionUpdates();
   void ReapExitedTerminalTabs();
   bool BottomPanelVisible() const;
+  bool BottomPanelShowsTerminal() const;
+  bool BottomPanelShowsOutput() const;
+  bool BottomPanelShowsChat() const;
   BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
@@ -1087,8 +1191,41 @@ class WorkspaceShell {
   };
   mutable std::vector<SidebarModeMenuEntry> sidebar_mode_menu_entries_;
   mutable std::vector<MenuItemSpec> sidebar_mode_menu_items_;
+  struct DynamicMenuEntryStorage {
+    std::string label;
+    std::string accelerator;
+    std::string command_name;
+  };
+  static constexpr std::size_t kMenuSlotCount =
+      static_cast<std::size_t>(MenuId::TerminalTabContext) + 1;
+  mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
+  mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspacePluginRuntime plugin_runtime_;
+  WorkspaceOutputChannels output_channels_;
+  FormatterRegistry formatter_registry_;
+  SaveParticipantRegistry save_participant_registry_;
+  CompletionRegistry completion_registry_;
+  CodeActionRegistry code_action_registry_;
+  TaskRegistry task_registry_;
+  WorkspaceTaskRuntime task_runtime_;
+  ToolRegistry tool_registry_;
+  ToolDownloader tool_downloader_;
+  DapManager dap_manager_;
+  TestController test_controller_;
+  ScmRegistry scm_registry_;
+  AnnotationRegistry annotation_registry_;
+  AuthProviderRegistry auth_provider_registry_;
+  SecretStorage secret_storage_;
+  VirtualDocumentRegistry virtual_document_registry_;
+  ReviewCommentsRegistry review_comments_registry_;
+  AiProviderRegistry ai_provider_registry_;
+  InlineCompletionRegistry inline_completion_registry_;
+  ConversationRegistry conversation_registry_;
+  ExternalAgentRegistry external_agent_registry_;
+  McpToolRegistry mcp_tool_registry_;
+  AiContextManager ai_context_manager_;
+  WorkspaceAiRuntime ai_runtime_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

@@ -14,9 +14,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                                                                  ActionSource source,
                                                                  std::string* rejection_feedback) {
   (void)source;
-  (void)rejection_feedback;
+  const auto reject = [&](std::string feedback) {
+    if (rejection_feedback != nullptr) {
+      *rejection_feedback = std::move(feedback);
+    }
+    return DispatchResult::Rejected;
+  };
 
   switch (id) {
+    case ActionId::Completion: {
+      std::string error_message;
+      if (!context_.ShowCompletionOverlay(&error_message)) {
+        return reject(error_message.empty() ? "No completions available" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::CodeActions: {
+      std::string error_message;
+      if (!context_.ShowCodeActionsOverlay(&error_message)) {
+        return reject(error_message.empty() ? "No code actions available" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Goto:
     case ActionId::Jump: {
       if (context_.ActiveTabIsCompare() || context_.ActiveTabIsMerge()) {
@@ -73,6 +92,20 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     }
     case ActionId::PasteClipboard: {
       context_.PasteClipboard();
+      return DispatchResult::Handled;
+    }
+    case ActionId::InlineCompletion: {
+      std::string error_message;
+      if (!context_.RequestInlineCompletion(&error_message)) {
+        return reject(error_message.empty() ? "Inline completion unavailable" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::TestsDiscover: {
+      std::string error_message;
+      if (!context_.DiscoverTestsForActiveBuffer(&error_message)) {
+        return reject(error_message.empty() ? "Test discovery failed" : error_message);
+      }
       return DispatchResult::Handled;
     }
     default:

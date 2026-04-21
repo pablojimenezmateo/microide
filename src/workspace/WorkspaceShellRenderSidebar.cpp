@@ -232,6 +232,16 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        CanDiscardAllGitSidebarEntries(), true);
     draw_action_button(GitSidebarRefreshButtonRect(layout.sidebar), "Refresh", true);
 
+    const auto summary_lines = GitSidebarSummaryLines();
+    float summary_y = GitSidebarActionRowRect(layout.sidebar).y +
+                      GitSidebarActionRowRect(layout.sidebar).h + 6.0f;
+    for (const std::string& summary : summary_lines) {
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, summary_y,
+                 theme_.text_muted, theme_.surface_background,
+                 TruncateLabel(summary, layout.sidebar.w - kSidebarInset * 2.0f));
+      summary_y += 14.0f;
+    }
+
     const auto lines = BuildGitSidebarLines();
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
@@ -381,6 +391,96 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     draw_vertical_scrollbar(list_layout.list_rect,
                             static_cast<float>(context_.current_project_state.sidebar.problems.entries.size()),
+                            list_layout.visible_units, static_cast<float>(scroll_row),
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
+  } else if (sidebar_mode == SidebarMode::Tests) {
+    const auto list_layout =
+        ComputeTestsSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.tests.entries.size());
+    const int scroll_row = list_layout.scroll_row;
+
+    for (int row = 0; row < list_layout.visible_rows; ++row) {
+      const int item_index = scroll_row + row;
+      if (item_index >= static_cast<int>(context_.current_project_state.sidebar.tests.entries.size())) {
+        break;
+      }
+
+      const auto& item =
+          context_.current_project_state.sidebar.tests.entries[static_cast<std::size_t>(item_index)];
+      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
+      const bool selected =
+          static_cast<std::size_t>(item_index) == context_.current_project_state.sidebar.tests.selected_index;
+      const SDL_Color row_background =
+          selected ? theme_.row_highlight : theme_.surface_background;
+      if (selected) {
+        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
+        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
+                       theme_.accent);
+      }
+
+      SDL_Color status_color = theme_.text_muted;
+      if (item.status == "passed") {
+        status_color = theme_.diff_added;
+      } else if (item.status == "failed" || item.status == "errored") {
+        status_color = theme_.diff_deleted;
+      } else if (item.status == "running") {
+        status_color = theme_.accent;
+      } else if (item.status == "skipped") {
+        status_color = theme_.text_disabled;
+      }
+
+      const std::string status_glyph =
+          item.status == "passed" ? "P"
+          : item.status == "failed" ? "F"
+          : item.status == "errored" ? "E"
+          : item.status == "running" ? "R"
+          : item.status == "skipped" ? "S"
+                                     : "Q";
+      const float text_x = row_rect.x + 8.0f;
+      const float text_y =
+          row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
+      DrawTextOn(text_renderer_, renderer, text_x, text_y, status_color, row_background,
+                 status_glyph);
+
+      const float label_x = text_x + 16.0f;
+      const float label_width = std::max(20.0f, row_rect.w - 22.0f);
+      const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
+      DrawTextOn(text_renderer_, renderer, label_x, text_y, primary_color, row_background,
+                 text_renderer_.TruncateToWidth(item.label, label_width * 0.62f));
+
+      std::string detail;
+      if (!item.file.empty()) {
+        detail = item.file.filename().string();
+        if (item.line > 0) {
+          detail += ":" + std::to_string(item.line);
+        }
+      }
+      if (!detail.empty()) {
+        const float detail_x =
+            label_x + std::min(label_width * 0.62f, text_renderer_.MeasureWidth(item.label)) + 8.0f;
+        const float detail_width = std::max(0.0f, row_rect.x + row_rect.w - 6.0f - detail_x);
+        if (detail_width > 24.0f) {
+          DrawTextOn(text_renderer_, renderer, detail_x, text_y,
+                     selected ? theme_.text_secondary : theme_.text_muted, row_background,
+                     text_renderer_.TruncateToWidth(detail, detail_width));
+        }
+      }
+    }
+
+    const std::string placeholder =
+        !context_.current_project_state.sidebar.tests.error.empty()
+            ? "Error: " + context_.current_project_state.sidebar.tests.error
+            : context_.current_project_state.sidebar.tests.entries.empty() ? "No tests discovered"
+                                                                           : std::string{};
+    if (!placeholder.empty()) {
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
+                 list_layout.row_y + 4.0f,
+                 context_.current_project_state.sidebar.tests.error.empty() ? theme_.text_muted : theme_.diff_deleted,
+                 theme_.surface_background,
+                 TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
+    }
+
+    draw_vertical_scrollbar(list_layout.list_rect,
+                            static_cast<float>(context_.current_project_state.sidebar.tests.entries.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else if (sidebar_mode == SidebarMode::Plugin) {

@@ -53,7 +53,10 @@ class SidebarCoordinator {
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_problems_sidebar_list_layout;
+    std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_tests_sidebar_list_layout;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_plugin_sidebar_list_layout;
+    std::function<bool()> refresh_tests_sidebar_state;
+    std::function<bool(const std::vector<std::string>&)> run_tests;
   };
 
   SidebarCoordinator(ProjectWorkspaceState& state,
@@ -68,6 +71,7 @@ class SidebarCoordinator {
   void ShowSearch(std::string query = {}, bool temporary = false);
   void ShowProblems();
   void ShowGit();
+  void ShowTests();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
   void Toggle();
@@ -75,16 +79,21 @@ class SidebarCoordinator {
   void RefreshProjectFiles();
   void RefreshGit();
   bool RefreshProblems();
+  bool RefreshTests();
   bool RefreshPlugin();
   void RevealSelectedTreeLine();
   void RevealSelectedGitLine();
   void RevealSelectedProblemsLine();
+  void RevealSelectedTestsLine();
   void RevealSelectedPluginLine();
   void MoveGitSelection(int delta);
   void MoveProblemsSelection(int delta);
+  void MoveTestsSelection(int delta);
   void MovePluginSelection(int delta);
   bool OpenGitEntry(std::size_t entry_index);
   bool OpenProblemItem();
+  bool OpenTestItem();
+  bool RunTestItem();
   bool OpenPluginItem();
   bool CanStageAllGitEntries() const;
   bool CanDiscardAllGitEntries() const;

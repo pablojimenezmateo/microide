@@ -468,6 +468,72 @@ return ide.plugin({
          "plugin shutdown should clear the owner's diagnostics");
 }
 
+void TestPluginHostPhase2StatusApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase2 status\n");
+
+  WritePluginInit(
+      global_plugins, "phase2-status",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase2-status",
+  setup = function(ctx)
+    ctx.status.add({
+      id = "counter",
+      text = "0",
+      tooltip = "Counter is 0",
+      alignment = "right",
+    })
+    ctx.commands.add("phase2-status.tick", function(ctx, args)
+      ctx.status.update("counter", {
+        text = "1",
+        tooltip = "Counter is 1",
+      })
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  int redraw_requests = 0;
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .active_buffer = {},
+      .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
+      .error_sink = {},
+      .log_sink = {},
+      .get_setting = {},
+      .request_status_redraw = [&]() { ++redraw_requests; },
+  });
+
+  Expect(host.Reload(project_root), "phase2 status plugin should reload successfully");
+  Expect(host.ContributedStatusItems().size() == 1,
+         "phase2 status plugin should contribute one status item");
+  Expect(host.ContributedStatusItems().front().text == "0",
+         "status items should expose the initial text");
+
+  std::string command_error;
+  Expect(host.ExecuteCommand("phase2-status.tick", {}, &command_error),
+         "phase2 status update command should execute");
+  Expect(command_error.empty(), "successful status updates should not set an error");
+  Expect(redraw_requests == 1, "status updates should request one chrome redraw");
+  Expect(host.ContributedStatusItems().front().text == "1" &&
+             host.ContributedStatusItems().front().tooltip == "Counter is 1",
+         "status updates should mutate the exported status item state");
+}
+
 void TestPluginHostPhase3HoverApis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -530,6 +596,216 @@ return ide.plugin({
   Expect(hover_error.empty(), "missing hover results should not set an error");
   Expect(hover.title.empty() && hover.content.empty(),
          "missing hover results should leave the output empty");
+}
+
+void TestPluginHostPhase3RuntimeApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "phase3-runtime",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "phase3-runtime",
+  setup = function(ctx)
+    ctx.commands.add("phase3-runtime.echo", function(ctx, args)
+      ctx.log("echo:" .. table.concat(args, ":"))
+    end)
+
+    ctx.save_participants.add("uppercase", function(buffer)
+      return {
+        text = string.upper(buffer.text)
+      }
+    end)
+
+    ctx.completion.add({
+      id = "todo",
+      language_id = "todo",
+      provide = function(buffer, position, trigger)
+        return {
+          {
+            label = "TODO",
+            detail = buffer.relative_path,
+            documentation = "trigger:" .. trigger,
+            insert_text = "TODO()"
+          }
+        }
+      end
+    })
+
+    ctx.code_actions.add({
+      id = "todo",
+      language_id = "todo",
+      provide = function(buffer, range)
+        return {
+          {
+            title = "Log quick fix",
+            command = "phase3-runtime.echo",
+            arguments = {
+              buffer.relative_path,
+              tostring(range.start.line),
+              tostring(range['end'].column)
+            }
+          }
+        }
+      end
+    })
+
+    ctx.tests.add({
+      id = "todo",
+      language_id = "todo",
+      discover = function(buffer)
+        return {
+          {
+            id = "todo.case",
+            label = "TODO case",
+            file = buffer.relative_path,
+            line = 3
+          }
+        }
+      end,
+      run = function(test_ids)
+        return {
+          {
+            test_id = test_ids[1],
+            state = "passed",
+            message = "ok",
+            duration_ms = 12
+          }
+        }
+      end
+    })
+  end
+})
+)lua");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .active_buffer = {},
+      .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
+      .error_sink = {},
+      .log_sink = {},
+      .get_setting = {},
+      .request_status_redraw = {},
+  });
+
+  Expect(host.Reload(project_root), "phase3 runtime plugin should reload successfully");
+
+  std::string text = "alpha\nbeta\n";
+  std::string runtime_error;
+  Expect(host.RunSaveParticipants(source, &text, &runtime_error),
+         "save participant runtime should execute");
+  Expect(runtime_error.empty(), "successful save participant execution should not set an error");
+  Expect(text == "ALPHA\nBETA\n", "save participants should be able to replace buffer text");
+
+  const auto completions = host.QueryCompletions("todo", source, 1, 3, ".", &runtime_error);
+  Expect(runtime_error.empty(), "successful completion queries should not set an error");
+  Expect(completions.size() == 1, "completion query should return one runtime result");
+  Expect(completions.front().label == "TODO" &&
+             completions.front().insert_text == "TODO()" &&
+             completions.front().detail == "README.todo",
+         "completion providers should preserve label, insert text, and relative file context");
+
+  const auto actions = host.QueryCodeActions("todo", source, 1, 2, 1, 5, &runtime_error);
+  Expect(runtime_error.empty(), "successful code action queries should not set an error");
+  Expect(actions.size() == 1, "code action query should return one runtime result");
+  Expect(actions.front().title == "Log quick fix" &&
+             actions.front().command == "phase3-runtime.echo" &&
+             actions.front().arguments == std::vector<std::string>{"README.todo", "1", "5"},
+         "code action providers should preserve returned commands and arguments");
+
+  std::vector<PluginHost::TestCase> discovered_tests;
+  Expect(host.DiscoverTests("phase3-runtime.todo", source, &discovered_tests, &runtime_error),
+         "test discovery should execute the provider runtime");
+  Expect(runtime_error.empty(), "successful test discovery should not set an error");
+  Expect(discovered_tests.size() == 1, "test discovery should return one test case");
+  Expect(discovered_tests.front().id == "todo.case" &&
+             discovered_tests.front().file == source.lexically_normal() &&
+             discovered_tests.front().line == 3,
+         "test discovery should resolve file paths against the active project");
+
+  std::vector<PluginHost::TestRunResult> run_results;
+  Expect(host.RunTests("phase3-runtime.todo", {"todo.case"}, &run_results, &runtime_error),
+         "test execution should execute the provider runtime");
+  Expect(runtime_error.empty(), "successful test execution should not set an error");
+  Expect(run_results.size() == 1, "test execution should return one test result");
+  Expect(run_results.front().test_id == "todo.case" &&
+             run_results.front().state == "passed" &&
+             run_results.front().duration_ms == 12,
+         "test execution should preserve the returned test result fields");
+}
+
+void TestPluginHostPhase4ContributionApis() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase4 contributions\n");
+
+  WritePluginInit(
+      global_plugins, "phase4-contrib",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase4-contrib",
+  setup = function(ctx)
+    ctx.scm.add("sample", "Sample SCM")
+    ctx.annotations.add({
+      id = "blame",
+      label = "Plugin Blame",
+      type = "blame",
+      language_id = "todo"
+    })
+    ctx.auth.add("github", "GitHub")
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(PluginHost::Callbacks{
+      .is_command_name_available = [](std::string_view) { return true; },
+      .open_file = {},
+      .active_buffer = {},
+      .show_sidebar = {},
+      .publish_diagnostics = {},
+      .clear_file_diagnostics = {},
+      .clear_owner_diagnostics = {},
+      .error_sink = {},
+      .log_sink = {},
+      .get_setting = {},
+      .request_status_redraw = {},
+  });
+
+  Expect(host.Reload(project_root), "phase4 contribution plugin should reload successfully");
+  Expect(host.ContributedScmProviders().size() == 1,
+         "phase4 contribution plugin should register one SCM provider");
+  Expect(host.ContributedScmProviders().front().id == "phase4-contrib.sample",
+         "SCM providers should be plugin-prefixed");
+  Expect(host.ContributedAnnotationProviders().size() == 1 &&
+             host.ContributedAnnotationProviders().front().type == "blame" &&
+             host.ContributedAnnotationProviders().front().language_id == "todo",
+         "annotation providers should preserve type and language metadata");
+  Expect(host.ContributedAuthProviders().size() == 1 &&
+             host.ContributedAuthProviders().front().id == "phase4-contrib.github",
+         "auth providers should be registered with plugin-prefixed ids");
 }
 
 void TestPluginHostPhase5WorkspaceApis() {
@@ -600,8 +876,11 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/RejectsDuplicatePluginIds",
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
+  AddTest(tests, "PluginHost/Phase2StatusApis", TestPluginHostPhase2StatusApis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
   AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
+  AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
+  AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
 }
 

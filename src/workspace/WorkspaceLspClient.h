@@ -104,6 +104,11 @@ class LspClient {
   // Request: textDocument/codeAction
   std::optional<std::vector<CodeAction>> RequestCodeAction(const std::string& uri, Range range);
 
+  // Request: textDocument/formatting
+  std::optional<std::string> RequestFormatting(const std::string& uri,
+                                               int tab_size = 4,
+                                               bool insert_spaces = true);
+
   // Shutdown and close connection.
   void Shutdown();
 

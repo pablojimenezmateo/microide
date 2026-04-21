@@ -29,6 +29,10 @@ class WorkspaceEventDispatcher {
     std::function<bool(Uint32)> plugin_runtime_consume_wake_event;
     std::function<bool(Uint32)> project_search_handles_event;
     std::function<void()> consume_project_search_updates;
+    std::function<bool(Uint32)> task_runtime_handles_event;
+    std::function<void()> consume_task_runtime_updates;
+    std::function<bool(Uint32)> ai_runtime_handles_event;
+    std::function<void()> consume_ai_runtime_updates;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> consume_terminal_session_updates;
     std::function<void(SDL_Window*)> sync_text_input_surface;

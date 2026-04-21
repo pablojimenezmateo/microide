@@ -31,19 +31,19 @@ void TestController::RecordTestResult(const TestResult& result) {
 
 const std::vector<TestResult>& TestController::TestResults(const std::string& test_id) const {
   static const std::vector<TestResult> kEmpty;
-  // Return only results for this test_id
-  // For simplicity, this is a linear search; in production use a map
+  filtered_results_.clear();
   for (const auto& result : results_) {
     if (result.test_id == test_id) {
-      return results_;  // Return all; caller filters by test_id
+      filtered_results_.push_back(result);
     }
   }
-  return kEmpty;
+  return filtered_results_.empty() ? kEmpty : filtered_results_;
 }
 
 void TestController::Clear() {
   test_items_.clear();
   results_.clear();
+  filtered_results_.clear();
 }
 
 }  // namespace microide::workspace

@@ -21,6 +21,7 @@ struct AsyncSubprocess::Impl {
   int stdin_fd = -1;   // write end — parent writes here
   int stdout_fd = -1;  // read end  — parent reads here
   bool running = false;
+  std::optional<int> exit_code;
 
   void CloseStdin() {
     if (stdin_fd >= 0) {
@@ -47,6 +48,7 @@ struct AsyncSubprocess::Impl {
 struct AsyncSubprocess::Impl {
   bool running = false;
   int pid_val = -1;
+  std::optional<int> exit_code;
 };
 
 #endif
@@ -136,6 +138,7 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   impl_->stdin_fd = stdin_pipe[1];
   impl_->stdout_fd = stdout_pipe[0];
   impl_->running = true;
+  impl_->exit_code.reset();
   return true;
 }
 
@@ -150,6 +153,13 @@ bool AsyncSubprocess::IsRunning() const {
     impl_->running = false;
     impl_->Close();
     impl_->pid = -1;
+    if (WIFEXITED(status)) {
+      impl_->exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+      impl_->exit_code = 128 + WTERMSIG(status);
+    } else {
+      impl_->exit_code = std::nullopt;
+    }
   }
   return impl_->running;
 }
@@ -264,6 +274,13 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
     if (waitpid(impl_->pid, &status, WNOHANG) == impl_->pid) {
       impl_->pid = -1;
       impl_->running = false;
+      if (WIFEXITED(status)) {
+        impl_->exit_code = WEXITSTATUS(status);
+      } else if (WIFSIGNALED(status)) {
+        impl_->exit_code = 128 + WTERMSIG(status);
+      } else {
+        impl_->exit_code = std::nullopt;
+      }
       return;
     }
     struct timespec ts{.tv_sec = 0, .tv_nsec = kSliceMs * 1'000'000L};
@@ -283,10 +300,15 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
   }
   impl_->pid = -1;
   impl_->running = false;
+  impl_->exit_code = 128 + SIGKILL;
 }
 
 int AsyncSubprocess::pid() const {
   return impl_ != nullptr ? static_cast<int>(impl_->pid) : -1;
+}
+
+std::optional<int> AsyncSubprocess::exit_code() const {
+  return impl_ != nullptr ? impl_->exit_code : std::nullopt;
 }
 
 #else  // non-POSIX stubs
@@ -300,6 +322,9 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t, int) { return std:
 std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t, int) { return std::nullopt; }
 void AsyncSubprocess::Shutdown(int) {}
 int AsyncSubprocess::pid() const { return -1; }
+std::optional<int> AsyncSubprocess::exit_code() const {
+  return impl_ != nullptr ? impl_->exit_code : std::nullopt;
+}
 
 #endif
 

@@ -42,6 +42,8 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
     std::vector<std::string>* errors = nullptr);
 std::size_t RegistryRevision();
 SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines);
+std::string DetectFiletype(const std::filesystem::path& path,
+                           const std::vector<std::string>& lines);
 
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,

@@ -42,6 +42,8 @@ void RegisterWorkspaceShellSharedTerminalTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests);
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests);
 void RegisterPhase3Tests(std::vector<TestCase>& tests);
+void RegisterPhase4Tests(std::vector<TestCase>& tests);
+void RegisterPhase5Tests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -82,6 +84,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterFileOperationServiceTests(tests);
   microide::tests::RegisterContributionRegistryTests(tests);
   microide::tests::RegisterPhase3Tests(tests);
+  microide::tests::RegisterPhase4Tests(tests);
+  microide::tests::RegisterPhase5Tests(tests);
 
   bool ran_any = false;
   for (const auto& test : tests) {

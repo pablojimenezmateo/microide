@@ -44,6 +44,9 @@ class AsyncSubprocess {
   // pid of the child, or -1 if not running.
   int pid() const;
 
+  // exit code of the child once it has exited, or nullopt while still running/unknown.
+  std::optional<int> exit_code() const;
+
  private:
   struct Impl;
   Impl* impl_;  // non-owning pointer to platform-specific state; managed by POSIX impl

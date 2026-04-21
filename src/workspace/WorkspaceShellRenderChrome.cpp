@@ -111,9 +111,26 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   const std::string hovered_tab_tooltip = HoveredTabTooltipLabel(layout.tab_strip);
-  const float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
+  const auto status_items = ComputeVisibleStatusItems(layout.breadcrumb);
+  float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
+  float breadcrumb_text_right = layout.breadcrumb.x + layout.breadcrumb.w - 12.0f;
+  for (const VisibleStatusItem& item : status_items) {
+    const SDL_Color background =
+        item.hovered ? theme_.row_highlight : theme_.surface_raised;
+    const SDL_Color text_color =
+        item.hovered ? theme_.text_primary : theme_.text_secondary;
+    DrawFilledRect(renderer, item.rect, background);
+    DrawRect(renderer, item.rect, theme_.border);
+    DrawVCenteredTextOn(text_renderer_, renderer, item.rect, 8.0f, text_color, background,
+                        item.item.text);
+    if (item.item.alignment == StatusAlignment::Left) {
+      breadcrumb_text_x = std::max(breadcrumb_text_x, item.rect.x + item.rect.w + 8.0f);
+    } else {
+      breadcrumb_text_right = std::min(breadcrumb_text_right, item.rect.x - 8.0f);
+    }
+  }
   const float breadcrumb_text_width =
-      std::max(0.0f, layout.breadcrumb.x + layout.breadcrumb.w - 12.0f - breadcrumb_text_x);
+      std::max(0.0f, breadcrumb_text_right - breadcrumb_text_x);
   DrawVCenteredTextOn(
       text_renderer_, renderer,
       MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
@@ -131,6 +148,26 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                    layout.full.x + layout.full.w - tooltip_width - 8.0f);
     const SDL_FRect tooltip_rect = MakeRect(tooltip_x, layout.tab_strip.y + layout.tab_strip.h + 6.0f,
                                             tooltip_width, tooltip_height);
+    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
+    DrawRect(renderer, tooltip_rect, theme_.border);
+    DrawVCenteredTextOn(text_renderer_, renderer, tooltip_rect, 8.0f, theme_.text_primary,
+                        theme_.surface_raised, tooltip_text);
+  }
+
+  const std::string status_tooltip = HoveredStatusTooltip(layout.breadcrumb);
+  if (!status_tooltip.empty()) {
+    const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
+    const std::string tooltip_text =
+        text_renderer_.TruncateToWidth(status_tooltip, max_tooltip_width - 16.0f);
+    const float tooltip_width =
+        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
+    const float tooltip_x =
+        std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
+    const SDL_FRect tooltip_rect =
+        MakeRect(tooltip_x, layout.breadcrumb.y + layout.breadcrumb.h + 6.0f, tooltip_width,
+                 tooltip_height);
     DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
     DrawRect(renderer, tooltip_rect, theme_.border);
     DrawVCenteredTextOn(text_renderer_, renderer, tooltip_rect, 8.0f, theme_.text_primary,

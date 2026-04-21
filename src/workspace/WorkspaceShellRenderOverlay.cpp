@@ -178,6 +178,97 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 92.0f,
                  theme_.text_muted, theme_.overlay_background, "No matching commits");
     }
+  } else if (context_.current_project_state.overlay.mode == OverlayMode::Completion) {
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
+               theme_.text_primary, theme_.chrome_background, "Completions");
+    const std::string summary =
+        context_.current_project_state.overlay.workflow.completion.items.empty()
+            ? "No completions"
+            : std::to_string(context_.current_project_state.overlay.workflow.completion.selected_index + 1) + " / " +
+                  std::to_string(context_.current_project_state.overlay.workflow.completion.items.size()) +
+                  " completions";
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+               theme_.text_muted, theme_.overlay_background,
+               TruncateLabel(summary, overlay.w - 36.0f));
+    for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
+      const int item_index = context_.current_project_state.overlay.scroll_row + row;
+      if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.completion.items.size())) {
+        break;
+      }
+      const auto& item =
+          context_.current_project_state.overlay.workflow.completion.items[static_cast<std::size_t>(item_index)];
+      const std::string label =
+          item.detail.empty() ? item.label : item.label + "  " + item.detail;
+      draw_overlay_row(
+          row,
+          static_cast<int>(context_.current_project_state.overlay.workflow.completion.selected_index) -
+              context_.current_project_state.overlay.scroll_row,
+          TruncateLabel(label, overlay.w - 36.0f));
+    }
+    if (!context_.current_project_state.overlay.workflow.completion.error.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+                 theme_.diff_deleted, theme_.overlay_background,
+                 TruncateLabel(context_.current_project_state.overlay.workflow.completion.error,
+                               overlay.w - 36.0f));
+    }
+  } else if (context_.current_project_state.overlay.mode == OverlayMode::CodeActions) {
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
+               theme_.text_primary, theme_.chrome_background, "Code Actions");
+    const std::string summary =
+        context_.current_project_state.overlay.workflow.code_actions.items.empty()
+            ? "No actions"
+            : std::to_string(context_.current_project_state.overlay.workflow.code_actions.selected_index + 1) + " / " +
+                  std::to_string(context_.current_project_state.overlay.workflow.code_actions.items.size()) +
+                  " actions";
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+               theme_.text_muted, theme_.overlay_background,
+               TruncateLabel(summary, overlay.w - 36.0f));
+    for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
+      const int item_index = context_.current_project_state.overlay.scroll_row + row;
+      if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.code_actions.items.size())) {
+        break;
+      }
+      const auto& item =
+          context_.current_project_state.overlay.workflow.code_actions.items[static_cast<std::size_t>(item_index)];
+      draw_overlay_row(
+          row,
+          static_cast<int>(context_.current_project_state.overlay.workflow.code_actions.selected_index) -
+              context_.current_project_state.overlay.scroll_row,
+          TruncateLabel(item.title, overlay.w - 36.0f));
+    }
+    if (!context_.current_project_state.overlay.workflow.code_actions.error.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+                 theme_.diff_deleted, theme_.overlay_background,
+                 TruncateLabel(context_.current_project_state.overlay.workflow.code_actions.error,
+                               overlay.w - 36.0f));
+    }
+  } else if (context_.current_project_state.overlay.mode == OverlayMode::TaskPicker) {
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
+               theme_.text_primary, theme_.chrome_background, "Tasks");
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+               theme_.text_muted, theme_.overlay_background,
+               "Enter runs the selected task");
+    for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
+      const int item_index = context_.current_project_state.overlay.scroll_row + row;
+      if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.task_picker.entries.size())) {
+        break;
+      }
+      const auto& item =
+          context_.current_project_state.overlay.workflow.task_picker.entries[static_cast<std::size_t>(item_index)];
+      const std::string label =
+          item.group.empty() ? item.label : item.group + "  " + item.label;
+      draw_overlay_row(
+          row,
+          static_cast<int>(context_.current_project_state.overlay.workflow.task_picker.selected_index) -
+              context_.current_project_state.overlay.scroll_row,
+          TruncateLabel(label, overlay.w - 36.0f));
+    }
+    if (!context_.current_project_state.overlay.workflow.task_picker.error.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+                 theme_.diff_deleted, theme_.overlay_background,
+                 TruncateLabel(context_.current_project_state.overlay.workflow.task_picker.error,
+                               overlay.w - 36.0f));
+    }
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Find File");

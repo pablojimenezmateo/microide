@@ -53,6 +53,11 @@ class SidebarMouseCoordinator {
     std::function<void()> reveal_selected_problems_sidebar_line;
     std::function<bool()> open_selected_problem_sidebar_item;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
+        compute_tests_sidebar_list_layout;
+    std::function<void()> reveal_selected_tests_sidebar_line;
+    std::function<bool()> open_selected_test_sidebar_item;
+    std::function<bool()> run_selected_test_sidebar_item;
+    std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_plugin_sidebar_list_layout;
     std::function<void()> reveal_selected_plugin_sidebar_line;
     std::function<bool()> open_selected_plugin_sidebar_item;
@@ -86,6 +91,9 @@ class SidebarMouseCoordinator {
   bool HandleProblemsButtonDown(const SDL_Event& event,
                                 const WorkspaceLayout& layout,
                                 float local_y);
+  bool HandleTestsButtonDown(const SDL_Event& event,
+                             const WorkspaceLayout& layout,
+                             float local_y);
   bool HandlePluginButtonDown(const SDL_Event& event,
                               const WorkspaceLayout& layout,
                               float local_y);

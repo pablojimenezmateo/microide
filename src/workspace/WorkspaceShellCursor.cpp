@@ -248,6 +248,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
+    if (context_.current_project_state.overlay.mode == OverlayMode::Completion ||
+        context_.current_project_state.overlay.mode == OverlayMode::CodeActions ||
+        context_.current_project_state.overlay.mode == OverlayMode::TaskPicker) {
+      return CursorKind::Default;
+    }
     return y >= overlay.y + 40.0f && y < overlay.y + 60.0f ? CursorKind::Text
                                                             : CursorKind::Default;
   }
@@ -365,6 +370,18 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
     }
+    if (sidebar_mode == SidebarMode::Tests) {
+      const auto list_layout =
+          ComputeTestsSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.tests.entries.size());
+      const auto line_index = ScrollableListIndexAtY(list_layout, y);
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(context_.current_project_state.sidebar.tests.entries.size())) {
+        return CursorKind::Default;
+      }
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
+      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+    }
     if (sidebar_mode == SidebarMode::Plugin) {
       const auto list_layout =
           ComputePluginSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.plugin.items.size());
@@ -403,7 +420,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kWorkspaceBottomPanelHeaderHeight);
-    if (ActiveTerminalTab() != nullptr && Contains(panel_header, x, y)) {
+    if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr && Contains(panel_header, x, y)) {
       if (Contains(BottomPanelTerminalNewTabRect(panel_header), x, y)) {
         return CursorKind::Pointer;
       }
@@ -414,19 +431,33 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
-    if (ActiveTerminalTab() != nullptr) {
-      const std::size_t line_count =
-          ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : 0;
+    const std::size_t line_count =
+        BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr
+            ? ActiveTerminalTab()->session.LineCount()
+            : BottomPanelShowsOutput()
+                ? (OutputChannelEntries(context_.current_project_state.panel.output.channel_id) != nullptr
+                       ? OutputChannelEntries(context_.current_project_state.panel.output.channel_id)->size()
+                       : 0)
+                : BottomPanelShowsChat()
+                    ? (conversation_registry_.GetConversation(
+                               context_.current_project_state.panel.chat.conversation_id) != nullptr
+                           ? conversation_registry_
+                                 .GetConversation(context_.current_project_state.panel.chat.conversation_id)
+                                 ->messages.size()
+                           : 0)
+                    : 0;
+    if (line_count > 0) {
       const auto panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
       if (panel_layout.scroll.vertical_scrollbar.has_value() &&
           Contains(panel_layout.scroll.vertical_scrollbar->track, x, y)) {
         return CursorKind::Default;
       }
     }
-    if (context_.current_project_state.panel.command_mode && Contains(BottomPanelCommandPromptRect(layout), x, y)) {
+    if ((context_.current_project_state.panel.command_mode || BottomPanelShowsChat()) &&
+        Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }
-    if (ActiveTerminalTab() != nullptr &&
+    if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr &&
         y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
       if (TerminalUrlAtPoint(x, y).has_value()) {
         return CursorKind::Pointer;

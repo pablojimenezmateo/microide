@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <filesystem>
+
 namespace microide::workspace {
 
 // Secret storage: secure storage for credentials, tokens, etc.
@@ -29,12 +31,15 @@ class SecretStorage {
   // List all secret keys.
   std::vector<std::string> Keys() const;
 
-  // Clear all secrets.
+ // Clear all secrets.
   void Clear();
 
  private:
-  // In production, this would use OS credential stores (keychain on macOS, credential manager
-  // on Windows, pass on Linux). For now, we use an in-memory unencrypted map.
+  bool Load();
+  bool Save() const;
+
+  // Until we add OS credential manager backends, secrets live in a per-user local store.
+  std::filesystem::path storage_path_;
   std::unordered_map<std::string, std::string> storage_;
 };
 

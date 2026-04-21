@@ -204,6 +204,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
+  src/workspace/WorkspaceShellTooling.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp
@@ -215,6 +216,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp
   src/workspace/WorkspaceOutputChannels.cpp
+  src/workspace/WorkspaceTaskRuntime.cpp
+  src/workspace/WorkspaceAiRuntime.cpp
   src/workspace/WorkspacePersistenceFormat.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
@@ -362,6 +365,8 @@ add_executable(microide_tests
   tests/WorkspaceShellTerminalTests.cpp
   tests/ContributionRegistryTests.cpp
   tests/Phase3Tests.cpp
+  tests/Phase4Tests.cpp
+  tests/Phase5Tests.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")

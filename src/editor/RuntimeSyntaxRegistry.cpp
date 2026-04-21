@@ -747,6 +747,13 @@ SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std
   };
 }
 
+std::string DetectFiletype(const std::filesystem::path& path, const std::vector<std::string>& lines) {
+  const Registry& registry = GetRegistry();
+  const std::uint32_t definition_id = DetectDefinitionId(registry, path, &lines, {});
+  const Definition* definition = DefinitionById(registry, definition_id);
+  return definition == nullptr ? std::string{} : definition->filetype;
+}
+
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,

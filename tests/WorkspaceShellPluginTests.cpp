@@ -54,6 +54,266 @@ exit 0
       std::filesystem::perm_options::replace);
 }
 
+bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+  return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
+    return SDL_HasRectIntersectionFloat(&rect, &target);
+  });
+}
+
+void TestWorkspaceShellPluginKeybindingsDispatchCommands() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "plugin keybinding\n");
+
+  WritePluginInit(
+      plugins_root, "keybindings",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "keybindings",
+  setup = function(ctx)
+    ctx.commands.add("keybindings.log", function(ctx, args)
+      ctx.log("keybinding-fired")
+    end)
+    ctx.keybindings.add({
+      id = "log",
+      action = "keybindings.log",
+      key = "Ctrl+Shift+L",
+      context = "editor"
+    })
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "plugin keybinding fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(
+             shell, SDLK_L, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "pressing a contributed editor keybinding should be handled");
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() ==
+                 "keybindings: keybinding-fired",
+         "contributed editor keybindings should dispatch plugin commands through the shell");
+}
+
+void TestWorkspaceShellPluginStatusItemsRenderAndRedraw() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "plugin status\n");
+
+  WritePluginInit(
+      plugins_root, "status",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "status",
+  setup = function(ctx)
+    ctx.status.add({
+      id = "counter",
+      text = "0",
+      tooltip = "Counter is 0",
+      alignment = "right",
+    })
+    ctx.commands.add("status.tick", function(ctx, args)
+      ctx.status.update("counter", {
+        text = "1",
+        tooltip = "Counter is 1",
+      })
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "plugin status fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto initial_items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
+  Expect(initial_items.size() == 1 && initial_items.front().item.text == "0",
+         "status items should render contributed status text in the breadcrumb row");
+  (void)WorkspaceShellTestAccess::HandleMouseMotion(
+      shell, initial_items.front().rect.x + initial_items.front().rect.w * 0.5f,
+      initial_items.front().rect.y + initial_items.front().rect.h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredStatusTooltipLabel(shell) == "Counter is 0",
+         "hovering a contributed status item should expose its tooltip");
+
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "status.tick"),
+         "status update command should execute");
+
+  const auto updated_items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
+  Expect(updated_items.size() == 1 && updated_items.front().item.text == "1",
+         "status item updates should be reflected in the live breadcrumb row");
+  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  Expect(redraw.full || !redraw.rects.empty(),
+         "status updates should request a visible redraw");
+}
+
+void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      plugins_root, "save-pipeline",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "save-pipeline",
+  setup = function(ctx)
+    ctx.save_participants.add("rename-alpha", function(buffer)
+      return {
+        text = buffer.text:gsub("alpha", "beta")
+      }
+    end)
+    ctx.formatters.add({
+      id = "todo-uppercase",
+      language_id = "todo",
+      label = "TODO Uppercase",
+      command = { "sh", "-c", "tr '[:lower:]' '[:upper:]'" }
+    })
+  end
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "save-pipeline", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\b[A-Z_]+\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "save pipeline fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText("alpha\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "saving an editor buffer should run the host save pipeline");
+  Expect(ReadFile(source) == "BETA\n",
+         "save participants should run before formatters and persist the transformed text");
+}
+
+void TestWorkspaceShellPhase4RegistriesReloadWithPlugins() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "phase4 registries\n");
+
+  WritePluginInit(
+      plugins_root, "phase4-registries",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase4-registries",
+  setup = function(ctx)
+    ctx.scm.add("sample", "Sample SCM")
+    ctx.annotations.add({
+      id = "blame",
+      label = "Plugin Blame",
+      type = "blame",
+      language_id = "markdown"
+    })
+    ctx.auth.add("github", "GitHub")
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "phase4 registry fixture should open the project");
+  Expect(WorkspaceShellTestAccess::ScmProviders(shell).size() == 1 &&
+             WorkspaceShellTestAccess::ScmProviders(shell).front().id ==
+                 "phase4-registries.sample",
+         "opening a project should rebuild the shell SCM registry from plugin contributions");
+  Expect(WorkspaceShellTestAccess::AnnotationProviders(shell).size() == 1 &&
+             WorkspaceShellTestAccess::AnnotationProviders(shell).front().language_id ==
+                 "markdown",
+         "opening a project should rebuild the annotation registry from plugin contributions");
+  const auto* auth_provider =
+      WorkspaceShellTestAccess::AuthProvider(shell, "phase4-registries.github");
+  Expect(auth_provider != nullptr && auth_provider->label == "GitHub",
+         "opening a project should rebuild the auth provider registry from plugin contributions");
+}
+
+void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "virtual document fixture\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "virtual document fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RegisterVirtualDocument(
+      shell,
+      microide::workspace::VirtualDocumentSpec{
+          .uri = "virtual://preview/README.todo",
+          .language_id = "todo",
+          .content = "alpha\n",
+          .editable = false,
+          .plugin_id = "host-test",
+      });
+
+  Expect(WorkspaceShellTestAccess::OpenVirtualDocument(shell, "virtual://preview/README.todo"),
+         "virtual documents should be openable through the live tab model");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).lines().empty() &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "alpha",
+         "opening a virtual document should populate an editor tab with the provided content");
+  Expect(!WorkspaceShellTestAccess::HandleTextInput(shell, "beta"),
+         "read-only virtual documents should reject direct editor text input");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "alpha",
+         "read-only virtual documents should remain unchanged after rejected input");
+
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  WorkspaceShellTestAccess::UpdateVirtualDocumentContent(shell, "virtual://preview/README.todo",
+                                                         "beta\n");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "beta",
+         "updating a virtual document should refresh any open tab backed by that URI");
+  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(AnyRectIntersects(redraw.rects, layout.editor_surface),
+         "virtual document updates should redraw the editor surface");
+}
+
 void TestWorkspaceShellLoadsPluginsAndRunsBufferHooks() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1054,6 +1314,16 @@ void TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches() {
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/PluginKeybindingsDispatchCommands",
+          TestWorkspaceShellPluginKeybindingsDispatchCommands);
+  AddTest(tests, "WorkspaceShell/PluginStatusItemsRenderAndRedraw",
+          TestWorkspaceShellPluginStatusItemsRenderAndRedraw);
+  AddTest(tests, "WorkspaceShell/SavePipelineRunsParticipantsBeforeFormatter",
+          TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter);
+  AddTest(tests, "WorkspaceShell/Phase4RegistriesReloadWithPlugins",
+          TestWorkspaceShellPhase4RegistriesReloadWithPlugins);
+  AddTest(tests, "WorkspaceShell/VirtualDocumentsOpenAndRefresh",
+          TestWorkspaceShellVirtualDocumentsOpenAndRefresh);
   AddTest(tests, "WorkspaceShell/LoadsPluginsAndRunsBufferHooks",
           TestWorkspaceShellLoadsPluginsAndRunsBufferHooks);
   AddTest(tests, "WorkspaceShell/PluginsReloadCommandRefreshesCommands",

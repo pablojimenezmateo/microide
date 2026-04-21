@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -40,6 +41,9 @@ class KeyInputCoordinator {
     std::function<void(bool)> dismiss_prompt_surface;
     std::function<void()> confirm_prompt_surface;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
+    std::function<bool(std::string_view, const std::vector<std::string>&, ActionSource)>
+        execute_command_name;
+    std::function<std::vector<ResolvedKeybinding>()> resolved_keybindings;
     std::function<bool()> open_untitled_tab;
     std::function<bool()> active_tab_is_compare;
     std::function<bool()> active_tab_is_merge;
@@ -82,6 +86,11 @@ class KeyInputCoordinator {
     std::function<void()> reveal_selected_problems_sidebar_line;
     std::function<bool()> open_selected_problem_sidebar_item;
     std::function<bool()> refresh_problems_sidebar;
+    std::function<void(int)> move_tests_sidebar_selection;
+    std::function<void()> reveal_selected_tests_sidebar_line;
+    std::function<bool()> open_selected_test_sidebar_item;
+    std::function<bool()> run_selected_test_sidebar_item;
+    std::function<bool()> refresh_tests_sidebar;
     std::function<void(int)> move_plugin_sidebar_selection;
     std::function<void()> reveal_selected_plugin_sidebar_line;
     std::function<bool()> open_selected_plugin_sidebar_item;
@@ -103,6 +112,16 @@ class KeyInputCoordinator {
     std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
     std::function<void()> request_close_active_tab;
     std::function<void()> reveal_active_compare_selection;
+    std::function<bool(std::string*)> show_completion_overlay;
+    std::function<bool()> apply_selected_completion;
+    std::function<bool(std::string*)> show_code_actions_overlay;
+    std::function<bool()> execute_selected_code_action;
+    std::function<bool()> show_task_picker_overlay;
+    std::function<bool()> run_selected_task;
+    std::function<bool(std::string)> start_chat_request;
+    std::function<bool(std::string*)> request_inline_completion;
+    std::function<bool()> accept_inline_completion;
+    std::function<void()> dismiss_inline_completion;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&,
                        const std::vector<std::string>&,
@@ -130,6 +149,8 @@ class KeyInputCoordinator {
                            SDL_Keymod modifiers,
                            bool active_compare_tab,
                            bool active_merge_tab);
+  KeybindingContext ActiveKeybindingContext() const;
+  bool DispatchResolvedKeybinding(const ResolvedKeybinding& binding, ActionSource source);
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);

@@ -41,6 +41,7 @@ class ConversationRegistry {
 
   // Get conversation by id.
   Conversation* GetConversation(const std::string& id);
+  const Conversation* GetConversation(const std::string& id) const;
 
   // Add message to conversation.
   void AddMessage(const std::string& conversation_id, const Message& message);

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <optional>
 
+#include "editor/TextLayout.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
@@ -112,7 +113,7 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
       NormalizeEditorSplitTree(*editor_tab);
     }
   }
-  if (ActiveTerminalTab() != nullptr) {
+  if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
   float mouse_x = last_mouse_x_;
@@ -208,6 +209,59 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
+    const auto draw_review_comment_markers =
+        [this, renderer](const editor::TextViewport& viewport, const SDL_FRect& pane_rect) {
+          if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder()) {
+            return;
+          }
+
+          const std::string uri = viewport.path().generic_string();
+          std::vector<int> marked_lines;
+          for (const ReviewThread& thread : review_comments_registry_.GetThreads(uri)) {
+            if (thread.line > 0 &&
+                std::find(marked_lines.begin(), marked_lines.end(), thread.line) == marked_lines.end()) {
+              marked_lines.push_back(thread.line);
+            }
+          }
+          if (marked_lines.empty()) {
+            for (std::size_t line_index = viewport.scroll_line();
+                 line_index < std::min(viewport.lines().size(),
+                                       viewport.scroll_line() + viewport.visible_lines());
+                 ++line_index) {
+              if (!review_comments_registry_
+                       .GetComments(uri, static_cast<int>(line_index + 1))
+                       .empty()) {
+                marked_lines.push_back(static_cast<int>(line_index + 1));
+              }
+            }
+          }
+          if (marked_lines.empty()) {
+            return;
+          }
+
+          const editor::EditorViewMetrics metrics =
+              editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, pane_rect);
+          for (std::size_t line_index = viewport.scroll_line();
+               line_index < std::min(viewport.lines().size(),
+                                     viewport.scroll_line() + viewport.visible_lines());
+               ++line_index) {
+            const int one_based_line = static_cast<int>(line_index + 1);
+            if (std::find(marked_lines.begin(), marked_lines.end(), one_based_line) ==
+                marked_lines.end()) {
+              continue;
+            }
+            const float y =
+                metrics.first_line_y +
+                static_cast<float>(line_index - viewport.scroll_line()) * metrics.line_height;
+            const SDL_FRect marker_rect = SDL_FRect{
+                pane_rect.x + metrics.gutter_width - 6.0f,
+                y + std::max(1.0f, (metrics.line_height - 6.0f) * 0.5f),
+                3.0f,
+                6.0f,
+            };
+            DrawFilledRect(renderer, marker_rect, theme_.accent);
+          }
+        };
     const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
     editor::TextViewport* active_viewport = ActiveEditorViewport();
     if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
@@ -244,6 +298,40 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport));
+      draw_review_comment_markers(*viewport, pane.rect);
+
+      if (pane.active && context_.current_project_state.inline_completion.visible &&
+          !context_.current_project_state.inline_completion.text.empty()) {
+        const std::size_t line_index = context_.current_project_state.inline_completion.start_line;
+        const auto& lines = viewport->lines();
+        if (line_index < lines.size() && line_index >= viewport->scroll_line() &&
+            line_index < viewport->scroll_line() + viewport->visible_lines()) {
+          const editor::EditorViewMetrics metrics =
+              editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
+          const std::size_t visual_column = editor::TextLayout::VisualColumnForTextColumn(
+              lines[line_index], context_.current_project_state.inline_completion.start_column,
+              viewport->tab_size());
+          if (visual_column >= viewport->horizontal_scroll() &&
+              visual_column < viewport->horizontal_scroll() + viewport->visible_columns()) {
+            const float draw_x =
+                metrics.text_x +
+                static_cast<float>(visual_column - viewport->horizontal_scroll()) *
+                    text_renderer_.CharWidth();
+            const float draw_y =
+                metrics.first_line_y +
+                static_cast<float>(line_index - viewport->scroll_line()) * metrics.line_height;
+            std::string ghost_text = context_.current_project_state.inline_completion.text;
+            if (const std::size_t newline = ghost_text.find('\n'); newline != std::string::npos) {
+              ghost_text.erase(newline);
+            }
+            text_renderer_.DrawStringOn(
+                renderer, draw_x, draw_y, theme_.text_disabled,
+                line_index == viewport->cursor_line() ? theme_.row_highlight
+                                                      : theme_.editor_background,
+                ghost_text);
+          }
+        }
+      }
     }
   }
 

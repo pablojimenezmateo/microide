@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-20.
+Reviewed on 2026-04-21.
 
 This is the single source of truth for:
 
@@ -299,6 +299,12 @@ Current state:
   - `PersistedUserConfigState` now carries `settings` (id→value pairs) and
     `disabled_keybinding_ids`; `PersistedProjectConfigState` now carries `settings` and
     `sidebar_policies`; all fields round-trip through the existing line-based serialisation format
+  - `WorkspaceKeyInputCoordinator` now resolves contributed and user-disabled keybindings at
+    runtime instead of using a hardcoded shortcut path
+  - `WorkspaceMenuCoordinator` and the shell chrome now surface contributed menu items,
+    ordered sidebar views, and compact status items on the live UI path
+  - persistence and plugin callback wiring now restore setting values, sidebar policy, and
+    status redraw behavior end to end
   - all new registries have full test coverage in `tests/ContributionRegistryTests.cpp`
 
 Open work:
@@ -307,17 +313,6 @@ Open work:
 - validate broader native file-watch coverage beyond the current Linux-backed asset watcher once
   target-host build and runtime validation are available; until then snapshot fallback remains
   the correct baseline for macOS and Windows hosts
-- wire `WorkspaceKeybindingRegistry` into `WorkspaceKeyInputCoordinator` so plugin-contributed
-  and user-disabled bindings take effect at runtime (currently the registry provides data but
-  the coordinator still uses its own hardcoded key dispatch)
-- wire `WorkspaceSettingsRegistry` and `PersistedUserConfigState.settings` into the persistence
-  coordinator so plugin-declared setting values are read back via `Callbacks::get_setting`
-- wire `WorkspaceStatusRegistry` into the shell render path so status bar items from plugins
-  are displayed in the bottom chrome
-- wire `ContributedMenuItems` into the menu coordinator so plugin menu entries appear in the
-  menu bar at runtime
-- wire `SidebarViewPolicy` from persisted project config into `OrderedSidebarViews` so user hide
-  and reorder choices survive session restarts
 - add async or background plugin task surfaces only if real plugin workloads require them
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in
   product features even when plugins can extend around them
@@ -328,7 +323,7 @@ Open work:
   - `util/JsonValue.*` implements a recursive JSON parser and serializer for LSP communication
   - `workspace/WorkspaceLspClient.*` implements a synchronous JSON-RPC 2.0 client with
     initialize, didOpen, didChange, didSave, didClose notifications and textDocument/hover,
-    textDocument/completion, textDocument/codeAction requests
+    textDocument/completion, textDocument/codeAction, and textDocument/formatting requests
   - `workspace/WorkspaceLspManager.*` manages multiple LSP servers, one per language_id
   - `workspace/WorkspaceDapManager.*` manages multiple debug adapters, one per debugger type
   - `workspace/WorkspaceFormatterRegistry.*` stores declarative formatter specs (language_id,
@@ -348,19 +343,31 @@ Open work:
     `ctx.completion` (add), `ctx.code_actions` (add), `ctx.tasks` (add), `ctx.tools` (add),
     `ctx.debuggers` (add), `ctx.tests` (add); corresponding C++ accessors are available to
     workspace coordinators
-  - all new registries have full test coverage in `tests/Phase3Tests.cpp`
+  - `PluginHost` now exposes runtime query or execution paths for save participants, completion
+    providers, code-action providers, and test providers
+  - `workspace/WorkspaceLspClient.*` now supports `textDocument/formatting`
+  - the editor save path now runs save participants before formatter execution and writes the
+    transformed buffer back into the viewport before disk save
+  - `WorkspaceToolDownloader::Download(...)` is no longer a stub and now validates cached or
+    local file installs
+  - built-in commands, menus, and keybindings now surface completion, code actions, tasks, test
+    discovery or execution, output channels, and first-pass debug start or stop through live shell
+    state
+  - completion and code actions now render through dedicated host-owned editor overlays, while
+    task and test flows reuse the bottom panel and Tests sidebar instead of inventing parallel UI
+  - runtime and shell wiring are covered in `tests/PluginHostTests.cpp` and
+    `tests/WorkspaceShellPluginTests.cpp`, in addition to `tests/Phase3Tests.cpp`
 
 Open work:
 
-- wire `WorkspaceLspManager` into the formatter registry so document formatting runs via LSP on save
-- implement background task execution for formatters and save participants
-- wire `WorkspaceCompletionRegistry` into the command-prompt coordinator and editor completion
-- wire `WorkspaceCodeActionRegistry` into the editor code-action popups
-- wire `WorkspaceTaskRegistry` into a task runner so plugins can contribute runnable tasks
-- implement tool download via `WorkspaceToolDownloader` for `WorkspaceToolRegistry`
-- wire `WorkspaceTestController` into the editor gutter and test sidebar
-- wire `WorkspaceDapManager` into a debugger session UI
-- validate real LSP and DAP server communication once wire-up is in place
+- validate real LSP and DAP server communication before promising broader language-server or
+  debugger coverage
+- keep the completion and code-action overlays host-owned and minimal; do not fork the command
+  prompt into a second editor interaction model
+- extend test UX only after real controller state exists for richer tree, gutter, and per-test
+  debug workflows
+- add remote tool-download transports only when a real workflow needs them; the shipped path is
+  cache-backed local install plus SHA validation
 
 - Phase 4 SCM, review, and advanced provider surfaces now shipped:
   - `workspace/WorkspaceScmRegistry.*` manages source control provider registrations
@@ -371,20 +378,28 @@ Open work:
   - `workspace/WorkspaceReviewComments.*` manages inline code review comments and discussion
     threads with state tracking
   - `workspace/WorkspaceAuthProvider.*` manages authentication providers and active sessions
-  - `workspace/WorkspaceSecretStorage.*` provides secure credential storage (currently in-memory;
-    in production uses OS credential managers)
+  - `workspace/WorkspaceSecretStorage.*` now persists host-managed secrets in the config
+    directory; it is still not backed by an OS credential manager
   - `PluginHost` gains four new Lua tables: `ctx.scm` (add), `ctx.annotations` (add),
     `ctx.auth` (add); virtual documents and review comments are host-managed
+  - `WorkspaceShell` rebuilds SCM, annotation, and auth registries from plugin contributions on
+    reload, and virtual documents now open and refresh in the live tab model
+  - the Git sidebar now shows SCM and auth summary lines, review comments render as gutter markers
+    in editor and virtual-document views, and auth login, refresh, or logout now flow through
+    built-in commands plus host-owned output channels
+  - direct coverage now exists in `tests/WorkspaceShellPluginTests.cpp` and
+    `tests/Phase4Tests.cpp`
 
 Open work:
 
-- wire `WorkspaceScmRegistry` into a source control sidebar
-- wire `WorkspaceAnnotationRegistry` into the editor gutter and margin
-- wire `WorkspaceVirtualDocument` into tab and editor support
-- wire `WorkspaceReviewComments` into inline diff comment UI
-- implement `WorkspaceAuthProvider` session flows (login/logout UI)
-- implement OS credential manager backend for `WorkspaceSecretStorage`
-- validate GitLens-like and GitHub-review-like workflows once wiring is in place
+- keep the built-in Git compare and stage flows host-owned until a cohesive provider-driven source
+  control design is ready
+- extend review UX from gutter markers to richer thread panels, compose, edit, and resolve only
+  after location mapping and persistence rules are stable
+- add an OS credential backend for `WorkspaceSecretStorage` when the deployment targets and secure
+  storage contract are ready
+- validate GitLens-like and GitHub-review-like workflows against the current provider seams before
+  broadening them
 
 - Phase 5 AI platform is now shipped:
   - `workspace/WorkspaceAiProvider.*` manages language model provider registrations (cloud, local,
@@ -402,17 +417,26 @@ Open work:
   - `PluginHost` gains three new Lua tables: `ctx.ai_providers` (add),
     `ctx.external_agents` (add), `ctx.mcp_tools` (add); conversations and inline completions
     are host-managed
+  - `workspace/WorkspaceAiRuntime.*` now owns request IDs, cancellation, background execution,
+    and shell wake delivery for external-agent requests
+  - the live shell now supports bottom-panel chat, active conversation tracking, ghost-text inline
+    completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
+    commands
+  - first-pass external-agent execution is wired through stdio subprocesses, and MCP tool
+    invocation flows through host-owned permission-checked command surfaces and output channels
+  - dedicated end-to-end coverage now lives in `tests/Phase5Tests.cpp`
 
 Open work:
 
-- wire `WorkspaceAiProvider` into provider and model selection UI
-- wire `WorkspaceInlineCompletion` into editor inline hint rendering
-- wire `WorkspaceConversation` into a sidebar chat interface with message input
-- implement external agent protocol handlers (HTTP, stdio, WebSocket)
-- implement MCP protocol client for tool use
-- wire `WorkspaceAiContext` into completion and chat requests for bounded context
-- implement context cancellation and streaming response handling
-- validate real LLM workflows (completion, chat, inline actions) once wiring is in place
+- keep provider and model selection simple until the request runtime and shell-owned conversation
+  flow need more depth
+- broaden the external-agent runtime beyond stdio only when a real HTTP, WebSocket, or ACP-backed
+  integration requires it
+- add richer streamed updates, tool-permission prompts, and broader `WorkspaceAiContext`
+  collection from diagnostics, SCM, and search as follow-on work, not as a reason to rework the
+  current runtime shape
+- validate real LLM workflows against the shipped inline completion and chat surfaces before
+  expanding the UX
 
 ### 2. Terminal Hardening
 
@@ -483,10 +507,9 @@ Open work:
 
 These are not current project work unless deliberately promoted into their own phase:
 
-- debugging
+- full debugger UI beyond first-pass start or stop and output-channel plumbing
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - cloud or collaboration features
-- built-in AI or chat surfaces
 - recent-project and recent-file affordances
 - soft wrap
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started

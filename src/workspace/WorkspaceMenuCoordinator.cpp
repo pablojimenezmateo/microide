@@ -125,6 +125,9 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
     args.emplace_back(item.args[i]);
   }
   CloseMenuBar();
+  if (!item.command_name.empty()) {
+    return operations_.execute_command_name(item.command_name, args, ActionSource::Menu);
+  }
   return operations_.execute_action(item.action, args, ActionSource::Menu);
 }
 
@@ -257,6 +260,12 @@ MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
+              },
+          .execute_command_name =
+              [this](std::string_view command_name,
+                     const std::vector<std::string>& args,
+                     ActionSource source) {
+                return ExecuteCommandName(command_name, args, source);
               },
       });
 }

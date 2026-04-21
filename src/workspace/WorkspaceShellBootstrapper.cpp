@@ -56,6 +56,14 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell](Uint32 type) { return shell->project_search_runtime_.HandlesEvent(type); },
           .consume_project_search_updates =
               [shell]() { shell->ConsumeProjectSearchUpdates(); },
+          .task_runtime_handles_event =
+              [shell](Uint32 type) { return shell->task_runtime_.HandlesEvent(type); },
+          .consume_task_runtime_updates =
+              [shell]() { shell->ConsumeTaskRuntimeUpdates(); },
+          .ai_runtime_handles_event =
+              [shell](Uint32 type) { return shell->ai_runtime_.HandlesEvent(type); },
+          .consume_ai_runtime_updates =
+              [shell]() { shell->ConsumeAiRuntimeUpdates(); },
           .request_focused_editor_redraw =
               [shell]() { shell->RequestFocusedEditorRedraw(); },
           .consume_terminal_session_updates =

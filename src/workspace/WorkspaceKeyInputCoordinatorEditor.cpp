@@ -313,6 +313,14 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     return false;
   }
 
+  if (event.key == SDLK_ESCAPE) {
+    operations_.dismiss_inline_completion();
+    return false;
+  }
+  if (event.key == SDLK_TAB && operations_.accept_inline_completion()) {
+    return true;
+  }
+
   switch (event.key) {
     case SDLK_TAB: {
       const bool was_dirty = viewport->dirty();

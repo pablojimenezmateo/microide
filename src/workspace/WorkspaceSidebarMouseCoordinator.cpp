@@ -43,6 +43,9 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (sidebar_mode == SidebarMode::Problems) {
     return HandleProblemsButtonDown(event, layout, local_y);
   }
+  if (sidebar_mode == SidebarMode::Tests) {
+    return HandleTestsButtonDown(event, layout, local_y);
+  }
   if (sidebar_mode == SidebarMode::Plugin) {
     return HandlePluginButtonDown(event, layout, local_y);
   }
@@ -190,6 +193,31 @@ bool SidebarMouseCoordinator::HandleProblemsButtonDown(const SDL_Event& event,
   operations_.reveal_selected_problems_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
     operations_.open_selected_problem_sidebar_item();
+  }
+  return true;
+}
+
+bool SidebarMouseCoordinator::HandleTestsButtonDown(const SDL_Event& event,
+                                                    const WorkspaceLayout& layout,
+                                                    float local_y) {
+  if (local_y < 0.0f) {
+    return true;
+  }
+
+  const auto list_layout =
+      operations_.compute_tests_sidebar_list_layout(layout.sidebar, state_.sidebar.tests.entries.size());
+  const auto item_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+  if (!item_index.has_value() || *item_index < 0 ||
+      *item_index >= static_cast<int>(state_.sidebar.tests.entries.size())) {
+    return true;
+  }
+
+  state_.sidebar.tests.selected_index = static_cast<std::size_t>(*item_index);
+  operations_.reveal_selected_tests_sidebar_line();
+  if (event.button.button == SDL_BUTTON_LEFT) {
+    operations_.open_selected_test_sidebar_item();
+  } else if (event.button.button == SDL_BUTTON_MIDDLE) {
+    operations_.run_selected_test_sidebar_item();
   }
   return true;
 }
@@ -350,6 +378,14 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
           .reveal_selected_problems_sidebar_line =
               [this]() { RevealSelectedProblemsSidebarLine(); },
           .open_selected_problem_sidebar_item = [this]() { return OpenSelectedProblemSidebarItem(); },
+          .compute_tests_sidebar_list_layout =
+              [this](const SDL_FRect& rect, std::size_t count) {
+                return ComputeTestsSidebarListLayout(rect, count);
+              },
+          .reveal_selected_tests_sidebar_line =
+              [this]() { RevealSelectedTestsSidebarLine(); },
+          .open_selected_test_sidebar_item = [this]() { return OpenSelectedTestSidebarItem(); },
+          .run_selected_test_sidebar_item = [this]() { return RunSelectedTestSidebarItem(); },
           .compute_plugin_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputePluginSidebarListLayout(rect, count);

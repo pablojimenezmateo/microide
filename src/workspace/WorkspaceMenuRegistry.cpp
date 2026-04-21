@@ -16,11 +16,12 @@ MenuItemSpec MenuItem(ActionId action,
                       std::size_t arg_count = 0,
                       bool checkable = false,
                       MenuId submenu = MenuId::None) {
-  return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable, submenu};
+  return MenuItemSpec{action, label, accelerator, args, arg_count, false, checkable, submenu, {}};
 }
 
 MenuItemSpec MenuSeparator() {
-  return MenuItemSpec{ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None};
+  return MenuItemSpec{
+      ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None, {}};
 }
 
 }  // namespace
@@ -48,9 +49,22 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CopySelectionWithContext),
       MenuItem(ActionId::PasteClipboard),
       MenuItem(ActionId::SelectAll),
+      MenuSeparator(),
+      MenuItem(ActionId::Completion),
+      MenuItem(ActionId::CodeActions),
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
+      MenuSeparator(),
+      MenuItem(ActionId::SidebarShow, "Source Control", {},
+               std::array<std::string_view, 2>{"git", {}}, 1, true),
+      MenuItem(ActionId::SidebarShow, "Problems", {},
+               std::array<std::string_view, 2>{"problems", {}}, 1, true),
+      MenuItem(ActionId::SidebarShow, "Tests", {},
+               std::array<std::string_view, 2>{"tests", {}}, 1, true),
+      MenuSeparator(),
+      MenuItem(ActionId::ShowOutput),
+      MenuItem(ActionId::ShowChat),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}},
                1),

@@ -100,6 +100,12 @@ void SidebarCoordinator::ShowGit() {
   RevealSelectedGitLine();
 }
 
+void SidebarCoordinator::ShowTests() {
+  RefreshTests();
+  ShowMode(SidebarMode::Tests, false);
+  RevealSelectedTestsLine();
+}
+
 bool SidebarCoordinator::ShowPlugin(std::string_view id, bool temporary) {
   const auto* provider = plugin_runtime_.Host().FindSidebarProvider(id);
   if (provider == nullptr) {
@@ -177,6 +183,8 @@ void SidebarCoordinator::RestorePrevious() {
     RefreshPlugin();
   } else if (ActiveSidebarMode() == SidebarMode::Problems) {
     RefreshProblems();
+  } else if (ActiveSidebarMode() == SidebarMode::Tests) {
+    RefreshTests();
   }
   operations_.request_sidebar_redraw();
 }
@@ -188,6 +196,7 @@ void SidebarCoordinator::RefreshProjectFiles() {
   state_.file_finder.SetIndex(&state_.file_index);
   RefreshGit();
   RefreshProblems();
+  RefreshTests();
   RefreshPlugin();
   if (state_.sidebar.visible) {
     operations_.request_sidebar_redraw();
@@ -260,10 +269,18 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeProblemsSidebarListLayout(rect, count);
               },
+          .compute_tests_sidebar_list_layout =
+              [this](const SDL_FRect& rect, std::size_t count) {
+                return ComputeTestsSidebarListLayout(rect, count);
+              },
           .compute_plugin_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputePluginSidebarListLayout(rect, count);
               },
+          .refresh_tests_sidebar_state = [this]() { return RefreshTestsSidebar(); },
+          .run_tests = [this](const std::vector<std::string>& test_ids) {
+            return RunTests(test_ids, nullptr);
+          },
       });
 }
 
@@ -285,6 +302,10 @@ void WorkspaceShell::ShowProblemsSidebar() {
 
 void WorkspaceShell::ShowGitSidebar() {
   MakeSidebarCoordinator().ShowGit();
+}
+
+void WorkspaceShell::ShowTestsSidebar() {
+  MakeSidebarCoordinator().ShowTests();
 }
 
 bool WorkspaceShell::ShowPluginSidebar(std::string_view id, bool temporary) {
@@ -315,6 +336,76 @@ bool WorkspaceShell::RefreshProblemsSidebar() {
   return MakeSidebarCoordinator().RefreshProblems();
 }
 
+bool WorkspaceShell::RefreshTestsSidebar() {
+  const std::string previous_id =
+      context_.current_project_state.sidebar.tests.selected_index <
+              context_.current_project_state.sidebar.tests.entries.size()
+          ? context_.current_project_state.sidebar.tests
+                .entries[context_.current_project_state.sidebar.tests.selected_index]
+                .id
+          : std::string{};
+
+  context_.current_project_state.sidebar.tests.entries.clear();
+  context_.current_project_state.sidebar.tests.error.clear();
+  for (const TestItem& item : test_controller_.TestItems()) {
+    std::string status = "queued";
+    const auto& results = test_controller_.TestResults(item.id);
+    if (!results.empty()) {
+      switch (results.back().state) {
+        case TestResultState::Queued:
+          status = "queued";
+          break;
+        case TestResultState::InProgress:
+          status = "running";
+          break;
+        case TestResultState::Passed:
+          status = "passed";
+          break;
+        case TestResultState::Failed:
+          status = "failed";
+          break;
+        case TestResultState::Skipped:
+          status = "skipped";
+          break;
+        case TestResultState::Errored:
+          status = "errored";
+          break;
+      }
+    }
+    context_.current_project_state.sidebar.tests.entries.push_back(TestsSidebarEntry{
+        .id = item.id,
+        .label = item.label,
+        .file = item.file,
+        .line = item.line,
+        .parent_id = item.parent_id,
+        .status = status,
+    });
+  }
+
+  if (!previous_id.empty()) {
+    for (std::size_t i = 0; i < context_.current_project_state.sidebar.tests.entries.size(); ++i) {
+      if (context_.current_project_state.sidebar.tests.entries[i].id == previous_id) {
+        context_.current_project_state.sidebar.tests.selected_index = i;
+        break;
+      }
+    }
+  }
+  if (!context_.current_project_state.sidebar.tests.entries.empty()) {
+    context_.current_project_state.sidebar.tests.selected_index =
+        std::min(context_.current_project_state.sidebar.tests.selected_index,
+                 context_.current_project_state.sidebar.tests.entries.size() - 1);
+  } else {
+    context_.current_project_state.sidebar.tests.selected_index = 0;
+  }
+
+  RevealSelectedTestsSidebarLine();
+  if (context_.current_project_state.sidebar.visible &&
+      ActiveSidebarMode() == SidebarMode::Tests) {
+    RequestSidebarRedraw();
+  }
+  return !context_.current_project_state.sidebar.tests.entries.empty();
+}
+
 bool WorkspaceShell::RefreshPluginSidebar() {
   return MakeSidebarCoordinator().RefreshPlugin();
 }
@@ -325,6 +416,10 @@ void WorkspaceShell::RevealSelectedGitSidebarLine() {
 
 void WorkspaceShell::RevealSelectedProblemsSidebarLine() {
   MakeSidebarCoordinator().RevealSelectedProblemsLine();
+}
+
+void WorkspaceShell::RevealSelectedTestsSidebarLine() {
+  MakeSidebarCoordinator().RevealSelectedTestsLine();
 }
 
 void WorkspaceShell::RevealSelectedTreeSidebarLine() {
@@ -343,6 +438,10 @@ void WorkspaceShell::MoveProblemsSidebarSelection(int delta) {
   MakeSidebarCoordinator().MoveProblemsSelection(delta);
 }
 
+void WorkspaceShell::MoveTestsSidebarSelection(int delta) {
+  MakeSidebarCoordinator().MoveTestsSelection(delta);
+}
+
 void WorkspaceShell::MovePluginSidebarSelection(int delta) {
   MakeSidebarCoordinator().MovePluginSelection(delta);
 }
@@ -355,8 +454,16 @@ bool WorkspaceShell::OpenSelectedProblemSidebarItem() {
   return MakeSidebarCoordinator().OpenProblemItem();
 }
 
+bool WorkspaceShell::OpenSelectedTestSidebarItem() {
+  return MakeSidebarCoordinator().OpenTestItem();
+}
+
 bool WorkspaceShell::OpenSelectedPluginSidebarItem() {
   return MakeSidebarCoordinator().OpenPluginItem();
+}
+
+bool WorkspaceShell::RunSelectedTestSidebarItem() {
+  return MakeSidebarCoordinator().RunTestItem();
 }
 
 bool WorkspaceShell::CanStageAllGitSidebarEntries() const {

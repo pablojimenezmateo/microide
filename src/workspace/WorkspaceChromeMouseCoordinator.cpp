@@ -82,6 +82,31 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
     operations_.move_buffer_search_selection(-overlay_ticks);
   } else if (state_.overlay.mode == OverlayMode::ProjectSearch) {
     operations_.move_project_search_selection(-overlay_ticks);
+  } else if (state_.overlay.mode == OverlayMode::Completion ||
+             state_.overlay.mode == OverlayMode::CodeActions ||
+             state_.overlay.mode == OverlayMode::TaskPicker) {
+    if (state_.overlay.mode == OverlayMode::Completion &&
+        !state_.overlay.workflow.completion.items.empty()) {
+      const int current = static_cast<int>(state_.overlay.workflow.completion.selected_index);
+      const int max_index =
+          static_cast<int>(state_.overlay.workflow.completion.items.size()) - 1;
+      state_.overlay.workflow.completion.selected_index =
+          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index));
+    } else if (state_.overlay.mode == OverlayMode::CodeActions &&
+               !state_.overlay.workflow.code_actions.items.empty()) {
+      const int current = static_cast<int>(state_.overlay.workflow.code_actions.selected_index);
+      const int max_index =
+          static_cast<int>(state_.overlay.workflow.code_actions.items.size()) - 1;
+      state_.overlay.workflow.code_actions.selected_index =
+          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index));
+    } else if (state_.overlay.mode == OverlayMode::TaskPicker &&
+               !state_.overlay.workflow.task_picker.entries.empty()) {
+      const int current = static_cast<int>(state_.overlay.workflow.task_picker.selected_index);
+      const int max_index =
+          static_cast<int>(state_.overlay.workflow.task_picker.entries.size()) - 1;
+      state_.overlay.workflow.task_picker.selected_index =
+          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index));
+    }
   } else {
     operations_.move_file_finder_selection(-overlay_ticks);
   }

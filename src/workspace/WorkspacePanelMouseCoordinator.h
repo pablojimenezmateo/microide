@@ -19,6 +19,7 @@ class PanelMouseCoordinator {
     std::function<SDL_FRect(const WorkspaceLayout&)> bottom_panel_resize_handle_rect;
     std::function<WorkspaceShell::BottomPanelLogLayout(const WorkspaceLayout&, std::size_t)>
         compute_bottom_panel_log_layout;
+    std::function<std::size_t()> bottom_panel_line_count;
     std::function<void(int, std::size_t, int)> set_bottom_panel_scroll_row;
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<SDL_FRect(const WorkspaceLayout&, bool)> bottom_panel_content_rect;

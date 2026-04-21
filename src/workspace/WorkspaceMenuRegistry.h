@@ -46,6 +46,7 @@ struct MenuItemSpec {
   bool separator = false;
   bool checkable = false;
   MenuId submenu = MenuId::None;
+  std::string_view command_name;
 };
 
 struct MenuSpec {

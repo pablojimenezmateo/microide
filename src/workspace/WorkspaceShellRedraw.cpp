@@ -508,7 +508,8 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
   if (!layout.has_value() || !BottomPanelVisible()) {
     return std::nullopt;
   }
-  return BottomPanelContentRect(*layout, context_.current_project_state.panel.command_mode);
+  return BottomPanelContentRect(*layout, context_.current_project_state.panel.command_mode ||
+                                             BottomPanelShowsChat());
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() const {
@@ -619,7 +620,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    return ActiveTerminalTab() != nullptr;
+    return (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) || BottomPanelShowsChat();
   }
 
   return false;
@@ -648,6 +649,14 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
     return ActiveEditorCaretRect(*layout);
   }
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
+    if (BottomPanelShowsChat()) {
+      const auto visual = BuildActiveTextInputVisual(*layout, std::nullopt);
+      return visual.has_value()
+                 ? std::optional<SDL_FRect>(MakeRect(visual->cursor_x, visual->text_y - 1.0f,
+                                                     std::max(1.0f, text_renderer_.CharWidth()),
+                                                     text_renderer_.LineHeight()))
+                 : std::nullopt;
+    }
     return ActiveTerminalCaretRect(*layout);
   }
   return std::nullopt;
@@ -741,7 +750,8 @@ editor::TextViewport* WorkspaceShell::ActiveEditableViewport() {
   if (!ActiveTabIsEditor() || ActiveTabIsCompare()) {
     return nullptr;
   }
-  return ActiveEditorViewport();
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  return viewport != nullptr && IsReadOnlyVirtualDocument(viewport->path()) ? nullptr : viewport;
 }
 
 const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
@@ -758,7 +768,8 @@ const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
   if (!ActiveTabIsEditor() || ActiveTabIsCompare()) {
     return nullptr;
   }
-  return ActiveEditorViewport();
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  return viewport != nullptr && IsReadOnlyVirtualDocument(viewport->path()) ? nullptr : viewport;
 }
 
 }  // namespace microide::workspace

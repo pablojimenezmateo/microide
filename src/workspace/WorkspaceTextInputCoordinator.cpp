@@ -69,6 +69,7 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       operations_.request_prompt_redraw();
       break;
     case TextInputSurface::Command:
+    case TextInputSurface::ChatComposer:
       operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
@@ -148,9 +149,19 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
     operations_.request_bottom_panel_command_redraw();
     return true;
   }
+  if (state_.surface.focus == FocusTarget::Panel &&
+      operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
+    state_.panel.chat.composer.append(input);
+    operations_.request_bottom_panel_command_redraw();
+    return true;
+  }
 
   if (state_.overlay.visible) {
     switch (state_.overlay.mode) {
+      case OverlayMode::Completion:
+      case OverlayMode::CodeActions:
+      case OverlayMode::TaskPicker:
+        return false;
       case OverlayMode::CommitPicker:
         state_.overlay.workflow.compare_picker.query.append(input);
         operations_.refresh_compare_picker();
@@ -219,7 +230,8 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
     return true;
   }
 
-  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
+  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr &&
+      operations_.current_text_input_surface() == TextInputSurface::Terminal) {
     operations_.clear_terminal_selection();
     if (auto* terminal_tab = operations_.active_terminal_tab(); terminal_tab != nullptr) {
       terminal_tab->follow_tail = true;

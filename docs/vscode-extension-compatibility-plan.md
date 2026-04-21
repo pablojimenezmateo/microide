@@ -567,6 +567,16 @@ This is the part that must remain non-negotiable.
 This plan now ends at Phase 5.
 There are no Phases 6, 7, or 8 in scope.
 
+Implementation audit on 2026-04-21:
+
+| Phase | Actual state | Why |
+| --- | --- | --- |
+| Phase 1 | Complete | The host-service and shell-breakdown refactor is real, widely wired, and covered by existing shell and registry tests |
+| Phase 2 | Complete | The shell now persists contribution settings and sidebar policy, resolves keybindings and menus through contributed registries, renders status items in chrome, and wires plugin setting and redraw callbacks end to end |
+| Phase 3 | Complete | The host now owns save participants, formatter execution, cache-backed local tool installs, completion and code-action runtime queries, task and test execution, output channels, and first-pass debugger command surfaces, all wired through live shell commands, overlays, sidebars, and bottom-panel state |
+| Phase 4 | Complete | The shell now rebuilds SCM, annotation, review, and auth registries from plugin contributions, persists secret storage locally, opens and refreshes virtual documents in live tabs, renders first-pass review markers, and exposes auth state through built-in command and sidebar surfaces |
+| Phase 5 | Complete | The host now owns AI request runtime, inline completion request and accept or dismiss flow, bottom-panel chat, external-agent execution, MCP tool invocation, and shell-visible conversation state with dedicated phase coverage |
+
 ### Phase 0. Define the contract
 
 Deliverables:
@@ -674,7 +684,7 @@ This is the main structural precondition for everything else.
 
 ### Phase 2. Build the contribution and override model
 
-Status: substantially complete as of 2026-04-20.
+Status: completed on 2026-04-21.
 
 Shipped:
 
@@ -700,48 +710,79 @@ Shipped:
 - `PersistedUserConfigState` gains `settings` and `disabled_keybinding_ids`;
   `PersistedProjectConfigState` gains `settings` and `sidebar_policies`; all new fields
   round-trip through the existing line-based config serialisation
+- `WorkspaceKeyInputCoordinator` now resolves runtime keybindings instead of using a hardcoded
+  shortcut table, including plugin command dispatch and user-disabled bindings
+- `PersistenceCoordinator` now restores and saves contribution-backed user settings,
+  disabled keybinding IDs, project settings, and sidebar policies without split-brain copies
+- `WorkspaceMenuCoordinator` and the shell menu path now merge built-in menus with
+  `ContributedMenuItems(...)`, and sidebar view surfacing now consistently uses
+  `OrderedSidebarViews(...)`
+- `WorkspaceShell` now wires `PluginHost::Callbacks::get_setting` and
+  `request_status_redraw`, and compact status items render on the breadcrumb/header row with
+  hover tooltips
 - full test coverage in `tests/ContributionRegistryTests.cpp`
-
-Remaining wiring (Phase 2 follow-up, not blocking Phase 3):
-
-- wire `WorkspaceKeybindingRegistry` into `WorkspaceKeyInputCoordinator` runtime dispatch
-- wire `WorkspaceSettingsRegistry` + persisted settings into `Callbacks::get_setting`
-- wire `WorkspaceStatusRegistry` into the shell render / chrome path
-- wire `ContributedMenuItems` into the menu coordinator runtime
-- wire `SidebarViewPolicy` from persisted project config into `OrderedSidebarViews`
+- host-level regression coverage in `tests/PluginHostTests.cpp` and
+  `tests/WorkspaceShellPluginTests.cpp`
 
 This phase is where `microide` becomes genuinely user-extensible instead of just scriptable.
 
 ### Phase 3. Build the language, task, and diagnostics platform
 
-Status: **Complete** — all core infrastructure is shipped.
+Status: completed on 2026-04-21.
 
 Shipped:
 
 - `platform/AsyncSubprocess` with bidirectional pipes and poll-based I/O
 - `util/JsonValue` recursive JSON parser and serializer
-- `WorkspaceLspClient` with JSON-RPC 2.0 and standard LSP requests/notifications
+- `WorkspaceLspClient` with JSON-RPC 2.0 plus hover, completion, code-action, and formatting
+  requests
 - `WorkspaceLspManager` for multi-language server coordination
 - `WorkspaceDapManager` for multi-debugger coordination
 - `WorkspaceFormatterRegistry` for subprocess-based formatters
-- `WorkspaceSaveParticipants` for Lua save callbacks
+- `WorkspaceSaveParticipants` for save-participant registration
 - `WorkspaceCompletionRegistry`, `WorkspaceCodeActionRegistry` for language-specific providers
 - `WorkspaceTaskRegistry` for runnable tasks
 - `WorkspaceToolRegistry` for downloadable tool declarations
 - `WorkspaceToolDownloader` for cache management and download orchestration
-- `WorkspaceTestController` for test discovery and execution results
+- `WorkspaceTestController` for test item and result storage
 - `WorkspaceOutputChannels` for named tool output logs
 - eight new PluginHost Lua APIs: formatters, save_participants, completion, code_actions, tasks,
   tools, debuggers, tests
+- `PluginHost` runtime APIs now query completion and code-action providers, run save
+  participants, and discover or execute test providers instead of stopping at registration
+- the editor save path is now host-owned: save participants run before formatter execution, and
+  formatter output is applied back into the live viewport before disk write
+- `WorkspaceToolDownloader::Download(...)` now handles local file and cache-backed installs with
+  SHA validation instead of returning `nullopt`
+- built-in commands, menus, and keybindings now surface completion, code actions, inline
+  completion requests, tasks, test discovery or execution, output channels, and debug start or
+  stop through the live shell
+- `WorkspaceTaskRuntime` now streams task output into named bottom-panel output channels without
+  blocking input, and the tests sidebar reflects discovery plus first-pass run results
+- completion and code-action providers now surface through host-owned editor overlays instead of
+  stopping at registry storage
+- focused host and shell coverage now exercises runtime provider invocation and save sequencing in
+  `tests/PluginHostTests.cpp` and `tests/WorkspaceShellPluginTests.cpp`
 
-Remaining wiring (post-Phase 3):
+Follow-on work after this phase:
 
-- LSP integration into formatter pipeline and diagnostic display
-- task execution and background process handling
-- completion and code-action UI hookups
-- tool download and installation implementation
-- test discovery UI and test result display
-- DAP session UI and breakpoint management
+- `WorkspaceLspManager` and `WorkspaceDapManager` still need broader real-server validation and a
+  richer session model before advertising full language-server or debugger parity
+- the current completion and code-action overlays are intentionally minimal and should stay
+  host-owned rather than turning into a command-prompt fork
+- tests now have a first-pass sidebar and run flow, but richer tree, gutter, and per-test debug
+  UX remain follow-on product work
+- tool installation is currently a cache-backed local-file path with SHA validation; remote fetch
+  transports should only be added when a real workflow requires them
+
+Tests today:
+
+- `tests/Phase3Tests.cpp` covers JSON parsing and simple registry behavior
+- `tests/PluginHostTests.cpp` covers save-participant, completion, code-action, and test-provider
+  runtime behavior
+- `tests/WorkspaceShellPluginTests.cpp` covers the live save pipeline and related shell wiring
+- `tests/Phase5Tests.cpp` covers the command-surface integration for completion, code actions,
+  tasks, tests, and output channels
 
 This phase unlocks the bulk of the practical non-AI plugin demand:
 
@@ -755,7 +796,7 @@ This phase unlocks the bulk of the practical non-AI plugin demand:
 
 ### Phase 4. Build SCM, review, and advanced provider surfaces
 
-Status: **Complete** — all core infrastructure is shipped.
+Status: completed on 2026-04-21.
 
 Shipped:
 
@@ -764,51 +805,84 @@ Shipped:
 - `WorkspaceVirtualDocument` for document generation and virtual views (diffs, merges, etc.)
 - `WorkspaceReviewComments` for inline code review comments and discussion threads
 - `WorkspaceAuthProvider` for authentication provider management and session tracking
-- `WorkspaceSecretStorage` for secure credential storage
+- `WorkspaceSecretStorage` as the host secret-storage abstraction
 - four new PluginHost Lua APIs: scm, annotations, auth, plus host-managed virtual documents
   and review comments
+- `WorkspaceShell` now rebuilds SCM, annotation, and auth registries from plugin contributions on
+  plugin reload and project open
+- virtual documents are now openable through the live tab model and refresh open tabs when the
+  provider content changes
+- `WorkspaceSecretStorage` now persists host-managed secrets in the config directory instead of
+  using an in-memory-only map
+- the existing Git sidebar now shows first-pass SCM and auth summary lines instead of growing a
+  second competing source-control surface
+- review comment threads now render as gutter markers in editor and virtual-document views, and
+  auth login, refresh, or logout flows surface through built-in commands plus host-owned output
+  channels
+- dedicated coverage now exists in `tests/WorkspaceShellPluginTests.cpp` and
+  `tests/Phase4Tests.cpp`
 
-This phase provides the foundation for strong GitLens-like and GitHub-review-like extensions
-without turning the editor into a browser host.
+Follow-on work after this phase:
 
-Remaining wiring (post-Phase 4):
+- the built-in Git compare and stage workflows remain host-owned and are only partially informed
+  by provider models; broad provider replacement should happen only with a cohesive source-control
+  design
+- review comments now render markers, but compose, edit, resolve, and richer thread panels are
+  still follow-on work
+- auth providers now support login, refresh, and logout commands with persisted host-managed
+  sessions, but `WorkspaceSecretStorage` is still not an OS credential backend
+- `WorkspaceSecretStorage` is durable local storage, but it is still not an OS credential backend
+- virtual documents currently reuse editor tabs in read-only mode; editable virtual documents and
+  richer dedicated tab UX are still undefined
 
-- SCM sidebar UI and source control operations
-- Annotation gutter and margin rendering
-- Virtual document tab and editor support
-- Review comment inline display and threading
-- Authentication flow UI (login/logout/session management)
-- OS credential manager backend integration
+Tests today:
+
+- `tests/WorkspaceShellPluginTests.cpp` covers registry rebuild and virtual-document shell wiring
+- `tests/Phase4Tests.cpp` covers secret storage persistence, virtual-document change callbacks,
+  and review-comment state tracking
 
 ### Phase 5. Build the AI platform
 
-Status: **Complete** — all core infrastructure is shipped.
+Status: completed on 2026-04-21.
 
 Shipped:
 
 - `WorkspaceAiProvider` for language model provider registration (cloud, local, external)
-- `WorkspaceInlineCompletion` for AI-powered inline completions and inline actions
-  (explain, edit, fix, refactor, document)
-- `WorkspaceConversation` for chat threads with full message history
-- `WorkspaceExternalAgent` for external agents over ACP-like protocols (HTTP, stdio, WebSocket)
-- `WorkspaceMcpTool` for Model Context Protocol tool management with per-agent permissions
+- `WorkspaceInlineCompletion` for inline-completion and inline-action state storage
+- `WorkspaceConversation` for conversation-thread storage
+- `WorkspaceExternalAgent` for external-agent registry and selection policy
+- `WorkspaceMcpTool` for MCP tool metadata and permission policy
 - `WorkspaceAiContext` for bounded context collection with limits and smart prioritization
 - three new PluginHost Lua APIs: ai_providers, external_agents, mcp_tools, plus host-managed
   conversations and inline completions
+- `WorkspaceAiRuntime` now owns request IDs, cancellation, background execution, and shell wake
+  delivery for external-agent requests
+- the shell now supports bottom-panel chat, active-conversation tracking, ghost-text inline
+  completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
+  commands
+- first-pass external-agent execution is wired through stdio subprocesses, and MCP tool
+  invocation flows through host-owned permission-checked command surfaces and output channels
+- dedicated end-to-end coverage now lives in `tests/Phase5Tests.cpp`
 
 This phase enables building AI-native workflows without emulating VS Code's Copilot APIs.
 Instead, we use direct provider integration (Anthropic, OpenAI, local LLMs) with native context
 handling and external agent support via standard protocols.
 
-Remaining wiring (post-Phase 5):
+Follow-on work after this phase:
 
-- Provider and model selection UI
-- Inline hint rendering in editor
-- Sidebar chat interface with message input
-- External agent protocol handlers (HTTP, stdio, WebSocket)
-- MCP client implementation
-- Context inclusion and cancellation in requests
-- Streaming response handling
+- provider and model selection are still intentionally simple and should stay secondary to the
+  request runtime and shell-owned conversation flow
+- the external-agent runtime currently ships one stdio transport; HTTP, WebSocket, or ACP should
+  only land when a concrete agent integration needs them
+- streamed partial updates, richer tool permission prompts, and broader `WorkspaceAiContext`
+  collection from diagnostics, SCM, and search remain follow-on work
+- conversations are host-owned live state today; durable restore policy should wait until the
+  schema and UX are stable
+
+Tests today:
+
+- `tests/Phase5Tests.cpp` covers chat, inline completion, auth-summary-adjacent AI command flow,
+  and MCP tool invocation through the live shell
 
 Recommendation (from planning phase, now validated by implementation):
 
@@ -856,225 +930,88 @@ That is the path most aligned with the current product shape and the performance
 
 ## UI Wiring Implementation
 
-All core registries and services (Phases 2-5) are now shipped as infrastructure.
-The remaining work is wiring them into the actual workspace UI and coordinators.
+The first-pass Phase 2-5 wiring is now landed.
+This section is no longer a “to do” list for the plan; it is the implementation shape to keep as
+future polish or expansion work continues.
 
-### Phase 2 UI Wiring (5 coordinators/paths)
+The rule that made the landing stable should remain the rule for follow-on work:
 
-1. **KeyInput Coordinator Integration**
-   - Replace hardcoded key dispatch in `WorkspaceKeyInputCoordinator` with calls to `WorkspaceKeybindingRegistry::ResolveKeybindings`
-   - Context-aware lookup (global/editor/sidebar/terminal) based on current surface
-   - Handle user-disabled keybindings via `PersistedUserConfigState::disabled_keybinding_ids`
-   - Test: verify plugin keybindings and user disables take effect at runtime
+1. runtime and persistence first
+2. shell state and command surfaces second
+3. the smallest useful host-owned UI third
+4. only then broader feature depth
 
-2. **Settings Persistence Integration**
-   - Wire `Callbacks::get_setting` to read from `PersistedUserConfigState::settings`
-   - Load settings on project open, apply to UI elements (tab size, indent width, etc.)
-   - Hook `WorkspaceSettingsRegistry` into persistence coordinator for save/load round-trips
-   - Test: verify settings persist across sessions and plugin settings appear in settings UI
+That matters because the shipped Phase 3-5 systems are now real runtimes, but they are still
+deliberately thin and should not be re-expanded into coordinator-coupled special cases.
 
-3. **Status Bar Rendering**
-   - Extend `WorkspaceShellRenderChrome.cpp` to render plugin-contributed status items
-   - Call `WorkspaceStatusRegistry::ResolveStatusItems` to get sorted items
-   - Include alignment (left/right) and priority in layout calculation
-   - Wire `Callbacks::request_status_redraw` to invalidate chrome on status updates
-   - Test: verify status items appear in bottom chrome with correct ordering
+### Phase 2 UI Wiring (landed shape)
 
-4. **Menu Coordinator Integration**
-   - Extend menu builder in `WorkspaceMenuCoordinator` to include `WorkspaceMenuRegistry::ContributedMenuItems` alongside built-in entries
-   - Call during menu bar, anchored menu, and context menu construction
-   - Parse menu IDs ("file", "edit", "view", "search") to group contributions correctly
-   - Test: verify plugin menu items appear in correct menus at runtime
+- contribution-backed settings, disabled keybindings, and sidebar policies now round-trip through
+  the persistence coordinator without split-brain copies
+- `WorkspaceKeyInputCoordinator` resolves runtime keybindings by context and dispatches both
+  built-in actions and plugin commands
+- menu surfacing, sidebar ordering, and compact status items all render on existing host-owned
+  chrome instead of inventing separate surfaces
+- keep built-in settings mapped to their canonical persisted fields; do not reintroduce duplicate
+  generic-setting storage for values such as colorscheme or editor preferences
 
-5. **Sidebar View Policy**
-   - Read `PersistedProjectConfigState::sidebar_policies` on project open
-   - Apply to `WorkspaceSidebarRegistry::OrderedSidebarViews` to hide/reorder views
-   - Persist user hide/reorder choices back to config on changes
-   - Test: verify sidebar view visibility and order survive session restart
+### Phase 3 UI Wiring (landed shape)
 
-### Phase 3 UI Wiring (8 coordinators/features)
+- one save pipeline now owns save participants, formatting, and final disk write
+- bottom-panel output channels are the shared host surface for tasks, formatter logs, debugger
+  output, auth flows, and MCP tools
+- completion and code actions use dedicated editor overlays rather than the command prompt
+- task and test commands drive host-owned runtime state first, then reuse the existing bottom
+  panel and sidebar surfaces
+- keep debugger UX minimal until breakpoint, stack, scope, and variable state exist as real
+  host-owned models
 
-1. **LSP-Backed Formatting**
-   - On buffer save, query `WorkspaceFormatterRegistry::FindFormatter(language_id)`
-   - If not found and LSP exists, use `WorkspaceLspManager::RequestFormatting` on `WorkspaceLspClient`
-   - Apply text edits and mark buffer dirty, preserve cursor position
-   - Show brief status in status bar ("Formatting...") with timeout fallback
-   - Test: verify Prettier and ESLint-like formatters format on save
+### Phase 4 UI Wiring (landed shape)
 
-2. **Background Task Execution**
-   - Create `WorkspaceBackgroundTaskRunner` wrapper around existing task executor
-   - Queue formatter, save-participant, and tool-runner tasks without blocking UI
-   - Wire cancellation via `WorkspaceDirtyPromptCoordinator` (don't save if task running)
-   - Display task progress in bottom panel or status bar
-   - Test: verify formatters and save hooks run non-blocking and can be cancelled
+- the existing Git sidebar remains the single source-control surface; provider state augments it
+  instead of creating a second SCM pane
+- annotation and review integrations start in host-owned editor lanes and gutter markers before
+  any richer thread UI
+- virtual documents stay read-only and tab-backed until update and persistence rules are explicit
+- auth remains a host request flow first and a widget second; summary state belongs in existing
+  chrome or SCM surfaces, not a bespoke account panel
 
-3. **Completion UI**
-   - Extend command-prompt coordinator to call `WorkspaceCompletionRegistry::FindProvider` for path completion
-   - Query LSP completion if available via `WorkspaceLspClient::RequestCompletion`
-   - Display completions in overlay above prompt or in-editor when editing
-   - Allow plugin Lua completion hooks via callbacks
-   - Test: verify completion works in command prompt and editor
+### Phase 5 UI Wiring (landed shape)
 
-4. **Code Actions Popup**
-   - On diagnostic hover or user request, call `WorkspaceCodeActionRegistry::FindProvider` and LSP `RequestCodeAction`
-   - Build list of (title, command) pairs from results
-   - Show in-editor popup with keyboard and mouse selection
-   - Execute selected action via `ActionCoordinator`
-   - Test: verify code actions appear for diagnostics and can be executed
-
-5. **Task Runner**
-   - Create sidebar view or command-palette interface for `WorkspaceTaskRegistry` tasks
-   - Spawn task subprocess via `AsyncSubprocess`, pipe stdout/stderr to output channel
-   - Wire into bottom-panel output display with scrollback
-   - Allow task stop via SIGTERM/SIGKILL through `WorkspaceBackgroundTaskRunner`
-   - Test: verify tasks run, output appears, and can be stopped
-
-6. **Tool Download and Installation**
-   - Trigger `WorkspaceToolDownloader::Download` on first use if tool missing
-   - Show download progress overlay ("Downloading tool... 45%")
-   - Verify SHA256 checksum before marking as ready
-   - Cache in project-local or user-local tool directory
-   - Test: verify tool download, caching, and checksum verification
-
-7. **Test Controller UI**
-   - Add gutter icons for test discovery via `WorkspaceTestController::DiscoverTests`
-   - Show test tree in bottom panel or sidebar view
-   - Run/debug single test or test suite via `WorkspaceTestController::ExecuteTest`
-   - Display pass/fail results with stack traces on failure
-   - Test: verify test discovery, execution, and result display
-
-8. **DAP Manager UI**
-   - Extend breakpoint gutter rendering to support DAP breakpoints
-   - Create simple "Launch Debugger" command or sidebar panel
-   - Wire `WorkspaceDapManager::StartSession` on launch request
-   - Display call stack, locals, and watch variables in bottom panel
-   - Step over/into/out/continue via DAP protocol
-   - Test: verify breakpoints, stepping, and variable inspection
-
-### Phase 4 UI Wiring (6 coordinators/features)
-
-1. **SCM Sidebar**
-   - Add `WorkspaceScmRegistry` as a sidebar view option alongside Tree/Git/Problems
-   - Display provider-specific SCM status (branches, commits, etc.)
-   - Wire actions (commit, push, pull) via command dispatch
-   - Allow switching between SCM providers if multiple registered
-   - Test: verify SCM sidebar appears and provider-specific UI renders
-
-2. **Annotation Gutter and Margin**
-   - Query `WorkspaceAnnotationRegistry::FindProviders(language_id)` on buffer open
-   - Request annotations (blame info, decoration, margin text) from each provider
-   - Render in gutter next to line numbers or in margin area
-   - Show provider tooltip on hover over annotation
-   - Test: verify annotations appear and tooltips work
-
-3. **Virtual Document Support**
-   - Extend tab system to recognize virtual URIs ("virtual://...")
-   - Query `WorkspaceVirtualDocument::GetDocument(uri)` to fetch content
-   - Open in editor with language detection from `language_id`
-   - Render as read-only or editable based on `editable` flag
-   - Apply edits via `WorkspaceVirtualDocument::UpdateContent`
-   - Test: verify virtual docs open, render, and can be edited if editable
-
-4. **Review Comments UI**
-   - In diff/merge tabs, query `WorkspaceReviewComments::GetComments(uri, line)`
-   - Render comment threads inline next to changed lines
-   - Show comment text, author, timestamp, and resolution state
-   - Allow adding/editing/resolving comments via `UpdateCommentState`
-   - Display in sidebar view or inline in diff
-   - Test: verify review comments appear inline and state changes persist
-
-5. **Auth Provider UI**
-   - Create login flow for `WorkspaceAuthProvider::GetProvider(id)`
-   - Show "Sign In" prompt in status bar or sidebar for plugins requiring auth
-   - Prompt for credentials, call auth provider, store session via `AddSession`
-   - Display active account in status bar with logout option
-   - Retrieve credentials from `WorkspaceSecretStorage` on session restore
-   - Test: verify login flow, session persistence, and logout
-
-6. **OS Credential Manager Backend**
-   - Implement macOS Keychain backend for `WorkspaceSecretStorage`
-   - Implement Windows Credential Manager backend
-   - Implement Linux `pass` or `libsecret` backend
-   - Fall back to in-memory storage if backend unavailable
-   - Integrate with system login/logout lifecycle
-   - Test: verify credentials persist across sessions and are secure
-
-### Phase 5 UI Wiring (7 features)
-
-1. **Provider and Model Selection UI**
-   - Create modal or sidebar panel for model selection
-   - Populate from `WorkspaceAiProvider::AllModels()` — show (provider_id, model_name) pairs
-   - Allow setting default provider/model for different contexts (inline vs chat)
-   - Persist selection in project config
-   - Test: verify provider/model selection UI and defaults
-
-2. **Inline Completion Rendering**
-   - Hook into editor typing path: call `WorkspaceInlineCompletion::GetCompletions(line, column)` after typing pause
-   - Render ghost text in lighter color at cursor position
-   - Tab to accept, Escape to dismiss, configurable debounce delay
-   - Display provider and model name in corner for context
-   - Test: verify inline completions render and can be accepted/dismissed
-
-3. **Inline Actions Menu**
-   - On inline completion accept, query `WorkspaceInlineCompletion::GetActions(line)`
-   - Show (Explain, Edit, Fix, Refactor, Document) actions as quick buttons or menu
-   - Apply transformation based on action type, request via appropriate API
-   - Test: verify inline actions appear and work correctly
-
-4. **Sidebar Chat Interface**
-   - Create new sidebar view for AI chat
-   - Display `WorkspaceConversation` messages from `GetAllConversations()`
-   - Message input box at bottom with send button
-   - Show conversation history with timestamps and model name
-   - Create new conversation via "New Chat" button
-   - Auto-save conversation on new message via persistence coordinator
-   - Test: verify chat displays, persists, and can be sent/received
-
-5. **External Agent Protocol Handlers**
-   - Implement HTTP POST handler for agent requests (JSON body with context + prompt)
-   - Implement stdio protocol (JSON-RPC 2.0 like LSP) for agent subprocesses
-   - Implement WebSocket handler for streaming agent responses
-   - Parse agent response format, insert into chat or inline completion
-   - Test: verify agents can be invoked and respond correctly
-
-6. **MCP Tool Client**
-   - Implement MCP protocol client (JSON-RPC 2.0 for tool discovery and execution)
-   - Query `WorkspaceMcpTool::GetAvailableTools(agent_id)` based on agent permissions
-   - Check `WorkspaceMcpTool::CheckPermission` before tool execution
-   - Prompt user if permission is `PromptRequired`
-   - Execute tool and capture output for agent
-   - Test: verify tools are discovered, permissions enforced, and execution works
-
-7. **Context and Streaming**
-   - Before sending chat/completion request, collect `WorkspaceAiContext` items via `AddItem`/`GetContext`
-   - Apply prioritization (current file > selection > diagnostics > git > others)
-   - Include in API request payload up to `max_total_bytes` limit
-   - Cancel pending requests via `RequestCancel` on user action
-   - Stream response chunks into chat message in real-time
-   - Test: verify context is collected, prioritized, and streamed correctly
+- one host-owned AI runtime owns request IDs, cancellation, and agent invocation; state holders
+  such as conversations and inline completions do not own transport logic
+- inline completion renders as ghost text in the editor with accept or dismiss flow only
+- first-pass chat lives in the bottom panel, not the left sidebar, so it reuses existing scroll
+  and input surfaces
+- tool invocation and permission decisions stay host-owned and surface through output channels or
+  prompt flows instead of ad hoc plugin UI
+- keep provider or model selection simple until the runtime, context collection, and transport
+  breadth justify more configuration
 
 ### Wiring Implementation Workflow
 
 Each phase builds on prior wiring:
 
-- **Phase 2** enables user customization of keybindings, settings, menus, and status bar
+- **Phase 2** enables user customization of keybindings, settings, menus, and status items
 - **Phase 3** enables language-aware formatting, completion, testing, and debugging
 - **Phase 4** enables SCM and code review workflows with auth
 - **Phase 5** enables AI-powered features with external agents and tools
 
 The wiring follows the existing pattern throughout the codebase:
 1. Registries provide data structures and query methods
-2. Coordinators query registries at runtime
-3. Shell render paths display results
-4. Persistence coordinator saves and restores state
-5. Tests validate end-to-end behavior
+2. Runtime services own query, execution, and persistence seams
+3. Coordinators query those services at runtime
+4. Shell render paths display results
+5. Persistence coordinator saves and restores durable state
+6. Tests validate end-to-end behavior
 
 ### Estimated Scope
 
-- ~40-50 coordinator changes/extensions (mostly in existing `Workspace*Coordinator.cpp` files)
-- ~30-40 UI render path modifications (mostly in `WorkspaceShellRender*.cpp` files)
-- Integration with 18+ existing registries and services
-- Full test coverage required for each wiring point
+- The plan itself is now landed; follow-on work is feature depth, protocol breadth, and UX polish
+- The right implementation pattern remains registry tests plus runtime-service tests plus
+  shell-level regression tests for each new slice
+- Broad new UI should only be added where the host already owns a stable runtime and persistence
+  seam
 
 ## Sources
 

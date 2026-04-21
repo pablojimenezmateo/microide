@@ -19,6 +19,7 @@ enum class SidebarMode {
   Search,
   Problems,
   Git,
+  Tests,
   Plugin,
 };
 
@@ -34,6 +35,10 @@ struct GitSidebarEntry {
   project::GitFileStatus status = project::GitFileStatus::Clean;
   bool conflicted = false;
   bool staged = false;
+  std::string provider_id;
+  std::string provider_label;
+  bool supports_stage = true;
+  bool supports_discard = true;
 };
 
 struct GitSidebarLine {
@@ -68,12 +73,34 @@ struct GitSidebarState {
   std::string base_ref;
   std::string base_label;
   bool repo_available = false;
+  bool provider_backed = false;
+  bool supports_mutations = true;
+  std::string provider_id;
+  std::string provider_label;
+  std::string error;
   std::size_t selected_index = 0;
 };
 
 struct ProblemsSidebarState {
   std::vector<ProblemsSidebarEntry> entries;
   std::size_t selected_index = 0;
+};
+
+struct TestsSidebarEntry {
+  std::string id;
+  std::string label;
+  std::filesystem::path file;
+  int line = 0;
+  std::string parent_id;
+  std::string status;
+};
+
+struct TestsSidebarState {
+  std::vector<TestsSidebarEntry> entries;
+  std::size_t selected_index = 0;
+  bool running = false;
+  std::string provider_id;
+  std::string error;
 };
 
 struct PluginSidebarState {
@@ -91,6 +118,7 @@ struct SidebarState {
   int scroll_row = 0;
   GitSidebarState git;
   ProblemsSidebarState problems;
+  TestsSidebarState tests;
   PluginSidebarState plugin;
 };
 

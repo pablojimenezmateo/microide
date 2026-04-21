@@ -322,6 +322,18 @@ struct WorkspaceShell::TestAccess {
   static bool OpenFileInNewTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.OpenFileInNewTab(path);
   }
+  static void RegisterVirtualDocument(WorkspaceShell& shell,
+                                      const microide::workspace::VirtualDocumentSpec& spec) {
+    shell.virtual_document_registry_.Register(spec);
+  }
+  static void UpdateVirtualDocumentContent(WorkspaceShell& shell,
+                                           std::string_view uri,
+                                           std::string content) {
+    shell.virtual_document_registry_.UpdateContent(std::string(uri), content);
+  }
+  static bool OpenVirtualDocument(WorkspaceShell& shell, std::string_view uri) {
+    return shell.OpenVirtualDocumentInNewTab(uri);
+  }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
     return shell.MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
   }
@@ -343,12 +355,87 @@ struct WorkspaceShell::TestAccess {
   }
   static const std::vector<std::string>* OutputChannelEntries(const WorkspaceShell& shell,
                                                               std::string_view id) {
-    return shell.plugin_runtime_.OutputChannelEntries(id);
+    return shell.OutputChannelEntries(id);
+  }
+  static WorkspaceShell::PanelContentKind PanelContent(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.content;
+  }
+  static WorkspaceShell::OverlayMode ActiveOverlayMode(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.mode;
+  }
+  static const WorkspaceShell::CompletionSessionState& CompletionSession(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.completion;
+  }
+  static const WorkspaceShell::CodeActionSessionState& CodeActionSession(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.code_actions;
+  }
+  static const WorkspaceShell::TaskPickerState& TaskPicker(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.task_picker;
+  }
+  static const WorkspaceShell::InlineCompletionState& InlineCompletion(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.inline_completion;
+  }
+  static bool AcceptInlineCompletion(WorkspaceShell& shell) {
+    return shell.AcceptInlineCompletion();
+  }
+  static void DismissInlineCompletion(WorkspaceShell& shell) {
+    shell.DismissInlineCompletion();
+  }
+  static std::vector<Message> ActiveConversationMessages(const WorkspaceShell& shell) {
+    const auto* conversation = shell.conversation_registry_.GetConversation(
+        shell.context_.current_project_state.panel.chat.conversation_id);
+    return conversation != nullptr ? conversation->messages : std::vector<Message>{};
+  }
+  static std::string ActiveConversationProviderId(const WorkspaceShell& shell) {
+    const auto* conversation = shell.conversation_registry_.GetConversation(
+        shell.context_.current_project_state.panel.chat.conversation_id);
+    return conversation != nullptr ? conversation->provider_id : std::string{};
+  }
+  static void ConsumeAiRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeAiRuntimeUpdates(); }
+  static bool WaitForAiRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
+    const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+    while (shell.ai_runtime_.active_request_id() != 0 && SDL_GetTicks() <= deadline) {
+      shell.ConsumeAiRuntimeUpdates();
+      SDL_Delay(5);
+    }
+    shell.ConsumeAiRuntimeUpdates();
+    return shell.ai_runtime_.active_request_id() == 0;
+  }
+  static void ConsumeTaskRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeTaskRuntimeUpdates(); }
+  static bool WaitForTaskRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
+    const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+    while (shell.task_runtime_.active_run_id() != 0 && SDL_GetTicks() <= deadline) {
+      shell.ConsumeTaskRuntimeUpdates();
+      SDL_Delay(5);
+    }
+    shell.ConsumeTaskRuntimeUpdates();
+    return shell.task_runtime_.active_run_id() == 0;
   }
   static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
       const WorkspaceShell& shell,
       const std::filesystem::path& path) {
     return shell.context_.current_project_state.diagnostics_store.FindByPath(path);
+  }
+  static const std::vector<microide::workspace::ScmProviderSpec>& ScmProviders(
+      const WorkspaceShell& shell) {
+    return shell.scm_registry_.Specs();
+  }
+  static const std::vector<microide::workspace::AnnotationProviderSpec>& AnnotationProviders(
+      const WorkspaceShell& shell) {
+    return shell.annotation_registry_.Specs();
+  }
+  static std::vector<microide::workspace::AuthSession> AuthSessions(
+      const WorkspaceShell& shell,
+      std::string_view provider_id) {
+    return shell.auth_provider_registry_.GetSessions(std::string(provider_id));
+  }
+  static const microide::workspace::AuthProviderSpec* AuthProvider(
+      const WorkspaceShell& shell,
+      std::string_view provider_id) {
+    return shell.auth_provider_registry_.GetProvider(std::string(provider_id));
   }
   static bool PublishDiagnostics(WorkspaceShell& shell,
                                  std::string_view owner,
@@ -411,17 +498,34 @@ struct WorkspaceShell::TestAccess {
   }
   static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
   static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
+  static void ShowTestsSidebar(WorkspaceShell& shell) { shell.ShowTestsSidebar(); }
   static bool RefreshProblemsSidebar(WorkspaceShell& shell) {
     return shell.RefreshProblemsSidebar();
   }
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
+  static std::vector<std::string> GitSidebarSummaryLines(const WorkspaceShell& shell) {
+    return shell.GitSidebarSummaryLines();
+  }
   static const std::vector<WorkspaceShell::ProblemsSidebarEntry>& ProblemsSidebarEntries(
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.problems.entries;
   }
+  static const std::vector<WorkspaceShell::TestsSidebarEntry>& TestsSidebarEntries(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.tests.entries;
+  }
   static const std::vector<WorkspaceShell::GitSidebarEntry>& GitSidebarEntries(
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.entries;
+  }
+  static void DismissOverlay(WorkspaceShell& shell, bool focus_editor = false) {
+    shell.DismissOverlay(focus_editor);
+  }
+  static bool ApplySelectedCompletion(WorkspaceShell& shell) {
+    return shell.ApplySelectedCompletion();
+  }
+  static bool ExecuteSelectedCodeAction(WorkspaceShell& shell) {
+    return shell.ExecuteSelectedCodeAction();
   }
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();
@@ -440,11 +544,13 @@ struct WorkspaceShell::TestAccess {
       shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
     }
     shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
+    shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
   static void AddTerminalTab(WorkspaceShell& shell) {
     shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
     shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
+    shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
   static void ConsumeTerminalSessionUpdates(WorkspaceShell& shell) {
@@ -615,6 +721,14 @@ struct WorkspaceShell::TestAccess {
   static std::string HoveredTabTooltipLabel(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredTabTooltipLabel(layout.tab_strip);
+  }
+  static std::vector<WorkspaceShell::VisibleStatusItem> VisibleStatusItems(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ComputeVisibleStatusItems(layout.breadcrumb);
+  }
+  static std::string HoveredStatusTooltipLabel(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.HoveredStatusTooltip(layout.breadcrumb);
   }
   static std::string HoveredGitSidebarTooltipLabel(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

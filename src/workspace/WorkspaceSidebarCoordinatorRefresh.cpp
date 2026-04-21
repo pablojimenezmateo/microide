@@ -121,6 +121,22 @@ bool SidebarCoordinator::RefreshProblems() {
   return !state_.sidebar.problems.entries.empty();
 }
 
+bool SidebarCoordinator::RefreshTests() {
+  const bool populated =
+      operations_.refresh_tests_sidebar_state ? operations_.refresh_tests_sidebar_state() : false;
+  if (!state_.sidebar.tests.entries.empty()) {
+    state_.sidebar.tests.selected_index =
+        std::min(state_.sidebar.tests.selected_index, state_.sidebar.tests.entries.size() - 1);
+  } else {
+    state_.sidebar.tests.selected_index = 0;
+  }
+  RevealSelectedTestsLine();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tests) {
+    operations_.request_sidebar_redraw();
+  }
+  return populated;
+}
+
 bool SidebarCoordinator::RefreshPlugin() {
   state_.sidebar.plugin.items.clear();
   state_.sidebar.plugin.error.clear();
@@ -212,6 +228,25 @@ void SidebarCoordinator::RevealSelectedProblemsLine() {
       operations_.compute_problems_sidebar_list_layout(layout.sidebar, state_.sidebar.problems.entries.size());
   state_.sidebar.scroll_row =
       RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.problems.selected_index));
+}
+
+void SidebarCoordinator::RevealSelectedTestsLine() {
+  if (state_.sidebar.tests.entries.empty() ||
+      state_.sidebar.tests.selected_index >= state_.sidebar.tests.entries.size()) {
+    return;
+  }
+  const auto layout_state = operations_.current_workspace_layout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const WorkspaceLayout layout = *layout_state;
+  if (layout.sidebar.h <= 0.0f) {
+    return;
+  }
+  const auto list_layout =
+      operations_.compute_tests_sidebar_list_layout(layout.sidebar, state_.sidebar.tests.entries.size());
+  state_.sidebar.scroll_row =
+      RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.tests.selected_index));
 }
 
 void SidebarCoordinator::RevealSelectedPluginLine() {

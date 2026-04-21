@@ -8,14 +8,27 @@
 
 namespace microide::workspace {
 
+namespace {
+
+bool IsVirtualDocumentUri(std::string_view text) {
+  return text.starts_with("virtual://");
+}
+
+}  // namespace
+
 WorkspaceShell::WorkspaceShell() {
+  virtual_document_registry_.SetOnChange(
+      [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
       .is_command_name_available =
           [](std::string_view name) { return FindWorkspaceActionByCommand(name) == nullptr; },
       .open_file =
           [this](const plugin::PluginHost::OpenFileRequest& request) {
             const std::filesystem::path normalized_path = request.path.lexically_normal();
-            if (!OpenFileInNewTab(normalized_path)) {
+            const bool opened = IsVirtualDocumentUri(request.path.generic_string())
+                                    ? OpenVirtualDocumentInNewTab(request.path.generic_string())
+                                    : OpenFileInNewTab(normalized_path);
+            if (!opened) {
               return false;
             }
             if (request.line > 0) {
@@ -69,21 +82,183 @@ WorkspaceShell::WorkspaceShell() {
           },
       .error_sink =
           [this](const std::string& text) {
+            output_channels_.AppendLine("plugins.error", "Plugin Errors", text);
             plugin_runtime_.AppendError(text);
           },
       .log_sink =
           [this](const std::string& text) {
+            output_channels_.AppendLine("plugins.log", "Plugin Log", text);
             plugin_runtime_.AppendLog(text);
+          },
+      .get_setting =
+          [this](std::string_view id) {
+            return GetSettingValue(id);
+          },
+      .request_status_redraw =
+          [this]() {
+            RequestChromeRedraw();
           },
   });
 }
 
+void WorkspaceShell::RebuildPhase3Registries() {
+  formatter_registry_ = FormatterRegistry{};
+  save_participant_registry_ = SaveParticipantRegistry{};
+  completion_registry_ = CompletionRegistry{};
+  code_action_registry_ = CodeActionRegistry{};
+  task_registry_ = TaskRegistry{};
+  tool_registry_ = ToolRegistry{};
+  test_controller_.Clear();
+  dap_manager_.ShutdownAll();
+
+  const auto& host = plugin_runtime_.Host();
+  for (const auto& formatter : host.ContributedFormatters()) {
+    formatter_registry_.Register(FormatterSpec{
+        .id = formatter.id,
+        .language_id = formatter.language_id,
+        .label = formatter.label,
+        .command = formatter.command,
+        .plugin_id = formatter.plugin_id,
+    });
+  }
+  for (const auto& participant : host.ContributedSaveParticipants()) {
+    save_participant_registry_.Register(
+        SaveParticipantSpec{.id = participant.id, .plugin_id = participant.plugin_id});
+  }
+  for (const auto& completion : host.ContributedCompletions()) {
+    completion_registry_.Register(CompletionProviderSpec{
+        .id = completion.id,
+        .plugin_id = completion.plugin_id,
+        .language_id = completion.language_id,
+        .trigger_characters = completion.trigger_characters,
+    });
+  }
+  for (const auto& code_action : host.ContributedCodeActions()) {
+    code_action_registry_.Register(CodeActionProviderSpec{
+        .id = code_action.id,
+        .plugin_id = code_action.plugin_id,
+        .language_id = code_action.language_id,
+    });
+  }
+  for (const auto& task : host.ContributedTasks()) {
+    task_registry_.Register(TaskSpec{
+        .id = task.id,
+        .plugin_id = task.plugin_id,
+        .label = task.label,
+        .group = task.group,
+        .command = task.command,
+        .cwd = task.cwd,
+        .run_in_shell = task.run_in_shell,
+    });
+  }
+  for (const auto& tool : host.ContributedTools()) {
+    tool_registry_.Register(ToolSpec{
+        .id = tool.id,
+        .plugin_id = tool.plugin_id,
+        .label = tool.label,
+        .platform = tool.platform,
+        .download_url = tool.download_url,
+        .sha256 = tool.sha256,
+        .install_dir = tool.install_dir,
+    });
+  }
+  for (const auto& debugger : host.ContributedDebuggers()) {
+    dap_manager_.RegisterDebugger(debugger.type, debugger.command);
+  }
+}
+
+void WorkspaceShell::RebuildPhase4Registries() {
+  scm_registry_ = ScmRegistry{};
+  annotation_registry_ = AnnotationRegistry{};
+  auth_provider_registry_.Clear();
+
+  const auto& host = plugin_runtime_.Host();
+  for (const auto& provider : host.ContributedScmProviders()) {
+    scm_registry_.Register(ScmProviderSpec{
+        .id = provider.id,
+        .label = provider.label,
+        .plugin_id = provider.plugin_id,
+    });
+  }
+  for (const auto& provider : host.ContributedAnnotationProviders()) {
+    annotation_registry_.Register(AnnotationProviderSpec{
+        .id = provider.id,
+        .label = provider.label,
+        .type = provider.type,
+        .language_id = provider.language_id,
+        .plugin_id = provider.plugin_id,
+    });
+  }
+  for (const auto& provider : host.ContributedAuthProviders()) {
+    auth_provider_registry_.RegisterProvider(AuthProviderSpec{
+        .id = provider.id,
+        .label = provider.label,
+        .plugin_id = provider.plugin_id,
+    });
+  }
+}
+
+void WorkspaceShell::RebuildPhase5Registries() {
+  ai_provider_registry_ = AiProviderRegistry{};
+  inline_completion_registry_.Clear();
+  conversation_registry_.Clear();
+  external_agent_registry_.Clear();
+  mcp_tool_registry_.Clear();
+  ai_context_manager_.Clear();
+
+  const auto& host = plugin_runtime_.Host();
+  for (const auto& provider : host.ContributedAiProviders()) {
+    ai_provider_registry_.Register(AiProviderSpec{
+        .id = provider.id,
+        .label = provider.label,
+        .type = provider.type,
+        .api_key_name = provider.id + ".api_key",
+        .models = provider.models,
+        .plugin_id = provider.plugin_id,
+    });
+  }
+  for (const auto& agent : host.ContributedExternalAgents()) {
+    external_agent_registry_.RegisterAgent(ExternalAgentSpec{
+        .id = agent.id,
+        .label = agent.label,
+        .protocol = agent.protocol,
+        .endpoint = agent.endpoint,
+        .capabilities = agent.capabilities,
+        .plugin_id = agent.plugin_id,
+    });
+  }
+  for (const auto& tool : host.ContributedMcpTools()) {
+    mcp_tool_registry_.RegisterTool(McpToolSpec{
+        .id = tool.id,
+        .name = tool.name,
+        .description = tool.description,
+        .input_schema = tool.input_schema,
+        .plugin_id = tool.plugin_id,
+    });
+    mcp_tool_registry_.SetPermission(ToolPermission{
+        .tool_id = tool.id,
+        .agent_id = "*",
+        .level = ToolPermissionLevel::PromptRequired,
+    });
+  }
+  if (context_.current_project_state.panel.chat.conversation_id.empty()) {
+    context_.current_project_state.panel.chat.conversation_id =
+        conversation_registry_.CreateConversation("Chat", {});
+  }
+}
+
 bool WorkspaceShell::ReloadPluginsForCurrentProject() {
   const bool clean_reload = plugin_runtime_.Reload(context_.current_project_state.root);
+  RebuildPhase3Registries();
+  RebuildPhase4Registries();
+  RebuildPhase5Registries();
   InvalidateRuntimeSyntaxStateCaches();
+  NormalizeSidebarViewSelection();
   RefreshPluginSidebar();
+  RefreshGitSidebar();
   RefreshProblemsSidebar();
   NotifyPluginsAboutOpenBuffers();
+  RequestChromeRedraw();
   RequestEditorSurfaceRedraw();
   return clean_reload;
 }
@@ -95,7 +270,9 @@ bool WorkspaceShell::ReloadPluginsIfPluginAssetsChanged(bool force_check) {
   }
 
   ReloadPluginsForCurrentProject();
-  plugin_runtime_.AppendLog("Detected plugin asset changes: " + PluginRuntimeReloadSummary());
+  const std::string summary = "Detected plugin asset changes: " + PluginRuntimeReloadSummary();
+  output_channels_.AppendLine("plugins.log", "Plugin Log", summary);
+  plugin_runtime_.AppendLog(summary);
   return true;
 }
 

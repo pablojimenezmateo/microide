@@ -20,6 +20,8 @@ class MenuCoordinator {
     std::function<std::optional<SDL_FRect>(MenuId)> menu_popup_rect;
     std::function<std::optional<SDL_FRect>(MenuId, std::size_t)> menu_popup_item_rect;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
+    std::function<bool(std::string_view, const std::vector<std::string>&, ActionSource)>
+        execute_command_name;
   };
 
   MenuCoordinator(MenuSurfaceState& menu_state, Operations operations);

@@ -21,6 +21,45 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     return DispatchResult::Rejected;
   };
   switch (id) {
+    case ActionId::AuthLogin: {
+      if (args.empty()) {
+        return reject("auth-login requires a provider id");
+      }
+      std::vector<std::string> scopes;
+      if (args.size() > 1) {
+        scopes.assign(args.begin() + 1, args.end());
+      }
+      std::string error_message;
+      if (!context_.LoginAuthProvider(args.front(), scopes, &error_message)) {
+        return reject(error_message.empty() ? "Auth login failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::AuthRefresh: {
+      if (args.size() < 2) {
+        return reject("auth-refresh requires a provider id and session id");
+      }
+      std::string error_message;
+      if (!context_.RefreshAuthSession(args[0], args[1], &error_message)) {
+        return reject(error_message.empty() ? "Auth refresh failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::AuthLogout: {
+      if (args.size() < 2) {
+        return reject("auth-logout requires a provider id and session id");
+      }
+      std::string error_message;
+      if (!context_.LogoutAuthSession(args[0], args[1], &error_message)) {
+        return reject(error_message.empty() ? "Auth logout failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::CodeActions:
+    case ActionId::Completion:
+    case ActionId::InlineCompletion:
+    case ActionId::TestsDiscover:
+      return DispatchResult::Unhandled;
     case ActionId::Colorscheme: {
       const std::optional<ColorschemeRequest> request = BuildColorschemeRequest(args);
       if (!request.has_value()) {
@@ -90,12 +129,72 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.OpenCommandPrompt();
       return DispatchResult::Handled;
     }
+    case ActionId::DebugStart: {
+      if (args.empty()) {
+        return reject("debug-start requires a debugger type");
+      }
+      std::string error_message;
+      if (!context_.StartDebugger(args.front(), &error_message)) {
+        return reject(error_message.empty() ? "Debugger start failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::DebugStop:
+      context_.StopDebugger();
+      return DispatchResult::Handled;
+    case ActionId::McpTool: {
+      if (args.empty()) {
+        return reject("mcp requires a tool id");
+      }
+      const std::string input_json = args.size() > 1 ? JoinCommandArguments(args, 1) : "{}";
+      std::string error_message;
+      if (!context_.InvokeMcpTool(args.front(), input_json, &error_message)) {
+        return reject(error_message.empty() ? "MCP tool failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::PluginsReload:
       if (!context_.PluginRuntimeEnabled()) {
         return reject("Lua plugin runtime unavailable");
       }
       context_.ReloadPluginsWithFeedback();
       return DispatchResult::Handled;
+    case ActionId::ShowChat: {
+      if (args.empty()) {
+        context_.ShowChatPanel();
+        return DispatchResult::Handled;
+      }
+      std::string error_message;
+      if (!context_.StartChatRequest(JoinCommandArguments(args, 0), &error_message)) {
+        return reject(error_message.empty() ? "Chat request failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::ShowOutput:
+      context_.ShowOutputChannel(args.empty() ? std::string_view{} : std::string_view(args.front()));
+      return DispatchResult::Handled;
+    case ActionId::Tasks: {
+      if (args.empty()) {
+        if (!context_.ShowTaskPickerOverlay()) {
+          return reject("No tasks registered");
+        }
+        return DispatchResult::Handled;
+      }
+      std::string error_message;
+      if (!context_.RunTaskById(args.front(), &error_message)) {
+        return reject(error_message.empty() ? "Task run failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::TestsRun: {
+      std::string error_message;
+      const bool ok = args.empty() ? context_.RunAllDiscoveredTests(&error_message)
+                                   : context_.RunTests(args, &error_message);
+      if (!ok) {
+        return reject(error_message.empty() ? "Test run failed" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Quit:
       context_.RequestQuit();
       return DispatchResult::Handled;

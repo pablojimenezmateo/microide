@@ -18,6 +18,7 @@ enum class TextInputSurface {
   SidebarSearchQuery,
   SidebarSearchReplace,
   Terminal,
+  ChatComposer,
 };
 
 struct TextCompositionState {

@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
+#include <utility>
+
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -87,7 +89,22 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     }
     return handled;
   }
-  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
+  if (state_.surface.focus == FocusTarget::Panel &&
+      state_.panel.content == PanelContentKind::Chat) {
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        state_.surface.focus = FocusTarget::Editor;
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        return operations_.start_chat_request({});
+      default:
+        break;
+    }
+  }
+  if (state_.surface.focus == FocusTarget::Panel &&
+      state_.panel.content == PanelContentKind::Terminal &&
+      operations_.active_terminal_tab() != nullptr) {
     const bool handled = operations_.text_input_handle_terminal_key_down(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
@@ -120,103 +137,87 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                               SDL_Keymod modifiers,
                                               bool active_compare_tab,
                                               bool active_merge_tab) {
-  if ((modifiers & SDL_KMOD_CTRL) && !state_.panel.command_mode && !state_.overlay.visible &&
-      event.key == SDLK_N) {
-    return operations_.open_untitled_tab();
+  const auto bindings = operations_.resolved_keybindings();
+  const ResolvedKeybinding* binding =
+      FindKeybinding(bindings, event.key, modifiers, ActiveKeybindingContext());
+  if (binding == nullptr) {
+    return false;
   }
 
-  if ((modifiers & SDL_KMOD_CTRL) && !state_.panel.command_mode && !state_.overlay.visible &&
-      state_.surface.focus == FocusTarget::Editor && !active_compare_tab &&
-      operations_.active_editable_viewport() != nullptr && event.key == SDLK_A) {
-    operations_.execute_action(ActionId::SelectAll, {}, ActionSource::Shortcut);
-    return true;
+  const bool editor_shortcut =
+      binding->action == ActionId::SelectAll || binding->action == ActionId::Undo ||
+      binding->action == ActionId::Redo || binding->action == ActionId::CopySelection ||
+      binding->action == ActionId::CutSelection || binding->action == ActionId::PasteClipboard ||
+      binding->action == ActionId::CloseActiveTab || binding->action == ActionId::Search ||
+      binding->action == ActionId::ReplaceInBuffer || binding->action == ActionId::ProjectSearch;
+
+  if (binding->action == ActionId::Tab && binding->args.empty() &&
+      binding->command_name.empty() &&
+      (state_.panel.command_mode || state_.overlay.visible)) {
+    return false;
   }
 
-  if ((modifiers & SDL_KMOD_CTRL) && !state_.panel.command_mode && !state_.overlay.visible &&
-      state_.surface.focus == FocusTarget::Editor && !active_compare_tab) {
-    if (!active_merge_tab && (modifiers & SDL_KMOD_SHIFT) && event.key == SDLK_F) {
-      operations_.execute_action(ActionId::ProjectSearch, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (!active_merge_tab && event.key == SDLK_H) {
-      operations_.execute_action(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (!active_merge_tab && event.key == SDLK_F) {
-      operations_.execute_action(ActionId::Search, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_W) {
-      operations_.execute_action(ActionId::CloseActiveTab, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_Z) {
-      operations_.execute_action((modifiers & SDL_KMOD_SHIFT) != 0 ? ActionId::Redo : ActionId::Undo,
-                                 {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_Y) {
-      operations_.execute_action(ActionId::Redo, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_C) {
-      operations_.execute_action(ActionId::CopySelection, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_X) {
-      operations_.execute_action(ActionId::CutSelection, {}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_V) {
-      operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
-      return true;
-    }
+  if (editor_shortcut &&
+      (state_.panel.command_mode || state_.overlay.visible ||
+       state_.surface.focus != FocusTarget::Editor || active_compare_tab)) {
+    return false;
+  }
+  if ((binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer ||
+       binding->action == ActionId::ProjectSearch) &&
+      active_merge_tab) {
+    return false;
+  }
+  if (binding->action == ActionId::SelectAll &&
+      operations_.active_editable_viewport() == nullptr) {
+    return false;
+  }
+  if (binding->action == ActionId::Save && active_compare_tab) {
+    return false;
+  }
+  if (!binding->command_name.empty() &&
+      (state_.panel.command_mode || state_.overlay.visible)) {
+    return false;
   }
 
-  if ((modifiers & SDL_KMOD_CTRL) && !active_compare_tab && event.key == SDLK_S) {
-    operations_.execute_action(ActionId::Save, {}, ActionSource::Shortcut);
-    return true;
-  }
+  return DispatchResolvedKeybinding(*binding, ActionSource::Shortcut);
+}
 
-  if (modifiers & SDL_KMOD_CTRL) {
-    if (event.key == SDLK_0 || event.key == SDLK_KP_0) {
-      operations_.execute_action(ActionId::UiScale, {"reset"}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_MINUS || event.key == SDLK_KP_MINUS) {
-      operations_.execute_action(ActionId::UiScale, {"down"}, ActionSource::Shortcut);
-      return true;
-    }
-    if (event.key == SDLK_EQUALS || event.key == SDLK_PLUS || event.key == SDLK_KP_PLUS) {
-      operations_.execute_action(ActionId::UiScale, {"up"}, ActionSource::Shortcut);
-      return true;
-    }
+KeybindingContext KeyInputCoordinator::ActiveKeybindingContext() const {
+  switch (state_.surface.focus) {
+    case FocusTarget::Editor:
+      return KeybindingContext::Editor;
+    case FocusTarget::Sidebar:
+      return KeybindingContext::Sidebar;
+    case FocusTarget::Panel:
+      return state_.panel.content == PanelContentKind::Terminal &&
+                     operations_.active_terminal_tab() != nullptr
+                 ? KeybindingContext::Terminal
+                 : KeybindingContext::Global;
+    case FocusTarget::Overlay:
+    default:
+      return KeybindingContext::Global;
   }
+}
 
-  if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_E) {
-    operations_.execute_action(ActionId::OpenCommandPrompt, {}, ActionSource::Shortcut);
-    return true;
+bool KeyInputCoordinator::DispatchResolvedKeybinding(const ResolvedKeybinding& binding,
+                                                     ActionSource source) {
+  if (!binding.command_name.empty()) {
+    return operations_.execute_command_name(binding.command_name, binding.args, source);
   }
-
-  return false;
+  return operations_.execute_action(binding.action, binding.args, source);
 }
 
 bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event,
                                                          SDL_Keymod modifiers) {
   switch (event.key) {
-    case SDLK_F8:
-      operations_.execute_action(ActionId::SidebarToggle, {}, ActionSource::Shortcut);
-      return true;
-    case SDLK_F6:
-      operations_.execute_action(ActionId::Files, {}, ActionSource::Shortcut);
-      return true;
     case SDLK_TAB:
       if (modifiers & SDL_KMOD_CTRL) {
         if (state_.overlay.visible) {
           state_.surface.focus = FocusTarget::Overlay;
           return true;
         }
-        const bool include_panel = operations_.active_terminal_tab() != nullptr || state_.panel.command_mode;
+        const bool include_panel =
+            state_.panel.content != PanelContentKind::None || state_.panel.command_mode;
         if (include_panel) {
           if (state_.sidebar.visible) {
             if (modifiers & SDL_KMOD_SHIFT) {
@@ -322,6 +323,16 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
+          .execute_command_name =
+              [this](std::string_view command_name,
+                     const std::vector<std::string>& args,
+                     ActionSource source) {
+                return ExecuteCommandName(command_name, args, source);
+              },
+          .resolved_keybindings =
+              [this]() {
+                return ResolveKeybindings(plugin_runtime_.Host(), context_.disabled_keybinding_ids);
+              },
           .open_untitled_tab = [this]() { return OpenUntitledTab(); },
           .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
           .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },
@@ -373,6 +384,14 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() { RevealSelectedProblemsSidebarLine(); },
           .open_selected_problem_sidebar_item = [this]() { return OpenSelectedProblemSidebarItem(); },
           .refresh_problems_sidebar = [this]() { return RefreshProblemsSidebar(); },
+          .move_tests_sidebar_selection = [this](int delta) { MoveTestsSidebarSelection(delta); },
+          .reveal_selected_tests_sidebar_line =
+              [this]() { RevealSelectedTestsSidebarLine(); },
+          .open_selected_test_sidebar_item =
+              [this]() { return OpenSelectedTestSidebarItem(); },
+          .run_selected_test_sidebar_item =
+              [this]() { return RunSelectedTestSidebarItem(); },
+          .refresh_tests_sidebar = [this]() { return RefreshTestsSidebar(); },
           .move_plugin_sidebar_selection = [this](int delta) { MovePluginSidebarSelection(delta); },
           .reveal_selected_plugin_sidebar_line = [this]() { RevealSelectedPluginSidebarLine(); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
@@ -408,6 +427,29 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .request_close_active_tab =
               [this]() { RequestCloseTab(context_.current_project_state.active_tab_index); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
+          .show_completion_overlay =
+              [this](std::string* error_message) {
+                return ShowCompletionOverlay(error_message);
+              },
+          .apply_selected_completion = [this]() { return ApplySelectedCompletion(); },
+          .show_code_actions_overlay =
+              [this](std::string* error_message) {
+                return ShowCodeActionsOverlay(error_message);
+              },
+          .execute_selected_code_action =
+              [this]() { return ExecuteSelectedCodeAction(); },
+          .show_task_picker_overlay = [this]() { return ShowTaskPickerOverlay(); },
+          .run_selected_task = [this]() { return RunSelectedTask(); },
+          .start_chat_request =
+              [this](std::string message) {
+                return StartChatRequest(std::move(message), nullptr);
+              },
+          .request_inline_completion =
+              [this](std::string* error_message) {
+                return RequestInlineCompletion(error_message);
+              },
+          .accept_inline_completion = [this]() { return AcceptInlineCompletion(); },
+          .dismiss_inline_completion = [this]() { DismissInlineCompletion(); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
               [this](MergeTabState& merge_tab,

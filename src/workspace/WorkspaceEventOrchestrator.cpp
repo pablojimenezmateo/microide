@@ -57,6 +57,14 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     operations_.consume_project_search_updates();
     return finish(true);
   }
+  if (operations_.task_runtime_handles_event(event.type)) {
+    operations_.consume_task_runtime_updates();
+    return finish(true);
+  }
+  if (operations_.ai_runtime_handles_event(event.type)) {
+    operations_.consume_ai_runtime_updates();
+    return finish(true);
+  }
   if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
     operations_.request_focused_editor_redraw();
     return finish(true);

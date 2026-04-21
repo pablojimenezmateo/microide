@@ -386,6 +386,50 @@ std::optional<std::vector<LspClient::CodeAction>> LspClient::RequestCodeAction(
   return std::nullopt;
 }
 
+std::optional<std::string> LspClient::RequestFormatting(const std::string& uri,
+                                                        int tab_size,
+                                                        bool insert_spaces) {
+  using namespace util;
+  JsonObject text_doc;
+  text_doc["uri"] = JsonValue(uri);
+
+  JsonObject options;
+  options["tabSize"] = JsonValue(static_cast<std::int64_t>(tab_size));
+  options["insertSpaces"] = JsonValue(insert_spaces);
+
+  JsonObject params;
+  params["textDocument"] = JsonValue(text_doc);
+  params["options"] = JsonValue(options);
+
+  const auto req = impl_->MakeRequest("textDocument/formatting", JsonValue(params));
+  if (!impl_->SendMessage(req)) {
+    return std::nullopt;
+  }
+
+  const int req_id = impl_->next_id - 1;
+  for (int attempts = 0; attempts < 30; ++attempts) {
+    const auto resp_opt = impl_->ReadJsonRpc(500);
+    if (!resp_opt) {
+      return std::nullopt;
+    }
+    const auto& resp = *resp_opt;
+    if (!resp.HasKey("id") || resp["id"].AsInt() != req_id) {
+      continue;
+    }
+
+    const auto& edits = resp["result"];
+    if (!edits.IsArray()) {
+      return std::string{};
+    }
+    const auto& edit_array = edits.AsArray();
+    if (edit_array.empty()) {
+      return std::string{};
+    }
+    return edit_array.front()["newText"].AsString();
+  }
+  return std::nullopt;
+}
+
 void LspClient::Shutdown() {
   if (!impl_->initialized) {
     impl_->proc.Shutdown();
