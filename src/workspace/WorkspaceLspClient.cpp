@@ -11,6 +11,7 @@ namespace microide::workspace {
 struct LspClient::Impl {
   platform::AsyncSubprocess proc;
   std::unordered_map<int, util::JsonValue> pending_responses;
+  std::unordered_map<std::string, int> document_versions;
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
@@ -197,6 +198,7 @@ void LspClient::PollNotifications() {
 bool LspClient::DidOpen(const std::string& uri, const std::string& language_id,
                         const std::string& text) {
   using namespace util;
+  impl_->document_versions[uri] = 1;
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   text_doc["languageId"] = JsonValue(language_id);
@@ -212,9 +214,10 @@ bool LspClient::DidOpen(const std::string& uri, const std::string& language_id,
 
 bool LspClient::DidChange(const std::string& uri, const std::string& text) {
   using namespace util;
+  const int version = ++impl_->document_versions[uri];
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
-  text_doc["version"] = JsonValue(static_cast<std::int64_t>(2));
+  text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
 
   JsonObject change;
   change["text"] = JsonValue(text);
@@ -369,7 +372,7 @@ std::optional<std::vector<LspClient::CodeAction>> LspClient::RequestCodeAction(
     if (resp.HasKey("id") && resp["id"].AsInt() == req_id) {
       std::vector<CodeAction> actions;
       const auto& result = resp["result"];
-      const auto& action_array = result.IsArray() ? result.AsArray() : result.AsArray();
+      const auto& action_array = result.AsArray();
       for (const auto& action : action_array) {
         CodeAction ca;
         ca.title = action["title"].AsString();
@@ -446,7 +449,7 @@ void LspClient::Shutdown() {
     if (!resp_opt) break;
   }
 
-  impl_->MakeNotification("exit", JsonValue(JsonObject{}));
+  impl_->SendMessage(impl_->MakeNotification("exit", JsonValue(JsonObject{})));
   impl_->proc.Shutdown();
   impl_->initialized = false;
 }

@@ -138,8 +138,15 @@ Current controls:
 
 Current commands:
 
+- `auth-login <provider> [scope...]`
+- `auth-logout <provider> <session>`
+- `auth-refresh <provider> <session>`
+- `code-actions`
 - `colorscheme [name|list]`
+- `completion`
 - `compare [path] [commit-prefix]`
+- `debug-start <type>`
+- `debug-stop`
 - `merge <base> <incoming> <current> [output]`
 - `files [root]`
 - `find <query>`
@@ -147,7 +154,9 @@ Current commands:
 - `goto <line[:col]>`
 - `git-refresh`
 - `indent-width [n]`
+- `inline-complete`
 - `jump <line[:col]>`
+- `mcp <tool> [json]`
 - `open <path>`
 - `project-close`
 - `project-next`
@@ -159,6 +168,8 @@ Current commands:
 - `reopen`
 - `save`
 - `search <query>`
+- `chat [message]`
+- `output [channel]`
 - `sidebar-close`
 - `sidebar-hide`
 - `sidebar-show [tool]`
@@ -174,6 +185,9 @@ Current commands:
 - `tabmove <n>`
 - `tabswitch <tab>`
 - `term [command]`
+- `tasks [task-id]`
+- `tests-discover`
+- `tests-run [test-id...]`
 - `tree [root]`
 - `tree-refresh`
 - `ui-scale [n|up|down|reset]`

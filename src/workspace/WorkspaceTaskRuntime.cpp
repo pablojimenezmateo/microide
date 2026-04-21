@@ -26,12 +26,11 @@ std::vector<std::string> BuildTaskCommand(const TaskSpec& spec) {
   if (spec.command.empty()) {
     return {};
   }
-
-  if (spec.run_in_shell) {
-    if (spec.command.size() == 1) {
-      return {"sh", "-lc", spec.command.front() + " 2>&1"};
-    }
-    return {"sh", "-lc", BuildShellCommand(spec.command) + " 2>&1"};
+  if (!spec.run_in_shell) {
+    return spec.command;
+  }
+  if (spec.command.size() == 1) {
+    return {"sh", "-lc", spec.command.front() + " 2>&1"};
   }
   return {"sh", "-lc", BuildShellCommand(spec.command) + " 2>&1"};
 }

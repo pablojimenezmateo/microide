@@ -281,9 +281,9 @@ void TestWorkspaceSidebarRegistry() {
 
   microide::plugin::PluginHost plugin_host;
   const auto views = SidebarViews(plugin_host);
-  Expect(views.size() == 4, "sidebar registry should expose four built-in views");
+  Expect(views.size() == 5, "sidebar registry should expose five built-in views");
   Expect(views[0].id == "tree" && views[0].label == "Project" &&
-             views[1].id == "search" && views[3].id == "git",
+             views[1].id == "search" && views[3].id == "git" && views[4].id == "tests",
          "sidebar registry should preserve built-in view ordering");
 
   const auto problems_view = FindSidebarView("problems", plugin_host);
@@ -292,8 +292,8 @@ void TestWorkspaceSidebarRegistry() {
          "sidebar registry should resolve the problems view against the host");
 
   const auto view_ids = SidebarViewIds(plugin_host);
-  Expect(view_ids.size() == 4 && view_ids[0] == "git" && view_ids[1] == "problems" &&
-             view_ids[3] == "tree",
+  Expect(view_ids.size() == 5 && view_ids[0] == "git" && view_ids[1] == "problems" &&
+             view_ids[3] == "tests" && view_ids[4] == "tree",
          "sidebar registry should preserve built-in view completion ids");
 
   const SidebarViewRequest search_request =
