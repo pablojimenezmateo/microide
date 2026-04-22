@@ -299,7 +299,9 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject() {
   InvalidateRuntimeSyntaxStateCaches();
   NormalizeSidebarViewSelection();
   RefreshPluginSidebar();
-  RefreshGitSidebar();
+  if (ActiveSidebarMode() == SidebarMode::Git) {
+    RefreshGitSidebar();
+  }
   RefreshProblemsSidebar();
   NotifyPluginsAboutOpenBuffers();
   RequestChromeRedraw();

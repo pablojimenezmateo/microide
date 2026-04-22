@@ -27,16 +27,7 @@ bool RemoveLastUtf8Codepoint(std::string* text) {
 void FileFinder::SetIndex(const FileIndex* index) {
   index_ = index;
   cached_entries_.clear();
-  if (index_ != nullptr) {
-    for (const auto& path : index_->files()) {
-      const std::string path_string = path.string();
-      cached_entries_.push_back(CachedFileEntry{
-          .path_string = path_string,
-          .lower_path = ToLower(path_string),
-          .lower_filename = ToLower(std::filesystem::path(path_string).filename().string()),
-      });
-    }
-  }
+  cache_ready_ = false;
   results_.clear();
   selected_index_ = 0;
   if (index_ != nullptr && !query_.empty()) {
@@ -76,6 +67,7 @@ void FileFinder::Refresh() {
   if (index_ == nullptr) {
     return;
   }
+  EnsureCacheBuilt();
 
   const std::string lower_query = ToLower(query_);
   const auto& files = index_->files();
@@ -180,6 +172,25 @@ std::string FileFinder::ToLower(std::string value) {
     return static_cast<char>(std::tolower(c));
   });
   return value;
+}
+
+void FileFinder::EnsureCacheBuilt() {
+  if (cache_ready_ || index_ == nullptr) {
+    return;
+  }
+
+  const auto& files = index_->files();
+  cached_entries_.clear();
+  cached_entries_.reserve(files.size());
+  for (const auto& path : files) {
+    const std::string path_string = path.string();
+    cached_entries_.push_back(CachedFileEntry{
+        .path_string = path_string,
+        .lower_path = ToLower(path_string),
+        .lower_filename = ToLower(std::filesystem::path(path_string).filename().string()),
+    });
+  }
+  cache_ready_ = true;
 }
 
 }  // namespace microide::project

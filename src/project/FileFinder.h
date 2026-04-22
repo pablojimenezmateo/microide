@@ -41,11 +41,13 @@ class FileFinder {
   static int SubsequenceScore(const std::string& text, const std::string& query);
   static int RankMatchCached(const CachedFileEntry& entry, const std::string& query);
   static std::string ToLower(std::string value);
+  void EnsureCacheBuilt();
 
   const FileIndex* index_ = nullptr;
   std::string query_;
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
+  bool cache_ready_ = false;
   std::size_t selected_index_ = 0;
 };
 

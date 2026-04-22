@@ -1,12 +1,37 @@
 # MicroIDE Performance Findings
 
-Last reviewed on 2026-04-16 after the terminal-focus freeze investigation, the follow-up
-performance pass.
+Last reviewed on 2026-04-22 after a startup profiling pass focused on project-open overhead.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
 
 ## Fixed In This Pass
+
+### Startup project-open eager scans
+
+Problem:
+
+- project-open work eagerly refreshed Git sidebar entries even when the active sidebar was not the
+  Git view
+- `FileFinder::SetIndex()` eagerly consumed `FileIndex::files()`, forcing a full project file scan
+  at startup before the file-finder overlay was opened
+
+Implemented:
+
+- `WorkspaceShell::SetProjectRoot` and plugin-reload startup paths now refresh Git sidebar data
+  only when the active sidebar mode is Git
+- `FileFinder` now defers index-cache materialization until a real file-finder query refresh is
+  requested
+- project-shell coverage now includes deferred Git sidebar refresh at project open
+- project-shell coverage now includes file-finder open-and-select behavior with deferred index
+  cache build
+
+Impact:
+
+- startup traces now avoid the eager file-index scan on project open
+- on the same local startup-trace command, `WorkspaceShell::SetProjectRoot` dropped from the
+  previous `~370 ms` hotspot range to `~17-20 ms`
+- Git sidebar behavior remains correct when users switch into the Git view
 
 ### Text measurement hot path
 

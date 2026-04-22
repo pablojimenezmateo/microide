@@ -110,6 +110,35 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should prefill the typed open-project command");
 }
 
+void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add startup git sidebar fixture", "startup git sidebar fixture");
+  WriteFile(source, "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+  Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).empty(),
+         "opening a project should not eagerly collect git sidebar entries");
+
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(!entries.empty(),
+         "showing git sidebar should collect entries on demand");
+  const bool found_modified_source = std::any_of(
+      entries.begin(), entries.end(), [&](const WorkspaceShell::GitSidebarEntry& entry) {
+        return entry.section == WorkspaceShell::GitSidebarEntry::Section::Modified &&
+               entry.path == source.lexically_normal();
+      });
+  Expect(found_modified_source,
+         "on-demand git sidebar refresh should include the modified file");
+}
+
 void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
@@ -606,6 +635,27 @@ void TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome() {
          "Escape should dismiss the welcome overlay");
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
          "closing the welcome overlay should restore editor focus when no sidebar is visible");
+}
+
+void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path readme = root / "README.md";
+  const std::filesystem::path target = root / "src" / "target-match.cpp";
+  WriteFile(readme, "hello\n");
+  WriteFile(target, "int target() {\n  return 42;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "files shortcut should open the file finder overlay");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target-match"),
+         "typing in the file finder should be handled");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing enter in the file finder should open the selected match");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == target.lexically_normal(),
+         "file finder should still open matches after deferred index cache build");
 }
 
 void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
@@ -1268,6 +1318,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
+  AddTest(tests, "WorkspaceShell/ProjectOpenDefersGitSidebarRefreshUntilShown",
+          TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
   AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",
@@ -1304,6 +1356,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",
           TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome);
+  AddTest(tests, "WorkspaceShell/FilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild",
+          TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild);
   AddTest(tests, "WorkspaceShell/OverlayOutsideClickRestoresPrimaryFocus",
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
