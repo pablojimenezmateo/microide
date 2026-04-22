@@ -4,25 +4,9 @@
 #include <cctype>
 #include <limits>
 
+#include "util/SingleLineText.h"
+
 namespace microide::project {
-
-namespace {
-
-bool RemoveLastUtf8Codepoint(std::string* text) {
-  if (text == nullptr || text->empty()) {
-    return false;
-  }
-
-  std::size_t index = text->size();
-  do {
-    --index;
-  } while (index > 0 &&
-           (static_cast<unsigned char>((*text)[index]) & 0xC0u) == 0x80u);
-  text->erase(index);
-  return true;
-}
-
-}  // namespace
 
 void FileFinder::SetIndex(const FileIndex* index) {
   index_ = index;
@@ -30,35 +14,16 @@ void FileFinder::SetIndex(const FileIndex* index) {
   cache_ready_ = false;
   results_.clear();
   selected_index_ = 0;
-  if (index_ != nullptr && !query_.empty()) {
+  if (index_ != nullptr && !query_.text.empty()) {
     Refresh();
   }
 }
 
 void FileFinder::SetQuery(std::string query) {
-  query_ = std::move(query);
+  util::SetSingleLineText(&query_, std::move(query));
   Refresh();
 }
 
-void FileFinder::AppendQueryChar(char character) {
-  query_.push_back(character);
-  Refresh();
-}
-
-void FileFinder::AppendQueryText(std::string_view text) {
-  if (text.empty()) {
-    return;
-  }
-  query_.append(text);
-  Refresh();
-}
-
-void FileFinder::Backspace() {
-  if (!RemoveLastUtf8Codepoint(&query_)) {
-    return;
-  }
-  Refresh();
-}
 
 void FileFinder::Refresh() {
   results_.clear();
@@ -69,7 +34,7 @@ void FileFinder::Refresh() {
   }
   EnsureCacheBuilt();
 
-  const std::string lower_query = ToLower(query_);
+  const std::string lower_query = ToLower(query_.text);
   const auto& files = index_->files();
   for (std::size_t i = 0; i < cached_entries_.size() && i < files.size(); ++i) {
     const int score = RankMatchCached(cached_entries_[i], lower_query);

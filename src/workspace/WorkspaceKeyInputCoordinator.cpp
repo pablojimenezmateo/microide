@@ -5,7 +5,6 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
-#include "workspace/WorkspaceTextSearch.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
@@ -66,7 +65,10 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return true;
   }
   if (state_.panel.command_mode) {
-    const bool handled = operations_.command_prompt_handle_key_down(event);
+    bool handled = operations_.command_prompt_handle_key_down(event);
+    if (!handled) {
+      handled = operations_.text_input_handle_single_line_key_down(event, modifiers);
+    }
     if (handled) {
       ensure_redraw([this]() { operations_.request_bottom_panel_command_redraw(); });
     }
@@ -99,13 +101,14 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
         return operations_.start_chat_request({});
-      case SDLK_BACKSPACE:
-        RemoveLastUtf8Codepoint(&state_.panel.chat.composer);
-        ensure_redraw([this]() { operations_.request_bottom_panel_command_redraw(); });
-        return true;
       default:
-        return true;
+        break;
     }
+    const bool handled = operations_.text_input_handle_single_line_key_down(event, modifiers);
+    if (handled) {
+      ensure_redraw([this]() { operations_.request_bottom_panel_command_redraw(); });
+    }
+    return handled;
   }
   if (state_.surface.focus == FocusTarget::Panel &&
       state_.panel.content == PanelContentKind::Terminal &&
@@ -158,6 +161,32 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
          state_.overlay.workflow.project_search.editing);
     if (surface_accepts_paste) {
       return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
+    }
+  }
+
+  const TextInputSurface text_input_surface = operations_.current_text_input_surface();
+  const bool single_line_text_surface =
+      text_input_surface == TextInputSurface::PromptInput ||
+      text_input_surface == TextInputSurface::Command ||
+      text_input_surface == TextInputSurface::ChatComposer ||
+      text_input_surface == TextInputSurface::FileFinder ||
+      text_input_surface == TextInputSurface::BufferSearch ||
+      text_input_surface == TextInputSurface::BufferReplaceSearch ||
+      text_input_surface == TextInputSurface::BufferReplaceReplace ||
+      text_input_surface == TextInputSurface::ProjectSearchOverlay ||
+      text_input_surface == TextInputSurface::CommitPicker ||
+      text_input_surface == TextInputSurface::SidebarSearchQuery ||
+      text_input_surface == TextInputSurface::SidebarSearchReplace;
+  if (single_line_text_surface && (modifiers & SDL_KMOD_CTRL) != 0) {
+    switch (event.key) {
+      case SDLK_A:
+        return operations_.execute_action(ActionId::SelectAll, {}, ActionSource::Shortcut);
+      case SDLK_C:
+        return operations_.execute_action(ActionId::CopySelection, {}, ActionSource::Shortcut);
+      case SDLK_X:
+        return operations_.execute_action(ActionId::CutSelection, {}, ActionSource::Shortcut);
+      default:
+        break;
     }
   }
 
@@ -313,6 +342,12 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .text_input_composition_consumes_key =
               [this](SDL_Keycode key, SDL_Keymod modifiers) {
                 return MakeTextInputCoordinator().CompositionConsumesKey(key, modifiers);
+              },
+          .current_text_input_surface =
+              [this]() { return CurrentTextInputSurface(); },
+          .text_input_handle_single_line_key_down =
+              [this](const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
+                return MakeTextInputCoordinator().HandleSingleLineKeyDown(event, modifiers);
               },
           .text_input_handle_terminal_key_down =
               [this](const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {

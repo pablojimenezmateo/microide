@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -194,7 +195,7 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
   context_.prompts.surface.kind = kind;
   context_.prompts.surface.action = action;
   context_.prompts.surface.path = path.lexically_normal();
-  context_.prompts.surface.input = std::move(input);
+  util::SetSingleLineText(&context_.prompts.surface.input, std::move(input));
   context_.prompts.surface.selected_button = 0;
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
   RequestPromptRedraw();

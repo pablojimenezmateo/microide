@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "project/ProjectFileScanner.h"
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -25,7 +26,8 @@ void WorkspaceShell::RefreshProjectSearch() {
   context_.current_project_state.overlay.workflow.project_search.truncated = false;
   context_.current_project_state.overlay.workflow.project_search.error.clear();
 
-  if (context_.current_project_state.root.empty() || context_.current_project_state.overlay.workflow.project_search.query.empty()) {
+  if (context_.current_project_state.root.empty() ||
+      context_.current_project_state.overlay.workflow.project_search.query.text.empty()) {
     ResetOverlayScroll();
     RequestSidebarRedraw();
     return;
@@ -35,7 +37,8 @@ void WorkspaceShell::RefreshProjectSearch() {
   const project::ProjectFileScanMode scan_mode =
       context_.current_project_state.overlay.workflow.project_search.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
                                                            : project::ProjectFileScanMode::ExcludeHidden;
-  project_search_runtime_.Start(context_.current_project_state.root, context_.current_project_state.overlay.workflow.project_search.query,
+  project_search_runtime_.Start(context_.current_project_state.root,
+                                context_.current_project_state.overlay.workflow.project_search.query.text,
                                 context_.current_project_state.overlay.workflow.project_search.options,
                                 context_.current_project_state.file_index.files(scan_mode));
   ResetOverlayScroll();
@@ -82,9 +85,11 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
 
 void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
   context_.current_project_state.overlay.workflow.project_search.edit_field = field;
-  context_.current_project_state.overlay.workflow.project_search.edit_buffer =
-      field == ProjectSearchEditField::Query ? context_.current_project_state.overlay.workflow.project_search.query
-                                             : context_.current_project_state.overlay.workflow.project_search.replace_text;
+  util::SetSingleLineText(
+      &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
+      field == ProjectSearchEditField::Query
+          ? context_.current_project_state.overlay.workflow.project_search.query.text
+          : context_.current_project_state.overlay.workflow.project_search.replace_text.text);
   context_.current_project_state.overlay.workflow.project_search.editing = true;
   RequestSidebarRedraw();
 }
@@ -92,20 +97,26 @@ void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
 void WorkspaceShell::CommitProjectSearchEdit() {
   context_.current_project_state.overlay.workflow.project_search.editing = false;
   if (context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query) {
-    context_.current_project_state.overlay.workflow.project_search.query = context_.current_project_state.overlay.workflow.project_search.edit_buffer;
+    util::SetSingleLineText(
+        &context_.current_project_state.overlay.workflow.project_search.query,
+        context_.current_project_state.overlay.workflow.project_search.edit_buffer.text);
     RefreshProjectSearch();
     return;
   }
 
-  context_.current_project_state.overlay.workflow.project_search.replace_text = context_.current_project_state.overlay.workflow.project_search.edit_buffer;
+  util::SetSingleLineText(
+      &context_.current_project_state.overlay.workflow.project_search.replace_text,
+      context_.current_project_state.overlay.workflow.project_search.edit_buffer.text);
   RequestSidebarRedraw();
 }
 
 void WorkspaceShell::CancelProjectSearchEdit() {
-  context_.current_project_state.overlay.workflow.project_search.edit_buffer =
-      context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
-          ? context_.current_project_state.overlay.workflow.project_search.query
-          : context_.current_project_state.overlay.workflow.project_search.replace_text;
+  util::SetSingleLineText(
+      &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
+      context_.current_project_state.overlay.workflow.project_search.edit_field ==
+              ProjectSearchEditField::Query
+          ? context_.current_project_state.overlay.workflow.project_search.query.text
+          : context_.current_project_state.overlay.workflow.project_search.replace_text.text);
   context_.current_project_state.overlay.workflow.project_search.editing = false;
   RequestSidebarRedraw();
 }

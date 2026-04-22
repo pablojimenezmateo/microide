@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
@@ -93,6 +94,105 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
   }
 }
 
+util::SingleLineTextState* TextInputCoordinator::ActiveSingleLineTextState() {
+  switch (operations_.current_text_input_surface()) {
+    case TextInputSurface::PromptInput:
+      return &prompts_.surface.input;
+    case TextInputSurface::Command:
+      return &state_.panel.command.input;
+    case TextInputSurface::ChatComposer:
+      return &state_.panel.chat.composer;
+    case TextInputSurface::CommitPicker:
+      return &state_.overlay.workflow.compare_picker.query;
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+      return &state_.overlay.workflow.buffer_search.query;
+    case TextInputSurface::BufferReplaceReplace:
+      return &state_.overlay.workflow.buffer_search.replace_text;
+    case TextInputSurface::ProjectSearchOverlay:
+      return &state_.overlay.workflow.project_search.query;
+    case TextInputSurface::FileFinder:
+      return &state_.file_finder.query_state();
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+      return &state_.overlay.workflow.project_search.edit_buffer;
+    case TextInputSurface::None:
+    case TextInputSurface::Editor:
+    case TextInputSurface::Terminal:
+      return nullptr;
+  }
+  return nullptr;
+}
+
+const util::SingleLineTextState* TextInputCoordinator::ActiveSingleLineTextState() const {
+  return const_cast<TextInputCoordinator*>(this)->ActiveSingleLineTextState();
+}
+
+void TextInputCoordinator::DidMutateCommandInputText() {
+  state_.panel.command.history_index.reset();
+  state_.panel.command.history_pending_input.clear();
+  state_.panel.command.feedback_text.clear();
+}
+
+void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
+                                                       bool text_changed) {
+  switch (surface) {
+    case TextInputSurface::PromptInput:
+      operations_.request_prompt_redraw();
+      break;
+    case TextInputSurface::Command:
+      if (text_changed) {
+        DidMutateCommandInputText();
+      }
+      operations_.request_bottom_panel_command_redraw();
+      break;
+    case TextInputSurface::ChatComposer:
+      operations_.request_bottom_panel_command_redraw();
+      break;
+    case TextInputSurface::CommitPicker:
+      if (text_changed) {
+        operations_.refresh_compare_picker();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+      if (text_changed) {
+        operations_.refresh_buffer_search();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::BufferReplaceReplace:
+      operations_.request_overlay_redraw();
+      break;
+    case TextInputSurface::ProjectSearchOverlay:
+      if (text_changed) {
+        operations_.refresh_project_search();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::FileFinder:
+      if (text_changed) {
+        state_.file_finder.Refresh();
+        operations_.reset_overlay_scroll();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+      operations_.request_sidebar_redraw();
+      break;
+    case TextInputSurface::None:
+    case TextInputSurface::Editor:
+    case TextInputSurface::Terminal:
+      break;
+  }
+}
+
 bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) {
   if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     if (!text_input_state_.composition.text.empty()) {
@@ -149,48 +249,15 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
   SyncTextInputSurface(nullptr);
   text_input_state_.composition = TextCompositionState{};
   const TextInputSurface surface = operations_.current_text_input_surface();
+  if (util::SingleLineTextState* text_state = ActiveSingleLineTextState();
+      text_state != nullptr) {
+    if (!util::InsertSingleLineText(text_state, input)) {
+      return false;
+    }
+    RequestSingleLineTextRedraw(surface, true);
+    return true;
+  }
   switch (surface) {
-    case TextInputSurface::PromptInput:
-      prompts_.surface.input.append(input);
-      operations_.request_prompt_redraw();
-      return true;
-    case TextInputSurface::Command:
-      operations_.command_prompt_append_input(input);
-      operations_.request_bottom_panel_command_redraw();
-      return true;
-    case TextInputSurface::ChatComposer:
-      state_.panel.chat.composer.append(input);
-      operations_.request_bottom_panel_command_redraw();
-      return true;
-    case TextInputSurface::CommitPicker:
-      state_.overlay.workflow.compare_picker.query.append(input);
-      operations_.refresh_compare_picker();
-      return true;
-    case TextInputSurface::BufferSearch:
-      state_.overlay.workflow.buffer_search.query.append(input);
-      operations_.refresh_buffer_search();
-      return true;
-    case TextInputSurface::BufferReplaceSearch:
-      state_.overlay.workflow.buffer_search.query.append(input);
-      operations_.refresh_buffer_search();
-      return true;
-    case TextInputSurface::BufferReplaceReplace:
-      state_.overlay.workflow.buffer_search.replace_text.append(input);
-      operations_.request_overlay_redraw();
-      return true;
-    case TextInputSurface::ProjectSearchOverlay:
-      state_.overlay.workflow.project_search.query.append(input);
-      operations_.refresh_project_search();
-      return true;
-    case TextInputSurface::FileFinder:
-      state_.file_finder.AppendQueryText(input);
-      operations_.reset_overlay_scroll();
-      return true;
-    case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace:
-      state_.overlay.workflow.project_search.edit_buffer.append(input);
-      operations_.request_sidebar_redraw();
-      return true;
     case TextInputSurface::Editor:
       if (operations_.active_editable_viewport() == nullptr) {
         return false;
@@ -238,6 +305,111 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
       return false;
   }
   return false;
+}
+
+bool TextInputCoordinator::HandleSingleLineKeyDown(const SDL_KeyboardEvent& event,
+                                                   SDL_Keymod modifiers) {
+  util::SingleLineTextState* text_state = ActiveSingleLineTextState();
+  if (text_state == nullptr) {
+    return false;
+  }
+
+  const TextInputSurface surface = operations_.current_text_input_surface();
+  const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
+  bool handled = false;
+  bool text_changed = false;
+
+  if ((modifiers & SDL_KMOD_CTRL) != 0) {
+    switch (event.key) {
+      case SDLK_A:
+        handled = util::SelectAllSingleLineText(text_state);
+        break;
+      case SDLK_LEFT:
+      case SDLK_HOME:
+        handled = util::MoveSingleLineCursorHome(text_state, extend_selection);
+        break;
+      case SDLK_RIGHT:
+      case SDLK_END:
+        handled = util::MoveSingleLineCursorEnd(text_state, extend_selection);
+        break;
+      default:
+        return false;
+    }
+  } else {
+    switch (event.key) {
+      case SDLK_BACKSPACE:
+        handled = util::BackspaceSingleLineText(text_state);
+        text_changed = handled;
+        break;
+      case SDLK_DELETE:
+        handled = util::DeleteForwardSingleLineText(text_state);
+        text_changed = handled;
+        break;
+      case SDLK_LEFT:
+        handled = util::MoveSingleLineCursorLeft(text_state, extend_selection);
+        break;
+      case SDLK_RIGHT:
+        handled = util::MoveSingleLineCursorRight(text_state, extend_selection);
+        break;
+      case SDLK_HOME:
+        handled = util::MoveSingleLineCursorHome(text_state, extend_selection);
+        break;
+      case SDLK_END:
+        handled = util::MoveSingleLineCursorEnd(text_state, extend_selection);
+        break;
+      default:
+        return false;
+    }
+  }
+
+  if (!handled) {
+    return false;
+  }
+  RequestSingleLineTextRedraw(surface, text_changed);
+  if (util::HasSingleLineSelection(*text_state)) {
+    operations_.write_primary_selection_text(util::SelectedSingleLineText(*text_state));
+  }
+  return true;
+}
+
+bool TextInputCoordinator::HasSelectionAtActiveSingleLineSurface() const {
+  const util::SingleLineTextState* text_state = ActiveSingleLineTextState();
+  return text_state != nullptr && util::HasSingleLineSelection(*text_state);
+}
+
+std::string TextInputCoordinator::SelectedTextAtActiveSingleLineSurface() const {
+  const util::SingleLineTextState* text_state = ActiveSingleLineTextState();
+  return text_state != nullptr ? util::SelectedSingleLineText(*text_state) : std::string{};
+}
+
+bool TextInputCoordinator::SelectAllAtActiveSingleLineSurface() {
+  util::SingleLineTextState* text_state = ActiveSingleLineTextState();
+  if (text_state == nullptr) {
+    return false;
+  }
+  if (!util::SelectAllSingleLineText(text_state)) {
+    RequestSingleLineTextRedraw(operations_.current_text_input_surface(), false);
+    return false;
+  }
+  RequestSingleLineTextRedraw(operations_.current_text_input_surface(), false);
+  return true;
+}
+
+bool TextInputCoordinator::CutSelectionAtActiveSingleLineSurface() {
+  util::SingleLineTextState* text_state = ActiveSingleLineTextState();
+  if (text_state == nullptr) {
+    return false;
+  }
+  const std::string selected = util::SelectedSingleLineText(*text_state);
+  if (selected.empty() || !operations_.write_clipboard_text(selected)) {
+    return false;
+  }
+  operations_.write_primary_selection_text(selected);
+  if (!util::DeleteSelectedSingleLineText(text_state)) {
+    return false;
+  }
+  RequestSingleLineTextRedraw(operations_.current_text_input_surface(), true);
+  return true;
 }
 
 bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,

@@ -113,6 +113,10 @@ class WorkspaceActionContext {
     std::function<void()> request_focused_editor_redraw;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<bool(std::string_view)> insert_text_into_active_text_surface;
+    std::function<bool()> has_selection_at_active_single_line_text_surface;
+    std::function<std::string()> selected_text_at_active_single_line_text_surface;
+    std::function<bool()> select_all_at_active_single_line_text_surface;
+    std::function<bool()> cut_selection_at_active_single_line_text_surface;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;

@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspaceShell.h"
@@ -76,12 +77,13 @@ void SidebarCoordinator::ShowTree(const std::filesystem::path& root) {
 }
 
 void SidebarCoordinator::ShowSearch(std::string query, bool temporary) {
-  if (!query.empty() || state_.overlay.workflow.project_search.query.empty()) {
-    state_.overlay.workflow.project_search.query = std::move(query);
+  if (!query.empty() || state_.overlay.workflow.project_search.query.text.empty()) {
+    util::SetSingleLineText(&state_.overlay.workflow.project_search.query, std::move(query));
   }
-  state_.overlay.workflow.project_search.edit_buffer = state_.overlay.workflow.project_search.query;
+  util::SetSingleLineText(&state_.overlay.workflow.project_search.edit_buffer,
+                          state_.overlay.workflow.project_search.query.text);
   state_.overlay.workflow.project_search.editing =
-      state_.overlay.workflow.project_search.query.empty();
+      state_.overlay.workflow.project_search.query.text.empty();
   state_.overlay.workflow.project_search.edit_field = ProjectSearchEditField::Query;
   state_.overlay.workflow.project_search.selected_index = 0;
   operations_.refresh_project_search();

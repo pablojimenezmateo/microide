@@ -361,7 +361,7 @@ struct WorkspaceShell::TestAccess {
     return shell.context_.current_project_state.panel.content;
   }
   static const std::string& ChatComposerInput(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.panel.chat.composer;
+    return shell.context_.current_project_state.panel.chat.composer.text;
   }
   static WorkspaceShell::OverlayMode ActiveOverlayMode(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode;
@@ -1064,7 +1064,7 @@ struct WorkspaceShell::TestAccess {
     return shell.context_.prompts.surface_visible;
   }
   static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
-    return shell.context_.prompts.surface.input;
+    return shell.context_.prompts.surface.input.text;
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
     return shell.PromptSurfaceTitle();
@@ -1200,12 +1200,14 @@ struct WorkspaceShell::TestAccess {
     return shell.project_dialog_state_.active;
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command_mode; }
-  static const std::string& CommandInput(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command.input; }
+  static const std::string& CommandInput(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.command.input.text;
+  }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
     return CommandPromptCoordinator::PromptStatusText(shell.context_.current_project_state.panel.command);
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.overlay.workflow.project_search.query;
+    return shell.context_.current_project_state.overlay.workflow.project_search.query.text;
   }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.overlay.visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {

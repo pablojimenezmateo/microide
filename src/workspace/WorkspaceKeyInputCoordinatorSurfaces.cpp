@@ -2,8 +2,6 @@
 
 #include <algorithm>
 
-#include "workspace/WorkspaceTextSearch.h"
-
 namespace microide::workspace {
 
 bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
@@ -46,13 +44,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_PAGEDOWN:
         operations_.move_compare_picker_selection(8);
         return true;
-      case SDLK_BACKSPACE:
-        if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.compare_picker.query)) {
-          operations_.refresh_compare_picker();
-        }
-        return true;
       default:
-        return false;
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
   }
 
@@ -74,13 +67,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_PAGEDOWN:
         operations_.move_buffer_search_selection(8);
         return true;
-      case SDLK_BACKSPACE:
-        if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.buffer_search.query)) {
-          operations_.refresh_buffer_search();
-        }
-        return true;
       default:
-        return false;
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
   }
 
@@ -116,17 +104,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_PAGEDOWN:
         operations_.move_buffer_search_selection(8);
         return true;
-      case SDLK_BACKSPACE:
-        if (state_.overlay.buffer_search_field == BufferSearchField::Search) {
-          if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.buffer_search.query)) {
-            operations_.refresh_buffer_search();
-          }
-        } else {
-          RemoveLastUtf8Codepoint(&state_.overlay.workflow.buffer_search.replace_text);
-        }
-        return true;
       default:
-        return false;
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
   }
 
@@ -152,13 +131,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_PAGEDOWN:
         operations_.move_project_search_selection(8);
         return true;
-      case SDLK_BACKSPACE:
-        if (RemoveLastUtf8Codepoint(&state_.overlay.workflow.project_search.query)) {
-          operations_.refresh_project_search();
-        }
-        return true;
       default:
-        return false;
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
   }
 
@@ -275,12 +249,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_PAGEDOWN:
       operations_.move_file_finder_selection(8);
       return true;
-    case SDLK_BACKSPACE:
-      state_.file_finder.Backspace();
-      operations_.reset_overlay_scroll();
-      return true;
     default:
-      return false;
+      return operations_.text_input_handle_single_line_key_down(event, modifiers);
   }
 }
 
@@ -298,11 +268,8 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         case SDLK_KP_ENTER:
           operations_.commit_project_search_edit();
           return true;
-        case SDLK_BACKSPACE:
-          RemoveLastUtf8Codepoint(&state_.overlay.workflow.project_search.edit_buffer);
-          return true;
         default:
-          return false;
+          return operations_.text_input_handle_single_line_key_down(event, modifiers);
       }
     }
 

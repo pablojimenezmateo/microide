@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
@@ -67,12 +68,21 @@ class TextInputCoordinator {
   bool CompositionConsumesKey(SDL_Keycode key, SDL_Keymod modifiers) const;
   bool HandleTextEditing(const SDL_TextEditingEvent& event);
   bool HandleTextInput(const SDL_TextInputEvent& event);
+  bool HandleSingleLineKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
   bool InsertTextAtActiveSurface(std::string_view input);
+  bool HasSelectionAtActiveSingleLineSurface() const;
+  std::string SelectedTextAtActiveSingleLineSurface() const;
+  bool SelectAllAtActiveSingleLineSurface();
+  bool CutSelectionAtActiveSingleLineSurface();
 
  private:
   void RequestCompositionRedraw(TextInputSurface surface);
+  util::SingleLineTextState* ActiveSingleLineTextState();
+  const util::SingleLineTextState* ActiveSingleLineTextState() const;
+  void RequestSingleLineTextRedraw(TextInputSurface surface, bool text_changed);
+  void DidMutateCommandInputText();
 
   ProjectWorkspaceState& state_;
   PromptState& prompts_;

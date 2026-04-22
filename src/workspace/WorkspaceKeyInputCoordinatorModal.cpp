@@ -116,10 +116,14 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
         operations_.confirm_prompt_surface();
         return true;
       case SDLK_BACKSPACE:
-        RemoveLastUtf8Codepoint(&prompts_.surface.input);
-        return true;
+      case SDLK_DELETE:
+      case SDLK_LEFT:
+      case SDLK_RIGHT:
+      case SDLK_HOME:
+      case SDLK_END:
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
       default:
-        return true;
+        return operations_.text_input_handle_single_line_key_down(event, modifiers) || true;
     }
   }
 

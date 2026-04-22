@@ -140,6 +140,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
   src/util/JsonValue.cpp
+  src/util/SingleLineText.cpp
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp

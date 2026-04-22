@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -52,7 +53,7 @@ struct PromptSurfaceState {
   Kind kind = Kind::None;
   Action action = Action::CreateFile;
   std::filesystem::path path;
-  std::string input;
+  util::SingleLineTextState input;
   int selected_button = 0;
 };
 

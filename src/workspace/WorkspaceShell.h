@@ -273,6 +273,14 @@ class WorkspaceShell {
     float cursor_x = 0.0f;
     SDL_Color foreground{};
     SDL_Color background{};
+    std::string displayed_text;
+    std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
+  };
+
+  struct SingleLineViewMetrics {
+    std::string displayed_text;
+    float cursor_x = 0.0f;
+    std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
   };
 
   struct MergeSurfaceLayout {
@@ -1113,9 +1121,14 @@ class WorkspaceShell {
   void RenderDirtyPromptSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderActiveTextInputCaret(SDL_Renderer* renderer,
                                   const std::optional<TextInputVisual>& visual) const;
+  void RenderSingleLineTextSelection(SDL_Renderer* renderer,
+                                     const std::optional<TextInputVisual>& visual) const;
   std::optional<TextInputVisual> BuildActiveTextInputVisual(
       const WorkspaceLayout& layout,
       const std::optional<SDL_FRect>& active_editor_pane_rect) const;
+  SingleLineViewMetrics ComputeSingleLineViewMetrics(const util::SingleLineTextState& state,
+                                                     std::string_view prefix,
+                                                     float available_width) const;
   float MeasureSingleLineTextTail(std::string_view text, float available_width) const;
   void DrawSingleLineTextTail(SDL_Renderer* renderer,
                               float x,

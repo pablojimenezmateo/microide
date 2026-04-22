@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
@@ -344,7 +345,7 @@ bool WorkspaceActionContext::ActiveTabIsMerge() const {
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
   operations_.open_buffer_search();
-  state_.overlay.workflow.buffer_search.query = std::move(query);
+  util::SetSingleLineText(&state_.overlay.workflow.buffer_search.query, std::move(query));
   operations_.refresh_buffer_search();
 }
 
@@ -554,8 +555,12 @@ void WorkspaceActionContext::SelectAll() {
     viewport->SelectAll();
     operations_.reset_caret_blink();
     operations_.request_focused_editor_redraw();
+    state_.surface.focus = FocusTarget::Editor;
+    return;
   }
-  state_.surface.focus = FocusTarget::Editor;
+  if (operations_.select_all_at_active_single_line_text_surface()) {
+    operations_.reset_caret_blink();
+  }
 }
 
 void WorkspaceActionContext::Undo() {
@@ -622,6 +627,9 @@ std::string WorkspaceActionContext::CopySelectionText() const {
   if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
     return operations_.selected_terminal_text();
   }
+  if (operations_.has_selection_at_active_single_line_text_surface()) {
+    return operations_.selected_text_at_active_single_line_text_surface();
+  }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     return viewport->SelectedText();
   }
@@ -637,6 +645,10 @@ std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() co
 }
 
 void WorkspaceActionContext::CutSelection() {
+  if (operations_.cut_selection_at_active_single_line_text_surface()) {
+    operations_.reset_caret_blink();
+    return;
+  }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::string text = viewport->SelectedText();
@@ -770,7 +782,7 @@ void WorkspaceActionContext::OpenCommandPrompt(std::string input) {
       state_.panel.command_mode || operations_.active_terminal_tab() != nullptr;
   state_.panel.command_mode = true;
   state_.surface.focus = FocusTarget::Panel;
-  state_.panel.command.input = std::move(input);
+  util::SetSingleLineText(&state_.panel.command.input, std::move(input));
   operations_.reset_command_prompt_session();
   operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
 }
@@ -983,6 +995,22 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .insert_text_into_active_text_surface =
               [this](std::string_view text) {
                 return MakeTextInputCoordinator().InsertTextAtActiveSurface(text);
+              },
+          .has_selection_at_active_single_line_text_surface =
+              [this]() {
+                return MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
+              },
+          .selected_text_at_active_single_line_text_surface =
+              [this]() {
+                return MakeTextInputCoordinator().SelectedTextAtActiveSingleLineSurface();
+              },
+          .select_all_at_active_single_line_text_surface =
+              [this]() {
+                return MakeTextInputCoordinator().SelectAllAtActiveSingleLineSurface();
+              },
+          .cut_selection_at_active_single_line_text_surface =
+              [this]() {
+                return MakeTextInputCoordinator().CutSelectionAtActiveSingleLineSurface();
               },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .refresh_compare_tab_derived_state =

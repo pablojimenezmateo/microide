@@ -11,6 +11,7 @@
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
+#include "workspace/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
 
@@ -28,6 +29,8 @@ class KeyInputCoordinator {
     std::function<void()> request_focused_editor_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> command_prompt_handle_key_down;
     std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
+    std::function<TextInputSurface()> current_text_input_surface;
+    std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_single_line_key_down;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_terminal_key_down;
     std::function<void()> confirm_dirty_prompt;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "editor/SyntaxHighlighter.h"
+#include "util/SingleLineText.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
@@ -333,7 +334,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   if (!state.overlay.workflow.compare_picker.path.empty() &&
       PathEqualsOrWithin(state.overlay.workflow.compare_picker.path, path)) {
     state.overlay.workflow.compare_picker.path.clear();
-    state.overlay.workflow.compare_picker.query.clear();
+    util::SetSingleLineText(&state.overlay.workflow.compare_picker.query, "");
     state.overlay.workflow.compare_picker.commits.clear();
     state.overlay.workflow.compare_picker.matches.clear();
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {

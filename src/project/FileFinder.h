@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "project/FileIndex.h"
+#include "util/SingleLineText.h"
 
 namespace microide::project {
 
@@ -20,13 +21,12 @@ class FileFinder {
  public:
   void SetIndex(const FileIndex* index);
   void SetQuery(std::string query);
-  void AppendQueryChar(char character);
-  void AppendQueryText(std::string_view text);
-  void Backspace();
   void Refresh();
   void MoveSelection(int delta);
 
-  const std::string& query() const { return query_; }
+  const std::string& query() const { return query_.text; }
+  util::SingleLineTextState& query_state() { return query_; }
+  const util::SingleLineTextState& query_state() const { return query_; }
   const std::vector<FileFinderResult>& results() const { return results_; }
   std::size_t selected_index() const { return selected_index_; }
   std::optional<std::filesystem::path> SelectedPath() const;
@@ -44,7 +44,7 @@ class FileFinder {
   void EnsureCacheBuilt();
 
   const FileIndex* index_ = nullptr;
-  std::string query_;
+  util::SingleLineTextState query_;
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
   bool cache_ready_ = false;

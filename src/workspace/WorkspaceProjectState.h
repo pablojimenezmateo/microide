@@ -14,6 +14,7 @@
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
+#include "util/SingleLineText.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTabState.h"
@@ -60,7 +61,7 @@ struct ProjectSurfaceState {
 };
 
 struct CommandState {
-  std::string input;
+  util::SingleLineTextState input;
   std::vector<std::string> history;
   std::optional<std::size_t> history_index;
   std::string history_pending_input;
@@ -68,19 +69,19 @@ struct CommandState {
 };
 
 struct BufferSearchState {
-  std::string query;
-  std::string replace_text;
+  util::SingleLineTextState query;
+  util::SingleLineTextState replace_text;
   std::vector<editor::SelectionRange> matches;
   std::size_t selected_index = 0;
 };
 
 struct ProjectSearchState {
-  std::string query;
+  util::SingleLineTextState query;
   project::ProjectSearchOptions options;
-  std::string edit_buffer;
+  util::SingleLineTextState edit_buffer;
   bool editing = false;
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
-  std::string replace_text;
+  util::SingleLineTextState replace_text;
   std::vector<project::ProjectSearchResult> results;
   std::size_t selected_index = 0;
   bool running = false;
@@ -90,7 +91,7 @@ struct ProjectSearchState {
 
 struct ComparePickerState {
   std::filesystem::path path;
-  std::string query;
+  util::SingleLineTextState query;
   std::vector<project::GitCommitEntry> commits;
   std::vector<project::GitCommitEntry> matches;
   std::size_t selected_index = 0;
@@ -162,7 +163,7 @@ struct OutputPanelState {
 struct ChatPanelState {
   std::string conversation_id;
   std::string pending_assistant_message_id;
-  std::string composer;
+  util::SingleLineTextState composer;
   int scroll_row = 0;
   bool request_in_flight = false;
   std::string status_text;

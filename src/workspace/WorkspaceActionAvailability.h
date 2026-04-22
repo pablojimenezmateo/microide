@@ -22,6 +22,7 @@ class ActionAvailability {
     std::function<const editor::TextViewport*()> active_navigable_viewport;
     std::function<const editor::TextViewport*()> active_editable_viewport;
     std::function<TextInputSurface()> current_text_input_surface;
+    std::function<bool()> active_single_line_text_has_selection;
     std::function<const TerminalTabState*()> active_terminal_tab;
     std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<bool()> terminal_has_selection;
