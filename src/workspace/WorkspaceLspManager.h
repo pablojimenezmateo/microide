@@ -21,8 +21,9 @@ class LspManager {
   void SetWakeEventType(Uint32 event_type);
 
   // Register a server command for a language.
+  // If eager_start is true, the server will be started in the background immediately.
   void RegisterServer(const std::string& language_id, const std::vector<std::string>& command,
-                      const std::string& root_uri);
+                      const std::string& root_uri, bool eager_start = true);
 
   // Get or start server for language; returns nullptr if not registered or failed to start.
   LspClient* GetServer(const std::string& language_id);

@@ -29,8 +29,12 @@ void LspManager::SetWakeEventType(Uint32 event_type) {
 
 void LspManager::RegisterServer(const std::string& language_id,
                                  const std::vector<std::string>& command,
-                                 const std::string& root_uri) {
+                                 const std::string& root_uri, bool eager_start) {
   servers_[language_id] = ServerEntry{command, root_uri, {}, nullptr};
+  if (eager_start) {
+    // Eagerly start the server in the background so it's ready when needed
+    GetServer(language_id);
+  }
 }
 
 LspClient* LspManager::GetServer(const std::string& language_id) {
