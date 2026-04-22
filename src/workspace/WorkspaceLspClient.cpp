@@ -437,6 +437,10 @@ struct LspClient::Impl {
     // Send "initialized" notification.
     SendMessage(MakeNotification("initialized", JsonValue(JsonObject{})));
 
+    // Start the background reader thread now that initialization is complete.
+    stop_reader.store(false);
+    reader_thread = std::thread([this]() { ReaderMain(); });
+
     initializing.store(false, std::memory_order_release);
   }
 };
@@ -472,11 +476,8 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
   impl_->root_uri = root_uri;
   impl_->language_id = language_id;
 
-  // Start the background reader thread immediately so it can process responses.
-  impl_->stop_reader.store(false);
-  impl_->reader_thread = std::thread([this]() { impl_->ReaderMain(); });
-
   // Launch initialization on a background thread to avoid blocking the main thread.
+  // The reader thread will be started by the initialization thread after initialization completes.
   impl_->stop_init.store(false);
   impl_->init_thread = std::thread([this]() {
     impl_->DoInitializeBlocking();
