@@ -292,12 +292,12 @@ void WorkspaceShell::RebuildPhase5Registries() {
   }
 }
 
-bool WorkspaceShell::ReloadPluginsForCurrentProject() {
+bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitions) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   bool clean_reload;
   {
     util::StartupTrace::Scope plugin_scope("PluginRuntime::Reload");
-    clean_reload = plugin_runtime_.Reload(context_.current_project_state.root);
+    clean_reload = plugin_runtime_.Reload(context_.current_project_state.root, reload_syntax_definitions);
   }
   {
     util::StartupTrace::Scope registry_scope("RebuildRegistries");

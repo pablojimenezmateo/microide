@@ -515,7 +515,7 @@ class WorkspaceShell {
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
-  bool ReloadPluginsForCurrentProject();
+  bool ReloadPluginsForCurrentProject(bool reload_syntax_definitions = true);
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();
   std::string PluginRuntimeReloadSummary() const;

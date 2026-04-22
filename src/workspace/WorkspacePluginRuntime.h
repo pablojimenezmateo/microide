@@ -33,7 +33,7 @@ class WorkspacePluginRuntime {
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool ConsumeAssetChanges(bool force_check);
 
-  bool Reload(const std::filesystem::path& project_root);
+  bool Reload(const std::filesystem::path& project_root, bool reload_syntax_definitions = true);
   std::string ReloadSummary() const;
 
   void ShutdownHost();

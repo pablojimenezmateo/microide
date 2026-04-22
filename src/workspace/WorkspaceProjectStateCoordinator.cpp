@@ -132,7 +132,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (activate_restored_tab) {
       ActivateCurrentTabAfterStateLoad();
     }
-    ReloadPluginsForCurrentProject();
+    ReloadPluginsForCurrentProject(false);
     return true;
   }
 
@@ -160,7 +160,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       if (context_.current_project_state.terminal_tabs.empty()) {
         OpenTerminal({}, false, false);
       }
-      ReloadPluginsForCurrentProject();
+      ReloadPluginsForCurrentProject(false);
       return true;
     }
   }
@@ -173,7 +173,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (context_.current_project_state.terminal_tabs.empty()) {
     OpenTerminal({}, false, false);
   }
-  ReloadPluginsForCurrentProject();
+  ReloadPluginsForCurrentProject(false);
   return true;
 }
 

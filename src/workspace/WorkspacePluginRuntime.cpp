@@ -56,11 +56,17 @@ bool WorkspacePluginRuntime::ConsumeAssetChanges(bool force_check) {
   return force_check ? asset_monitor_.ConsumePendingChanges() : asset_monitor_.PollForChanges();
 }
 
-bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root) {
+bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root,
+                                    bool reload_syntax_definitions) {
   bool clean_reload = false;
   {
     util::StartupTrace::Scope host_scope("PluginHost::Reload");
     clean_reload = plugin_host_.enabled() ? plugin_host_.Reload(project_root) : false;
+  }
+
+  if (!reload_syntax_definitions) {
+    asset_monitor_.SetProjectRoot(project_root);
+    return clean_reload;
   }
 
   std::vector<std::string> syntax_loader_errors;
