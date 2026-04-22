@@ -33,6 +33,7 @@ class DirectoryTree {
  public:
   bool SetRoot(const std::filesystem::path& root);
   void Refresh();
+  void RefreshGitStatuses();
   void MoveSelection(int delta);
   void SetSelectedIndex(std::size_t index);
   bool SelectPath(const std::filesystem::path& path);

@@ -45,7 +45,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   root_ = absolute_root;
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
-  RebuildEntries(true);
+  RebuildEntries(false);
   return true;
 }
 
@@ -54,6 +54,14 @@ void DirectoryTree::Refresh() {
     return;
   }
   RebuildEntries(true);
+}
+
+void DirectoryTree::RefreshGitStatuses() {
+  if (root_.empty()) {
+    return;
+  }
+  util::StartupTrace::Scope trace_scope("DirectoryTree::RefreshGitStatuses");
+  git_statuses_ = CollectGitStatuses(root_);
 }
 
 void DirectoryTree::MoveSelection(int delta) {

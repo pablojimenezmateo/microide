@@ -95,6 +95,7 @@ void SidebarCoordinator::ShowProblems() {
 }
 
 void SidebarCoordinator::ShowGit() {
+  state_.directory_tree.RefreshGitStatuses();
   RefreshGit();
   ShowMode(SidebarMode::Git, false);
   RevealSelectedGitLine();
