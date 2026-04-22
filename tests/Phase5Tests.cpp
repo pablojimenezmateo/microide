@@ -536,6 +536,17 @@ return ide.plugin({
          "phase5 lsp fixture should open the project");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 5);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "find-references"),
+         "find-references should execute before LSP initialization completes");
+  Expect(
+      WaitForLspCondition(shell, [&] {
+        const auto* channel =
+            WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.references");
+        return channel != nullptr &&
+               std::find(channel->begin(), channel->end(), "README.md:2:1") != channel->end();
+      }),
+      "find-references should complete after asynchronous initialization and document open");
   Expect(
       WaitForLspCondition(shell, [&] {
         const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);

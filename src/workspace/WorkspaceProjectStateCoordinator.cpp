@@ -160,7 +160,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       if (context_.current_project_state.terminal_tabs.empty()) {
         OpenTerminal({}, false, false);
       }
-      ReloadPluginsForCurrentProject(false);
+      ReloadPluginsForCurrentProject();
       return true;
     }
   }
@@ -173,7 +173,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (context_.current_project_state.terminal_tabs.empty()) {
     OpenTerminal({}, false, false);
   }
-  ReloadPluginsForCurrentProject(false);
+  ReloadPluginsForCurrentProject();
   return true;
 }
 

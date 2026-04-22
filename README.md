@@ -150,7 +150,9 @@ Current commands:
 - `merge <base> <incoming> <current> [output]`
 - `files [root]`
 - `find <query>`
+- `find-references`
 - `focus <editor|sidebar|panel>`
+- `goto-definition`
 - `goto <line[:col]>`
 - `git-refresh`
 - `indent-width [n]`

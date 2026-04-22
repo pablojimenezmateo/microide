@@ -81,7 +81,7 @@ class LspClient {
   // responses are ready. Call before Start().
   void SetWakeEventType(Uint32 event_type);
 
-  // Start the server and send initialize request (blocks until initialized).
+  // Start the server and begin asynchronous initialization.
   bool Start(const std::vector<std::string>& command, const std::string& root_uri,
              const std::string& language_id);
 

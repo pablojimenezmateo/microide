@@ -712,7 +712,7 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
          "retained tab-open redraws should match a full redraw");
 }
 
-void TestWorkspaceShellNewlineInsertionRequestsFullRedraw() {
+void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "main.cpp";
@@ -724,6 +724,7 @@ void TestWorkspaceShellNewlineInsertionRequestsFullRedraw() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
 
+  const SDL_FRect editor_surface = WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface;
   const std::size_t before_line_count =
       WorkspaceShellTestAccess::ActiveEditor(shell).line_count();
   SDL_Event event{};
@@ -732,8 +733,10 @@ void TestWorkspaceShellNewlineInsertionRequestsFullRedraw() {
   const auto result = shell.HandleEvent(event);
   Expect(result.handled,
          "newline redraw regression fixture should insert a newline into the editor");
-  Expect(result.redraw.full,
-         "newline insertion should request a full redraw after changing the editor line count");
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+         "newline insertion should request a partial editor redraw after changing the editor line count");
+  Expect(AnyRectIntersects(result.redraw.rects, editor_surface),
+         "newline insertion redraws should include the editor surface");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() == before_line_count + 1,
          "newline insertion should split the current line in the active editor");
 }
@@ -952,8 +955,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenFileInNewTabRetainedRedrawMatchesFullRender",
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
-  AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsFullRedraw",
-          TestWorkspaceShellNewlineInsertionRequestsFullRedraw);
+  AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsEditorPartialRedraw",
+          TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw);
   AddTest(tests, "WorkspaceShell/SidebarResizeRequestsFullRedrawAndMatchesFullRender",
           TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender);
   AddTest(tests, "WorkspaceShell/BottomPanelResizeRequestsFullRedrawAndSettleFrames",

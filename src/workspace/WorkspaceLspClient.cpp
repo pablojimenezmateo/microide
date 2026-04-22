@@ -41,6 +41,7 @@ struct ReadBuf {
 struct LspClient::Impl {
   platform::AsyncSubprocess proc;
   std::mutex mutex;
+  std::mutex send_mutex;
 
   // Reader thread state
   std::thread reader_thread;
@@ -61,6 +62,7 @@ struct LspClient::Impl {
   OnPublishDiagnostics diagnostics_callback;
 
   std::unordered_map<std::string, int> document_versions;
+  std::vector<std::string> deferred_messages;
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
@@ -96,7 +98,7 @@ struct LspClient::Impl {
     return JsonValue(std::move(msg));
   }
 
-  bool SendMessage(const util::JsonValue& msg) {
+  std::string SerializeMessage(const util::JsonValue& msg) const {
     const std::string json = util::SerializeJson(msg);
     std::string rfc;
     rfc.reserve(32 + json.size());
@@ -104,7 +106,32 @@ struct LspClient::Impl {
     rfc += std::to_string(json.size());
     rfc += "\r\n\r\n";
     rfc += json;
-    return proc.Write(rfc);
+    return rfc;
+  }
+
+  bool SendSerializedMessageUnlocked(std::string_view message) {
+    return proc.Write(message);
+  }
+
+  bool SendMessageImmediate(const util::JsonValue& msg) {
+    const std::string serialized = SerializeMessage(msg);
+    std::lock_guard lock(send_mutex);
+    return SendSerializedMessageUnlocked(serialized);
+  }
+
+  bool SendMessageAfterInitialize(const util::JsonValue& msg) {
+    const std::string serialized = SerializeMessage(msg);
+    std::lock_guard lock(send_mutex);
+    if (!initialized.load(std::memory_order_acquire)) {
+      deferred_messages.push_back(serialized);
+      return true;
+    }
+    return SendSerializedMessageUnlocked(serialized);
+  }
+
+  void ClearDeferredMessages() {
+    std::lock_guard lock(send_mutex);
+    deferred_messages.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -311,6 +338,11 @@ struct LspClient::Impl {
     return id;
   }
 
+  void RemovePendingRequest(int id) {
+    std::lock_guard lock(mutex);
+    pending_requests.erase(id);
+  }
+
   // -------------------------------------------------------------------------
   // Blocking initialization (runs on initialization thread).
   // -------------------------------------------------------------------------
@@ -374,9 +406,10 @@ struct LspClient::Impl {
       return next_id++;
     }();
     const auto req = MakeRequest(init_id, "initialize", JsonValue(std::move(init_params)));
-    if (!SendMessage(req)) {
+    if (!SendMessageImmediate(req)) {
       last_error = "failed to send initialize request to language server";
       proc.Shutdown();
+      ClearDeferredMessages();
       initializing.store(false, std::memory_order_release);
       return;
     }
@@ -412,7 +445,6 @@ struct LspClient::Impl {
             }
             supports_incremental_sync = (sync_kind == 2);
           }
-          initialized.store(true, std::memory_order_release);
           got_init = true;
         }
         break;
@@ -430,12 +462,34 @@ struct LspClient::Impl {
         last_error = "timed out waiting for initialize response from language server";
       }
       proc.Shutdown();
+      ClearDeferredMessages();
       initializing.store(false, std::memory_order_release);
       return;
     }
 
-    // Send "initialized" notification.
-    SendMessage(MakeNotification("initialized", JsonValue(JsonObject{})));
+    // Send "initialized" first, then flush anything queued while the handshake was running.
+    {
+      std::lock_guard lock(send_mutex);
+      if (!SendSerializedMessageUnlocked(
+              SerializeMessage(MakeNotification("initialized", JsonValue(JsonObject{}))))) {
+        last_error = "failed to send initialized notification to language server";
+        deferred_messages.clear();
+        proc.Shutdown();
+        initializing.store(false, std::memory_order_release);
+        return;
+      }
+      initialized.store(true, std::memory_order_release);
+      for (const std::string& message : deferred_messages) {
+        if (!SendSerializedMessageUnlocked(message)) {
+          last_error = "failed to flush deferred language server messages";
+          deferred_messages.clear();
+          proc.Shutdown();
+          initializing.store(false, std::memory_order_release);
+          return;
+        }
+      }
+      deferred_messages.clear();
+    }
 
     // Start the background reader thread now that initialization is complete.
     stop_reader.store(false);
@@ -535,7 +589,8 @@ bool LspClient::DidOpen(const std::string& uri, const std::string& language_id,
   text_doc["text"] = JsonValue(text);
   JsonObject params;
   params["textDocument"] = JsonValue(std::move(text_doc));
-  return impl_->SendMessage(impl_->MakeNotification("textDocument/didOpen", JsonValue(std::move(params))));
+  return impl_->SendMessageAfterInitialize(
+      impl_->MakeNotification("textDocument/didOpen", JsonValue(std::move(params))));
 }
 
 bool LspClient::DidChange(const std::string& uri, const std::string& text) {
@@ -551,7 +606,8 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
   JsonObject params;
   params["textDocument"] = JsonValue(std::move(text_doc));
   params["contentChanges"] = JsonValue(std::move(changes));
-  return impl_->SendMessage(impl_->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+  return impl_->SendMessageAfterInitialize(
+      impl_->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
 }
 
 bool LspClient::DidChangeIncremental(const std::string& uri,
@@ -586,7 +642,8 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
   JsonObject params;
   params["textDocument"] = JsonValue(std::move(text_doc));
   params["contentChanges"] = JsonValue(std::move(changes));
-  return impl_->SendMessage(impl_->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+  return impl_->SendMessageAfterInitialize(
+      impl_->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
 }
 
 bool LspClient::DidSave(const std::string& uri) {
@@ -595,7 +652,8 @@ bool LspClient::DidSave(const std::string& uri) {
   text_doc["uri"] = JsonValue(uri);
   JsonObject params;
   params["textDocument"] = JsonValue(std::move(text_doc));
-  return impl_->SendMessage(impl_->MakeNotification("textDocument/didSave", JsonValue(std::move(params))));
+  return impl_->SendMessageAfterInitialize(
+      impl_->MakeNotification("textDocument/didSave", JsonValue(std::move(params))));
 }
 
 bool LspClient::DidClose(const std::string& uri) {
@@ -605,7 +663,8 @@ bool LspClient::DidClose(const std::string& uri) {
   text_doc["uri"] = JsonValue(uri);
   JsonObject params;
   params["textDocument"] = JsonValue(std::move(text_doc));
-  return impl_->SendMessage(impl_->MakeNotification("textDocument/didClose", JsonValue(std::move(params))));
+  return impl_->SendMessageAfterInitialize(
+      impl_->MakeNotification("textDocument/didClose", JsonValue(std::move(params))));
 }
 
 // ---------------------------------------------------------------------------
@@ -646,7 +705,8 @@ static std::vector<LspClient::Location> ParseLocations(const util::JsonValue& re
 }
 
 void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const HoverCallback failure_callback = callback;
   const auto params = MakeTextDocPosition(uri, pos);
   const int id = impl_->RegisterPendingRequest(
       [cb = std::move(callback)](util::JsonValue resp) {
@@ -656,11 +716,15 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
           cb(std::nullopt);
         }
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/hover", params));
+  if (!impl_->SendMessageAfterInitialize(impl_->MakeRequest(id, "textDocument/hover", params))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const CompletionCallback failure_callback = callback;
   const auto params = MakeTextDocPosition(uri, pos);
   const int id = impl_->RegisterPendingRequest(
       [cb = std::move(callback)](util::JsonValue resp) {
@@ -680,11 +744,16 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
         }
         cb(std::optional<std::vector<CompletionItem>>(std::move(items)));
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/completion", params));
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/completion", params))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const CodeActionCallback failure_callback = callback;
   using namespace util;
   JsonObject start_obj;
   start_obj["line"] = JsonValue(static_cast<std::int64_t>(range.start.line));
@@ -726,12 +795,17 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionC
         }
         cb(std::optional<std::vector<CodeAction>>(std::move(actions)));
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/codeAction", JsonValue(std::move(params))));
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/codeAction", JsonValue(std::move(params))))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
                                         FormattingCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const FormattingCallback failure_callback = callback;
   using namespace util;
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
@@ -753,23 +827,33 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
         cb(std::optional<std::string>(
             edits.front()["newText"].IsString() ? edits.front()["newText"].AsString() : ""));
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/formatting", JsonValue(std::move(params))));
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/formatting", JsonValue(std::move(params))))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::RequestGoToDefinitionAsync(std::string uri, Position pos, LocationCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const LocationCallback failure_callback = callback;
   const auto params = MakeTextDocPosition(uri, pos);
   const int id = impl_->RegisterPendingRequest(
       [cb = std::move(callback)](util::JsonValue resp) {
         if (!resp.HasKey("result")) { cb(std::nullopt); return; }
         cb(std::optional<std::vector<Location>>(ParseLocations(resp["result"])));
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/definition", params));
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/definition", params))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
                                             bool include_declaration, LocationCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const LocationCallback failure_callback = callback;
   using namespace util;
   JsonObject position_obj;
   position_obj["line"] = JsonValue(static_cast<std::int64_t>(pos.line));
@@ -788,12 +872,17 @@ void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
         if (!resp.HasKey("result")) { cb(std::nullopt); return; }
         cb(std::optional<std::vector<Location>>(ParseLocations(resp["result"])));
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/references", JsonValue(std::move(params))));
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/references", JsonValue(std::move(params))))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string new_name,
                                     RenameCallback callback) {
-  if (!IsInitialized() || !callback) return;
+  if (!callback) return;
+  const RenameCallback failure_callback = callback;
   using namespace util;
   JsonObject position_obj;
   position_obj["line"] = JsonValue(static_cast<std::int64_t>(pos.line));
@@ -827,7 +916,11 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
         }
         cb(std::optional<WorkspaceEdit>(std::move(edit)));
       });
-  impl_->SendMessage(impl_->MakeRequest(id, "textDocument/rename", JsonValue(std::move(params))));
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/rename", JsonValue(std::move(params))))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
 }
 
 void LspClient::Shutdown() {
@@ -836,6 +929,7 @@ void LspClient::Shutdown() {
   if (impl_->init_thread.joinable()) {
     impl_->init_thread.join();
   }
+  impl_->ClearDeferredMessages();
 
   if (!impl_->initialized.load(std::memory_order_acquire)) {
     impl_->proc.Shutdown();
@@ -851,8 +945,8 @@ void LspClient::Shutdown() {
     std::lock_guard lock(impl_->mutex);
     return impl_->next_id++;
   }();
-  impl_->SendMessage(impl_->MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})));
-  impl_->SendMessage(impl_->MakeNotification("exit", JsonValue(JsonObject{})));
+  impl_->SendMessageImmediate(impl_->MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})));
+  impl_->SendMessageImmediate(impl_->MakeNotification("exit", JsonValue(JsonObject{})));
 
   impl_->proc.Shutdown(1000);
 
