@@ -490,6 +490,10 @@ bool LspClient::IsInitializing() const {
   return impl_->initializing.load(std::memory_order_acquire);
 }
 
+bool LspClient::IsInitialized() const {
+  return impl_->initialized;
+}
+
 bool LspClient::SupportsIncrementalSync() const {
   return impl_->supports_incremental_sync;
 }
@@ -641,7 +645,7 @@ static std::vector<LspClient::Location> ParseLocations(const util::JsonValue& re
 }
 
 void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   const auto params = MakeTextDocPosition(uri, pos);
   const int id = impl_->RegisterPendingRequest(
       [cb = std::move(callback)](util::JsonValue resp) {
@@ -655,7 +659,7 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
 }
 
 void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   const auto params = MakeTextDocPosition(uri, pos);
   const int id = impl_->RegisterPendingRequest(
       [cb = std::move(callback)](util::JsonValue resp) {
@@ -679,7 +683,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
 }
 
 void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   using namespace util;
   JsonObject start_obj;
   start_obj["line"] = JsonValue(static_cast<std::int64_t>(range.start.line));
@@ -726,7 +730,7 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionC
 
 void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
                                         FormattingCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   using namespace util;
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
@@ -752,7 +756,7 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
 }
 
 void LspClient::RequestGoToDefinitionAsync(std::string uri, Position pos, LocationCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   const auto params = MakeTextDocPosition(uri, pos);
   const int id = impl_->RegisterPendingRequest(
       [cb = std::move(callback)](util::JsonValue resp) {
@@ -764,7 +768,7 @@ void LspClient::RequestGoToDefinitionAsync(std::string uri, Position pos, Locati
 
 void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
                                             bool include_declaration, LocationCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   using namespace util;
   JsonObject position_obj;
   position_obj["line"] = JsonValue(static_cast<std::int64_t>(pos.line));
@@ -788,7 +792,7 @@ void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
 
 void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string new_name,
                                     RenameCallback callback) {
-  if (!IsRunning() || !callback) return;
+  if (!IsInitialized() || !callback) return;
   using namespace util;
   JsonObject position_obj;
   position_obj["line"] = JsonValue(static_cast<std::int64_t>(pos.line));

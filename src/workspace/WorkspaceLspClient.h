@@ -91,6 +91,9 @@ class LspClient {
   // True when the server is in the process of initializing.
   bool IsInitializing() const;
 
+  // True when the server has been fully initialized.
+  bool IsInitialized() const;
+
   // True when the server negotiated incremental document sync.
   bool SupportsIncrementalSync() const;
 
