@@ -151,8 +151,12 @@ class LspClient {
   void RequestRenameAsync(std::string uri, Position pos, std::string new_name,
                            RenameCallback callback);
 
-  // Shutdown and close connection.
+  // Shutdown and close connection (blocks until complete).
   void Shutdown();
+
+  // Begin shutdown on a background thread; returns immediately.
+  // The client must not be used after this call.
+  void ShutdownAsync();
 
  private:
   struct Impl;

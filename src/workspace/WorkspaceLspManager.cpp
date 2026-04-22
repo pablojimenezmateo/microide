@@ -104,7 +104,7 @@ std::string LspManager::LastServerError(const std::string& language_id) const {
 void LspManager::ShutdownAll() {
   for (auto& [_, entry] : servers_) {
     if (entry.client) {
-      entry.client->Shutdown();
+      entry.client->ShutdownAsync();
       entry.client = nullptr;
     }
   }

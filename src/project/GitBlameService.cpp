@@ -593,7 +593,6 @@ struct GitBlameService::Impl {
       pending_request_files.clear();
     }
     executor.CancelAll();
-    executor.WaitForIdle();
   }
 
   void ProcessQueuedRequest(const PendingRequest& request, const util::CancellationToken& token) {

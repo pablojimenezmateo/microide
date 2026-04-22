@@ -200,7 +200,6 @@ void ProjectSearchService::Stop() {
   }
 
   task_executor_.CancelAll();
-  task_executor_.WaitForIdle();
 }
 
 ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {

@@ -503,6 +503,37 @@ struct LspClient::Impl {
 
     initializing.store(false, std::memory_order_release);
   }
+
+  void DoShutdown() {
+    stop_init.store(true);
+    if (init_thread.joinable()) {
+      init_thread.join();
+    }
+    ClearDeferredMessages();
+
+    if (!initialized.load(std::memory_order_acquire)) {
+      proc.Shutdown();
+      return;
+    }
+
+    stop_reader.store(true);
+
+    using namespace util;
+    const int shutdown_id = [this]() {
+      std::lock_guard lock(mutex);
+      return next_id++;
+    }();
+    SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})));
+    SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})));
+
+    proc.Shutdown(1000);
+
+    if (reader_thread.joinable()) {
+      reader_thread.join();
+    }
+
+    initialized.store(false, std::memory_order_release);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -930,37 +961,16 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
 }
 
 void LspClient::Shutdown() {
-  // Wait for initialization thread to complete (non-blocking).
-  impl_->stop_init.store(true);
-  if (impl_->init_thread.joinable()) {
-    impl_->init_thread.join();
-  }
-  impl_->ClearDeferredMessages();
+  impl_->DoShutdown();
+}
 
-  if (!impl_->initialized.load(std::memory_order_acquire)) {
-    impl_->proc.Shutdown();
-    return;
-  }
-
-  // Stop the reader thread first.
-  impl_->stop_reader.store(true);
-
-  // Send shutdown request (fire-and-forget; don't block waiting for response).
-  using namespace util;
-  const int shutdown_id = [&]() {
-    std::lock_guard lock(impl_->mutex);
-    return impl_->next_id++;
-  }();
-  impl_->SendMessageImmediate(impl_->MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})));
-  impl_->SendMessageImmediate(impl_->MakeNotification("exit", JsonValue(JsonObject{})));
-
-  impl_->proc.Shutdown(1000);
-
-  if (impl_->reader_thread.joinable()) {
-    impl_->reader_thread.join();
-  }
-
-  impl_->initialized.store(false, std::memory_order_release);
+void LspClient::ShutdownAsync() {
+  Impl* old_impl = impl_;
+  impl_ = new Impl{};
+  std::thread([old_impl]() {
+    old_impl->DoShutdown();
+    delete old_impl;
+  }).detach();
 }
 
 }  // namespace microide::workspace

@@ -1268,6 +1268,8 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnOpen() {
              .c_str());
   Expect(diagnostics->front().message == "Unexpected broken token (no-broken)",
          "open-time lint should preserve the ESLint message and rule id");
+  Expect(!std::filesystem::exists(project_root / ".microide-eslint-src__main.js.json"),
+         "eslint plugin should not leave report files in the project root");
 
   WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
@@ -1353,6 +1355,9 @@ void TestWorkspaceShellRepoEslintPluginPublishesNestedTypescriptDiagnosticsOnOpe
   Expect(diagnostics->front().message ==
              "Unexpected any. Specify a different type. (@typescript-eslint/no-explicit-any)",
          "nested TypeScript lint should preserve the ESLint message and rule id");
+  Expect(!std::filesystem::exists(project_root /
+                                  ".microide-eslint-packages__utils__api__webhook-manager__profile-manager.ts.json"),
+         "nested ESLint runs should not leave report files in the project root");
 }
 
 void TestWorkspaceShellRepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits() {

@@ -63,9 +63,15 @@ local function has_yarn_lock(ctx)
   return ctx.files.exists("yarn.lock")
 end
 
-local function eslint_report_path(relative_path)
-  local safe = relative_path:gsub("[/\\]", "__"):gsub("[^%w%._-]", "_")
-  return ".microide-eslint-" .. safe .. ".json"
+local function sanitize_path_fragment(path)
+  return tostring(path or ""):gsub("[/\\]", "__"):gsub("[^%w%._-]", "_")
+end
+
+local function eslint_report_path(ctx, relative_path)
+  local project_root = ctx.workspace.project_root()
+  local project_safe = sanitize_path_fragment(project_root ~= "" and project_root or "project")
+  local relative_safe = sanitize_path_fragment(relative_path)
+  return "/tmp/microide-eslint-" .. project_safe .. "-" .. relative_safe .. ".json"
 end
 
 local function first_line(text)
@@ -388,7 +394,7 @@ local function run_eslint(ctx, relative_path, quiet, entry, force)
     return true
   end
 
-  local report_path = eslint_report_path(relative_path)
+  local report_path = eslint_report_path(ctx, relative_path)
   ctx.files.write_text(report_path, "")
   local use_yarn = has_yarn_lock(ctx)
   local result = ctx.process.run(eslint_command(ctx, relative_path, report_path, use_yarn), {
@@ -484,7 +490,7 @@ local function lint_path_async(ctx, relative_path, quiet, force)
     return true
   end
 
-  local report_path = eslint_report_path(relative_path)
+  local report_path = eslint_report_path(ctx, relative_path)
   local generation = begin_entry_request(entry)
   local use_yarn = has_yarn_lock(ctx)
   ctx.files.write_text(report_path, "")
