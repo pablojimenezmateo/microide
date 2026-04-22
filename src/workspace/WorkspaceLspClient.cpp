@@ -65,7 +65,7 @@ struct LspClient::Impl {
   std::string root_uri;
   std::string language_id;
   std::string last_error;
-  bool initialized = false;
+  std::atomic<bool> initialized{false};
   bool supports_incremental_sync = false;
   Uint32 wake_event_type = 0;
 
@@ -412,7 +412,7 @@ struct LspClient::Impl {
             }
             supports_incremental_sync = (sync_kind == 2);
           }
-          initialized = true;
+          initialized.store(true, std::memory_order_release);
           got_init = true;
         }
         break;
@@ -491,7 +491,7 @@ bool LspClient::IsInitializing() const {
 }
 
 bool LspClient::IsInitialized() const {
-  return impl_->initialized;
+  return impl_->initialized.load(std::memory_order_acquire);
 }
 
 bool LspClient::SupportsIncrementalSync() const {
@@ -836,7 +836,7 @@ void LspClient::Shutdown() {
     impl_->init_thread.join();
   }
 
-  if (!impl_->initialized) {
+  if (!impl_->initialized.load(std::memory_order_acquire)) {
     impl_->proc.Shutdown();
     return;
   }
@@ -859,7 +859,7 @@ void LspClient::Shutdown() {
     impl_->reader_thread.join();
   }
 
-  impl_->initialized = false;
+  impl_->initialized.store(false, std::memory_order_release);
 }
 
 }  // namespace microide::workspace
