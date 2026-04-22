@@ -593,10 +593,25 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = plugin_delay_ms;
     }
   }
+  if (plugin_runtime_.PendingAsyncProcessCount() > 0) {
+    constexpr Uint32 kPluginAsyncPollDelayMs = 10;
+    if (!next_delay.has_value() || kPluginAsyncPollDelayMs < *next_delay) {
+      next_delay = kPluginAsyncPollDelayMs;
+    }
+  }
   return next_delay;
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
+  if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }
 

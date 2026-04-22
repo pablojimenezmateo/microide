@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -39,16 +40,85 @@ void WriteFakeEslint(const std::filesystem::path& project_root) {
   WriteFile(
       eslint_path,
       R"(#!/bin/sh
-file="$4"
+output_file=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-file" ]; then
+    output_file="$arg"
+  fi
+  prev="$arg"
+done
+eval "file=\${$#}"
+report='[{"messages":[]}]'
 if grep -q "broken" "$file"; then
-  printf '%s\n' '[{"messages":[{"ruleId":"no-broken","severity":2,"message":"Unexpected broken token","line":1,"column":1,"endLine":1,"endColumn":7}]}]'
+  report='[{"messages":[{"ruleId":"no-broken","severity":2,"message":"Unexpected broken token","line":1,"column":1,"endLine":1,"endColumn":7}]}]'
+fi
+if [ -n "$output_file" ]; then
+  printf '%s\n' "$report" > "$output_file"
+else
+  printf '%s\n' "$report"
+fi
+if grep -q "broken" "$file"; then
   exit 1
 fi
-printf '%s\n' '[{"messages":[]}]'
 exit 0
 )");
   std::filesystem::permissions(
       eslint_path,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+      std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::replace);
+}
+
+void WriteFakeEslintNoExplicitAny(const std::filesystem::path& project_root) {
+  const std::filesystem::path eslint_path = project_root / "node_modules" / ".bin" / "eslint";
+  WriteFile(
+      eslint_path,
+      R"ESLINT(#!/bin/sh
+output_file=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-file" ]; then
+    output_file="$arg"
+  fi
+  prev="$arg"
+done
+eval "file=\${$#}"
+report='[{"messages":[]}]'
+if [ "$(basename "$file")" = "profile-manager.ts" ]; then
+  report='[{"messages":[{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":10,"column":33,"endLine":10,"endColumn":36},{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":32,"column":48,"endLine":32,"endColumn":51},{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":33,"column":36,"endLine":33,"endColumn":39}]}]'
+fi
+if [ -n "$output_file" ]; then
+  printf '%s\n' "$report" > "$output_file"
+else
+  printf '%s\n' "$report"
+fi
+if [ "$(basename "$file")" = "profile-manager.ts" ]; then
+  exit 1
+fi
+exit 0
+)ESLINT");
+  std::filesystem::permissions(
+      eslint_path,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+          std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::replace);
+}
+
+void WriteFakeTsc(const std::filesystem::path& project_root) {
+  const std::filesystem::path tsc_path = project_root / "node_modules" / ".bin" / "tsc";
+  WriteFile(
+      tsc_path,
+      R"(#!/bin/sh
+project="$2"
+if grep -q "ignoreDeprecations" "$project"; then
+  printf '%s\n' "$project(17,5): error TS5103: Invalid value for '--ignoreDeprecations'."
+  exit 2
+fi
+exit 0
+)");
+  std::filesystem::permissions(
+      tsc_path,
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
@@ -58,6 +128,29 @@ bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& tar
   return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
     return SDL_HasRectIntersectionFloat(&rect, &target);
   });
+}
+
+std::string DescribePluginState(const WorkspaceShell& shell) {
+  std::ostringstream description;
+  const auto& errors = WorkspaceShellTestAccess::PluginErrors(shell);
+  const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+  description << "plugin errors=" << errors.size() << " messages=" << messages.size();
+  if (!errors.empty()) {
+    description << " last_error=" << errors.back();
+  }
+  if (!messages.empty()) {
+    description << " last_message=" << messages.back();
+  }
+  const auto* log_channel = WorkspaceShellTestAccess::OutputChannelEntries(shell, "plugins.log");
+  if (log_channel != nullptr && !log_channel->empty()) {
+    description << " last_log=" << log_channel->back();
+  }
+  const auto* error_channel =
+      WorkspaceShellTestAccess::OutputChannelEntries(shell, "plugins.error");
+  if (error_channel != nullptr && !error_channel->empty()) {
+    description << " last_plugin_error=" << error_channel->back();
+  }
+  return description.str();
 }
 
 void TestWorkspaceShellPluginKeybindingsDispatchCommands() {
@@ -1086,6 +1179,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "eslint plugin fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
@@ -1093,10 +1187,14 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   editor.InsertText("broken();\n");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "eslint plugin fixture should save the edited JavaScript buffer");
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after saving the JavaScript buffer");
 
   const auto* broken_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
   Expect(broken_diagnostics != nullptr && broken_diagnostics->size() == 1,
-         "saving a broken JavaScript file should publish one ESLint diagnostic");
+         ("saving a broken JavaScript file should publish one ESLint diagnostic: " +
+          DescribePluginState(shell))
+             .c_str());
   Expect(broken_diagnostics->front().message == "Unexpected broken token (no-broken)",
          "ESLint plugin diagnostics should preserve the formatter message and rule id");
 
@@ -1121,19 +1219,251 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   WriteFile(unopened, "broken();\n");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "eslint.run-opened"),
          "eslint.run-opened should execute");
+  WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell);
   Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, unopened) == nullptr,
          "eslint.run-opened should ignore dirty files that were never opened in this session");
 
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell);
   auto& clean_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   clean_editor.SelectAll();
   clean_editor.InsertText("const answer = 1;\n");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "eslint plugin fixture should save the cleaned JavaScript buffer");
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after saving the cleaned JavaScript buffer");
   Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
          "saving a clean JavaScript file should clear the plugin's diagnostics");
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).empty(),
          "clearing ESLint diagnostics should refresh the Problems sidebar");
+}
+
+void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnOpen() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "eslint open fixture\n");
+  WriteFile(source, "broken();\n");
+  CopyRepoPlugin(plugins_root, "eslint");
+  WriteFakeEslint(project_root);
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "eslint open fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after opening the broken JavaScript file");
+
+  const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+  Expect(diagnostics != nullptr && diagnostics->size() == 1,
+         ("opening a broken JavaScript file should publish ESLint diagnostics: " +
+          DescribePluginState(shell))
+             .c_str());
+  Expect(diagnostics->front().message == "Unexpected broken token (no-broken)",
+         "open-time lint should preserve the ESLint message and rule id");
+
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
+         "open-time lint should populate the Problems sidebar");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText("const answer = 1;\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "eslint open fixture should save the cleaned JavaScript buffer");
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after saving the cleaned JavaScript buffer");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
+         ("saving a cleaned JavaScript file should clear the ESLint diagnostics: " +
+          DescribePluginState(shell))
+             .c_str());
+  Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).empty(),
+         "clearing ESLint diagnostics should refresh the Problems sidebar");
+}
+
+void TestWorkspaceShellRepoEslintPluginPublishesNestedTypescriptDiagnosticsOnOpen() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source =
+      project_root / "packages" / "utils" / "api" / "webhook-manager" / "profile-manager.ts";
+  WriteFile(project_root / "README.md", "eslint nested ts fixture\n");
+  WriteFile(
+      source,
+      "import Logger from './logger'\n"
+      "\n"
+      "type Employee = {\n"
+      "  name: string\n"
+      "}\n"
+      "\n"
+      "class ProfileWebhookManager {\n"
+      "  async deleteRecords(_records: string[]) {\n"
+      "  }\n"
+      "  async upsertRecords(employees: any[]) { // Unexpected any fixture\n"
+      "    Logger.info('STEP 1')\n"
+      "    for (const employee of employees) {\n"
+      "      await this.saveUser(employee)\n"
+      "    }\n"
+      "  }\n"
+      "\n"
+      "  async saveUser(employee: Employee) {\n"
+      "    const metadata = {\n"
+      "      name: employee.name,\n"
+      "    }\n"
+      "\n"
+      "    Logger.info('noop')\n"
+      "    return metadata\n"
+      "  }\n"
+      "}\n"
+      "\n"
+      "export default ProfileWebhookManager\n"
+      "\n"
+      "type One = any\n"
+      "type Two = {\n"
+      "  value: any\n"
+      "}\n");
+  CopyRepoPlugin(plugins_root, "eslint");
+  WriteFakeEslintNoExplicitAny(project_root);
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "nested eslint fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after opening the nested TypeScript file");
+  const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+
+  Expect(diagnostics != nullptr && diagnostics->size() == 3,
+         ("opening a nested TypeScript file should publish three ESLint diagnostics: " +
+          DescribePluginState(shell))
+             .c_str());
+  Expect(diagnostics->front().message ==
+             "Unexpected any. Specify a different type. (@typescript-eslint/no-explicit-any)",
+         "nested TypeScript lint should preserve the ESLint message and rule id");
+}
+
+void TestWorkspaceShellRepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.ts";
+  WriteFile(project_root / "README.md", "eslint save preserve fixture\n");
+  WriteFile(source, "broken();\n");
+  CopyRepoPlugin(plugins_root, "eslint");
+  WriteFakeEslint(project_root);
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "eslint save preserve fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after opening the broken TypeScript file");
+
+  const auto* opened_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+  Expect(opened_diagnostics != nullptr && opened_diagnostics->size() == 1,
+         "opening a broken TypeScript file should publish ESLint diagnostics");
+
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "saving an unchanged file should re-run ESLint");
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async lint should complete after saving the unchanged TypeScript file");
+
+  const auto* saved_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+  Expect(saved_diagnostics != nullptr && saved_diagnostics->size() == 1,
+         "saving an unchanged broken file should retain its ESLint diagnostics");
+  Expect(saved_diagnostics->front().message == "Unexpected broken token (no-broken)",
+         "saving an unchanged broken file should preserve the ESLint message");
+}
+
+void TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source =
+      project_root / "packages" / "business" / "tsconfig.json";
+  WriteFile(project_root / "README.md", "eslint tsconfig fixture\n");
+  WriteFile(source,
+            "{\n"
+            "  \"compilerOptions\": {\n"
+            "    \"target\": \"ES2022\",\n"
+            "    \"module\": \"ESNext\",\n"
+            "    \"strict\": true,\n"
+            "    \"skipLibCheck\": true,\n"
+            "    \"allowJs\": false,\n"
+            "    \"checkJs\": false,\n"
+            "    \"declaration\": false,\n"
+            "    \"sourceMap\": true,\n"
+            "    \"isolatedModules\": true,\n"
+            "    \"moduleResolution\": \"Bundler\",\n"
+            "    \"resolveJsonModule\": true,\n"
+            "    \"esModuleInterop\": true,\n"
+            "    \"forceConsistentCasingInFileNames\": true,\n"
+            "    \"noEmit\": true,\n"
+            "    \"incremental\": false,\n"
+            "    \"ignoreDeprecations\": \"1.0\"\n"
+            "  }\n"
+            "}\n");
+  CopyRepoPlugin(plugins_root, "eslint");
+  WriteFakeTsc(project_root);
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "eslint tsconfig fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async config check should complete after opening the TypeScript config");
+  const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
+  Expect(diagnostics != nullptr && diagnostics->size() == 1,
+         ("opening a TypeScript config should publish tsc diagnostics immediately: " +
+          DescribePluginState(shell))
+             .c_str());
+  Expect(diagnostics->front().message == "Invalid value for '--ignoreDeprecations'.",
+         "TypeScript config diagnostics should preserve the compiler message");
+  Expect(diagnostics->front().range.start.line == 16 &&
+             diagnostics->front().range.start.column == 4,
+         "TypeScript config diagnostics should preserve the compiler location");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText(
+      "{\n"
+      "  \"compilerOptions\": {\n"
+      "    \"target\": \"ES2022\"\n"
+      "  }\n"
+      "}\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "saving a TypeScript config should re-run config diagnostics");
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "eslint async config check should complete after saving the TypeScript config");
+  Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
+         ("saving a clean TypeScript config should clear the plugin diagnostics: " +
+          DescribePluginState(shell))
+             .c_str());
 }
 
 void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
@@ -1427,8 +1757,16 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginHoverPopupShowsMessages);
   AddTest(tests, "WorkspaceShell/PluginHoverPopupShowsMessagesInComparePane",
           TestWorkspaceShellPluginHoverPopupShowsMessagesInComparePane);
+  AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesDiagnosticsOnOpen",
+          TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnOpen);
+  AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesNestedTypescriptDiagnosticsOnOpen",
+          TestWorkspaceShellRepoEslintPluginPublishesNestedTypescriptDiagnosticsOnOpen);
+  AddTest(tests, "WorkspaceShell/RepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits",
+          TestWorkspaceShellRepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits);
   AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesDiagnosticsOnSave",
           TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave);
+  AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesTypescriptConfigDiagnostics",
+          TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics);
   AddTest(tests, "WorkspaceShell/RepoLlmPluginDrivesChatAndInlineCompletion",
           TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",

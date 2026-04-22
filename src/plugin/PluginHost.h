@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -281,6 +282,9 @@ class PluginHost {
   PluginHost& operator=(PluginHost&&) noexcept;
 
   void SetCallbacks(Callbacks callbacks);
+  void SetAsyncProcessEventType(std::uint32_t type);
+  int ConsumeAsyncProcessCallbacks();
+  int PendingAsyncProcessCount() const;
   bool enabled() const;
   bool Reload(const std::filesystem::path& project_root);
   void Shutdown();

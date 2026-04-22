@@ -49,6 +49,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .git_blame_event_type = shell->git_blame_event_type_,
           .terminal_event_type = shell->terminal_event_type_,
           .lsp_event_type = shell->lsp_event_type_,
+          .plugin_async_process_event_type = shell->plugin_async_process_event_type_,
       },
       WorkspaceEventDispatcher::State{
           .window_has_input_focus = shell->context_.interaction_state.window_has_input_focus,
@@ -81,6 +82,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->RequestFocusedEditorRedraw(); },
           .consume_lsp_callbacks =
               [shell]() { shell->ConsumeLspCallbacks(); },
+          .consume_plugin_async_process_callbacks =
+              [shell]() { shell->ConsumePluginAsyncProcessCallbacks(); },
           .consume_terminal_session_updates =
               [shell]() { shell->ConsumeTerminalSessionUpdates(); },
           .sync_text_input_surface =

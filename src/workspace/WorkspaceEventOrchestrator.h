@@ -16,6 +16,7 @@ class WorkspaceEventDispatcher {
     Uint32 git_blame_event_type = 0;
     Uint32 terminal_event_type = 0;
     Uint32 lsp_event_type = 0;
+    Uint32 plugin_async_process_event_type = 0;
   };
 
   struct State {
@@ -36,6 +37,7 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_ai_runtime_updates;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> consume_lsp_callbacks;
+    std::function<void()> consume_plugin_async_process_callbacks;
     std::function<void()> consume_terminal_session_updates;
     std::function<void(SDL_Window*)> sync_text_input_surface;
     std::function<bool(const SDL_Event&)> handle_mouse_button_down;

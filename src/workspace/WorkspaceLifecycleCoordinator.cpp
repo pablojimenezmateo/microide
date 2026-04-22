@@ -123,6 +123,13 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   } else {
     lsp_event_type_ = 0;
   }
+
+  plugin_async_process_event_type_ = SDL_RegisterEvents(1);
+  if (plugin_async_process_event_type_ != static_cast<Uint32>(-1)) {
+    plugin_runtime_.SetAsyncProcessEventType(plugin_async_process_event_type_);
+  } else {
+    plugin_async_process_event_type_ = 0;
+  }
 }
 
 void WorkspaceShell::DestroyLifecycleCursors() {

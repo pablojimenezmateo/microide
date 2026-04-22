@@ -396,6 +396,36 @@ struct WorkspaceShell::TestAccess {
   }
   static void ConsumeAiRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeAiRuntimeUpdates(); }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
+  static void ConsumePluginAsyncProcessCallbacks(WorkspaceShell& shell) {
+    shell.ConsumePluginAsyncProcessCallbacks();
+  }
+  static bool WaitForPluginAsyncProcessEventLoop(WorkspaceShell& shell, int timeout_ms = 5000) {
+    const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+    while (shell.plugin_runtime_.PendingAsyncProcessCount() > 0 &&
+           SDL_GetTicks() <= deadline) {
+      SDL_Event event;
+      if (SDL_WaitEventTimeout(&event, 10)) {
+        shell.HandleEvent(event);
+        while (SDL_PollEvent(&event)) {
+          shell.HandleEvent(event);
+        }
+      } else {
+        shell.HandleScheduledWake();
+      }
+    }
+    shell.ConsumePluginAsyncProcessCallbacks();
+    return shell.plugin_runtime_.PendingAsyncProcessCount() == 0;
+  }
+  static bool WaitForPluginAsyncProcessCallbacks(WorkspaceShell& shell, int timeout_ms = 5000) {
+    const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+    while (shell.plugin_runtime_.Host().PendingAsyncProcessCount() > 0 &&
+           SDL_GetTicks() <= deadline) {
+      shell.ConsumePluginAsyncProcessCallbacks();
+      SDL_Delay(5);
+    }
+    shell.ConsumePluginAsyncProcessCallbacks();
+    return shell.plugin_runtime_.Host().PendingAsyncProcessCount() == 0;
+  }
   static bool WaitForAiRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
     const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
     while (shell.ai_runtime_.active_request_id() != 0 && SDL_GetTicks() <= deadline) {

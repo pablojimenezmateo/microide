@@ -29,6 +29,9 @@ class WorkspacePluginRuntime {
 
   void SetWakeEventType(Uint32 event_type);
   bool ConsumeWakeEvent(Uint32 type);
+  void SetAsyncProcessEventType(Uint32 event_type);
+  bool ConsumeAsyncProcessCallbacks();
+  int PendingAsyncProcessCount() const;
   void SetPollInterval(std::chrono::milliseconds poll_interval);
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool ConsumeAssetChanges(bool force_check);

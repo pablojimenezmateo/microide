@@ -1,16 +1,23 @@
 #include "plugin/PluginHost.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <SDL3/SDL.h>
 
 #include "platform/AppDirectories.h"
 #include "platform/Filesystem.h"
@@ -214,6 +221,25 @@ struct PluginHost::Impl {
 
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
+
+  struct AsyncProcessCallback {
+    lua_State* lua_state = nullptr;
+    int callback_ref = LUA_NOREF;
+    platform::SubprocessResult result;
+  };
+  struct AsyncProcessRequest {
+    lua_State* lua_state = nullptr;
+    int callback_ref = LUA_NOREF;
+    bool cancelled = false;
+  };
+  struct AsyncProcessState {
+    Uint32 event_type = 0;
+    std::mutex mutex;
+    std::atomic<int> in_flight{0};
+    std::vector<std::shared_ptr<AsyncProcessRequest>> active_requests;
+    std::vector<AsyncProcessCallback> pending_callbacks;
+  };
+  std::shared_ptr<AsyncProcessState> async_process_state = std::make_shared<AsyncProcessState>();
   std::vector<PluginInstance> plugins;
   std::unordered_map<std::string, PluginCommand> commands;
   std::vector<std::string> command_names;
@@ -2163,6 +2189,134 @@ struct PluginHost::Impl {
     return 1;
   }
 
+  static int LuaProcessRunAsync(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    luaL_checktype(state, 3, LUA_TFUNCTION);
+
+    std::vector<std::string> argv;
+    const lua_Integer argc = static_cast<lua_Integer>(lua_rawlen(state, 1));
+    argv.reserve(static_cast<std::size_t>(argc));
+    for (lua_Integer i = 1; i <= argc; ++i) {
+      lua_rawgeti(state, 1, i);
+      if (!lua_isstring(state, -1)) {
+        return luaL_error(state, "process argv entries must be strings");
+      }
+      argv.emplace_back(lua_tostring(state, -1));
+      lua_pop(state, 1);
+    }
+
+    std::filesystem::path cwd = host != nullptr ? host->current_project_root : std::filesystem::path{};
+    std::string stdin_text;
+    std::vector<platform::SubprocessEnvironmentOverride> environment_overrides;
+    if (!lua_isnil(state, 2)) {
+      luaL_checktype(state, 2, LUA_TTABLE);
+      lua_getfield(state, 2, "cwd");
+      if (lua_isstring(state, -1)) {
+        cwd = ResolveRuntimePath(host != nullptr ? host->current_project_root : std::filesystem::path{},
+                                 std::filesystem::path(lua_tostring(state, -1)));
+      }
+      lua_pop(state, 1);
+
+      lua_getfield(state, 2, "stdin");
+      if (lua_isstring(state, -1)) {
+        size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length);
+        stdin_text.assign(text, length);
+      }
+      lua_pop(state, 1);
+
+      lua_getfield(state, 2, "env");
+      if (!lua_isnil(state, -1)) {
+        luaL_checktype(state, -1, LUA_TTABLE);
+        lua_pushnil(state);
+        while (lua_next(state, -2) != 0) {
+          if (!lua_isstring(state, -2)) {
+            return luaL_error(state, "process env keys must be strings");
+          }
+          platform::SubprocessEnvironmentOverride override_entry;
+          override_entry.name = lua_tostring(state, -2);
+          if (lua_isstring(state, -1)) {
+            size_t length = 0;
+            const char* text = lua_tolstring(state, -1, &length);
+            override_entry.value = std::string(text, length);
+          } else if (lua_isboolean(state, -1) && lua_toboolean(state, -1) == 0) {
+            override_entry.value = std::nullopt;
+          } else {
+            return luaL_error(state, "process env values must be strings or false");
+          }
+          environment_overrides.push_back(std::move(override_entry));
+          lua_pop(state, 1);
+        }
+      }
+      lua_pop(state, 1);
+    }
+
+    if (host == nullptr) {
+      return 0;
+    }
+
+    // Store the Lua callback ref — must be done on the main thread before launching the thread.
+    lua_pushvalue(state, 3);
+    const int callback_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+    const auto request = std::make_shared<AsyncProcessRequest>();
+    request->lua_state = state;
+    request->callback_ref = callback_ref;
+    const std::shared_ptr<AsyncProcessState> async_state =
+        host != nullptr ? host->async_process_state : nullptr;
+    if (async_state == nullptr) {
+      luaL_unref(state, LUA_REGISTRYINDEX, callback_ref);
+      return 0;
+    }
+    {
+      std::lock_guard lock(async_state->mutex);
+      async_state->active_requests.push_back(request);
+    }
+
+    platform::SubprocessOptions opts{
+        .cwd = std::move(cwd),
+        .stdin_text = std::move(stdin_text),
+        .environment_overrides = std::move(environment_overrides),
+        .capture_stdout = true,
+        .capture_stderr = true,
+    };
+
+    async_state->in_flight.fetch_add(1, std::memory_order_relaxed);
+    std::thread([async_state,
+                 request,
+                 argv = std::move(argv),
+                 opts = std::move(opts)]() mutable {
+      platform::SubprocessResult result = platform::RunSubprocess(argv, opts);
+      Uint32 event_type = 0;
+      bool should_push_event = false;
+      {
+        std::lock_guard lock(async_state->mutex);
+        auto it = std::find(async_state->active_requests.begin(), async_state->active_requests.end(),
+                            request);
+        if (it != async_state->active_requests.end()) {
+          async_state->active_requests.erase(it);
+        }
+        if (!request->cancelled && request->lua_state != nullptr &&
+            request->callback_ref != LUA_NOREF) {
+          async_state->pending_callbacks.push_back(
+              {request->lua_state, request->callback_ref, std::move(result)});
+          request->lua_state = nullptr;
+          request->callback_ref = LUA_NOREF;
+          event_type = async_state->event_type;
+          should_push_event = true;
+        }
+      }
+      async_state->in_flight.fetch_sub(1, std::memory_order_release);
+      if (should_push_event && event_type != 0) {
+        SDL_Event event{};
+        event.type = event_type;
+        SDL_PushEvent(&event);
+      }
+    }).detach();
+
+    return 0;
+  }
+
   bool ReadDiagnosticTable(lua_State* state,
                            int table_index,
                            editor::Diagnostic* diagnostic,
@@ -2433,10 +2587,13 @@ struct PluginHost::Impl {
     lua_setfield(state, -2, "exists");
     lua_setfield(state, -2, "files");
 
-    lua_createtable(state, 0, 1);
+    lua_createtable(state, 0, 2);
     lua_pushlightuserdata(state, this);
     lua_pushcclosure(state, &LuaProcessRun, 1);
     lua_setfield(state, -2, "run");
+    lua_pushlightuserdata(state, this);
+    lua_pushcclosure(state, &LuaProcessRunAsync, 1);
+    lua_setfield(state, -2, "run_async");
     lua_setfield(state, -2, "process");
 
     lua_createtable(state, 0, 2);
@@ -3462,6 +3619,39 @@ struct PluginHost::Impl {
 #endif
 
   void ClearMessages() { messages.clear(); }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  void CancelAsyncProcessCallbacks() {
+    std::lock_guard lock(async_process_state->mutex);
+    for (auto& request : async_process_state->active_requests) {
+      if (!request) {
+        continue;
+      }
+      if (request->callback_ref != LUA_NOREF && request->lua_state != nullptr) {
+        luaL_unref(request->lua_state, LUA_REGISTRYINDEX, request->callback_ref);
+      }
+      request->lua_state = nullptr;
+      request->callback_ref = LUA_NOREF;
+      request->cancelled = true;
+    }
+    for (auto& callback : async_process_state->pending_callbacks) {
+      if (callback.callback_ref != LUA_NOREF && callback.lua_state != nullptr) {
+        luaL_unref(callback.lua_state, LUA_REGISTRYINDEX, callback.callback_ref);
+      }
+      callback.lua_state = nullptr;
+      callback.callback_ref = LUA_NOREF;
+    }
+    async_process_state->pending_callbacks.clear();
+  }
+#endif
+
+  void WaitForAsyncProcesses(std::chrono::milliseconds timeout) const {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (async_process_state->in_flight.load(std::memory_order_acquire) > 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
 };
 
 PluginHost::PluginHost() : impl_(std::make_unique<Impl>()) {}
@@ -3501,6 +3691,8 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 #if MICROIDE_HAS_LUA_PLUGINS
   const std::filesystem::path next_project_root =
       project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
+  impl_->CancelAsyncProcessCallbacks();
+  impl_->WaitForAsyncProcesses(std::chrono::seconds(2));
   impl_->TearDownPlugins();
   impl_->current_project_root = next_project_root;
 
@@ -3537,10 +3729,58 @@ void PluginHost::Shutdown() {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
+  impl_->CancelAsyncProcessCallbacks();
+  impl_->WaitForAsyncProcesses(std::chrono::seconds(2));
   impl_->TearDownPlugins();
 #endif
   impl_->current_project_root.clear();
   impl_->SetReloadSummary();
+}
+
+void PluginHost::SetAsyncProcessEventType(std::uint32_t type) {
+  std::lock_guard lock(impl_->async_process_state->mutex);
+  impl_->async_process_state->event_type = static_cast<Uint32>(type);
+}
+
+int PluginHost::ConsumeAsyncProcessCallbacks() {
+#if MICROIDE_HAS_LUA_PLUGINS
+  std::vector<Impl::AsyncProcessCallback> callbacks;
+  {
+    std::lock_guard lock(impl_->async_process_state->mutex);
+    callbacks.swap(impl_->async_process_state->pending_callbacks);
+  }
+  for (auto& cb : callbacks) {
+    lua_State* state = cb.lua_state;
+    if (state == nullptr || cb.callback_ref == LUA_NOREF) {
+      continue;
+    }
+    lua_rawgeti(state, LUA_REGISTRYINDEX, cb.callback_ref);
+    luaL_unref(state, LUA_REGISTRYINDEX, cb.callback_ref);
+    cb.callback_ref = LUA_NOREF;
+    lua_createtable(state, 0, 3);
+    lua_pushinteger(state, cb.result.exit_code);
+    lua_setfield(state, -2, "exit_code");
+    lua_pushlstring(state, cb.result.stdout_text.c_str(), cb.result.stdout_text.size());
+    lua_setfield(state, -2, "stdout");
+    lua_pushlstring(state, cb.result.stderr_text.c_str(), cb.result.stderr_text.size());
+    lua_setfield(state, -2, "stderr");
+    if (lua_pcall(state, 1, 0, 0) != LUA_OK) {
+      const char* msg = lua_tostring(state, -1);
+      if (impl_->callbacks.error_sink && msg != nullptr) {
+        impl_->callbacks.error_sink(std::string("plugin async callback: ") + msg);
+      }
+      lua_pop(state, 1);
+    }
+  }
+  return static_cast<int>(callbacks.size());
+#endif
+  return 0;
+}
+
+int PluginHost::PendingAsyncProcessCount() const {
+  const int in_flight = impl_->async_process_state->in_flight.load(std::memory_order_acquire);
+  std::lock_guard lock(impl_->async_process_state->mutex);
+  return in_flight + static_cast<int>(impl_->async_process_state->pending_callbacks.size());
 }
 
 void PluginHost::OnBufferOpen(const std::filesystem::path& path) {

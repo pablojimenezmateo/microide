@@ -1004,6 +1004,7 @@ class WorkspaceShell {
   bool StartChatRequest(std::string message, std::string* error_message = nullptr);
   void ConsumeAiRuntimeUpdates();
   void ConsumeLspCallbacks();
+  bool ConsumePluginAsyncProcessCallbacks();
   bool RequestInlineCompletion(std::string* error_message = nullptr);
   bool AcceptInlineCompletion();
   void DismissInlineCompletion();
@@ -1281,6 +1282,7 @@ class WorkspaceShell {
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
   Uint32 lsp_event_type_ = 0;
+  Uint32 plugin_async_process_event_type_ = 0;
   project::GitBlameService git_blame_service_;
   std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;

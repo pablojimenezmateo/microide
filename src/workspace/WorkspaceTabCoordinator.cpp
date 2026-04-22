@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -142,6 +143,7 @@ bool TabCoordinator::Save(std::size_t index) {
   }
 
   bool attempted_save = false;
+  std::set<std::filesystem::path> open_paths;
   std::vector<std::filesystem::path> saved_paths;
   for (auto& view : editor_state->views) {
     editor::TextViewport* candidate = &view.viewport;
@@ -151,6 +153,7 @@ bool TabCoordinator::Save(std::size_t index) {
       }
       continue;
     }
+    open_paths.insert(candidate->path().lexically_normal());
     if (!candidate->dirty()) {
       continue;
     }
@@ -170,8 +173,12 @@ bool TabCoordinator::Save(std::size_t index) {
       operations_.notify_plugin_buffer_save(path);
     }
     state_.directory_tree.Refresh();
+    return true;
   }
-  return attempted_save || !editor_state->views.empty();
+  for (const auto& path : open_paths) {
+    operations_.notify_plugin_buffer_save(path);
+  }
+  return !editor_state->views.empty();
 }
 
 bool TabCoordinator::IsDirty(std::size_t index) const {

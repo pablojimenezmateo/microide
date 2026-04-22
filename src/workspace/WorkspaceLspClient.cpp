@@ -420,6 +420,12 @@ struct LspClient::Impl {
     {
       util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
       for (int attempts = 0; attempts < 60; ++attempts) {
+        if (stop_init.load(std::memory_order_acquire)) {
+          proc.Shutdown();
+          ClearDeferredMessages();
+          initializing.store(false, std::memory_order_release);
+          return;
+        }
         auto resp_opt = TryParseOneMessage(buf);
         if (!resp_opt) {
           auto chunk = proc.Read(4096, 500);

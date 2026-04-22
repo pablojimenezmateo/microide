@@ -2,9 +2,11 @@
 
 #include "plugin/PluginHost.h"
 
+#include <chrono>
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -837,6 +839,102 @@ return ide.plugin({
          "language server contributions should preserve ids, language ids, and commands");
 }
 
+void TestPluginHostCancelsAsyncCallbacksOnReload() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "async reload fixture\n");
+  WriteFile(source, "console.log('hello');\n");
+
+  WritePluginInit(
+      global_plugins, "async-reload",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.reload",
+  on_buffer_open = function(ctx, buffer)
+    ctx.process.run_async({"sh", "-lc", "sleep 0.1; printf done"}, nil, function(result)
+      ctx.log("async-complete:" .. tostring(result.exit_code))
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "async reload fixture should load");
+  host.OnBufferOpen(source);
+  Expect(host.PendingAsyncProcessCount() > 0,
+         "buffer open should leave an async process in flight before reload");
+  Expect(host.Reload(project_root), "reloading while an async callback is pending should succeed");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  host.ConsumeAsyncProcessCallbacks();
+  Expect(host.PendingAsyncProcessCount() == 0,
+         "reload should drain or discard async callbacks from the previous plugin state");
+  Expect(std::none_of(host.Messages().begin(), host.Messages().end(), [](const std::string& entry) {
+           return entry == "async.reload: async-complete:0";
+         }),
+         "reload should discard async callbacks captured by the old plugin state");
+  Expect(host.Errors().empty(),
+         "reloading while async callbacks are pending should not report callback errors");
+}
+
+void TestPluginHostCancelsAsyncCallbacksOnShutdown() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "async shutdown fixture\n");
+  WriteFile(source, "console.log('hello');\n");
+
+  WritePluginInit(
+      global_plugins, "async-shutdown",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.shutdown",
+  on_buffer_open = function(ctx, buffer)
+    ctx.process.run_async({"sh", "-lc", "sleep 0.1; printf done"}, nil, function(result)
+      ctx.log("async-complete:" .. tostring(result.exit_code))
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "async shutdown fixture should load");
+  host.OnBufferOpen(source);
+  Expect(host.PendingAsyncProcessCount() > 0,
+         "buffer open should leave an async process in flight before shutdown");
+  host.Shutdown();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  host.ConsumeAsyncProcessCallbacks();
+  Expect(host.PendingAsyncProcessCount() == 0,
+         "shutdown should drain or discard pending async callbacks");
+  Expect(std::none_of(host.Messages().begin(), host.Messages().end(), [](const std::string& entry) {
+           return entry == "async.shutdown: async-complete:0";
+         }),
+         "shutdown should discard async callbacks after Lua teardown");
+  Expect(host.Errors().empty(),
+         "shutting down with pending async callbacks should not report callback errors");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -849,6 +947,10 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
   AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
+  AddTest(tests, "PluginHost/CancelsAsyncCallbacksOnReload",
+          TestPluginHostCancelsAsyncCallbacksOnReload);
+  AddTest(tests, "PluginHost/CancelsAsyncCallbacksOnShutdown",
+          TestPluginHostCancelsAsyncCallbacksOnShutdown);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
