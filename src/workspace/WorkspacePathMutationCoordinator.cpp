@@ -31,11 +31,11 @@ void PathMutationCoordinator::ConfirmPromptSurface(WorkspaceShell::DirtyPathReso
   }
 
   if (state.kind == PromptSurfaceState::Kind::TextInput) {
-    if (state.input.empty()) {
+    if (state.input.text.empty()) {
       return;
     }
 
-    std::filesystem::path typed_path(state.input);
+    std::filesystem::path typed_path(state.input.text);
     if (typed_path.is_absolute()) {
       return;
     }

@@ -120,33 +120,39 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const bool editing_replace =
         ps.editing && ps.edit_field == ProjectSearchEditField::Replace;
 
-    const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
+    const TextInputSurface current_surface = CurrentTextInputSurface();
+    const bool sidebar_needs_visual =
+        current_surface == TextInputSurface::SidebarSearchQuery ||
+        current_surface == TextInputSurface::SidebarSearchReplace;
+    const auto visual =
+        sidebar_needs_visual ? BuildActiveTextInputVisual(layout, std::nullopt) : std::nullopt;
     const auto sidebar_display_text = [&](TextInputSurface surface,
-                                          std::string_view prefix,
-                                          std::string_view fallback_text) -> std::string {
+                                          const std::string& fallback) -> std::string_view {
       if (visual.has_value() && visual->surface == surface && !visual->displayed_text.empty()) {
         return visual->displayed_text;
       }
-      return std::string(prefix) + std::string(fallback_text);
+      return fallback;
     };
 
     const std::string_view query_text =
         editing_query ? ps.edit_buffer.text : ps.query.text;
     const std::string_view replace_text =
         editing_replace ? ps.edit_buffer.text : ps.replace_text.text;
+    const std::string query_fallback = "search> " + std::string(query_text);
+    const std::string replace_fallback = "replace> " + std::string(replace_text);
 
     DrawSingleLineTextTail(
         renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 38.0f,
         std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
         editing_query ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
-        sidebar_display_text(TextInputSurface::SidebarSearchQuery, "search> ", query_text));
+        sidebar_display_text(TextInputSurface::SidebarSearchQuery, query_fallback));
     DrawSingleLineTextTail(
         renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 54.0f,
         std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
         editing_replace ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
-        sidebar_display_text(TextInputSurface::SidebarSearchReplace, "replace> ", replace_text));
+        sidebar_display_text(TextInputSurface::SidebarSearchReplace, replace_fallback));
     const auto draw_search_button = [&](const SDL_FRect& rect,
                                         std::string_view label,
                                         bool active) {

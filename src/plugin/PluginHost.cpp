@@ -223,13 +223,17 @@ struct PluginHost::Impl {
   std::filesystem::path current_project_root;
 
   struct AsyncProcessCallback {
+#if MICROIDE_HAS_LUA_PLUGINS
     lua_State* lua_state = nullptr;
     int callback_ref = LUA_NOREF;
+#endif
     platform::SubprocessResult result;
   };
   struct AsyncProcessRequest {
+#if MICROIDE_HAS_LUA_PLUGINS
     lua_State* lua_state = nullptr;
     int callback_ref = LUA_NOREF;
+#endif
     bool cancelled = false;
   };
   struct AsyncProcessState {

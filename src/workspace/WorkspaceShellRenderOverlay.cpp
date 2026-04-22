@@ -39,9 +39,17 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     return;
   }
 
-  const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
+  const TextInputSurface current_surface = CurrentTextInputSurface();
+  const bool overlay_needs_visual =
+      current_surface == TextInputSurface::BufferSearch ||
+      current_surface == TextInputSurface::BufferReplaceSearch ||
+      current_surface == TextInputSurface::BufferReplaceReplace ||
+      current_surface == TextInputSurface::ProjectSearchOverlay ||
+      current_surface == TextInputSurface::CommitPicker;
+  const auto visual =
+      overlay_needs_visual ? BuildActiveTextInputVisual(layout, std::nullopt) : std::nullopt;
   const auto overlay_display_text = [&](TextInputSurface surface,
-                                        std::string fallback) -> std::string {
+                                        const std::string& fallback) -> std::string_view {
     if (visual.has_value() && visual->surface == surface && !visual->displayed_text.empty()) {
       return visual->displayed_text;
     }
@@ -90,12 +98,13 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   if (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Search Buffer");
+    const std::string bs_fallback =
+        "> " + context_.current_project_state.overlay.workflow.buffer_search.query.text;
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.overlay_background,
-        overlay_display_text(TextInputSurface::BufferSearch,
-                             "> " + context_.current_project_state.overlay.workflow.buffer_search.query.text));
+        overlay_display_text(TextInputSurface::BufferSearch, bs_fallback));
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
@@ -131,6 +140,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   } else if (context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Replace Buffer");
+    const std::string br_search_fallback =
+        "find: " + context_.current_project_state.overlay.workflow.buffer_search.query.text;
+    const std::string br_replace_fallback =
+        "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text.text;
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
@@ -138,8 +151,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
             ? theme_.text_primary
             : theme_.text_secondary,
         theme_.overlay_background,
-        overlay_display_text(TextInputSurface::BufferReplaceSearch,
-                             "find: " + context_.current_project_state.overlay.workflow.buffer_search.query.text));
+        overlay_display_text(TextInputSurface::BufferReplaceSearch, br_search_fallback));
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
@@ -147,8 +159,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
             ? theme_.text_primary
             : theme_.text_secondary,
         theme_.overlay_background,
-        overlay_display_text(TextInputSurface::BufferReplaceReplace,
-                             "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text.text));
+        overlay_display_text(TextInputSurface::BufferReplaceReplace, br_replace_fallback));
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
@@ -185,12 +196,13 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   } else if (context_.current_project_state.overlay.mode == OverlayMode::ProjectSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Project Search");
+    const std::string ps_fallback =
+        "> " + context_.current_project_state.overlay.workflow.project_search.query.text;
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.overlay_background,
-        overlay_display_text(TextInputSurface::ProjectSearchOverlay,
-                             "> " + context_.current_project_state.overlay.workflow.project_search.query.text));
+        overlay_display_text(TextInputSurface::ProjectSearchOverlay, ps_fallback));
     const std::string summary =
         context_.current_project_state.overlay.workflow.project_search.results.empty()
             ? "No results"
@@ -233,12 +245,13 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                theme_.text_muted, theme_.overlay_background,
                context_.current_project_state.overlay.workflow.compare_picker.path.filename().string());
+    const std::string cp_fallback =
+        "> " + context_.current_project_state.overlay.workflow.compare_picker.query.text;
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.overlay_background,
-        overlay_display_text(TextInputSurface::CommitPicker,
-                             "> " + context_.current_project_state.overlay.workflow.compare_picker.query.text));
+        overlay_display_text(TextInputSurface::CommitPicker, cp_fallback));
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = context_.current_project_state.overlay.scroll_row + row;
       if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.compare_picker.matches.size())) {

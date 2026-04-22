@@ -75,30 +75,48 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
   const std::size_t cursor_byte =
       std::min(prefix.size() + state.cursor, full_text.size());
 
-  // Walk backward from cursor to find the leftmost byte that fits in available_width.
-  std::size_t view_start = cursor_byte;
-  while (view_start > 0) {
-    const std::size_t prev = util::PreviousUtf8Boundary(full_text, view_start);
-    if (text_renderer_.MeasureWidth(
-            std::string_view(full_text).substr(prev, cursor_byte - prev)) > available_width) {
-      break;
-    }
-    view_start = prev;
+  // Measure each codepoint from 0..cursor_byte exactly once, storing (start, width).
+  // Walking backward through this array to find view_start avoids re-measuring.
+  struct CharEntry {
+    std::size_t start;
+    float width;
+  };
+  std::vector<CharEntry> before_cursor;
+  before_cursor.reserve(64);
+  for (std::size_t pos = 0; pos < cursor_byte;) {
+    const std::size_t next = util::NextUtf8Boundary(full_text, pos);
+    before_cursor.push_back(
+        {pos, text_renderer_.MeasureWidth(std::string_view(full_text).substr(pos, next - pos))});
+    pos = next;
   }
 
-  // Extend view rightward as far as fits.
-  std::size_t view_end = view_start;
+  // Walk backward through stored widths to find the leftmost byte that still lets
+  // [view_start..cursor] fit in available_width — no extra MeasureWidth calls needed.
+  float cursor_x = 0.0f;
+  std::size_t view_start_idx = before_cursor.size();
+  for (auto i = before_cursor.size(); i > 0; --i) {
+    if (cursor_x + before_cursor[i - 1].width > available_width) {
+      break;
+    }
+    cursor_x += before_cursor[i - 1].width;
+    view_start_idx = i - 1;
+  }
+  const std::size_t view_start =
+      before_cursor.empty() ? 0 : before_cursor[view_start_idx].start;
+
+  // Walk forward from cursor_byte, measuring each codepoint once, until full.
+  float right_accum = cursor_x;
+  std::size_t view_end = cursor_byte;
   while (view_end < full_text.size()) {
     const std::size_t next = util::NextUtf8Boundary(full_text, view_end);
-    if (text_renderer_.MeasureWidth(
-            std::string_view(full_text).substr(view_start, next - view_start)) > available_width) {
+    const float char_w = text_renderer_.MeasureWidth(
+        std::string_view(full_text).substr(view_end, next - view_end));
+    if (right_accum + char_w > available_width) {
       break;
     }
+    right_accum += char_w;
     view_end = next;
   }
-
-  const float cursor_x = text_renderer_.MeasureWidth(
-      std::string_view(full_text).substr(view_start, cursor_byte - view_start));
 
   std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
   if (const auto sel = util::SingleLineSelection(state); sel.has_value()) {
@@ -114,7 +132,8 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
   }
 
   return SingleLineViewMetrics{
-      .displayed_text = std::string(std::string_view(full_text).substr(view_start, view_end - view_start)),
+      .displayed_text =
+          std::string(std::string_view(full_text).substr(view_start, view_end - view_start)),
       .cursor_x = cursor_x,
       .selection_bytes = selection_bytes,
   };

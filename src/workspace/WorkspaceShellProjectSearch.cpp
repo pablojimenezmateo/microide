@@ -186,7 +186,7 @@ std::string WorkspaceShell::ProjectSearchHiddenButtonLabel() const {
 bool WorkspaceShell::ProjectSearchCanReplaceAll() const {
   return context_.current_project_state.overlay.workflow.project_search.options.pattern_mode ==
              project::ProjectSearchPatternMode::Literal &&
-         !context_.current_project_state.overlay.workflow.project_search.query.empty();
+         !context_.current_project_state.overlay.workflow.project_search.query.text.empty();
 }
 
 bool WorkspaceShell::ProjectSearchReplaceCaseSensitive() const {
@@ -197,7 +197,7 @@ bool WorkspaceShell::ProjectSearchReplaceCaseSensitive() const {
       return false;
     case project::ProjectSearchCaseMode::Smart:
     default:
-      return UsesCaseSensitiveLiteralMatch(context_.current_project_state.overlay.workflow.project_search.query);
+      return UsesCaseSensitiveLiteralMatch(context_.current_project_state.overlay.workflow.project_search.query.text);
   }
 }
 
@@ -237,7 +237,7 @@ void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
 }
 
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
-  if (context_.current_project_state.overlay.workflow.project_search.query.empty()) {
+  if (context_.current_project_state.overlay.workflow.project_search.query.text.empty()) {
     return;
   }
 
@@ -277,8 +277,8 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
     std::string updated_content = content;
     const std::size_t replacements = ReplaceLiteralMatchesInText(
-        updated_content, context_.current_project_state.overlay.workflow.project_search.query,
-        context_.current_project_state.overlay.workflow.project_search.replace_text, case_sensitive);
+        updated_content, context_.current_project_state.overlay.workflow.project_search.query.text,
+        context_.current_project_state.overlay.workflow.project_search.replace_text.text, case_sensitive);
     if (replacements == 0) {
       continue;
     }

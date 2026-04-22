@@ -410,14 +410,16 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const bool command_mode = context_.current_project_state.panel.command_mode;
     const TextInputSurface panel_surface =
         command_mode ? TextInputSurface::Command : TextInputSurface::ChatComposer;
-    const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
-    const std::string panel_display_text =
-        (visual.has_value() && visual->surface == panel_surface &&
-         !visual->displayed_text.empty())
-            ? visual->displayed_text
-            : "> " + (command_mode
-                          ? context_.current_project_state.panel.command.input.text
-                          : context_.current_project_state.panel.chat.composer.text);
+    const TextInputSurface current_surface = CurrentTextInputSurface();
+    const auto visual =
+        (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
+                                           : std::nullopt;
+    const std::string panel_fallback =
+        "> " + (command_mode ? context_.current_project_state.panel.command.input.text
+                             : context_.current_project_state.panel.chat.composer.text);
+    const std::string_view panel_display_text =
+        (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
+                                                                : std::string_view(panel_fallback);
     DrawSingleLineTextTail(renderer, prompt_rect.x + 6.0f, prompt_rect.y + 4.0f,
                            std::max(1.0f, prompt_rect.w - 12.0f), theme_.chrome_active_text,
                            theme_.chrome_active, panel_display_text);
