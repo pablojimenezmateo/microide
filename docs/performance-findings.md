@@ -1,6 +1,7 @@
 # MicroIDE Performance Findings
 
 Last reviewed on 2026-04-22 after a startup profiling pass focused on project-open overhead.
+Updated on 2026-04-22 with additional startup optimization for git status deferral.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -227,7 +228,66 @@ Impact:
 - redraw ownership is more local to the state mutation, which makes the retained-scene path less
   brittle as more call sites reuse those mutations
 
+## Recent Optimization Pass (2026-04-22)
+
+### Git status collection deferred to on-demand
+
+Problem:
+
+- DirectoryTree::SetRoot called RebuildEntries(true) unconditionally at startup
+- This ran `git status --porcelain=v1 -z --untracked-files=all` at startup
+- Took 14.10 ms even when the Git sidebar wasn't visible
+
+Implemented:
+
+- DirectoryTree::SetRoot now calls RebuildEntries(false), deferring git status collection
+- Added DirectoryTree::RefreshGitStatuses() public method for explicit refresh
+- SetProjectRoot calls RefreshGitStatuses when Git sidebar mode is active
+- SidebarCoordinator::ShowGit() calls RefreshGitStatuses before rendering git sidebar
+- Git statuses are now collected only when the Git sidebar is displayed or explicitly refreshed
+
+Impact:
+
+- Application::Initialize: 82.76 ms → 56.90 ms (31% improvement)
+- Total startup to FirstRender: 99.39 ms → 71.49 ms (28% improvement)
+- Removed 14.10 ms from startup critical path
+- DirectoryTree::SetRoot: 16.18 ms → 1.45 ms
+
+### Identified remaining startup bottleneck: syntax definition reloading
+
+Diagnostic traces added to WorkspacePluginRuntime::Reload show that ReloadDefinitions is the
+primary remaining bottleneck, accounting for 44.27 ms (78% of total plugin reload time).
+
+The BuildRegistry function rebuilds the entire syntax registry for all plugin-provided syntax
+definitions on every startup. This is still a necessary operation when plugins or definitions
+change, but opportunities exist to optimize further through:
+
+- Caching compiled syntax definitions to disk
+- Only reloading syntax if definitions actually changed
+- Deferring syntax reload to after first render (if syntax highlighting isn't immediately needed)
+- Parallelizing syntax definition processing across multiple definitions
+
+Relevant code:
+
+- `src/editor/RuntimeSyntaxRegistry.cpp` (BuildRegistry, ReloadDefinitions)
+- `src/workspace/WorkspacePluginRuntime.cpp` (Reload)
+
 ## Still Worth Doing
+
+### Syntax definition reloading optimization
+
+With git status deferral complete, syntax definition reloading (44.27 ms) is now the primary
+startup bottleneck. Recommended optimizations:
+
+- Cache compiled/indexed syntax definitions to disk to avoid re-parsing on every startup
+- Compare plugin definition checksums to skip reload when definitions haven't changed
+- Defer full syntax reload to after first render if file syntax highlighting isn't immediately needed
+- Parallelize syntax definition indexing across multiple worker threads
+
+Relevant code:
+
+- `src/editor/RuntimeSyntaxRegistry.cpp` - BuildRegistry, ReloadDefinitions
+- `src/workspace/WorkspacePluginRuntime.cpp` - Reload
 
 ### Finer-grained surface invalidation
 
