@@ -5,6 +5,7 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
+#include "workspace/WorkspaceTextSearch.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
@@ -98,8 +99,12 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
         return operations_.start_chat_request({});
+      case SDLK_BACKSPACE:
+        RemoveLastUtf8Codepoint(&state_.panel.chat.composer);
+        ensure_redraw([this]() { operations_.request_bottom_panel_command_redraw(); });
+        return true;
       default:
-        break;
+        return true;
     }
   }
   if (state_.surface.focus == FocusTarget::Panel &&
@@ -137,6 +142,25 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                               SDL_Keymod modifiers,
                                               bool active_compare_tab,
                                               bool active_merge_tab) {
+  if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
+    const bool surface_accepts_paste =
+        state_.panel.command_mode ||
+        (state_.surface.focus == FocusTarget::Panel &&
+         state_.panel.content == PanelContentKind::Chat) ||
+        (state_.overlay.visible &&
+         (state_.overlay.mode == OverlayMode::FileFinder ||
+          state_.overlay.mode == OverlayMode::CommitPicker ||
+          state_.overlay.mode == OverlayMode::BufferSearch ||
+          state_.overlay.mode == OverlayMode::BufferReplace ||
+          state_.overlay.mode == OverlayMode::ProjectSearch)) ||
+        (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
+         operations_.active_sidebar_mode() == SidebarMode::Search &&
+         state_.overlay.workflow.project_search.editing);
+    if (surface_accepts_paste) {
+      return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
+    }
+  }
+
   const auto bindings = operations_.resolved_keybindings();
   const ResolvedKeybinding* binding =
       FindKeybinding(bindings, event.key, modifiers, ActiveKeybindingContext());
@@ -159,7 +183,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
 
   if (editor_shortcut &&
       (state_.panel.command_mode || state_.overlay.visible ||
-       state_.surface.focus != FocusTarget::Editor || active_compare_tab)) {
+       state_.surface.focus != FocusTarget::Editor)) {
     return false;
   }
   if ((binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer ||
@@ -168,7 +192,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     return false;
   }
   if (binding->action == ActionId::SelectAll &&
-      operations_.active_editable_viewport() == nullptr) {
+      operations_.active_navigable_viewport() == nullptr) {
     return false;
   }
   if (binding->action == ActionId::Save && active_compare_tab) {
@@ -336,6 +360,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .open_untitled_tab = [this]() { return OpenUntitledTab(); },
           .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
           .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },
+          .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },

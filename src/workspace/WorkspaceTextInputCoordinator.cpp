@@ -138,69 +138,64 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
 
   SyncTextInputSurface(nullptr);
   text_input_state_.composition = TextCompositionState{};
-  const std::string_view input(event.text);
-  if (prompts_.surface_visible && prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
-    prompts_.surface.input.append(input);
-    operations_.request_prompt_redraw();
-    return true;
-  }
-  if (state_.panel.command_mode) {
-    operations_.command_prompt_append_input(input);
-    operations_.request_bottom_panel_command_redraw();
-    return true;
-  }
-  if (state_.surface.focus == FocusTarget::Panel &&
-      operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
-    state_.panel.chat.composer.append(input);
-    operations_.request_bottom_panel_command_redraw();
-    return true;
+  return InsertTextAtActiveSurface(event.text);
+}
+
+bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
+  if (input.empty()) {
+    return false;
   }
 
-  if (state_.overlay.visible) {
-    switch (state_.overlay.mode) {
-      case OverlayMode::Completion:
-      case OverlayMode::CodeActions:
-      case OverlayMode::TaskPicker:
+  SyncTextInputSurface(nullptr);
+  text_input_state_.composition = TextCompositionState{};
+  const TextInputSurface surface = operations_.current_text_input_surface();
+  switch (surface) {
+    case TextInputSurface::PromptInput:
+      prompts_.surface.input.append(input);
+      operations_.request_prompt_redraw();
+      return true;
+    case TextInputSurface::Command:
+      operations_.command_prompt_append_input(input);
+      operations_.request_bottom_panel_command_redraw();
+      return true;
+    case TextInputSurface::ChatComposer:
+      state_.panel.chat.composer.append(input);
+      operations_.request_bottom_panel_command_redraw();
+      return true;
+    case TextInputSurface::CommitPicker:
+      state_.overlay.workflow.compare_picker.query.append(input);
+      operations_.refresh_compare_picker();
+      return true;
+    case TextInputSurface::BufferSearch:
+      state_.overlay.workflow.buffer_search.query.append(input);
+      operations_.refresh_buffer_search();
+      return true;
+    case TextInputSurface::BufferReplaceSearch:
+      state_.overlay.workflow.buffer_search.query.append(input);
+      operations_.refresh_buffer_search();
+      return true;
+    case TextInputSurface::BufferReplaceReplace:
+      state_.overlay.workflow.buffer_search.replace_text.append(input);
+      operations_.request_overlay_redraw();
+      return true;
+    case TextInputSurface::ProjectSearchOverlay:
+      state_.overlay.workflow.project_search.query.append(input);
+      operations_.refresh_project_search();
+      return true;
+    case TextInputSurface::FileFinder:
+      state_.file_finder.AppendQueryText(input);
+      operations_.reset_overlay_scroll();
+      return true;
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+      state_.overlay.workflow.project_search.edit_buffer.append(input);
+      operations_.request_sidebar_redraw();
+      return true;
+    case TextInputSurface::Editor:
+      if (operations_.active_editable_viewport() == nullptr) {
         return false;
-      case OverlayMode::CommitPicker:
-        state_.overlay.workflow.compare_picker.query.append(input);
-        operations_.refresh_compare_picker();
-        return true;
-      case OverlayMode::BufferSearch:
-        state_.overlay.workflow.buffer_search.query.append(input);
-        operations_.refresh_buffer_search();
-        return true;
-      case OverlayMode::BufferReplace:
-        if (state_.overlay.buffer_search_field == BufferSearchField::Search) {
-          state_.overlay.workflow.buffer_search.query.append(input);
-          operations_.refresh_buffer_search();
-        } else {
-          state_.overlay.workflow.buffer_search.replace_text.append(input);
-          operations_.request_overlay_redraw();
-        }
-        return true;
-      case OverlayMode::ProjectSearch:
-        state_.overlay.workflow.project_search.query.append(input);
-        operations_.refresh_project_search();
-        return true;
-      case OverlayMode::FileFinder:
-      default:
-        state_.file_finder.AppendQueryText(input);
-        operations_.reset_overlay_scroll();
-        return true;
-    }
-  }
-
-  if (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
-      (operations_.current_text_input_surface() == TextInputSurface::SidebarSearchQuery ||
-       operations_.current_text_input_surface() == TextInputSurface::SidebarSearchReplace)) {
-    state_.overlay.workflow.project_search.edit_buffer.append(input);
-    operations_.request_sidebar_redraw();
-    return true;
-  }
-
-  if (state_.surface.focus == FocusTarget::Editor &&
-      operations_.active_editable_viewport() != nullptr) {
+      }
+      {
     editor::TextViewport* viewport = operations_.active_editable_viewport();
     if (viewport == nullptr) {
       return false;
@@ -228,20 +223,20 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
       operations_.request_tab_strip_redraw();
     }
     return true;
+      }
+    case TextInputSurface::Terminal:
+      if (auto* terminal_tab = operations_.active_terminal_tab(); terminal_tab != nullptr) {
+        operations_.clear_terminal_selection();
+        terminal_tab->follow_tail = true;
+        operations_.append_terminal_pending_input(input);
+        terminal_tab->session.SendBytes(input);
+        operations_.request_bottom_panel_content_redraw();
+        return true;
+      }
+      return false;
+    case TextInputSurface::None:
+      return false;
   }
-
-  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr &&
-      operations_.current_text_input_surface() == TextInputSurface::Terminal) {
-    operations_.clear_terminal_selection();
-    if (auto* terminal_tab = operations_.active_terminal_tab(); terminal_tab != nullptr) {
-      terminal_tab->follow_tail = true;
-      operations_.append_terminal_pending_input(input);
-      terminal_tab->session.SendBytes(input);
-    }
-    operations_.request_bottom_panel_content_redraw();
-    return true;
-  }
-
   return false;
 }
 

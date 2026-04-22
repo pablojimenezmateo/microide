@@ -81,9 +81,11 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   if (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Search Buffer");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_secondary, theme_.overlay_background,
-               "> " + context_.current_project_state.overlay.workflow.buffer_search.query);
+    DrawSingleLineTextTail(
+        renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+        std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
+        theme_.overlay_background,
+        "> " + context_.current_project_state.overlay.workflow.buffer_search.query);
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
@@ -119,16 +121,22 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   } else if (context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Replace Buffer");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Search ? theme_.text_primary
-                                                                         : theme_.text_secondary,
-               theme_.overlay_background,
-               "find: " + context_.current_project_state.overlay.workflow.buffer_search.query);
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-               context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Replace ? theme_.text_primary
-                                                                          : theme_.text_secondary,
-               theme_.overlay_background,
-               "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text);
+    DrawSingleLineTextTail(
+        renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+        std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
+        context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Search
+            ? theme_.text_primary
+            : theme_.text_secondary,
+        theme_.overlay_background,
+        "find: " + context_.current_project_state.overlay.workflow.buffer_search.query);
+    DrawSingleLineTextTail(
+        renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+        std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
+        context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Replace
+            ? theme_.text_primary
+            : theme_.text_secondary,
+        theme_.overlay_background,
+        "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text);
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
@@ -165,9 +173,11 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   } else if (context_.current_project_state.overlay.mode == OverlayMode::ProjectSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Project Search");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_secondary, theme_.overlay_background,
-               "> " + context_.current_project_state.overlay.workflow.project_search.query);
+    DrawSingleLineTextTail(
+        renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+        std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
+        theme_.overlay_background,
+        "> " + context_.current_project_state.overlay.workflow.project_search.query);
     const std::string summary =
         context_.current_project_state.overlay.workflow.project_search.results.empty()
             ? "No results"
@@ -210,9 +220,11 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                theme_.text_muted, theme_.overlay_background,
                context_.current_project_state.overlay.workflow.compare_picker.path.filename().string());
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-               theme_.text_secondary, theme_.overlay_background,
-               "> " + context_.current_project_state.overlay.workflow.compare_picker.query);
+    DrawSingleLineTextTail(
+        renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+        std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
+        theme_.overlay_background,
+        "> " + context_.current_project_state.overlay.workflow.compare_picker.query);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = context_.current_project_state.overlay.scroll_row + row;
       if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.compare_picker.matches.size())) {
@@ -326,8 +338,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Find File");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_secondary, theme_.overlay_background, "> " + context_.current_project_state.file_finder.query());
+    DrawSingleLineTextTail(renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+                           std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
+                           theme_.text_secondary, theme_.overlay_background,
+                           "> " + context_.current_project_state.file_finder.query());
 
     const auto& results = context_.current_project_state.file_finder.results();
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {

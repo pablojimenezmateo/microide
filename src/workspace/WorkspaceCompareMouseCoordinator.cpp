@@ -108,7 +108,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const std::size_t previous_selected_row = compare_tab->selected_row;
   const bool previous_right_view_active = compare_tab->right_view_active;
   compare_tab->selected_row = static_cast<std::size_t>(model_row);
-  if (compare_tab->right_editable && event.button.x >= surface_layout.right_x) {
+  if (event.button.x >= surface_layout.right_x) {
     compare_tab->right_view_active = true;
     const TextGridInteractionLayout right_interaction =
         operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
@@ -119,7 +119,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
     operations_.sync_compare_selection_from_viewport(*compare_tab, false);
     operations_.reset_caret_blink();
-    if (event.button.button == SDL_BUTTON_MIDDLE) {
+    if (event.button.button == SDL_BUTTON_MIDDLE && compare_tab->right_editable) {
       if (const std::optional<std::string> text = operations_.read_primary_selection_text();
           text.has_value()) {
         const std::vector<std::string> before_lines = compare_tab->right_viewport.lines();
@@ -228,7 +228,7 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   }
 
   CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
+  if (compare_tab == nullptr || !compare_tab->right_view_active) {
     return false;
   }
 

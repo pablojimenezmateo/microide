@@ -203,6 +203,32 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.RequestCloseTabs(std::move(indices));
       return DispatchResult::Handled;
     }
+    case ActionId::CopyRelativePath:
+    case ActionId::CopyAbsolutePath: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const std::filesystem::path path = context_.ActiveTabPath();
+      if (path.empty()) {
+        return reject("Active tab has no path");
+      }
+
+      std::string clipboard_text;
+      if (id == ActionId::CopyRelativePath) {
+        std::error_code error;
+        const std::filesystem::path relative =
+            std::filesystem::relative(path, context_.ProjectRoot(), error);
+        if (error || relative.empty()) {
+          return reject("Unable to resolve a relative path for the active tab");
+        }
+        clipboard_text = relative.generic_string();
+      } else {
+        clipboard_text = path.lexically_normal().string();
+      }
+
+      context_.WriteClipboardText(clipboard_text);
+      return DispatchResult::Handled;
+    }
     default:
       return DispatchResult::Unhandled;
   }

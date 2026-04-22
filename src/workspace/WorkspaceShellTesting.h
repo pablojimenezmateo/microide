@@ -360,6 +360,9 @@ struct WorkspaceShell::TestAccess {
   static WorkspaceShell::PanelContentKind PanelContent(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.content;
   }
+  static const std::string& ChatComposerInput(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.chat.composer;
+  }
   static WorkspaceShell::OverlayMode ActiveOverlayMode(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode;
   }
@@ -479,6 +482,22 @@ struct WorkspaceShell::TestAccess {
         WorkspaceShell::ActionId::CopySelectionWithContext, {},
         WorkspaceShell::ActionSource::Menu);
   }
+  static bool ExecuteCopySelection(WorkspaceShell& shell) {
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
+        WorkspaceShell::ActionId::CopySelection, {}, WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteSelectAll(WorkspaceShell& shell) {
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
+        WorkspaceShell::ActionId::SelectAll, {}, WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteCopyRelativePath(WorkspaceShell& shell) {
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
+        WorkspaceShell::ActionId::CopyRelativePath, {}, WorkspaceShell::ActionSource::Menu);
+  }
+  static bool ExecuteCopyAbsolutePath(WorkspaceShell& shell) {
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
+        WorkspaceShell::ActionId::CopyAbsolutePath, {}, WorkspaceShell::ActionSource::Menu);
+  }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);
@@ -578,6 +597,7 @@ struct WorkspaceShell::TestAccess {
     shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
+  static void ShowChatPanel(WorkspaceShell& shell) { shell.ShowChatPanel(); }
   static void AddTerminalTab(WorkspaceShell& shell) {
     shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
     shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
@@ -1042,6 +1062,9 @@ struct WorkspaceShell::TestAccess {
   }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface_visible;
+  }
+  static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.input;
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
     return shell.PromptSurfaceTitle();

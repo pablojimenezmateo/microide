@@ -8,6 +8,7 @@ void WorkspaceShell::RenderPromptSurface(
     SDL_Renderer* renderer,
     const WorkspaceLayout& layout,
     const std::optional<TextInputVisual>& active_text_input_visual) const {
+  (void)active_text_input_visual;
   if (!context_.prompts.surface_visible) {
     return;
   }
@@ -33,18 +34,9 @@ void WorkspaceShell::RenderPromptSurface(
     const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
     DrawFilledRect(renderer, input_rect, theme_.surface_background);
     DrawRect(renderer, input_rect, theme_.border);
-    DrawVCenteredTextOn(text_renderer_, renderer, input_rect, 6.0f, theme_.surface_text,
-                        theme_.surface_background,
-                        TruncateLabel(context_.prompts.surface.input, input_rect.w - 12.0f));
-    if (context_.interaction_state.window_has_input_focus && context_.text_input.composition.text.empty() &&
-        active_text_input_visual.has_value() &&
-        active_text_input_visual->surface == TextInputSurface::PromptInput) {
-      DrawFilledRect(renderer,
-                     MakeRect(active_text_input_visual->cursor_x,
-                              active_text_input_visual->text_y - 1.0f, 1.5f,
-                              text_renderer_.LineHeight()),
-                     theme_.cursor);
-    }
+    DrawSingleLineTextTail(renderer, input_rect.x + 6.0f, input_rect.y + 4.0f,
+                           std::max(1.0f, input_rect.w - 12.0f), theme_.surface_text,
+                           theme_.surface_background, context_.prompts.surface.input);
   }
 
   const auto buttons = ComputePromptSurfaceButtonRects(dialog);

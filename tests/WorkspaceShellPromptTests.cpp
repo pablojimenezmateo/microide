@@ -185,6 +185,28 @@ void TestWorkspaceShellRenamePromptRetargetsDiagnostics() {
          "rename diagnostics flow should refresh the Problems sidebar entry");
 }
 
+void TestWorkspaceShellRenamePromptPasteShortcutUsesSharedTextInputPath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "rename prompt paste fixture should open the rename prompt");
+
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() -> std::optional<std::string> { return std::string("renamed.txt"); });
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_V, SDL_KMOD_CTRL),
+         "Ctrl+V should be handled by the rename prompt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "renamed.txt",
+         "Ctrl+V should route clipboard text through the shared prompt text-input path");
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   TemporaryDirectory temp_dir;
@@ -763,6 +785,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenamePromptOnlySavesAffectedSplitEditor);
   AddTest(tests, "WorkspaceShell/RenamePromptRetargetsDiagnostics",
           TestWorkspaceShellRenamePromptRetargetsDiagnostics);
+  AddTest(tests, "WorkspaceShell/RenamePromptPasteShortcutUsesSharedTextInputPath",
+          TestWorkspaceShellRenamePromptPasteShortcutUsesSharedTextInputPath);
   AddTest(tests, "WorkspaceShell/RenamePreservesWorkingTreeCompareState",
           TestWorkspaceShellRenamePreservesWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/RenamePreservesBranchCompareSemantics",

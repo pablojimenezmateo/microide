@@ -407,8 +407,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
     DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
-    DrawVCenteredTextOn(
-        text_renderer_, renderer, prompt_rect, 6.0f, theme_.chrome_active_text,
+    DrawSingleLineTextTail(
+        renderer, prompt_rect.x + 6.0f, prompt_rect.y + 4.0f,
+        std::max(1.0f, prompt_rect.w - 12.0f), theme_.chrome_active_text,
         theme_.chrome_active,
         "> " +
             (context_.current_project_state.panel.command_mode

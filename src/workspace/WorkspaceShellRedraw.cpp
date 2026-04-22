@@ -628,13 +628,32 @@ void WorkspaceShell::ResetCaretBlink() {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  if (context_.current_project_state.panel.command_mode || context_.prompts.dirty_visible || context_.prompts.surface_visible ||
-      context_.current_project_state.overlay.visible || context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
+  if (context_.prompts.dirty_visible || context_.menu_state.menu_bar_open ||
+      context_.menu_state.tree_context_menu.open) {
     return false;
   }
 
+  switch (CurrentTextInputSurface()) {
+    case TextInputSurface::PromptInput:
+    case TextInputSurface::Command:
+    case TextInputSurface::ChatComposer:
+    case TextInputSurface::FileFinder:
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::ProjectSearchOverlay:
+    case TextInputSurface::CommitPicker:
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+      return true;
+    case TextInputSurface::None:
+    case TextInputSurface::Editor:
+    case TextInputSurface::Terminal:
+      break;
+  }
+
   if (context_.current_project_state.surface.focus == FocusTarget::Editor) {
-    const editor::TextViewport* viewport = ActiveEditableViewport();
+    const editor::TextViewport* viewport = ActiveNavigableViewport();
     return viewport != nullptr && !viewport->is_placeholder();
   }
 
@@ -662,6 +681,17 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value()) {
     return std::nullopt;
+  }
+
+  if (const auto surface = CurrentTextInputSurface();
+      surface != TextInputSurface::None && surface != TextInputSurface::Editor &&
+      surface != TextInputSurface::Terminal) {
+    const auto visual = BuildActiveTextInputVisual(*layout, std::nullopt);
+    return visual.has_value()
+               ? std::optional<SDL_FRect>(MakeRect(visual->cursor_x, visual->text_y - 1.0f,
+                                                   std::max(1.0f, text_renderer_.CharWidth()),
+                                                   text_renderer_.LineHeight()))
+               : std::nullopt;
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Editor) {

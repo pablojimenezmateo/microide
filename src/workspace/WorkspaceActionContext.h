@@ -48,6 +48,7 @@ class WorkspaceActionContext {
     std::function<void()> reload_clean_open_buffers_from_disk;
     std::function<std::filesystem::path(ActionSource)> tree_mutation_base_path;
     std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
+    std::function<std::filesystem::path()> active_tab_path;
     std::function<void(PromptSurfaceState::Action,
                        PromptSurfaceState::Kind,
                        const std::filesystem::path&,
@@ -111,6 +112,7 @@ class WorkspaceActionContext {
     std::function<editor::TextViewport*()> active_navigable_viewport;
     std::function<void()> request_focused_editor_redraw;
     std::function<editor::TextViewport*()> active_editable_viewport;
+    std::function<bool(std::string_view)> insert_text_into_active_text_surface;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
@@ -186,6 +188,7 @@ class WorkspaceActionContext {
   void ReloadCleanOpenBuffersFromDisk();
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
+  std::filesystem::path ActiveTabPath() const;
   void OpenCreatePathPrompt(bool directory, const std::filesystem::path& base_path);
   void OpenRenamePathPrompt(const std::filesystem::path& path);
   void OpenDeletePathPrompt(const std::filesystem::path& path);

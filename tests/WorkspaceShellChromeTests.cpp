@@ -386,6 +386,56 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
          "command prompt typing should append to the visible command input");
 }
 
+void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+         "command paste fixture should open the command prompt");
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() -> std::optional<std::string> { return std::string("palette"); });
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_V, SDL_KMOD_CTRL),
+         "Ctrl+V should be handled by the command prompt");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "palette",
+         "Ctrl+V should route clipboard text through the shared command text-input path");
+}
+
+void TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
+  const auto original_lines = WorkspaceShellTestAccess::ActiveEditor(shell).lines();
+  const std::size_t original_column = WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column();
+
+  WorkspaceShellTestAccess::ShowChatPanel(shell);
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
+         "chat key fixture should focus the panel");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "hello"),
+         "chat key fixture should type into the chat composer");
+  Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hello",
+         "chat typing should populate the chat composer");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+         "Backspace should be handled while the chat composer is focused");
+  Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hell",
+         "Backspace should edit the chat composer text");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_LEFT, SDL_KMOD_NONE),
+         "navigation keys should be consumed while the chat composer is focused");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines() == original_lines,
+         "chat key handling should not mutate the underlying editor buffer");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == original_column,
+         "chat key handling should not move the underlying editor cursor");
+}
+
 void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -544,6 +594,53 @@ void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
          "right-clicking an editor tab should open the editor tab context menu");
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "right-clicking an editor tab should retarget the active tab before menu actions run");
+}
+
+void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target = root / "src" / "alpha.cpp";
+  const std::filesystem::path other = root / "src" / "beta.cpp";
+  WriteFile(target, "int alpha() { return 1; }\n");
+  WriteFile(other, "int beta() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, target);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, other);
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f,
+             SDL_BUTTON_RIGHT),
+         "right-clicking a tab should open the editor tab context menu");
+
+  const auto labels = WorkspaceShellTestAccess::VisiblePopupMenuLabels(
+      shell, WorkspaceShell::MenuId::EditorTabContext);
+  Expect(std::find(labels.begin(), labels.end(), "Copy Relative Path") != labels.end(),
+         "editor tab context menu should expose Copy Relative Path");
+  Expect(std::find(labels.begin(), labels.end(), "Copy Absolute Path") != labels.end(),
+         "editor tab context menu should expose Copy Absolute Path");
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopyRelativePath(shell),
+         "Copy Relative Path should execute from the active tab");
+  Expect(clipboard_text == "src/alpha.cpp",
+         "Copy Relative Path should copy the active tab path relative to the project root");
+
+  clipboard_text.clear();
+  Expect(WorkspaceShellTestAccess::ExecuteCopyAbsolutePath(shell),
+         "Copy Absolute Path should execute from the active tab");
+  Expect(clipboard_text == target.lexically_normal().string(),
+         "Copy Absolute Path should copy the active tab path");
 }
 
 void TestWorkspaceShellTabContextActionsCloseAdjacentTabs() {
@@ -942,12 +1039,18 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
   AddTest(tests, "WorkspaceShell/CommandTextInputReturnsPartialCommandInvalidation",
           TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation);
+  AddTest(tests, "WorkspaceShell/CommandPasteShortcutUsesSharedTextInputPath",
+          TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
+  AddTest(tests, "WorkspaceShell/ChatComposerKeysDoNotLeakIntoEditor",
+          TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",
           TestWorkspaceShellTabTooltipRendersAboveSidebar);
   AddTest(tests, "WorkspaceShell/ShortcutEditActionsReturnEditorInvalidation",
           TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation);
   AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",
           TestWorkspaceShellEditorTabRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/EditorTabContextMenuShowsAndExecutesPathActions",
+          TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
           TestWorkspaceShellTabContextActionsCloseAdjacentTabs);
 #if MICROIDE_HAS_SDL3_TTF

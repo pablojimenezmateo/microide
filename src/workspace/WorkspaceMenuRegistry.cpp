@@ -105,6 +105,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CloseOtherTabs),
       MenuItem(ActionId::CloseTabsToRight),
       MenuItem(ActionId::CloseTabsToLeft),
+      MenuSeparator(),
+      MenuItem(ActionId::CopyRelativePath),
+      MenuItem(ActionId::CopyAbsolutePath),
   });
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyLastTerminalCommand),

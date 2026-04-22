@@ -9,6 +9,7 @@
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectState.h"
+#include "workspace/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
 
@@ -17,7 +18,10 @@ class ActionAvailability {
   struct Operations {
     std::function<TreeContextTargetKind()> selected_tree_target_kind;
     std::function<std::filesystem::path(ActionSource)> resolve_tree_action_path;
+    std::function<std::filesystem::path()> active_tab_path;
+    std::function<const editor::TextViewport*()> active_navigable_viewport;
     std::function<const editor::TextViewport*()> active_editable_viewport;
+    std::function<TextInputSurface()> current_text_input_surface;
     std::function<const TerminalTabState*()> active_terminal_tab;
     std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<bool()> terminal_has_selection;

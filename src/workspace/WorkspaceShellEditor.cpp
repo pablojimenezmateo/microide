@@ -364,8 +364,8 @@ const editor::TextViewport* WorkspaceShell::ActiveEditorViewport() const {
 editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() {
   if (ActiveTabIsCompare()) {
     auto* compare_tab = ActiveCompareTab();
-    return compare_tab != nullptr && compare_tab->right_editable ? &compare_tab->right_viewport
-                                                                 : nullptr;
+    return compare_tab != nullptr && compare_tab->right_view_active ? &compare_tab->right_viewport
+                                                                    : nullptr;
   }
   if (ActiveTabIsMerge()) {
     auto* merge_tab = ActiveMergeTab();
@@ -377,14 +377,22 @@ editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() {
 const editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() const {
   if (ActiveTabIsCompare()) {
     const auto* compare_tab = ActiveCompareTab();
-    return compare_tab != nullptr && compare_tab->right_editable ? &compare_tab->right_viewport
-                                                                 : nullptr;
+    return compare_tab != nullptr && compare_tab->right_view_active ? &compare_tab->right_viewport
+                                                                    : nullptr;
   }
   if (ActiveTabIsMerge()) {
     const auto* merge_tab = ActiveMergeTab();
     return merge_tab != nullptr ? &merge_tab->result_viewport : nullptr;
   }
   return ActiveEditorViewport();
+}
+
+std::filesystem::path WorkspaceShell::ActiveTabPath() const {
+  if (context_.current_project_state.active_tab_index >= context_.current_project_state.open_tabs.size()) {
+    return {};
+  }
+  return context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index]
+      .path.lexically_normal();
 }
 
 void WorkspaceShell::RequestCloseTab(std::size_t index) {

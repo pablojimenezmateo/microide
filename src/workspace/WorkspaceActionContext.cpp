@@ -187,6 +187,10 @@ std::filesystem::path WorkspaceActionContext::ResolveTreeActionPath(ActionSource
   return operations_.resolve_tree_action_path(source);
 }
 
+std::filesystem::path WorkspaceActionContext::ActiveTabPath() const {
+  return operations_.active_tab_path();
+}
+
 void WorkspaceActionContext::OpenCreatePathPrompt(bool directory,
                                                   const std::filesystem::path& base_path) {
   operations_.open_prompt_surface(directory ? PromptSurfaceState::Action::CreateDirectory
@@ -546,7 +550,7 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
 }
 
 void WorkspaceActionContext::SelectAll() {
-  if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
+  if (auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     viewport->SelectAll();
     operations_.reset_caret_blink();
     operations_.request_focused_editor_redraw();
@@ -618,7 +622,7 @@ std::string WorkspaceActionContext::CopySelectionText() const {
   if (state_.surface.focus == FocusTarget::Panel && operations_.terminal_has_selection()) {
     return operations_.selected_terminal_text();
   }
-  if (const auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
+  if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
     return viewport->SelectedText();
   }
   return {};
@@ -670,6 +674,9 @@ void WorkspaceActionContext::PasteClipboard() {
       clipboard_text.has_value()) {
     if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
       operations_.paste_clipboard_into_terminal();
+      return;
+    }
+    if (operations_.insert_text_into_active_text_surface(*clipboard_text)) {
       return;
     }
     if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
@@ -846,6 +853,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](ActionSource source) { return TreeMutationBasePath(source); },
           .resolve_tree_action_path =
               [this](ActionSource source) { return ResolveTreeActionPath(source); },
+          .active_tab_path = [this]() { return ActiveTabPath(); },
           .open_prompt_surface =
               [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,
                      const std::filesystem::path& path, std::string input) {
@@ -972,6 +980,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
+          .insert_text_into_active_text_surface =
+              [this](std::string_view text) {
+                return MakeTextInputCoordinator().InsertTextAtActiveSurface(text);
+              },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },

@@ -381,7 +381,7 @@ void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
       microide::workspace::VirtualDocumentSpec{
           .uri = "virtual://preview/README.todo",
           .language_id = "todo",
-          .content = "alpha\n",
+          .content = "alpha",
           .editable = false,
           .plugin_id = "host-test",
       });
@@ -396,9 +396,36 @@ void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "alpha",
          "read-only virtual documents should remain unchanged after rejected input");
 
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  Expect(WorkspaceShellTestAccess::ExecuteSelectAll(shell),
+         "read-only virtual documents should still allow select-all through the shared viewport path");
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelection(shell),
+         "read-only virtual documents should still allow copy through the shared viewport path");
+  Expect(clipboard_text == "alpha",
+         "copying from a read-only virtual document should write the selected text");
+
+  clipboard_text.clear();
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_A, SDL_KMOD_CTRL),
+         "Ctrl+A should be handled on a read-only virtual document");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_C, SDL_KMOD_CTRL),
+         "Ctrl+C should be handled on a read-only virtual document");
+  Expect(clipboard_text == "alpha",
+         "read-only virtual document shortcuts should use the shared navigable viewport path");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+         "edit keys on a read-only virtual document should be consumed without mutating the buffer");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "alpha",
+         "edit keys should leave read-only virtual document text unchanged");
+
   (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
   WorkspaceShellTestAccess::UpdateVirtualDocumentContent(shell, "virtual://preview/README.todo",
-                                                         "beta\n");
+                                                         "beta");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "beta",
          "updating a virtual document should refresh any open tab backed by that URI");
   const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);

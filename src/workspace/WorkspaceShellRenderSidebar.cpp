@@ -124,25 +124,24 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Replace
             ? context_.current_project_state.overlay.workflow.project_search.edit_buffer
             : context_.current_project_state.overlay.workflow.project_search.replace_text;
-    DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-               layout.sidebar.y + 38.0f,
-               context_.current_project_state.overlay.workflow.project_search.editing &&
-                       context_.current_project_state.overlay.workflow.project_search.edit_field ==
-                           ProjectSearchEditField::Query
-                   ? theme_.text_primary
-                   : theme_.text_secondary,
-               theme_.surface_background,
-               TruncateLabel("search> " + active_query, layout.sidebar.w - kSidebarInset * 2.0f));
-    DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-               layout.sidebar.y + 54.0f,
-               context_.current_project_state.overlay.workflow.project_search.editing &&
-                       context_.current_project_state.overlay.workflow.project_search.edit_field ==
-                           ProjectSearchEditField::Replace
-                   ? theme_.text_primary
-                   : theme_.text_secondary,
-               theme_.surface_background,
-               TruncateLabel("replace> " + active_replace,
-                             layout.sidebar.w - kSidebarInset * 2.0f));
+    DrawSingleLineTextTail(
+        renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 38.0f,
+        std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
+        context_.current_project_state.overlay.workflow.project_search.editing &&
+                context_.current_project_state.overlay.workflow.project_search.edit_field ==
+                    ProjectSearchEditField::Query
+            ? theme_.text_primary
+            : theme_.text_secondary,
+        theme_.surface_background, "search> " + active_query);
+    DrawSingleLineTextTail(
+        renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 54.0f,
+        std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
+        context_.current_project_state.overlay.workflow.project_search.editing &&
+                context_.current_project_state.overlay.workflow.project_search.edit_field ==
+                    ProjectSearchEditField::Replace
+            ? theme_.text_primary
+            : theme_.text_secondary,
+        theme_.surface_background, "replace> " + active_replace);
     const auto draw_search_button = [&](const SDL_FRect& rect,
                                         std::string_view label,
                                         bool active) {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsRender.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -17,6 +18,53 @@ namespace {
 constexpr float kSidebarInset = 10.0f;
 
 }  // namespace
+
+float WorkspaceShell::MeasureSingleLineTextTail(std::string_view text,
+                                                float available_width) const {
+  if (available_width <= 0.0f || text.empty()) {
+    return 0.0f;
+  }
+  if (text_renderer_.MeasureWidth(text) <= available_width) {
+    return text_renderer_.MeasureWidth(text);
+  }
+
+  std::size_t byte_offset = 0;
+  while (byte_offset < text.size()) {
+    const std::string_view suffix = text.substr(byte_offset);
+    const float suffix_width = text_renderer_.MeasureWidth(suffix);
+    if (suffix_width <= available_width) {
+      return suffix_width;
+    }
+    byte_offset += util::Utf8SequenceLength(text, byte_offset);
+  }
+  return 0.0f;
+}
+
+void WorkspaceShell::DrawSingleLineTextTail(SDL_Renderer* renderer,
+                                            float x,
+                                            float y,
+                                            float available_width,
+                                            SDL_Color foreground,
+                                            SDL_Color background,
+                                            std::string_view text) const {
+  if (available_width <= 0.0f || text.empty()) {
+    return;
+  }
+  if (text_renderer_.MeasureWidth(text) <= available_width) {
+    text_renderer_.DrawStringOn(renderer, x, y, foreground, background, text);
+    return;
+  }
+
+  std::size_t byte_offset = 0;
+  while (byte_offset < text.size()) {
+    const std::string_view suffix = text.substr(byte_offset);
+    if (text_renderer_.MeasureWidth(suffix) <= available_width) {
+      text_renderer_.DrawStringOn(renderer, x, y, foreground, background, suffix);
+      return;
+    }
+    byte_offset += util::Utf8SequenceLength(text, byte_offset);
+  }
+}
 
 std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextInputVisual(
     const WorkspaceLayout& layout,
@@ -64,10 +112,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       const float text_x = prompt_rect.x + 6.0f;
       const float text_y = prompt_rect.y + 4.0f;
-      const float cursor_x = text_x + text_renderer_.MeasureWidth("> " + context_.current_project_state.panel.command.input);
+      const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);
+      const std::string display_text = "> " + context_.current_project_state.panel.command.input;
+      const float cursor_x = text_x + MeasureSingleLineTextTail(display_text, available_width);
       return TextInputVisual{
           .surface = surface,
-          .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f), line_height),
+          .area = MakeRect(text_x, text_y, available_width, line_height),
           .text_x = text_x,
           .text_y = text_y,
           .cursor_x = cursor_x,
@@ -79,11 +129,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       const float text_x = prompt_rect.x + 6.0f;
       const float text_y = prompt_rect.y + 4.0f;
-      const float cursor_x =
-          text_x + text_renderer_.MeasureWidth("> " + context_.current_project_state.panel.chat.composer);
+      const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);
+      const std::string display_text = "> " + context_.current_project_state.panel.chat.composer;
+      const float cursor_x = text_x + MeasureSingleLineTextTail(display_text, available_width);
       return TextInputVisual{
           .surface = surface,
-          .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f), line_height),
+          .area = MakeRect(text_x, text_y, available_width, line_height),
           .text_x = text_x,
           .text_y = text_y,
           .cursor_x = cursor_x,
@@ -96,10 +147,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       const float text_x = input_rect.x + 6.0f;
       const float text_y = input_rect.y + 4.0f;
-      const float cursor_x = text_x + text_renderer_.MeasureWidth(context_.prompts.surface.input);
+      const float available_width = std::max(1.0f, input_rect.w - 12.0f);
+      const float cursor_x =
+          text_x + MeasureSingleLineTextTail(context_.prompts.surface.input, available_width);
       return TextInputVisual{
           .surface = surface,
-          .area = MakeRect(text_x, text_y, std::max(1.0f, input_rect.w - 12.0f), line_height),
+          .area = MakeRect(text_x, text_y, available_width, line_height),
           .text_x = text_x,
           .text_y = text_y,
           .cursor_x = cursor_x,
@@ -144,10 +197,11 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           prefix += context_.current_project_state.file_finder.query();
           break;
       }
-      const float cursor_x = text_x + text_renderer_.MeasureWidth(prefix);
+      const float available_width = std::max(1.0f, overlay.w - inset * 2.0f);
+      const float cursor_x = text_x + MeasureSingleLineTextTail(prefix, available_width);
       return TextInputVisual{
           .surface = surface,
-          .area = MakeRect(text_x, text_y, std::max(1.0f, overlay.w - inset * 2.0f), line_height),
+          .area = MakeRect(text_x, text_y, available_width, line_height),
           .text_x = text_x,
           .text_y = text_y,
           .cursor_x = cursor_x,
@@ -170,11 +224,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           surface == TextInputSurface::SidebarSearchQuery
               ? "search> " + context_.current_project_state.overlay.workflow.project_search.edit_buffer
               : "replace> " + context_.current_project_state.overlay.workflow.project_search.edit_buffer;
-      const float cursor_x = text_x + text_renderer_.MeasureWidth(prefix);
+      const float available_width =
+          std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f);
+      const float cursor_x = text_x + MeasureSingleLineTextTail(prefix, available_width);
       return TextInputVisual{
           .surface = surface,
-          .area = MakeRect(text_x, text_y,
-                           std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f), line_height),
+          .area = MakeRect(text_x, text_y, available_width, line_height),
           .text_x = text_x,
           .text_y = text_y,
           .cursor_x = cursor_x,
@@ -340,6 +395,43 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
                  action_hovered ? theme_.text_primary : theme_.text_secondary,
                  action_hovered ? theme_.row_highlight : theme_.surface_raised, "Copy SHA");
   }
+}
+
+void WorkspaceShell::RenderActiveTextInputCaret(
+    SDL_Renderer* renderer,
+    const std::optional<TextInputVisual>& visual) const {
+  if (!visual.has_value() || !context_.interaction_state.window_has_input_focus ||
+      !context_.text_input.composition.text.empty()) {
+    return;
+  }
+
+  switch (visual->surface) {
+    case TextInputSurface::PromptInput:
+    case TextInputSurface::Command:
+    case TextInputSurface::ChatComposer:
+    case TextInputSurface::FileFinder:
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::ProjectSearchOverlay:
+    case TextInputSurface::CommitPicker:
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+      break;
+    case TextInputSurface::None:
+    case TextInputSurface::Editor:
+    case TextInputSurface::Terminal:
+      return;
+  }
+
+  if (!CaretVisibleNow()) {
+    return;
+  }
+
+  DrawFilledRect(renderer,
+                 MakeRect(visual->cursor_x, visual->text_y - 1.0f, 1.5f,
+                          text_renderer_.LineHeight()),
+                 theme_.cursor);
 }
 
 void WorkspaceShell::RenderTextComposition(

@@ -135,7 +135,7 @@ std::optional<std::string> WorkspaceShell::ReadPrimarySelectionText() const {
 }
 
 void WorkspaceShell::SyncPrimarySelectionWithActiveEditor() {
-  const editor::TextViewport* viewport = ActiveEditableViewport();
+  const editor::TextViewport* viewport = ActiveNavigableViewport();
   if (viewport == nullptr || !viewport->has_selection()) {
     return;
   }
@@ -158,7 +158,7 @@ void WorkspaceShell::SyncPrimarySelectionWithTerminalSelection() {
 }
 
 std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
-  const editor::TextViewport* viewport = ActiveEditableViewport();
+  const editor::TextViewport* viewport = ActiveNavigableViewport();
   if (viewport == nullptr) {
     return std::nullopt;
   }

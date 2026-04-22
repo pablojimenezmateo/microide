@@ -18,7 +18,10 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
               [shell](WorkspaceShell::ActionSource source) {
                 return shell->ResolveTreeActionPath(source);
               },
+          .active_tab_path = [shell]() { return shell->ActiveTabPath(); },
+          .active_navigable_viewport = [shell]() { return shell->ActiveNavigableViewport(); },
           .active_editable_viewport = [shell]() { return shell->ActiveEditableViewport(); },
+          .current_text_input_surface = [shell]() { return shell->CurrentTextInputSurface(); },
           .active_terminal_tab = [shell]() { return shell->ActiveTerminalTab(); },
           .last_terminal_command_text = [shell]() { return shell->LastTerminalCommandText(); },
           .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
@@ -221,6 +224,7 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                 const auto active_text_input_visual =
                     shell->BuildActiveTextInputVisual(layout, active_editor_pane_rect);
                 shell->RenderPromptSurface(renderer, layout, active_text_input_visual);
+                shell->RenderActiveTextInputCaret(renderer, active_text_input_visual);
                 shell->RenderTextComposition(renderer, active_text_input_visual);
                 shell->UpdateTextInputArea(renderer, render_window, active_text_input_visual);
                 shell->RenderDirtyPromptSurface(renderer, layout);

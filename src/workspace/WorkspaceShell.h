@@ -625,6 +625,7 @@ class WorkspaceShell {
   const editor::TextViewport* ActiveEditorViewport() const;
   editor::TextViewport* ActiveNavigableViewport();
   const editor::TextViewport* ActiveNavigableViewport() const;
+  std::filesystem::path ActiveTabPath() const;
   EditorSplitSlot FindEditorLeafSlot(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
   TabEntry::EditorTabState::EditorSplitNode* FindEditorSplitNode(
       TabEntry::EditorTabState::EditorSplitNode* node,
@@ -1110,9 +1111,19 @@ class WorkspaceShell {
       const WorkspaceLayout& layout,
       const std::optional<TextInputVisual>& active_text_input_visual) const;
   void RenderDirtyPromptSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderActiveTextInputCaret(SDL_Renderer* renderer,
+                                  const std::optional<TextInputVisual>& visual) const;
   std::optional<TextInputVisual> BuildActiveTextInputVisual(
       const WorkspaceLayout& layout,
       const std::optional<SDL_FRect>& active_editor_pane_rect) const;
+  float MeasureSingleLineTextTail(std::string_view text, float available_width) const;
+  void DrawSingleLineTextTail(SDL_Renderer* renderer,
+                              float x,
+                              float y,
+                              float available_width,
+                              SDL_Color foreground,
+                              SDL_Color background,
+                              std::string_view text) const;
   void UpdateTextInputArea(SDL_Renderer* renderer,
                            SDL_Window* render_window,
                            const std::optional<TextInputVisual>& visual) const;

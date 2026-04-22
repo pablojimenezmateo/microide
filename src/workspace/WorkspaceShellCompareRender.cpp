@@ -194,7 +194,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       context_.current_project_state.surface.focus == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
       !(CurrentTextInputSurface() == TextInputSurface::Editor && !context_.text_input.composition.text.empty());
   const std::optional<editor::SelectionRange> right_selection =
-      compare_tab->right_editable ? compare_tab->right_viewport.selection_range() : std::nullopt;
+      compare_tab->right_view_active ? compare_tab->right_viewport.selection_range() : std::nullopt;
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
       compare_tab->right_editable && compare_tab->right_view_active
           ? BuildCompareBlameOverlay(*compare_tab, surface, rect)

@@ -102,6 +102,10 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
   if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
+    const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
+    if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
+      return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
+    }
     switch (event.key) {
       case SDLK_ESCAPE:
         operations_.dismiss_prompt_surface(true);

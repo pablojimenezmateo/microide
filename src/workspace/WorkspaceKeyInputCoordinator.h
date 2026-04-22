@@ -47,6 +47,7 @@ class KeyInputCoordinator {
     std::function<bool()> open_untitled_tab;
     std::function<bool()> active_tab_is_compare;
     std::function<bool()> active_tab_is_merge;
+    std::function<editor::TextViewport*()> active_navigable_viewport;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<void(bool)> dismiss_overlay;

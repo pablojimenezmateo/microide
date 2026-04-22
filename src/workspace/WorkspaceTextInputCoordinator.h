@@ -69,6 +69,7 @@ class TextInputCoordinator {
   bool HandleTextInput(const SDL_TextInputEvent& event);
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
+  bool InsertTextAtActiveSurface(std::string_view input);
 
  private:
   void RequestCompositionRedraw(TextInputSurface surface);

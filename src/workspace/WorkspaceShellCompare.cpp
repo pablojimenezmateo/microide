@@ -101,7 +101,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
   rebuilt->compare->right_editable = compare_tab.right_ref == "WORKTREE";
   rebuilt->compare->right_view_active =
-      rebuilt->compare->right_editable && (compare_tab.right_editable ? compare_tab.right_view_active : true);
+      compare_tab.right_view_active || !rebuilt->compare->right_editable;
   rebuilt->compare->persistable = compare_tab.persistable;
   if (compare_tab.right_editable) {
     rebuilt->compare->right_viewport.MoveCursorTo(compare_tab.right_viewport.cursor_line(),
@@ -142,6 +142,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
   RefreshCompareTabDerivedState(compare_tab);
   compare_tab.selected_row =
       compare_tab.model.rows.empty() ? 0 : std::min(selected_row, compare_tab.model.rows.size() - 1);
+  compare_tab.right_view_active = true;
 
   return TabEntry{
       .kind = TabEntry::Kind::Compare,
@@ -371,7 +372,7 @@ void WorkspaceShell::RevealActiveCompareSelection() {
         static_cast<int>(compare_tab->selected_row) - surface_layout.visible_rows + 1;
   }
   ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
-  if (compare_tab->right_editable) {
+  if (compare_tab->right_view_active) {
     SyncCompareViewportScroll(*compare_tab);
   }
 }
@@ -379,7 +380,7 @@ void WorkspaceShell::RevealActiveCompareSelection() {
 std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextInputVisual(
     const SDL_FRect& editor_surface) const {
   const CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
+  if (compare_tab == nullptr || !compare_tab->right_view_active) {
     return std::nullopt;
   }
 
@@ -476,7 +477,7 @@ std::size_t WorkspaceShell::CompareRightLineForRow(const CompareTabState& compar
 }
 
 void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) const {
-  if (!compare_tab.right_editable) {
+  if (!compare_tab.right_view_active) {
     return;
   }
 
@@ -488,7 +489,7 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
 
 void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
                                                       bool reveal_selection) const {
-  if (!compare_tab.right_editable || compare_tab.model.rows.empty()) {
+  if (!compare_tab.right_view_active || compare_tab.model.rows.empty()) {
     return;
   }
 

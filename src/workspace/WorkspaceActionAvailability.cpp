@@ -14,8 +14,10 @@ TreeContextTargetKind ActionAvailability::ActiveTreeTargetKind() const {
 }
 
 bool ActionAvailability::IsEnabled(ActionId id) const {
-  const editor::TextViewport* active_viewport = operations_.active_editable_viewport();
+  const editor::TextViewport* active_viewport = operations_.active_navigable_viewport();
+  const editor::TextViewport* active_editable_viewport = operations_.active_editable_viewport();
   const TerminalTabState* active_terminal_tab = operations_.active_terminal_tab();
+  const TextInputSurface text_input_surface = operations_.current_text_input_surface();
   switch (id) {
     case ActionId::AuthLogin:
     case ActionId::AuthRefresh:
@@ -107,11 +109,23 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
               operations_.terminal_has_selection());
     case ActionId::CutSelection:
     case ActionId::Redo:
-    case ActionId::SelectAll:
     case ActionId::Undo:
+      return active_editable_viewport != nullptr;
+    case ActionId::SelectAll:
       return active_viewport != nullptr;
     case ActionId::PasteClipboard:
-      return active_viewport != nullptr ||
+      return active_editable_viewport != nullptr ||
+             text_input_surface == TextInputSurface::PromptInput ||
+             text_input_surface == TextInputSurface::Command ||
+             text_input_surface == TextInputSurface::ChatComposer ||
+             text_input_surface == TextInputSurface::FileFinder ||
+             text_input_surface == TextInputSurface::BufferSearch ||
+             text_input_surface == TextInputSurface::BufferReplaceSearch ||
+             text_input_surface == TextInputSurface::BufferReplaceReplace ||
+             text_input_surface == TextInputSurface::ProjectSearchOverlay ||
+             text_input_surface == TextInputSurface::CommitPicker ||
+             text_input_surface == TextInputSurface::SidebarSearchQuery ||
+             text_input_surface == TextInputSurface::SidebarSearchReplace ||
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
               active_terminal_tab != nullptr);
     case ActionId::Goto:
@@ -136,10 +150,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::IndentWidth:
       return true;
     case ActionId::CopyAbsolutePath:
-      return !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty();
+      return !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty() ||
+             !operations_.active_tab_path().empty();
     case ActionId::CopyRelativePath: {
       const std::filesystem::path path =
-          operations_.resolve_tree_action_path(ActionSource::ContextMenu);
+          !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty()
+              ? operations_.resolve_tree_action_path(ActionSource::ContextMenu)
+              : operations_.active_tab_path();
       return !context_.current_project_state.root.empty() && !path.empty() &&
              path != context_.current_project_state.root;
     }

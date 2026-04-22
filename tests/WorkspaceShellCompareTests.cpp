@@ -167,6 +167,92 @@ void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
          "clicking the compare right pane should reactivate the editable pane");
 }
 
+void TestWorkspaceShellReadOnlyCompareRightPaneSupportsSelectAllAndCopy() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "history.txt";
+  WriteFile(source, "base line\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "head line\n");
+  CommitAll(root, "head fixture", "head fixture");
+
+  const auto history = microide::project::CollectGitFileHistory(root, source);
+  Expect(history.size() == 2, "read-only compare fixture should have two commits");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, history[1].hash, "base",
+                                                            history[0].hash, "head"),
+         "read-only branch comparison should open");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float row_y = surface.rows_y + surface.line_height * 0.5f;
+  const float right_x = surface.right_x + 24.0f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
+         "clicking the read-only compare right pane should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_view_active,
+         "clicking the read-only compare right pane should make it the active navigable surface");
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  Expect(WorkspaceShellTestAccess::ExecuteSelectAll(shell),
+         "Select All should execute on the read-only compare right pane");
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelection(shell),
+         "Copy Selection should execute on the read-only compare right pane");
+  Expect(clipboard_text.find("head line") != std::string::npos,
+         "copying from the read-only compare right pane should copy its visible text");
+}
+
+void TestWorkspaceShellReadOnlyCompareShortcutCopyUsesNavigableViewport() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "history.txt";
+  WriteFile(source, "base line\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, "head line\n");
+  CommitAll(root, "head fixture", "head fixture");
+
+  const auto history = microide::project::CollectGitFileHistory(root, source);
+  Expect(history.size() == 2, "compare shortcut fixture should have two commits");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, history[1].hash, "base",
+                                                            history[0].hash, "head"),
+         "read-only branch comparison should open");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float row_y = surface.rows_y + surface.line_height * 0.5f;
+  const float right_x = surface.right_x + 24.0f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
+         "clicking the read-only compare right pane should be handled");
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_A, SDL_KMOD_CTRL),
+         "Ctrl+A should be handled on the read-only compare pane");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_C, SDL_KMOD_CTRL),
+         "Ctrl+C should be handled on the read-only compare pane");
+  Expect(clipboard_text.find("head line") != std::string::npos,
+         "compare shortcut copy should use the active read-only navigable viewport");
+}
+
 void TestWorkspaceShellCompareWheelScrollsRows() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -548,6 +634,10 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
+  AddTest(tests, "WorkspaceShell/ReadOnlyCompareRightPaneSupportsSelectAllAndCopy",
+          TestWorkspaceShellReadOnlyCompareRightPaneSupportsSelectAllAndCopy);
+  AddTest(tests, "WorkspaceShell/ReadOnlyCompareShortcutCopyUsesNavigableViewport",
+          TestWorkspaceShellReadOnlyCompareShortcutCopyUsesNavigableViewport);
   AddTest(tests, "WorkspaceShell/CompareWheelScrollsRows",
           TestWorkspaceShellCompareWheelScrollsRows);
   AddTest(tests, "WorkspaceShell/CompareHorizontalNavigationInvalidatesEditablePane",
