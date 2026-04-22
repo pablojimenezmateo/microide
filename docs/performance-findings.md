@@ -1,7 +1,8 @@
 # MicroIDE Performance Findings
 
-Last reviewed on 2026-04-22 after a startup profiling pass focused on project-open overhead.
-Updated on 2026-04-22 with additional startup optimization for Git status and LSP prewarm deferral.
+Last reviewed on 2026-04-22 after startup profiling focused on project-open overhead.
+Updated on 2026-04-22 with Git status and syntax definition deferral optimizations.
+Updated on 2026-04-22 with asynchronous LSP server initialization to prevent UI blocking.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -361,9 +362,46 @@ Relevant docs:
 
 - `docs/startup-tracing.md`
 
+## Recent LSP Optimization Pass
+
+Problem:
+
+- Opening a TypeScript project caused noticeable delay at startup
+- UI would freeze momentarily when using LSP features (e.g., find references) for the first time
+- LSP server initialization was synchronous and blocked the main thread waiting for the
+  initialize/initialized handshake
+
+Implemented:
+
+- `LspClient::Start()` now launches server initialization asynchronously on a background thread
+- Process starts immediately, but capability negotiation happens in the background
+- Reader thread starts after initialization completes to avoid race conditions with the
+  initialization thread
+- Query methods (hover, completion, find references, etc.) check `IsInitialized()` and only send
+  requests after the LSP spec's required initialization handshake completes
+- Added comprehensive startup/performance traces for `LspClient::Start`, initialization phases,
+  and callback processing
+
+Impact:
+
+- UI is no longer blocked during LSP server startup (e.g., TypeScript Language Server takes 1-3s
+  to start)
+- Startup to first render remains unblocked at ~432 ms (plugin loading dominates at ~230 ms)
+- LSP queries fail gracefully if the server hasn't initialized yet, rather than crashing
+- Trace spans: `LspClient::Start`, `LspClient::Start::StartProcess`, `LspClient::DoInitializeBlocking::WaitInitializeResponse`,
+  `LspManager::GetServer::InitializeServer`, `LspManager::DrainCallbacks`, `LspClient::DispatchResponse`
+
+Relevant code:
+
+- `src/workspace/WorkspaceLspClient.cpp` - async initialization and query synchronization
+- `src/workspace/WorkspaceLspManager.cpp` - server lifecycle management
+- `src/workspace/WorkspaceShellTooling.cpp` - LSP query methods
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout
   cost without changing behavior.
 - The terminal still needs broader real-world validation; these fixes reduce load but do not expand
   emulator coverage by themselves.
+- LSP server startup happens asynchronously; users will see gradual feature availability as the
+  server initializes rather than upfront startup delay.
