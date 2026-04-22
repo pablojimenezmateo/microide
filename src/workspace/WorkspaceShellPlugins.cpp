@@ -4,6 +4,7 @@
 #include <set>
 #include <string_view>
 
+#include "util/StartupTrace.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
@@ -292,11 +293,22 @@ void WorkspaceShell::RebuildPhase5Registries() {
 }
 
 bool WorkspaceShell::ReloadPluginsForCurrentProject() {
-  const bool clean_reload = plugin_runtime_.Reload(context_.current_project_state.root);
-  RebuildPhase3Registries();
-  RebuildPhase4Registries();
-  RebuildPhase5Registries();
-  InvalidateRuntimeSyntaxStateCaches();
+  util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
+  bool clean_reload;
+  {
+    util::StartupTrace::Scope plugin_scope("PluginRuntime::Reload");
+    clean_reload = plugin_runtime_.Reload(context_.current_project_state.root);
+  }
+  {
+    util::StartupTrace::Scope registry_scope("RebuildRegistries");
+    RebuildPhase3Registries();
+    RebuildPhase4Registries();
+    RebuildPhase5Registries();
+  }
+  {
+    util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
+    InvalidateRuntimeSyntaxStateCaches();
+  }
   NormalizeSidebarViewSelection();
   RefreshPluginSidebar();
   if (ActiveSidebarMode() == SidebarMode::Git) {

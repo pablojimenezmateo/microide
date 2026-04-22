@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "editor/SyntaxDefinitionLoader.h"
+#include "util/StartupTrace.h"
 
 namespace microide::workspace {
 
@@ -56,19 +57,29 @@ bool WorkspacePluginRuntime::ConsumeAssetChanges(bool force_check) {
 }
 
 bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root) {
-  const bool clean_reload = plugin_host_.enabled() ? plugin_host_.Reload(project_root) : false;
+  bool clean_reload = false;
+  {
+    util::StartupTrace::Scope host_scope("PluginHost::Reload");
+    clean_reload = plugin_host_.enabled() ? plugin_host_.Reload(project_root) : false;
+  }
 
   std::vector<std::string> syntax_loader_errors;
-  const std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> syntax_definitions =
-      editor::runtime_syntax::LoadDefinitionsFromDirectories(plugin_host_.DataDirectories("syntax"),
-                                                             &syntax_loader_errors);
+  std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> syntax_definitions;
+  {
+    util::StartupTrace::Scope load_scope("LoadSyntaxDefinitions");
+    syntax_definitions = editor::runtime_syntax::LoadDefinitionsFromDirectories(
+        plugin_host_.DataDirectories("syntax"), &syntax_loader_errors);
+  }
 
   runtime_syntax_errors_.clear();
-  const editor::runtime_syntax::RuntimeSyntaxReloadResult syntax_reload =
-      editor::runtime_syntax::ReloadDefinitions(syntax_definitions, &runtime_syntax_errors_);
+  {
+    util::StartupTrace::Scope reload_scope("ReloadSyntaxDefinitions");
+    const editor::runtime_syntax::RuntimeSyntaxReloadResult syntax_reload =
+        editor::runtime_syntax::ReloadDefinitions(syntax_definitions, &runtime_syntax_errors_);
+    runtime_syntax_plugin_definition_count_ = syntax_reload.plugin_definition_count;
+  }
   runtime_syntax_errors_.insert(runtime_syntax_errors_.end(), syntax_loader_errors.begin(),
                                 syntax_loader_errors.end());
-  runtime_syntax_plugin_definition_count_ = syntax_reload.plugin_definition_count;
   asset_monitor_.SetProjectRoot(project_root);
   return clean_reload && runtime_syntax_errors_.empty();
 }
