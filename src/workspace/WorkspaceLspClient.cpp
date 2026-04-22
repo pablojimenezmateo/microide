@@ -6,6 +6,8 @@
 #include <thread>
 #include <unordered_map>
 
+#include "util/StartupTrace.h"
+
 namespace microide::workspace {
 
 // ---------------------------------------------------------------------------
@@ -44,6 +46,11 @@ struct LspClient::Impl {
   std::thread reader_thread;
   std::atomic<bool> stop_reader{false};
 
+  // Initialization thread state
+  std::thread init_thread;
+  std::atomic<bool> initializing{false};
+  std::atomic<bool> stop_init{false};
+
   // Per-request pending callbacks (keyed by request id), guarded by mutex.
   std::unordered_map<int, std::function<void(util::JsonValue)>> pending_requests;
 
@@ -57,6 +64,7 @@ struct LspClient::Impl {
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
+  std::string last_error;
   bool initialized = false;
   bool supports_incremental_sync = false;
   Uint32 wake_event_type = 0;
@@ -249,6 +257,7 @@ struct LspClient::Impl {
         // Wrap in a zero-arg lambda so it can be stored in ready_callbacks.
         util::JsonValue captured = std::move(msg);
         auto ready_fn = [cb = std::move(cb), m = std::move(captured)]() mutable {
+          util::StartupTrace::Scope scope("LspClient::DispatchResponse");
           cb(std::move(m));
         };
         std::lock_guard lock(mutex);
@@ -260,6 +269,7 @@ struct LspClient::Impl {
       // via ready_callbacks to keep thread safety.
       const std::string method = msg["method"].IsString() ? msg["method"].AsString() : "";
       if (method == "textDocument/publishDiagnostics") {
+        util::StartupTrace::Scope scope("LspClient::DispatchDiagnostics");
         const auto& params = msg["params"];
         const std::string uri = params["uri"].IsString() ? params["uri"].AsString() : "";
         std::vector<Diagnostic> diags;
@@ -300,6 +310,139 @@ struct LspClient::Impl {
     pending_requests[id] = std::move(cb);
     return id;
   }
+
+  // -------------------------------------------------------------------------
+  // Blocking initialization (runs on initialization thread).
+  // -------------------------------------------------------------------------
+  void DoInitializeBlocking() {
+    util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
+    initializing.store(true, std::memory_order_release);
+
+    // Negotiate capabilities: request incremental sync and common features.
+    using namespace util;
+    JsonObject text_doc_sync;
+    text_doc_sync["dynamicRegistration"] = JsonValue(false);
+    text_doc_sync["willSave"] = JsonValue(false);
+    text_doc_sync["didSave"] = JsonValue(true);
+
+    JsonObject completion_caps;
+    completion_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject hover_caps;
+    hover_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject signature_caps;
+    signature_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject definition_caps;
+    definition_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject references_caps;
+    references_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject rename_caps;
+    rename_caps["dynamicRegistration"] = JsonValue(false);
+    rename_caps["prepareSupport"] = JsonValue(false);
+
+    JsonObject code_action_caps;
+    code_action_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject formatting_caps;
+    formatting_caps["dynamicRegistration"] = JsonValue(false);
+
+    JsonObject text_document_caps;
+    text_document_caps["synchronization"] = JsonValue(std::move(text_doc_sync));
+    text_document_caps["completion"] = JsonValue(std::move(completion_caps));
+    text_document_caps["hover"] = JsonValue(std::move(hover_caps));
+    text_document_caps["signatureHelp"] = JsonValue(std::move(signature_caps));
+    text_document_caps["definition"] = JsonValue(std::move(definition_caps));
+    text_document_caps["references"] = JsonValue(std::move(references_caps));
+    text_document_caps["rename"] = JsonValue(std::move(rename_caps));
+    text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));
+    text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
+
+    JsonObject caps;
+    caps["textDocument"] = JsonValue(std::move(text_document_caps));
+
+    JsonObject init_params;
+    init_params["processId"] = JsonValue(static_cast<std::int64_t>(proc.pid()));
+    init_params["rootUri"] = JsonValue(root_uri);
+    init_params["capabilities"] = JsonValue(std::move(caps));
+
+    const int init_id = [&]() {
+      std::lock_guard lock(mutex);
+      return next_id++;
+    }();
+    const auto req = MakeRequest(init_id, "initialize", JsonValue(std::move(init_params)));
+    if (!SendMessage(req)) {
+      last_error = "failed to send initialize request to language server";
+      proc.Shutdown();
+      initializing.store(false, std::memory_order_release);
+      return;
+    }
+
+    // Wait synchronously for the initialize response (before starting the reader thread).
+    ReadBuf buf;
+    bool got_init = false;
+    {
+      util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
+      for (int attempts = 0; attempts < 60; ++attempts) {
+        auto resp_opt = TryParseOneMessage(buf);
+        if (!resp_opt) {
+          auto chunk = proc.Read(4096, 500);
+          if (!chunk) break;  // process died
+          if (!chunk->empty()) buf.append(*chunk);
+          continue;
+        }
+        const auto& resp = *resp_opt;
+        if (!resp.HasKey("id") || resp["id"].AsInt() != init_id) continue;
+
+        // Parse server capabilities to detect sync mode.
+        if (resp.HasKey("result")) {
+          const auto& result = resp["result"];
+          if (result.HasKey("capabilities")) {
+            const auto& server_caps = result["capabilities"];
+            const auto& sync = server_caps["textDocumentSync"];
+            // 1 = full, 2 = incremental
+            int sync_kind = 1;
+            if (sync.IsInt()) {
+              sync_kind = sync.AsInt();
+            } else if (sync.HasKey("change")) {
+              sync_kind = sync["change"].AsInt(1);
+            }
+            supports_incremental_sync = (sync_kind == 2);
+          }
+          initialized = true;
+          got_init = true;
+        }
+        break;
+      }
+    }
+
+    if (!got_init) {
+      (void)proc.IsRunning();
+      const std::optional<int> exit_code = proc.exit_code();
+      if (exit_code.has_value()) {
+        last_error =
+            "language server exited before initialize response (exit code " +
+            std::to_string(*exit_code) + ")";
+      } else {
+        last_error = "timed out waiting for initialize response from language server";
+      }
+      proc.Shutdown();
+      initializing.store(false, std::memory_order_release);
+      return;
+    }
+
+    // Send "initialized" notification.
+    SendMessage(MakeNotification("initialized", JsonValue(JsonObject{})));
+
+    // Start the background reader thread.
+    stop_reader.store(false);
+    reader_thread = std::thread([this]() { ReaderMain(); });
+
+    initializing.store(false, std::memory_order_release);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -319,117 +462,33 @@ void LspClient::SetWakeEventType(Uint32 event_type) {
 
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
                       const std::string& language_id) {
-  if (!impl_->proc.Start(command)) return false;
+  util::StartupTrace::Scope trace_scope("LspClient::Start");
+  impl_->last_error.clear();
+
+  {
+    util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
+    if (!impl_->proc.Start(command)) {
+      impl_->last_error = "failed to start language server process";
+      return false;
+    }
+  }
 
   impl_->root_uri = root_uri;
   impl_->language_id = language_id;
 
-  // Negotiate capabilities: request incremental sync and common features.
-  using namespace util;
-  JsonObject text_doc_sync;
-  text_doc_sync["dynamicRegistration"] = JsonValue(false);
-  text_doc_sync["willSave"] = JsonValue(false);
-  text_doc_sync["didSave"] = JsonValue(true);
-
-  JsonObject completion_caps;
-  completion_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject hover_caps;
-  hover_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject signature_caps;
-  signature_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject definition_caps;
-  definition_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject references_caps;
-  references_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject rename_caps;
-  rename_caps["dynamicRegistration"] = JsonValue(false);
-  rename_caps["prepareSupport"] = JsonValue(false);
-
-  JsonObject code_action_caps;
-  code_action_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject formatting_caps;
-  formatting_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject text_document_caps;
-  text_document_caps["synchronization"] = JsonValue(std::move(text_doc_sync));
-  text_document_caps["completion"] = JsonValue(std::move(completion_caps));
-  text_document_caps["hover"] = JsonValue(std::move(hover_caps));
-  text_document_caps["signatureHelp"] = JsonValue(std::move(signature_caps));
-  text_document_caps["definition"] = JsonValue(std::move(definition_caps));
-  text_document_caps["references"] = JsonValue(std::move(references_caps));
-  text_document_caps["rename"] = JsonValue(std::move(rename_caps));
-  text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));
-  text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
-
-  JsonObject caps;
-  caps["textDocument"] = JsonValue(std::move(text_document_caps));
-
-  JsonObject init_params;
-  init_params["processId"] = JsonValue(static_cast<std::int64_t>(impl_->proc.pid()));
-  init_params["rootUri"] = JsonValue(root_uri);
-  init_params["capabilities"] = JsonValue(std::move(caps));
-
-  const int init_id = [&]() {
-    std::lock_guard lock(impl_->mutex);
-    return impl_->next_id++;
-  }();
-  const auto req = impl_->MakeRequest(init_id, "initialize", JsonValue(std::move(init_params)));
-  if (!impl_->SendMessage(req)) {
-    impl_->proc.Shutdown();
-    return false;
-  }
-
-  // Wait synchronously for the initialize response (before starting the reader thread).
-  ReadBuf buf;
-  bool got_init = false;
-  for (int attempts = 0; attempts < 60; ++attempts) {
-    auto resp_opt = impl_->ReadJsonRpcBlocking(buf, 500);
-    if (!resp_opt) break;
-    const auto& resp = *resp_opt;
-    if (!resp.HasKey("id") || resp["id"].AsInt() != init_id) continue;
-
-    // Parse server capabilities to detect sync mode.
-    if (resp.HasKey("result")) {
-      const auto& result = resp["result"];
-      if (result.HasKey("capabilities")) {
-        const auto& server_caps = result["capabilities"];
-        const auto& sync = server_caps["textDocumentSync"];
-        // 1 = full, 2 = incremental
-        int sync_kind = 1;
-        if (sync.IsInt()) {
-          sync_kind = sync.AsInt();
-        } else if (sync.HasKey("change")) {
-          sync_kind = sync["change"].AsInt(1);
-        }
-        impl_->supports_incremental_sync = (sync_kind == 2);
-      }
-      impl_->initialized = true;
-      got_init = true;
-    }
-    break;
-  }
-
-  if (!got_init) {
-    impl_->proc.Shutdown();
-    return false;
-  }
-
-  // Send "initialized" notification.
-  impl_->SendMessage(impl_->MakeNotification("initialized", JsonValue(JsonObject{})));
-
-  // Start the background reader thread.
-  impl_->stop_reader.store(false);
-  impl_->reader_thread = std::thread([this]() { impl_->ReaderMain(); });
+  // Launch initialization on a background thread to avoid blocking the main thread.
+  impl_->stop_init.store(false);
+  impl_->init_thread = std::thread([this]() {
+    impl_->DoInitializeBlocking();
+  });
   return true;
 }
 
 bool LspClient::IsRunning() const { return impl_->proc.IsRunning(); }
+
+bool LspClient::IsInitializing() const {
+  return impl_->initializing.load(std::memory_order_acquire);
+}
 
 bool LspClient::SupportsIncrementalSync() const {
   return impl_->supports_incremental_sync;
@@ -439,12 +498,17 @@ bool LspClient::HasOpenDocument(const std::string& uri) const {
   return impl_->document_versions.contains(uri);
 }
 
+const std::string& LspClient::LastError() const {
+  return impl_->last_error;
+}
+
 void LspClient::SetDiagnosticsCallback(OnPublishDiagnostics callback) {
   std::lock_guard lock(impl_->mutex);
   impl_->diagnostics_callback = std::move(callback);
 }
 
 void LspClient::DrainCallbacks() {
+  util::StartupTrace::Scope trace_scope("LspClient::DrainCallbacks");
   std::vector<std::function<void()>> cbs;
   {
     std::lock_guard lock(impl_->mutex);
@@ -762,6 +826,12 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
 }
 
 void LspClient::Shutdown() {
+  // Wait for initialization thread to complete (non-blocking).
+  impl_->stop_init.store(true);
+  if (impl_->init_thread.joinable()) {
+    impl_->init_thread.join();
+  }
+
   if (!impl_->initialized) {
     impl_->proc.Shutdown();
     return;

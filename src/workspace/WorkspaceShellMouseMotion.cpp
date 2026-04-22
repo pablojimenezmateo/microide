@@ -53,7 +53,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
-    const bool handled = MakeTabMouseCoordinator().HandleMotion(event);
+    const bool handled = HandleTabMouseMotion(event, layout);
     if (handled) {
       ensure_redraw([this]() { RequestWindowRedraw(); });
     }
@@ -225,7 +225,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (MakeTabMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
+  if (HandleTabMouseWheel(event, layout, vertical_ticks)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }

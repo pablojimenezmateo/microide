@@ -5,10 +5,13 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <map>
 #include <optional>
 #include <sstream>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -53,6 +56,25 @@ std::string_view LineAtOrEmpty(const std::vector<std::string>& lines, std::size_
 
 std::string OutputChannelIdForTask(const TaskSpec& spec) {
   return "task." + spec.id;
+}
+
+std::string LspUnavailableMessage(const LspManager& manager,
+                                  std::string_view language_id,
+                                  std::string_view fallback) {
+  if (!language_id.empty()) {
+    const std::string id(language_id);
+    if (manager.HasServer(id)) {
+      const std::string detail = manager.LastServerError(id);
+      if (!detail.empty()) {
+        return "LSP startup failed for " + id + ": " + detail;
+      }
+      return "LSP startup failed for " + id;
+    }
+  }
+  if (!fallback.empty()) {
+    return std::string(fallback);
+  }
+  return "No language server available";
 }
 
 std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
@@ -278,6 +300,12 @@ bool WorkspaceShell::HasActiveReferencesProvider() const {
 
 LspClient* WorkspaceShell::LspClientForViewport(const editor::TextViewport& viewport,
                                                 std::string* language_id) {
+  if (!lsp_manager_.HasRegisteredServers()) {
+    if (language_id != nullptr) {
+      language_id->clear();
+    }
+    return nullptr;
+  }
   if (language_id != nullptr) {
     *language_id = DetectActiveLanguageId(viewport);
   }
@@ -384,13 +412,62 @@ const std::vector<std::string>* WorkspaceShell::OutputChannelEntries(std::string
   return output_channels_.Entries(id);
 }
 
+void WorkspaceShell::EnsureOutputChannelTabOpen(std::string_view channel_id) {
+  if (channel_id.empty()) {
+    return;
+  }
+  auto& tabs = context_.current_project_state.panel.output.open_channel_ids;
+  if (std::find(tabs.begin(), tabs.end(), channel_id) == tabs.end()) {
+    tabs.emplace_back(channel_id);
+  }
+}
+
+void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {
+  auto& tabs = context_.current_project_state.panel.output.open_channel_ids;
+  const auto it = std::find(tabs.begin(), tabs.end(), channel_id);
+  if (it == tabs.end()) {
+    return;
+  }
+  const std::size_t closed_index = static_cast<std::size_t>(std::distance(tabs.begin(), it));
+  tabs.erase(it);
+
+  if (context_.current_project_state.panel.content != PanelContentKind::Output ||
+      context_.current_project_state.panel.output.channel_id != channel_id) {
+    return;
+  }
+
+  if (!tabs.empty()) {
+    const std::size_t next_index = std::min(closed_index, tabs.size() - 1);
+    context_.current_project_state.panel.output.channel_id = tabs[next_index];
+    return;
+  }
+
+  if (ActiveTerminalTab() != nullptr) {
+    context_.current_project_state.panel.content = PanelContentKind::Terminal;
+    return;
+  }
+
+  context_.current_project_state.panel.content = PanelContentKind::None;
+  if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
+    context_.current_project_state.surface.focus = FocusTarget::Editor;
+  }
+}
+
 void WorkspaceShell::ShowOutputChannel(std::string_view id) {
   const std::string channel_id =
       id.empty() ? (context_.current_project_state.panel.output.channel_id.empty()
                         ? std::string("plugins.log")
                         : context_.current_project_state.panel.output.channel_id)
                  : std::string(id);
-  output_channels_.EnsureChannel(channel_id, channel_id);
+  std::string channel_label = channel_id;
+  for (const auto& channel : output_channels_.Channels()) {
+    if (channel.id == channel_id) {
+      channel_label = channel.label.empty() ? channel.id : channel.label;
+      break;
+    }
+  }
+  output_channels_.EnsureChannel(channel_id, channel_label);
+  EnsureOutputChannelTabOpen(channel_id);
   context_.current_project_state.panel.content = PanelContentKind::Output;
   context_.current_project_state.panel.output.channel_id = channel_id;
   context_.current_project_state.surface.focus = FocusTarget::Panel;
@@ -421,6 +498,7 @@ void WorkspaceShell::ConsumeTaskRuntimeUpdates() {
   if (update->finished && !update->status_text.empty()) {
     output_channels_.AppendLine(update->channel_id, update->channel_label, update->status_text);
   }
+  EnsureOutputChannelTabOpen(update->channel_id);
   context_.current_project_state.panel.content = PanelContentKind::Output;
   context_.current_project_state.panel.output.channel_id = update->channel_id;
   RequestBottomPanelRedraw();
@@ -473,6 +551,7 @@ bool WorkspaceShell::RunTaskById(std::string_view id, std::string* error_message
   task_runtime_.Start(*spec, context_.current_project_state.root);
   const std::string channel_id = OutputChannelIdForTask(*spec);
   output_channels_.EnsureChannel(channel_id, spec->label.empty() ? spec->id : spec->label);
+  EnsureOutputChannelTabOpen(channel_id);
   context_.current_project_state.panel.content = PanelContentKind::Output;
   context_.current_project_state.panel.output.channel_id = channel_id;
   DismissOverlay(false);
@@ -517,8 +596,11 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
 
   LspClient* client = LspClientForViewport(*viewport, nullptr);
   if (client == nullptr) {
+    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, provider_error);
+    output_channels_.AppendLine("lsp.log", "LSP Log", failure);
+    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
-      *error_message = provider_error.empty() ? "No completions available" : provider_error;
+      *error_message = failure;
     }
     return false;
   }
@@ -635,8 +717,11 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
 
   LspClient* client = LspClientForViewport(*viewport, nullptr);
   if (client == nullptr) {
+    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, provider_error);
+    output_channels_.AppendLine("lsp.log", "LSP Log", failure);
+    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
-      *error_message = provider_error.empty() ? "No code actions available" : provider_error;
+      *error_message = failure;
     }
     return false;
   }
@@ -719,8 +804,11 @@ bool WorkspaceShell::GoToLspDefinition(std::string* error_message) {
   std::string language_id;
   LspClient* client = LspClientForViewport(*viewport, &language_id);
   if (client == nullptr) {
+    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, {});
+    output_channels_.AppendLine("lsp.log", "LSP Log", failure);
+    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
-      *error_message = "No language server registered for " + language_id;
+      *error_message = failure;
     }
     return false;
   }
@@ -768,8 +856,11 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
   std::string language_id;
   LspClient* client = LspClientForViewport(*viewport, &language_id);
   if (client == nullptr) {
+    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, {});
+    output_channels_.AppendLine("lsp.log", "LSP Log", failure);
+    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
-      *error_message = "No language server registered for " + language_id;
+      *error_message = failure;
     }
     return false;
   }
@@ -786,7 +877,9 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
           ShowOutputChannel("lsp.references");
           return;
         }
-        for (const auto& location : *locations) {
+        std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
+        for (std::size_t location_index = 0; location_index < locations->size(); ++location_index) {
+          const auto& location = (*locations)[location_index];
           const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
           if (!path.has_value()) {
             continue;
@@ -800,6 +893,34 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
               "lsp.references", "LSP References",
               label + ":" + std::to_string(location.range.start.line + 1) + ":" +
                   std::to_string(location.range.start.character + 1));
+
+          const auto lines_it = file_line_cache.find(*path);
+          const std::vector<std::string>* file_lines = nullptr;
+          if (lines_it != file_line_cache.end()) {
+            file_lines = &lines_it->second;
+          } else if (const auto text = util::ReadTextFile(*path); text.has_value()) {
+            file_lines = &file_line_cache.emplace(*path, util::SplitLines(*text)).first->second;
+          }
+          if (file_lines == nullptr || file_lines->empty()) {
+            continue;
+          }
+
+          const std::size_t target_line = static_cast<std::size_t>(
+              std::max(location.range.start.line + 1, 1));
+          const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
+          const std::size_t last_line = target_line + 1;
+          for (std::size_t line_number = first_line; line_number <= last_line; ++line_number) {
+            if (line_number == 0 || line_number > file_lines->size()) {
+              continue;
+            }
+            output_channels_.AppendLine(
+                "lsp.references", "LSP References",
+                std::string(line_number == target_line ? " > " : "   ") +
+                    std::to_string(line_number) + " | " + (*file_lines)[line_number - 1]);
+          }
+          if (location_index + 1 < locations->size()) {
+            output_channels_.AppendLine("lsp.references", "LSP References", "");
+          }
         }
         ShowOutputChannel("lsp.references");
       });

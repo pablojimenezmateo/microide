@@ -2,12 +2,51 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
+#include <string_view>
 
 namespace microide::workspace {
 
 namespace {
 
 constexpr float kWindowFrameHitThickness = 6.0f;
+
+bool ParseUnsignedStrict(std::string_view text, std::size_t* value) {
+  if (value == nullptr || text.empty()) {
+    return false;
+  }
+  try {
+    std::size_t parsed_length = 0;
+    const unsigned long long parsed = std::stoull(std::string(text), &parsed_length);
+    if (parsed_length != text.size()) {
+      return false;
+    }
+    *value = static_cast<std::size_t>(parsed);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool IsNavigableOutputLine(std::string_view text) {
+  const std::size_t column_delimiter = text.rfind(':');
+  if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
+    return false;
+  }
+  const std::size_t line_delimiter = text.rfind(':', column_delimiter - 1);
+  if (line_delimiter == std::string_view::npos || line_delimiter == 0) {
+    return false;
+  }
+
+  const std::string_view path_text = text.substr(0, line_delimiter);
+  const std::string_view line_text =
+      text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
+  const std::string_view column_text = text.substr(column_delimiter + 1);
+  std::size_t line = 0;
+  std::size_t column = 0;
+  return !path_text.empty() && ParseUnsignedStrict(line_text, &line) && line > 0 &&
+         ParseUnsignedStrict(column_text, &column);
+}
 
 SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bottom) {
   if (top && left) {
@@ -424,11 +463,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kWorkspaceBottomPanelHeaderHeight);
-    if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr && Contains(panel_header, x, y)) {
+    if (Contains(panel_header, x, y)) {
       if (Contains(BottomPanelTerminalNewTabRect(panel_header), x, y)) {
         return CursorKind::Pointer;
       }
-      for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
+      for (const VisibleStripTab& tab : ComputeVisibleBottomPanelTabs(panel_header)) {
         if (Contains(tab.rect, x, y)) {
           return CursorKind::Pointer;
         }
@@ -455,6 +494,22 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (panel_layout.scroll.vertical_scrollbar.has_value() &&
           Contains(panel_layout.scroll.vertical_scrollbar->track, x, y)) {
         return CursorKind::Default;
+      }
+      if (BottomPanelShowsOutput() && Contains(panel_layout.content_rect, x, y) &&
+          y >= panel_layout.text_y && panel_layout.line_height > 0.0f) {
+        const int row = static_cast<int>((y - panel_layout.text_y) / panel_layout.line_height);
+        if (row >= 0 && row < panel_layout.scroll.visible_rows) {
+          const int absolute_index = panel_layout.scroll.vertical_scroll + row;
+          if (absolute_index >= 0) {
+            if (const auto* entries =
+                    OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
+                entries != nullptr &&
+                static_cast<std::size_t>(absolute_index) < entries->size() &&
+                IsNavigableOutputLine((*entries)[static_cast<std::size_t>(absolute_index)])) {
+              return CursorKind::Pointer;
+            }
+          }
+        }
       }
     }
     if ((context_.current_project_state.panel.command_mode || BottomPanelShowsChat()) &&

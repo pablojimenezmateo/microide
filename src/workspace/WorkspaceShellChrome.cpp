@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -169,6 +170,216 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
       static_cast<std::size_t>(std::clamp(context_.current_project_state.tab_scroll_index, 0,
                                           std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1))),
       tab_y, tab_height, {}, context_.current_project_state.active_tab_index, display_titles, tooltip_labels);
+}
+
+std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPanelTabs() const {
+  std::vector<BottomPanelTabModel> tabs;
+  tabs.reserve(context_.current_project_state.terminal_tabs.size() +
+               context_.current_project_state.panel.output.open_channel_ids.size() + 1);
+
+  for (std::size_t i = 0; i < context_.current_project_state.terminal_tabs.size(); ++i) {
+    const TerminalTabState* terminal_tab = context_.current_project_state.terminal_tabs[i].get();
+    if (terminal_tab == nullptr) {
+      continue;
+    }
+
+    std::string label = terminal_tab->session.LaunchLabel();
+    if (label.empty()) {
+      label = "terminal";
+    }
+    tabs.push_back(BottomPanelTabModel{
+        .kind = BottomPanelTabKind::Terminal,
+        .terminal_index = i,
+        .output_channel_id = {},
+        .chat_conversation_id = {},
+        .label = label,
+        .tooltip_label = label,
+    });
+  }
+
+  std::vector<std::string> output_channel_ids = context_.current_project_state.panel.output.open_channel_ids;
+  if (context_.current_project_state.panel.content == PanelContentKind::Output &&
+      !context_.current_project_state.panel.output.channel_id.empty() &&
+      std::find(output_channel_ids.begin(), output_channel_ids.end(),
+                context_.current_project_state.panel.output.channel_id) ==
+          output_channel_ids.end()) {
+    output_channel_ids.push_back(context_.current_project_state.panel.output.channel_id);
+  }
+
+  for (const std::string& channel_id : output_channel_ids) {
+    if (channel_id.empty()) {
+      continue;
+    }
+    std::string label = channel_id;
+    for (const auto& channel : output_channels_.Channels()) {
+      if (channel.id == channel_id) {
+        label = channel.label.empty() ? channel.id : channel.label;
+        break;
+      }
+    }
+    tabs.push_back(BottomPanelTabModel{
+        .kind = BottomPanelTabKind::Output,
+        .terminal_index = 0,
+        .output_channel_id = channel_id,
+        .chat_conversation_id = {},
+        .label = label,
+        .tooltip_label = label,
+    });
+  }
+
+  if (!context_.current_project_state.panel.chat.conversation_id.empty()) {
+    std::string label = "Chat";
+    if (const Conversation* conversation = conversation_registry_.GetConversation(
+            context_.current_project_state.panel.chat.conversation_id);
+        conversation != nullptr && !conversation->title.empty()) {
+      label = conversation->title;
+    }
+    tabs.push_back(BottomPanelTabModel{
+        .kind = BottomPanelTabKind::Chat,
+        .terminal_index = 0,
+        .output_channel_id = {},
+        .chat_conversation_id = context_.current_project_state.panel.chat.conversation_id,
+        .label = label,
+        .tooltip_label = label,
+    });
+  }
+
+  return tabs;
+}
+
+std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleBottomPanelTabs(
+    const SDL_FRect& panel_header) const {
+  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs();
+  if (tabs.empty()) {
+    return {};
+  }
+
+  std::vector<float> widths;
+  std::vector<std::string> display_titles;
+  std::vector<std::string> tooltip_labels;
+  std::vector<std::size_t> model_indices;
+  widths.reserve(tabs.size());
+  display_titles.reserve(tabs.size());
+  tooltip_labels.reserve(tabs.size());
+  model_indices.reserve(tabs.size());
+  std::size_t active_model_index = std::numeric_limits<std::size_t>::max();
+  for (std::size_t i = 0; i < tabs.size(); ++i) {
+    model_indices.push_back(i);
+    display_titles.push_back(tabs[i].label);
+    tooltip_labels.push_back(tabs[i].tooltip_label);
+    widths.push_back(
+        std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 38.0f, 84.0f, 220.0f));
+
+    if (context_.current_project_state.panel.content == PanelContentKind::Terminal &&
+        tabs[i].kind == BottomPanelTabKind::Terminal &&
+        tabs[i].terminal_index == context_.current_project_state.active_terminal_tab_index) {
+      active_model_index = i;
+    } else if (context_.current_project_state.panel.content == PanelContentKind::Output &&
+               tabs[i].kind == BottomPanelTabKind::Output &&
+               tabs[i].output_channel_id == context_.current_project_state.panel.output.channel_id) {
+      active_model_index = i;
+    } else if (context_.current_project_state.panel.content == PanelContentKind::Chat &&
+               tabs[i].kind == BottomPanelTabKind::Chat &&
+               tabs[i].chat_conversation_id ==
+                   context_.current_project_state.panel.chat.conversation_id) {
+      active_model_index = i;
+    }
+  }
+
+  if (active_model_index == std::numeric_limits<std::size_t>::max()) {
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      if (tabs[i].kind == BottomPanelTabKind::Terminal &&
+          tabs[i].terminal_index == context_.current_project_state.active_terminal_tab_index) {
+        active_model_index = i;
+        break;
+      }
+    }
+  }
+
+  const float tab_y = panel_header.y + 2.0f;
+  const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
+  const float gap = 1.0f;
+  const float start_x = panel_header.x + 12.0f;
+  const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
+  const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
+  return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, 0, tab_y, tab_height,
+                               model_indices, active_model_index, display_titles, tooltip_labels);
+}
+
+bool WorkspaceShell::ActivateBottomPanelTab(std::size_t model_index) {
+  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs();
+  if (model_index >= tabs.size()) {
+    return false;
+  }
+
+  const BottomPanelTabModel& tab = tabs[model_index];
+  switch (tab.kind) {
+    case BottomPanelTabKind::Terminal:
+      if (tab.terminal_index >= context_.current_project_state.terminal_tabs.size()) {
+        return false;
+      }
+      context_.current_project_state.active_terminal_tab_index = tab.terminal_index;
+      context_.current_project_state.panel.content = PanelContentKind::Terminal;
+      break;
+    case BottomPanelTabKind::Output:
+      EnsureOutputChannelTabOpen(tab.output_channel_id);
+      context_.current_project_state.panel.content = PanelContentKind::Output;
+      context_.current_project_state.panel.output.channel_id = tab.output_channel_id;
+      break;
+    case BottomPanelTabKind::Chat:
+      if (!tab.chat_conversation_id.empty()) {
+        context_.current_project_state.panel.chat.conversation_id = tab.chat_conversation_id;
+      }
+      context_.current_project_state.panel.content = PanelContentKind::Chat;
+      break;
+  }
+
+  context_.current_project_state.surface.focus = FocusTarget::Panel;
+  RequestBottomPanelRedraw();
+  return true;
+}
+
+bool WorkspaceShell::CloseBottomPanelTab(std::size_t model_index) {
+  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs();
+  if (model_index >= tabs.size()) {
+    return false;
+  }
+
+  const BottomPanelTabModel& tab = tabs[model_index];
+  switch (tab.kind) {
+    case BottomPanelTabKind::Terminal:
+      CloseTerminalTab(tab.terminal_index);
+      break;
+    case BottomPanelTabKind::Output:
+      CloseOutputChannelTab(tab.output_channel_id);
+      break;
+    case BottomPanelTabKind::Chat:
+      if (context_.current_project_state.panel.chat.conversation_id == tab.chat_conversation_id) {
+        context_.current_project_state.panel.chat.conversation_id.clear();
+        context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
+        context_.current_project_state.panel.chat.request_in_flight = false;
+        context_.current_project_state.panel.chat.status_text.clear();
+      }
+      if (context_.current_project_state.panel.content == PanelContentKind::Chat) {
+        if (ActiveTerminalTab() != nullptr) {
+          context_.current_project_state.panel.content = PanelContentKind::Terminal;
+        } else {
+          context_.current_project_state.panel.content = PanelContentKind::None;
+          if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
+            context_.current_project_state.surface.focus = FocusTarget::Editor;
+          }
+        }
+      }
+      break;
+  }
+
+  RequestBottomPanelRedraw();
+  return true;
+}
+
+bool WorkspaceShell::BottomPanelTabIsTerminal(std::size_t model_index) const {
+  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs();
+  return model_index < tabs.size() && tabs[model_index].kind == BottomPanelTabKind::Terminal;
 }
 
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTerminalTabs(

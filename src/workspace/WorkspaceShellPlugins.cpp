@@ -27,25 +27,21 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
           continue;
         }
         if (view.needs_restore) {
-          editor::TextViewport restored_view;
-          if (!restored_view.OpenFile(path)) {
-            continue;
-          }
-          callback(path, restored_view);
+          callback(path, nullptr);
         } else {
-          callback(path, view.viewport);
+          callback(path, &view.viewport);
         }
       }
       continue;
     }
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
-      callback(tab.compare->right_viewport.path().lexically_normal(), tab.compare->right_viewport);
+      callback(tab.compare->right_viewport.path().lexically_normal(), &tab.compare->right_viewport);
       continue;
     }
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
         !tab.merge->result_viewport.path().empty()) {
-      callback(tab.merge->result_viewport.path().lexically_normal(), tab.merge->result_viewport);
+      callback(tab.merge->result_viewport.path().lexically_normal(), &tab.merge->result_viewport);
     }
   }
 }
@@ -309,15 +305,34 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitio
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
     InvalidateRuntimeSyntaxStateCaches();
   }
-  NormalizeSidebarViewSelection();
-  RefreshPluginSidebar();
+  {
+    util::StartupTrace::Scope sidebar_selection_scope("NormalizeSidebarViewSelection");
+    NormalizeSidebarViewSelection();
+  }
+  {
+    util::StartupTrace::Scope plugin_sidebar_scope("RefreshPluginSidebar");
+    RefreshPluginSidebar();
+  }
   if (ActiveSidebarMode() == SidebarMode::Git) {
+    util::StartupTrace::Scope git_sidebar_scope("RefreshGitSidebar");
     RefreshGitSidebar();
   }
-  RefreshProblemsSidebar();
-  NotifyPluginsAboutOpenBuffers();
-  RequestChromeRedraw();
-  RequestEditorSurfaceRedraw();
+  {
+    util::StartupTrace::Scope problems_sidebar_scope("RefreshProblemsSidebar");
+    RefreshProblemsSidebar();
+  }
+  {
+    util::StartupTrace::Scope open_buffers_scope("NotifyPluginsAboutOpenBuffers");
+    NotifyPluginsAboutOpenBuffers(reload_syntax_definitions);
+  }
+  {
+    util::StartupTrace::Scope chrome_redraw_scope("RequestChromeRedraw");
+    RequestChromeRedraw();
+  }
+  {
+    util::StartupTrace::Scope editor_redraw_scope("RequestEditorSurfaceRedraw");
+    RequestEditorSurfaceRedraw();
+  }
   return clean_reload;
 }
 
@@ -375,22 +390,25 @@ std::string WorkspaceShell::PluginRuntimeReloadSummary() const {
   return plugin_runtime_.ReloadSummary();
 }
 
-void WorkspaceShell::NotifyPluginsAboutOpenBuffers() {
+void WorkspaceShell::NotifyPluginsAboutOpenBuffers(bool open_lsp_documents) {
   if (!plugin_runtime_.enabled()) {
     return;
   }
   std::set<std::filesystem::path> opened_paths;
   ForEachOpenEditableBuffer(context_.current_project_state,
                             [&](const std::filesystem::path& path,
-                                const editor::TextViewport& viewport) {
+                                const editor::TextViewport* viewport) {
                               if (!opened_paths.insert(path).second) {
                                 return;
                               }
                               plugin_runtime_.Host().OnBufferOpen(path);
+                              if (viewport == nullptr || !open_lsp_documents) {
+                                return;
+                              }
                               std::string language_id;
-                              LspClient* client = LspClientForViewport(viewport, &language_id);
+                              LspClient* client = LspClientForViewport(*viewport, &language_id);
                               if (client != nullptr) {
-                                EnsureLspDocumentOpen(viewport, *client, language_id);
+                                EnsureLspDocumentOpen(*viewport, *client, language_id);
                               }
                             });
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <filesystem>
 #include <optional>
 #include <vector>
 
@@ -36,6 +37,9 @@ class PanelMouseCoordinator {
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<std::optional<TerminalSelectionPosition>(int, int)> terminal_viewport_position_for_point;
     std::function<terminal::TerminalSession::MouseButton(Uint8)> terminal_mouse_button_for_sdl;
+    std::function<const std::vector<std::string>*()> output_channel_entries;
+    std::function<void(const std::filesystem::path&)> open_file;
+    std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(float, float)> clamp_bottom_panel_height;
     std::function<void()> sync_primary_selection_with_terminal_selection;

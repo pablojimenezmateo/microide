@@ -122,7 +122,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (MakeTabMouseCoordinator().HandleButtonDown(event, layout)) {
+  if (HandleTabMouseButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -246,7 +246,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.tab_drag.kind != TabDragKind::None) {
-    if (MakeTabMouseCoordinator().HandleButtonUp(event)) {
+    if (HandleTabMouseButtonUp(event)) {
       ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;
     }

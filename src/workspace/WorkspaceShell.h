@@ -372,6 +372,21 @@ class WorkspaceShell {
     SDL_FRect rect{};
   };
 
+  enum class BottomPanelTabKind {
+    Terminal,
+    Output,
+    Chat,
+  };
+
+  struct BottomPanelTabModel {
+    BottomPanelTabKind kind = BottomPanelTabKind::Terminal;
+    std::size_t terminal_index = 0;
+    std::string output_channel_id;
+    std::string chat_conversation_id;
+    std::string label;
+    std::string tooltip_label;
+  };
+
  private:
   struct EditorSplitSlot {
     TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
@@ -501,6 +516,10 @@ class WorkspaceShell {
   CompareMouseCoordinator MakeCompareMouseCoordinator();
   MergeMouseCoordinator MakeMergeMouseCoordinator();
   TabMouseCoordinator MakeTabMouseCoordinator();
+  bool HandleTabMouseMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleTabMouseButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleTabMouseButtonUp(const SDL_Event& event);
+  bool HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
   SidebarMouseCoordinator MakeSidebarMouseCoordinator();
   PanelMouseCoordinator MakePanelMouseCoordinator();
   void ResetLifecycleStartupState();
@@ -519,7 +538,7 @@ class WorkspaceShell {
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();
   std::string PluginRuntimeReloadSummary() const;
-  void NotifyPluginsAboutOpenBuffers();
+  void NotifyPluginsAboutOpenBuffers(bool open_lsp_documents = true);
   bool PrepareEditorViewportForSave(const std::filesystem::path& path,
                                     editor::TextViewport& viewport,
                                     std::string* error_message = nullptr);
@@ -1110,8 +1129,13 @@ class WorkspaceShell {
   std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
+  std::vector<VisibleStripTab> ComputeVisibleBottomPanelTabs(
+      const SDL_FRect& panel_header) const;
   std::vector<VisibleStripTab> ComputeVisibleTerminalTabs(
       const SDL_FRect& panel_header) const;
+  bool ActivateBottomPanelTab(std::size_t model_index);
+  bool CloseBottomPanelTab(std::size_t model_index);
+  bool BottomPanelTabIsTerminal(std::size_t model_index) const;
   static std::vector<VisibleStripTab> BuildVisibleStripTabs(
       const std::vector<float>& widths,
       float start_x,
@@ -1126,6 +1150,9 @@ class WorkspaceShell {
       const std::vector<std::string>& tooltip_labels);
   void ClearTabDrag();
   SDL_FRect BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const;
+  std::vector<BottomPanelTabModel> BuildBottomPanelTabs() const;
+  void EnsureOutputChannelTabOpen(std::string_view channel_id);
+  void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
   std::string BreadcrumbLabel() const;
   std::string ProjectLabel() const;

@@ -155,6 +155,7 @@ struct OverlayState {
 
 struct OutputPanelState {
   std::string channel_id = "plugins.log";
+  std::vector<std::string> open_channel_ids;
   int scroll_row = 0;
 };
 

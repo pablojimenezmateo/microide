@@ -790,7 +790,14 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .reject_action =
               [this](ActionSource source, std::string feedback) {
-                return MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
+                const std::string feedback_copy = feedback;
+                const bool accepted =
+                    MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
+                if (source != ActionSource::Command && !feedback_copy.empty()) {
+                  output_channels_.AppendLine("actions.log", "Actions", feedback_copy);
+                  ShowOutputChannel("actions.log");
+                }
+                return accepted;
               },
           .parse_sidebar_view_request =
               [this](const std::vector<std::string>& args) {

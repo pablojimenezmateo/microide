@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -9,6 +12,80 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 
 namespace microide::workspace {
+
+namespace {
+
+struct OutputLocation {
+  std::filesystem::path path;
+  std::size_t line = 0;
+  std::size_t column = 0;
+};
+
+bool ParseUnsignedStrict(std::string_view text, std::size_t* value) {
+  if (value == nullptr || text.empty()) {
+    return false;
+  }
+  try {
+    std::size_t parsed_length = 0;
+    const unsigned long long parsed = std::stoull(std::string(text), &parsed_length);
+    if (parsed_length != text.size()) {
+      return false;
+    }
+    *value = static_cast<std::size_t>(parsed);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+std::optional<OutputLocation> ParseOutputLocationLine(std::string_view text) {
+  const std::size_t column_delimiter = text.rfind(':');
+  if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
+    return std::nullopt;
+  }
+  const std::size_t line_delimiter = text.rfind(':', column_delimiter - 1);
+  if (line_delimiter == std::string_view::npos || line_delimiter == 0) {
+    return std::nullopt;
+  }
+
+  const std::string_view path_text = text.substr(0, line_delimiter);
+  const std::string_view line_text =
+      text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
+  const std::string_view column_text = text.substr(column_delimiter + 1);
+
+  std::size_t line = 0;
+  std::size_t column = 0;
+  if (path_text.empty() || !ParseUnsignedStrict(line_text, &line) ||
+      !ParseUnsignedStrict(column_text, &column) || line == 0) {
+    return std::nullopt;
+  }
+
+  return OutputLocation{
+      .path = std::filesystem::path(path_text),
+      .line = line,
+      .column = column,
+  };
+}
+
+std::optional<std::size_t> BottomPanelLineIndexAtPoint(
+    const WorkspaceShell::BottomPanelLogLayout& panel_layout,
+    float y,
+    std::size_t line_count) {
+  if (y < panel_layout.text_y || panel_layout.line_height <= 0.0f) {
+    return std::nullopt;
+  }
+  const int row = static_cast<int>(std::floor((y - panel_layout.text_y) / panel_layout.line_height));
+  if (row < 0 || row >= panel_layout.scroll.visible_rows) {
+    return std::nullopt;
+  }
+  const int absolute_index = panel_layout.scroll.vertical_scroll + row;
+  if (absolute_index < 0 || absolute_index >= static_cast<int>(line_count)) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(absolute_index);
+}
+
+}  // namespace
 
 PanelMouseCoordinator::PanelMouseCoordinator(ProjectWorkspaceState& state,
                                              MenuSurfaceState& menu_state,
@@ -129,6 +206,36 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       operations_.clear_terminal_selection();
     }
     state_.surface.focus = FocusTarget::Panel;
+  }
+
+  if (state_.panel.content == PanelContentKind::Output) {
+    const auto* output_entries = operations_.output_channel_entries();
+    if (output_entries != nullptr && !output_entries->empty()) {
+      const auto panel_layout =
+          operations_.compute_bottom_panel_log_layout(layout, output_entries->size());
+      if (Contains(panel_layout.content_rect, event.button.x, event.button.y)) {
+        const auto line_index =
+            BottomPanelLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y),
+                                        output_entries->size());
+        if (line_index.has_value() && *line_index < output_entries->size()) {
+          const auto parsed = ParseOutputLocationLine((*output_entries)[*line_index]);
+          if (parsed.has_value()) {
+            std::filesystem::path path = parsed->path;
+            if (path.is_relative() && !state_.root.empty()) {
+              path = state_.root / path;
+            }
+            operations_.open_file(path.lexically_normal());
+            if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+                viewport != nullptr) {
+              viewport->MoveCursorTo(parsed->line > 0 ? parsed->line - 1 : 0,
+                                     parsed->column > 0 ? parsed->column - 1 : 0);
+            }
+            state_.surface.focus = FocusTarget::Editor;
+            return true;
+          }
+        }
+      }
+    }
   }
 
   if (state_.panel.command_mode) {
@@ -380,6 +487,12 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [this](int x, int y) { return TerminalViewportPositionForPoint(x, y); },
           .terminal_mouse_button_for_sdl =
               [this](Uint8 button) { return TerminalMouseButtonForSdl(button); },
+          .output_channel_entries =
+              [this]() {
+                return OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
+              },
+          .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
+          .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .current_window_rect = [this]() { return CurrentWindowRect(); },
           .clamp_bottom_panel_height =
               [](float desired_height, float window_height) {

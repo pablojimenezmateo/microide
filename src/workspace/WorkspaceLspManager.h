@@ -29,9 +29,13 @@ class LspManager {
 
   // True if a server is registered for language, regardless of running state.
   bool HasServer(const std::string& language_id) const;
+  bool HasRegisteredServers() const;
 
   // True if server is running for language.
   bool IsServerRunning(const std::string& language_id) const;
+
+  // Last startup/runtime error for a language server, if any.
+  std::string LastServerError(const std::string& language_id) const;
 
   // Call from main thread each frame to dispatch pending LSP callbacks.
   void DrainCallbacks();
@@ -43,6 +47,7 @@ class LspManager {
   struct ServerEntry {
     std::vector<std::string> command;
     std::string root_uri;
+    std::string last_error;
     std::unique_ptr<LspClient> client;
   };
 

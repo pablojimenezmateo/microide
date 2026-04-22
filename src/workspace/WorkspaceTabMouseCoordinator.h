@@ -22,7 +22,12 @@ class TabMouseCoordinator {
     std::function<SDL_FRect(const SDL_FRect&)> bottom_panel_terminal_new_tab_rect;
     std::function<void(std::string)> open_terminal;
     std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
+        compute_visible_bottom_panel_tabs;
+    std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
         compute_visible_terminal_tabs;
+    std::function<bool(std::size_t)> activate_bottom_panel_tab;
+    std::function<bool(std::size_t)> close_bottom_panel_tab;
+    std::function<bool(std::size_t)> bottom_panel_tab_is_terminal;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<void(std::size_t)> close_terminal_tab;
     std::function<void()> clear_tab_drag;

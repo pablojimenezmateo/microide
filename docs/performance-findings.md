@@ -1,7 +1,7 @@
 # MicroIDE Performance Findings
 
 Last reviewed on 2026-04-22 after a startup profiling pass focused on project-open overhead.
-Updated on 2026-04-22 with additional startup optimization for git status deferral.
+Updated on 2026-04-22 with additional startup optimization for Git status and LSP prewarm deferral.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -252,6 +252,37 @@ Impact:
 - Total startup to FirstRender: 99.39 ms → 71.49 ms (28% improvement)
 - Removed 14.10 ms from startup critical path
 - DirectoryTree::SetRoot: 16.18 ms → 1.45 ms
+
+### Startup LSP prewarm deferred on no-syntax plugin reload
+
+Problem:
+
+- startup project restore uses `ReloadPluginsForCurrentProject(false)` to skip syntax-definition
+  rebuilds, but still called `NotifyPluginsAboutOpenBuffers`
+- that path called `LspClientForViewport` for restored buffers, which ran full runtime-syntax
+  language detection and could also start LSP servers during startup
+- this showed up as a startup hotspot in traces (`NotifyPluginsAboutOpenBuffers` dominated by
+  `LspClientForViewport`, around `~22-30 ms` on local headless runs)
+
+Implemented:
+
+- `NotifyPluginsAboutOpenBuffers` now accepts an `open_lsp_documents` toggle
+- `ReloadPluginsForCurrentProject(false)` keeps plugin `on_buffer_open` hooks but skips LSP
+  document prewarm
+- `LspManager` now exposes `HasRegisteredServers`, and `LspClientForViewport` exits early when no
+  LSP servers are registered
+- open-buffer iteration no longer eagerly opens deferred `needs_restore` views just to emit buffer
+  notifications
+
+Impact:
+
+- on the same local startup trace command, `NotifyPluginsAboutOpenBuffers` dropped from
+  `~22-30 ms` to `~0.05 ms`
+- `WorkspaceShell::ReloadPluginsForCurrentProject` dropped from `~23-32 ms` to `~2.10 ms` on the
+  no-syntax startup path
+- sampled `Application::Initialize` dropped from `39.51 ms` to `10.51 ms`
+- LSP behavior remains correct on demand (file open and LSP command paths), and targeted plugin/LSP
+  regression tests pass
 
 ### Identified remaining startup bottleneck: syntax definition reloading
 

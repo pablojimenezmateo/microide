@@ -88,11 +88,17 @@ class LspClient {
   // True while the server process is running.
   bool IsRunning() const;
 
+  // True when the server is in the process of initializing.
+  bool IsInitializing() const;
+
   // True when the server negotiated incremental document sync.
   bool SupportsIncrementalSync() const;
 
   // True when the client currently tracks an open document for uri.
   bool HasOpenDocument(const std::string& uri) const;
+
+  // Last startup/runtime error message captured by the LSP client.
+  const std::string& LastError() const;
 
   // Set callback for publishDiagnostics notifications (called on main thread).
   void SetDiagnosticsCallback(OnPublishDiagnostics callback);

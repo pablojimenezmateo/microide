@@ -942,6 +942,30 @@ struct WorkspaceShell::TestAccess {
     }
     return {};
   }
+  static std::vector<std::string> BottomPanelTabDisplayTitles(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
+    std::vector<std::string> labels;
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleBottomPanelTabs(panel_header)) {
+      labels.push_back(tab.display_title);
+    }
+    return labels;
+  }
+  static std::optional<SDL_FRect> BottomPanelTabRectByTitle(WorkspaceShell& shell,
+                                                             std::string_view title) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleBottomPanelTabs(panel_header)) {
+      if (tab.display_title == title) {
+        return tab.rect;
+      }
+    }
+    return std::nullopt;
+  }
   static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =

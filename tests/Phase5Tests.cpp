@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include "workspace/WorkspaceShellTesting.h"
 
 #include <filesystem>
@@ -360,8 +361,8 @@ void TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions() {
   const std::filesystem::path server_path = project_root / "fake_lsp.py";
   const std::filesystem::path source = project_root / "README.md";
   const std::filesystem::path refs = project_root / "refs.md";
-  WriteFile(source, "alpha\n");
-  WriteFile(refs, "definition\n");
+  WriteFile(source, "alpha\nusage\nafter\n");
+  WriteFile(refs, "before-def\ndefinition\nafter-def\n");
   WriteFile(
       server_path,
       R"py(#!/usr/bin/env python3
@@ -489,15 +490,15 @@ while True:
                 {
                     "uri": file_uri(project_root / "README.md"),
                     "range": {
-                        "start": {"line": 0, "character": 0},
-                        "end": {"line": 0, "character": 5},
+                        "start": {"line": 1, "character": 0},
+                        "end": {"line": 1, "character": 5},
                     },
                 },
                 {
                     "uri": file_uri(project_root / "refs.md"),
                     "range": {
-                        "start": {"line": 0, "character": 0},
-                        "end": {"line": 0, "character": 10},
+                        "start": {"line": 1, "character": 0},
+                        "end": {"line": 1, "character": 10},
                     },
                 },
             ],
@@ -533,6 +534,7 @@ return ide.plugin({
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "phase5 lsp fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   Expect(
       WaitForLspCondition(shell, [&] {
@@ -589,21 +591,103 @@ return ide.plugin({
       WaitForLspCondition(shell, [&] {
         const auto* channel =
             WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.references");
-        return channel != nullptr && channel->size() == 2;
+        return channel != nullptr && !channel->empty();
       }),
-      "find-references should publish host-owned output lines");
+      "find-references should publish host-owned output lines with local context");
   const auto* references_channel =
       WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.references");
-  Expect(references_channel != nullptr && references_channel->size() == 2 &&
-             references_channel->front() == "README.md:1:1" &&
-             references_channel->back() == "refs.md:1:1",
-         "find-references should publish host-owned output lines");
+  Expect(references_channel != nullptr &&
+             std::find(references_channel->begin(), references_channel->end(), "README.md:2:1") !=
+                 references_channel->end() &&
+             std::find(references_channel->begin(), references_channel->end(), "refs.md:2:1") !=
+                 references_channel->end() &&
+             std::find(references_channel->begin(), references_channel->end(), "") !=
+                 references_channel->end() &&
+             std::find(references_channel->begin(), references_channel->end(),
+                       " > 2 | definition") != references_channel->end() &&
+             std::find(references_channel->begin(), references_channel->end(),
+                       " > 2 | usage") != references_channel->end(),
+         "find-references should publish host-owned output lines with local context");
+  const std::vector<std::string> bottom_panel_tabs =
+      WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
+  Expect(std::find(bottom_panel_tabs.begin(), bottom_panel_tabs.end(), "LSP References") !=
+             bottom_panel_tabs.end(),
+         "find-references should expose references in their own bottom panel tab");
+
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "find-references"),
+         "find-references should keep terminal tabs available");
+  Expect(
+      WaitForLspCondition(shell, [&] {
+        return WorkspaceShellTestAccess::PanelContent(shell) ==
+               WorkspaceShell::PanelContentKind::Output;
+      }),
+      "find-references should route output to the output panel");
+  const SDL_FRect terminal_tab = WorkspaceShellTestAccess::ActiveTerminalTabRect(shell);
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, terminal_tab.x + terminal_tab.w * 0.5f,
+             terminal_tab.y + terminal_tab.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking a terminal tab while output is visible should be handled");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) ==
+             WorkspaceShell::PanelContentKind::Terminal,
+         "clicking a terminal tab while output is visible should switch back to the terminal");
+
+  const auto references_tab = WorkspaceShellTestAccess::BottomPanelTabRectByTitle(
+      shell, "LSP References");
+  Expect(references_tab.has_value() &&
+             WorkspaceShellTestAccess::HandleMouseButtonDown(
+                 shell, references_tab->x + references_tab->w * 0.5f,
+                 references_tab->y + references_tab->h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the references tab should be handled");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) ==
+             WorkspaceShell::PanelContentKind::Output,
+         "clicking the references tab should switch to output content");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "find-references"),
+         "find-references should execute before clicking output references");
+  Expect(
+      WaitForLspCondition(shell, [&] {
+        return WorkspaceShellTestAccess::PanelContent(shell) ==
+               WorkspaceShell::PanelContentKind::Output;
+      }),
+      "find-references should show output for link navigation");
+  const auto* clickable_references_channel =
+      WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.references");
+  Expect(clickable_references_channel != nullptr,
+         "find-references should keep output channel entries for click navigation");
+  const auto refs_anchor = clickable_references_channel != nullptr
+                               ? std::find(clickable_references_channel->begin(),
+                                           clickable_references_channel->end(),
+                                           "refs.md:2:1")
+                               : std::vector<std::string>::const_iterator{};
+  Expect(clickable_references_channel != nullptr &&
+             refs_anchor != clickable_references_channel->end(),
+         "find-references should include a clickable refs anchor");
+  const SDL_FPoint output_origin = WorkspaceShellTestAccess::BottomPanelTextOrigin(shell);
+  const float line_height = WorkspaceShellTestAccess::TextLineHeight(shell);
+  const std::size_t refs_anchor_row =
+      clickable_references_channel != nullptr && refs_anchor != clickable_references_channel->end()
+          ? static_cast<std::size_t>(
+                std::distance(clickable_references_channel->begin(), refs_anchor))
+          : 0;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, output_origin.x + 8.0f,
+             output_origin.y + line_height * (static_cast<float>(refs_anchor_row) + 0.5f),
+             SDL_BUTTON_LEFT),
+         "clicking a reference line in the output panel should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() == refs &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
+         "clicking a reference line in the output panel should open the referenced location");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto-definition"),
          "goto-definition should execute");
   Expect(
       WaitForLspCondition(shell, [&] {
-        return WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() == refs;
+        return WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() == refs &&
+               WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
+               WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0;
       }),
       "goto-definition should open the returned location and move the caret");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() == refs &&

@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "editor/DecoratedTextGridRenderer.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -28,6 +32,63 @@ std::string_view MessageRoleLabel(MessageRole role) {
   }
 }
 
+bool ParseUnsignedStrict(std::string_view text, std::size_t* value) {
+  if (value == nullptr || text.empty()) {
+    return false;
+  }
+  try {
+    std::size_t parsed_length = 0;
+    const unsigned long long parsed = std::stoull(std::string(text), &parsed_length);
+    if (parsed_length != text.size()) {
+      return false;
+    }
+    *value = static_cast<std::size_t>(parsed);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+std::optional<std::filesystem::path> ParseOutputReferencePath(std::string_view text) {
+  const std::size_t column_delimiter = text.rfind(':');
+  if (column_delimiter == std::string_view::npos || column_delimiter == 0) {
+    return std::nullopt;
+  }
+  const std::size_t line_delimiter = text.rfind(':', column_delimiter - 1);
+  if (line_delimiter == std::string_view::npos || line_delimiter == 0) {
+    return std::nullopt;
+  }
+
+  std::size_t line = 0;
+  std::size_t column = 0;
+  const std::string_view line_text =
+      text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
+  const std::string_view column_text = text.substr(column_delimiter + 1);
+  if (!ParseUnsignedStrict(line_text, &line) || !ParseUnsignedStrict(column_text, &column) ||
+      line == 0) {
+    return std::nullopt;
+  }
+  return std::filesystem::path(std::string(text.substr(0, line_delimiter)));
+}
+
+bool ParseOutputContextSnippet(std::string_view text,
+                               std::string_view* prefix,
+                               std::string_view* code) {
+  if (prefix == nullptr || code == nullptr || text.size() < 6) {
+    return false;
+  }
+  if (!(text.starts_with(" > ") || text.starts_with("   "))) {
+    return false;
+  }
+  const std::size_t divider = text.find("| ");
+  if (divider == std::string_view::npos) {
+    return false;
+  }
+  *prefix = text.substr(0, divider + 2);
+  *code = divider + 2 < text.size() ? text.substr(divider + 2) : std::string_view{};
+  return true;
+}
+
 }  // namespace
 
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
@@ -44,6 +105,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool terminal_panel = BottomPanelShowsTerminal();
   const bool output_panel = BottomPanelShowsOutput();
   const bool chat_panel = BottomPanelShowsChat();
+  const std::vector<VisibleStripTab> visible_panel_tabs =
+      ComputeVisibleBottomPanelTabs(panel_header);
 
   const auto draw_tab_close_button = [&](const SDL_FRect& rect,
                                          SDL_Color color,
@@ -123,16 +186,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   };
 
-  if (terminal_panel) {
-    for (const VisibleStripTab& tab : ComputeVisibleTerminalTabs(panel_header)) {
-      const auto* terminal_tab =
-          tab.index < context_.current_project_state.terminal_tabs.size()
-              ? context_.current_project_state.terminal_tabs[tab.index].get()
-              : nullptr;
-      if (terminal_tab == nullptr) {
-        continue;
-      }
-
+  if (!visible_panel_tabs.empty()) {
+    for (const VisibleStripTab& tab : visible_panel_tabs) {
       const SDL_Color background = tab.active ? theme_.chrome_active : theme_.surface_raised;
       const SDL_Color foreground =
           tab.active ? theme_.chrome_active_text : theme_.surface_text;
@@ -175,6 +230,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const std::vector<std::string>* output_entries =
       output_panel ? OutputChannelEntries(context_.current_project_state.panel.output.channel_id)
                    : nullptr;
+  std::optional<std::filesystem::path> current_reference_path;
   const Conversation* conversation =
       chat_panel
           ? conversation_registry_.GetConversation(
@@ -215,10 +271,61 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       continue;
     }
     if (output_panel && output_entries != nullptr) {
+      const std::string& output_line = (*output_entries)[static_cast<std::size_t>(index)];
+      if (output_line.empty()) {
+        current_reference_path.reset();
+      } else if (const auto parsed_path = ParseOutputReferencePath(output_line); parsed_path.has_value()) {
+        std::filesystem::path resolved_path = *parsed_path;
+        if (resolved_path.is_relative() && !context_.current_project_state.root.empty()) {
+          resolved_path = context_.current_project_state.root / resolved_path;
+        }
+        current_reference_path = resolved_path.lexically_normal();
+      } else {
+        std::string_view prefix;
+        std::string_view code;
+        if (ParseOutputContextSnippet(output_line, &prefix, &code) && current_reference_path.has_value()) {
+          const std::string prefix_text(prefix);
+          const std::string visible_prefix =
+              text_renderer_.TruncateToWidth(prefix_text, panel_layout.text_width);
+          DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
+                     theme_.surface_background, visible_prefix);
+
+          if (visible_prefix.size() == prefix_text.size()) {
+            const float prefix_width = text_renderer_.MeasureWidth(prefix_text);
+            const float remaining_width = panel_layout.text_width - prefix_width;
+            if (remaining_width > 0.0f && !code.empty()) {
+              const std::string visible_code =
+                  text_renderer_.TruncateToWidth(std::string(code), remaining_width);
+              const auto highlighted = editor::runtime_syntax::HighlightLine(
+                  visible_code, *current_reference_path, {},
+                  visible_code);
+              if (highlighted.tokens.size() == visible_code.size()) {
+                float run_x = panel_layout.text_x + prefix_width;
+                for (std::size_t start = 0; start < visible_code.size();) {
+                  const editor::SyntaxTokenKind kind = highlighted.tokens[start];
+                  std::size_t end = start + 1;
+                  while (end < visible_code.size() && highlighted.tokens[end] == kind) {
+                    ++end;
+                  }
+                  const std::string_view segment(visible_code.data() + start, end - start);
+                  const SDL_Color color =
+                      editor::SyntaxTokenColor(theme_, kind, theme_.text_secondary);
+                  text_renderer_.DrawString(renderer, run_x, line_y, color, segment);
+                  run_x += text_renderer_.MeasureWidth(segment);
+                  start = end;
+                }
+              } else {
+                DrawTextOn(text_renderer_, renderer, panel_layout.text_x + prefix_width, line_y,
+                           theme_.text_secondary, theme_.surface_background, visible_code);
+              }
+            }
+          }
+          continue;
+        }
+      }
       DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
                  theme_.surface_background,
-                 text_renderer_.TruncateToWidth((*output_entries)[static_cast<std::size_t>(index)],
-                                                panel_layout.text_width));
+                 text_renderer_.TruncateToWidth(output_line, panel_layout.text_width));
       continue;
     }
     if (chat_panel && conversation != nullptr) {
