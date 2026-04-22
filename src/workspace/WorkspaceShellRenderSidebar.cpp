@@ -114,34 +114,39 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
   const SidebarMode sidebar_mode = ActiveSidebarMode();
   if (sidebar_mode == SidebarMode::Search) {
-    const std::string active_query =
-        context_.current_project_state.overlay.workflow.project_search.editing &&
-                context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
-            ? context_.current_project_state.overlay.workflow.project_search.edit_buffer
-            : context_.current_project_state.overlay.workflow.project_search.query;
-    const std::string active_replace =
-        context_.current_project_state.overlay.workflow.project_search.editing &&
-                context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Replace
-            ? context_.current_project_state.overlay.workflow.project_search.edit_buffer
-            : context_.current_project_state.overlay.workflow.project_search.replace_text;
+    const auto& ps = context_.current_project_state.overlay.workflow.project_search;
+    const bool editing_query =
+        ps.editing && ps.edit_field == ProjectSearchEditField::Query;
+    const bool editing_replace =
+        ps.editing && ps.edit_field == ProjectSearchEditField::Replace;
+
+    const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
+    const auto sidebar_display_text = [&](TextInputSurface surface,
+                                          std::string_view prefix,
+                                          std::string_view fallback_text) -> std::string {
+      if (visual.has_value() && visual->surface == surface && !visual->displayed_text.empty()) {
+        return visual->displayed_text;
+      }
+      return std::string(prefix) + std::string(fallback_text);
+    };
+
+    const std::string_view query_text =
+        editing_query ? ps.edit_buffer.text : ps.query.text;
+    const std::string_view replace_text =
+        editing_replace ? ps.edit_buffer.text : ps.replace_text.text;
+
     DrawSingleLineTextTail(
         renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 38.0f,
         std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
-        context_.current_project_state.overlay.workflow.project_search.editing &&
-                context_.current_project_state.overlay.workflow.project_search.edit_field ==
-                    ProjectSearchEditField::Query
-            ? theme_.text_primary
-            : theme_.text_secondary,
-        theme_.surface_background, "search> " + active_query);
+        editing_query ? theme_.text_primary : theme_.text_secondary,
+        theme_.surface_background,
+        sidebar_display_text(TextInputSurface::SidebarSearchQuery, "search> ", query_text));
     DrawSingleLineTextTail(
         renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 54.0f,
         std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
-        context_.current_project_state.overlay.workflow.project_search.editing &&
-                context_.current_project_state.overlay.workflow.project_search.edit_field ==
-                    ProjectSearchEditField::Replace
-            ? theme_.text_primary
-            : theme_.text_secondary,
-        theme_.surface_background, "replace> " + active_replace);
+        editing_replace ? theme_.text_primary : theme_.text_secondary,
+        theme_.surface_background,
+        sidebar_display_text(TextInputSurface::SidebarSearchReplace, "replace> ", replace_text));
     const auto draw_search_button = [&](const SDL_FRect& rect,
                                         std::string_view label,
                                         bool active) {
@@ -184,7 +189,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                       context_.current_project_state.overlay.workflow.project_search.results.size(),
                       " matches")
             : context_.current_project_state.overlay.workflow.project_search.results.empty()
-                ? (context_.current_project_state.overlay.workflow.project_search.query.empty()
+                ? (context_.current_project_state.overlay.workflow.project_search.query.text.empty()
                        ? "/ query  = replace  |  buttons change mode, case, hidden"
                        : "No matches  |  " + match_actions)
             : context_.current_project_state.overlay.workflow.project_search.truncated
@@ -255,7 +260,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               ? "Error: " + context_.current_project_state.overlay.workflow.project_search.error
           : context_.current_project_state.overlay.workflow.project_search.running
               ? "Searching..."
-          : context_.current_project_state.overlay.workflow.project_search.query.empty() ? "Project search is idle"
+          : context_.current_project_state.overlay.workflow.project_search.query.text.empty() ? "Project search is idle"
                                                            : "No matches";
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,

@@ -294,7 +294,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    pane.active &&
                                            (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
                                             context_.current_project_state.overlay.mode == OverlayMode::BufferReplace)
-                                       ? context_.current_project_state.overlay.workflow.buffer_search.query
+                                       ? context_.current_project_state.overlay.workflow.buffer_search.query.text
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport));

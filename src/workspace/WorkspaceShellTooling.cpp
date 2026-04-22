@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/SingleLineText.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/WorkspaceCommandParsing.h"
@@ -1146,7 +1147,7 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
     error_message->clear();
   }
   if (message.empty()) {
-    message = context_.current_project_state.panel.chat.composer;
+    message = context_.current_project_state.panel.chat.composer.text;
   }
   if (message.empty()) {
     if (error_message != nullptr) {
@@ -1205,7 +1206,7 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
   context_.current_project_state.panel.chat.pending_assistant_message_id = assistant_id;
   context_.current_project_state.panel.chat.request_in_flight = true;
   context_.current_project_state.panel.chat.status_text = "Waiting for " + agent->label;
-  context_.current_project_state.panel.chat.composer.clear();
+  util::SetSingleLineText(&context_.current_project_state.panel.chat.composer, "");
 
   std::string prompt = message;
   if (const std::optional<std::string> selection = SelectionTextWithContext();

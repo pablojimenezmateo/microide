@@ -39,6 +39,15 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     return;
   }
 
+  const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
+  const auto overlay_display_text = [&](TextInputSurface surface,
+                                        std::string fallback) -> std::string {
+    if (visual.has_value() && visual->surface == surface && !visual->displayed_text.empty()) {
+      return visual->displayed_text;
+    }
+    return fallback;
+  };
+
   const auto draw_vertical_scrollbar = [&](const SDL_FRect& area,
                                            float total_units,
                                            float visible_units,
@@ -85,7 +94,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.overlay_background,
-        "> " + context_.current_project_state.overlay.workflow.buffer_search.query);
+        overlay_display_text(TextInputSurface::BufferSearch,
+                             "> " + context_.current_project_state.overlay.workflow.buffer_search.query.text));
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
@@ -128,7 +138,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
             ? theme_.text_primary
             : theme_.text_secondary,
         theme_.overlay_background,
-        "find: " + context_.current_project_state.overlay.workflow.buffer_search.query);
+        overlay_display_text(TextInputSurface::BufferReplaceSearch,
+                             "find: " + context_.current_project_state.overlay.workflow.buffer_search.query.text));
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
@@ -136,7 +147,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
             ? theme_.text_primary
             : theme_.text_secondary,
         theme_.overlay_background,
-        "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text);
+        overlay_display_text(TextInputSurface::BufferReplaceReplace,
+                             "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text.text));
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
             ? "No matches"
@@ -177,7 +189,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.overlay_background,
-        "> " + context_.current_project_state.overlay.workflow.project_search.query);
+        overlay_display_text(TextInputSurface::ProjectSearchOverlay,
+                             "> " + context_.current_project_state.overlay.workflow.project_search.query.text));
     const std::string summary =
         context_.current_project_state.overlay.workflow.project_search.results.empty()
             ? "No results"
@@ -224,7 +237,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.overlay_background,
-        "> " + context_.current_project_state.overlay.workflow.compare_picker.query);
+        overlay_display_text(TextInputSurface::CommitPicker,
+                             "> " + context_.current_project_state.overlay.workflow.compare_picker.query.text));
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = context_.current_project_state.overlay.scroll_row + row;
       if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.compare_picker.matches.size())) {

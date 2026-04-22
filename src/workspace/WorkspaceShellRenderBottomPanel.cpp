@@ -407,14 +407,20 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
     DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
-    DrawSingleLineTextTail(
-        renderer, prompt_rect.x + 6.0f, prompt_rect.y + 4.0f,
-        std::max(1.0f, prompt_rect.w - 12.0f), theme_.chrome_active_text,
-        theme_.chrome_active,
-        "> " +
-            (context_.current_project_state.panel.command_mode
-                 ? context_.current_project_state.panel.command.input
-                 : context_.current_project_state.panel.chat.composer));
+    const bool command_mode = context_.current_project_state.panel.command_mode;
+    const TextInputSurface panel_surface =
+        command_mode ? TextInputSurface::Command : TextInputSurface::ChatComposer;
+    const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
+    const std::string panel_display_text =
+        (visual.has_value() && visual->surface == panel_surface &&
+         !visual->displayed_text.empty())
+            ? visual->displayed_text
+            : "> " + (command_mode
+                          ? context_.current_project_state.panel.command.input.text
+                          : context_.current_project_state.panel.chat.composer.text);
+    DrawSingleLineTextTail(renderer, prompt_rect.x + 6.0f, prompt_rect.y + 4.0f,
+                           std::max(1.0f, prompt_rect.w - 12.0f), theme_.chrome_active_text,
+                           theme_.chrome_active, panel_display_text);
   }
 
   if (panel_layout.scroll.vertical_scrollbar.has_value()) {
