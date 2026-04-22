@@ -857,7 +857,7 @@ void TestPluginHostCancelsAsyncCallbacksOnReload() {
 return ide.plugin({
   id = "async.reload",
   on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "sleep 0.1; printf done"}, nil, function(result)
+    ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
     end)
   end
@@ -873,9 +873,15 @@ return ide.plugin({
   host.OnBufferOpen(source);
   Expect(host.PendingAsyncProcessCount() > 0,
          "buffer open should leave an async process in flight before reload");
+  const auto reload_start = std::chrono::steady_clock::now();
   Expect(host.Reload(project_root), "reloading while an async callback is pending should succeed");
+  const auto reload_elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                            reload_start);
+  Expect(reload_elapsed < std::chrono::milliseconds(200),
+         "reloading while an async callback is pending should not wait for the subprocess");
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::this_thread::sleep_for(std::chrono::milliseconds(700));
   host.ConsumeAsyncProcessCallbacks();
   Expect(host.PendingAsyncProcessCount() == 0,
          "reload should drain or discard async callbacks from the previous plugin state");
@@ -905,7 +911,7 @@ void TestPluginHostCancelsAsyncCallbacksOnShutdown() {
 return ide.plugin({
   id = "async.shutdown",
   on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "sleep 0.1; printf done"}, nil, function(result)
+    ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
     end)
   end
@@ -921,9 +927,15 @@ return ide.plugin({
   host.OnBufferOpen(source);
   Expect(host.PendingAsyncProcessCount() > 0,
          "buffer open should leave an async process in flight before shutdown");
+  const auto shutdown_start = std::chrono::steady_clock::now();
   host.Shutdown();
+  const auto shutdown_elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                            shutdown_start);
+  Expect(shutdown_elapsed < std::chrono::milliseconds(200),
+         "shutting down with a pending async callback should not wait for the subprocess");
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  std::this_thread::sleep_for(std::chrono::milliseconds(700));
   host.ConsumeAsyncProcessCallbacks();
   Expect(host.PendingAsyncProcessCount() == 0,
          "shutdown should drain or discard pending async callbacks");

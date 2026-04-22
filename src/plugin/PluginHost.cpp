@@ -3645,13 +3645,6 @@ struct PluginHost::Impl {
   }
 #endif
 
-  void WaitForAsyncProcesses(std::chrono::milliseconds timeout) const {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (async_process_state->in_flight.load(std::memory_order_acquire) > 0 &&
-           std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-  }
 };
 
 PluginHost::PluginHost() : impl_(std::make_unique<Impl>()) {}
@@ -3692,7 +3685,6 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
   const std::filesystem::path next_project_root =
       project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
   impl_->CancelAsyncProcessCallbacks();
-  impl_->WaitForAsyncProcesses(std::chrono::seconds(2));
   impl_->TearDownPlugins();
   impl_->current_project_root = next_project_root;
 
@@ -3730,7 +3722,6 @@ void PluginHost::Shutdown() {
 
 #if MICROIDE_HAS_LUA_PLUGINS
   impl_->CancelAsyncProcessCallbacks();
-  impl_->WaitForAsyncProcesses(std::chrono::seconds(2));
   impl_->TearDownPlugins();
 #endif
   impl_->current_project_root.clear();
