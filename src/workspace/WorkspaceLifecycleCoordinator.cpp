@@ -66,8 +66,9 @@ void LifecycleCoordinator::Shutdown() {
   operations_.shutdown_project_search_runtime();
   operations_.shutdown_task_runtime();
   operations_.shutdown_ai_runtime();
-  operations_.clear_terminal_tabs();
-  operations_.destroy_cursors();
+  // Terminal session teardown and cursor cleanup are intentionally skipped here:
+  // the process exits via quick_exit() immediately after, so the OS reclaims
+  // all child processes and resources without per-terminal blocking waits.
 }
 
 void LifecycleCoordinator::RequestQuit() {

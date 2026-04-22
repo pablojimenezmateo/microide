@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -208,6 +209,13 @@ bool Application::Initialize() {
 
   SDL_SetRenderVSync(renderer_, 1);
 
+  // Present a blank frame before the (potentially slow) workspace initialization
+  // so the compositor gets a committed frame immediately. This satisfies the
+  // desktop startup-notification protocol (xdg-activation / _NET_STARTUP_INFO)
+  // and dismisses the launcher busy indicator without waiting for the full init.
+  SDL_RenderClear(renderer_);
+  SDL_RenderPresent(renderer_);
+
   {
     util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
     if (!workspace_shell_.Initialize(std::filesystem::current_path())) {
@@ -252,26 +260,29 @@ void Application::Shutdown() {
   }
 
   workspace_shell_.SetDialogWindow(nullptr);
-  workspace_shell_.Shutdown();
 
+  // Destroy the window and renderer immediately so the app disappears from the
+  // screen before any blocking workspace shutdown work (persisting state, waiting
+  // for terminal processes to exit, etc.).
   if (window_ != nullptr) {
     SDL_StopTextInput(window_);
   }
-
+  DestroySceneTexture();
   if (renderer_ != nullptr) {
-    DestroySceneTexture();
     SDL_DestroyRenderer(renderer_);
     renderer_ = nullptr;
   }
-
   if (window_ != nullptr) {
     SDL_DestroyWindow(window_);
     window_ = nullptr;
   }
 
-  SDL_Quit();
-  LogRenderStatsIfNeeded(true);
-  initialized_ = false;
+  workspace_shell_.Shutdown();
+
+  // All user state has been saved. Exit immediately rather than waiting for
+  // destructor chains (terminal sessions, background thread joins, etc.).
+  // The OS reclaims all child processes and resources.
+  std::quick_exit(0);
 }
 
 workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event& event) {
