@@ -1,167 +1,341 @@
 local ide = require("microide")
 
--- Dummy commands used by the "demo" provider (safe default, no API key required).
-local DEMO_CHAT_COMMAND = "sh -lc \"printf 'LLM example reply'\""
-local DEMO_INLINE_COMMAND = "sh -lc \"printf 'llm_inline_suggestion'\""
+-- Auth helper embedded in endpoint scripts.
+-- All string literals use double quotes; single quotes must not appear here
+-- because the endpoint string is wrapped in single quotes by the shell.
+local AUTH_HELPER = [=[
+import json,os,time,base64,urllib.request,urllib.parse,datetime
+_AF=os.path.expanduser("~/.codex/auth.json")
+_CID="app_EMoamEEZ73f0CkXaXp7hrann"
+_TU="https://auth.openai.com/oauth/token"
+def _exp(t):
+    try:
+        p=t.split(".")[1];p+=("="*(-len(p)%4))
+        return json.loads(base64.urlsafe_b64decode(p)).get("exp",0)
+    except:
+        return 0
+def _refresh(auth,toks,rt):
+    body=urllib.parse.urlencode({"grant_type":"refresh_token","client_id":_CID,"refresh_token":rt}).encode()
+    req=urllib.request.Request(_TU,body,{"content-type":"application/x-www-form-urlencoded"})
+    resp=json.loads(urllib.request.urlopen(req,timeout=10).read())
+    toks["access_token"]=resp["access_token"]
+    if "refresh_token" in resp:toks["refresh_token"]=resp["refresh_token"]
+    auth["tokens"]=toks
+    auth["last_refresh"]=datetime.datetime.utcnow().isoformat()+"Z"
+    with open(_AF,"w") as f:json.dump(auth,f,indent=2)
+    return resp["access_token"]
+def get_token():
+    env=os.environ.get("OPENAI_API_KEY","")
+    if not os.path.exists(_AF):
+        if env:return env
+        raise SystemExit("Not authenticated. Run llm-login.")
+    with open(_AF) as f:auth=json.load(f)
+    toks=auth.get("tokens",{})
+    at=toks.get("access_token","");rt=toks.get("refresh_token","")
+    if not at:
+        if env:return env
+        raise SystemExit("No token. Run llm-login.")
+    if _exp(at)>time.time()+60:return at
+    if rt:
+        try:return _refresh(auth,toks,rt)
+        except:pass
+    return at
+]=]
 
--- Python one-liners for real API calls.
--- Use single-quotes in the shell endpoint so Python double-quote strings pass through.
--- No single quotes appear inside the Python code.
+-- Chat endpoint: stdin → one user turn → stdout. Must be single-quote-free.
+local CHAT_SCRIPT_TMPL = AUTH_HELPER .. [=[
+import sys
+try:
+    p=sys.stdin.read();t=get_token()
+    body=json.dumps({"model":"MODELID","max_tokens":4096,"messages":[{"role":"user","content":p}]}).encode()
+    req=urllib.request.Request("https://api.openai.com/v1/chat/completions",body,{"Authorization":"Bearer "+t,"content-type":"application/json"})
+    print(json.loads(urllib.request.urlopen(req,timeout=60).read())["choices"][0]["message"]["content"],end="")
+except SystemExit as e:
+    print(str(e),file=sys.stderr);sys.exit(1)
+except Exception as e:
+    print("API error: "+str(e),file=sys.stderr);sys.exit(1)
+]=]
 
-local CLAUDE_CHAT_SCRIPT = [=[import sys,json,urllib.request,os; p=sys.stdin.read(); b=json.dumps({"model":"MODELNAME","max_tokens":4096,"messages":[{"role":"user","content":p}]}).encode(); req=urllib.request.Request("https://api.anthropic.com/v1/messages",b,{"x-api-key":os.environ.get("ANTHROPIC_API_KEY",""),"anthropic-version":"2023-06-01","content-type":"application/json"}); r=urllib.request.urlopen(req); print(json.loads(r.read())["content"][0]["text"],end="")]=]
+-- Inline endpoint: same structure, code-completion system prompt. Must be single-quote-free.
+local INLINE_SCRIPT_TMPL = AUTH_HELPER .. [=[
+import sys
+try:
+    p=sys.stdin.read();t=get_token()
+    body=json.dumps({"model":"MODELID","max_tokens":512,"messages":[{"role":"system","content":"Complete the code. Output only the completion text, no explanation, no markdown fences."},{"role":"user","content":p}]}).encode()
+    req=urllib.request.Request("https://api.openai.com/v1/chat/completions",body,{"Authorization":"Bearer "+t,"content-type":"application/json"})
+    print(json.loads(urllib.request.urlopen(req,timeout=30).read())["choices"][0]["message"]["content"],end="")
+except SystemExit as e:
+    print(str(e),file=sys.stderr);sys.exit(1)
+except Exception as e:
+    print("API error: "+str(e),file=sys.stderr);sys.exit(1)
+]=]
 
-local CLAUDE_INLINE_SCRIPT = [=[import sys,json,urllib.request,os; p=sys.stdin.read(); b=json.dumps({"model":"MODELNAME","max_tokens":512,"system":"Complete the code. Output only the completion text, no explanation, no markdown fences.","messages":[{"role":"user","content":p}]}).encode(); req=urllib.request.Request("https://api.anthropic.com/v1/messages",b,{"x-api-key":os.environ.get("ANTHROPIC_API_KEY",""),"anthropic-version":"2023-06-01","content-type":"application/json"}); r=urllib.request.urlopen(req); print(json.loads(r.read())["content"][0]["text"],end="")]=]
+-- Scripts below run via ctx.process.run_async argv arrays, so any characters are allowed.
 
-local OPENAI_CHAT_SCRIPT = [=[import sys,json,urllib.request,os; p=sys.stdin.read(); b=json.dumps({"model":"MODELNAME","max_tokens":4096,"messages":[{"role":"user","content":p}]}).encode(); req=urllib.request.Request("https://api.openai.com/v1/chat/completions",b,{"Authorization":"Bearer "+os.environ.get("OPENAI_API_KEY",""),"content-type":"application/json"}); r=urllib.request.urlopen(req); print(json.loads(r.read())["choices"][0]["message"]["content"],end="")]=]
+local DEVICE_CODE_SCRIPT = [=[
+import json,urllib.request,urllib.parse,sys
+CLIENT_ID="app_EMoamEEZ73f0CkXaXp7hrann"
+DEVICE_URL="https://auth.openai.com/oauth/device/code"
+SCOPE="openid profile email offline_access"
+body=urllib.parse.urlencode({"client_id":CLIENT_ID,"scope":SCOPE}).encode()
+req=urllib.request.Request(DEVICE_URL,body,{"content-type":"application/x-www-form-urlencoded"})
+try:
+    resp=json.loads(urllib.request.urlopen(req,timeout=10).read())
+    print("device_code="+resp["device_code"])
+    print("user_code="+resp.get("user_code",""))
+    print("verification_uri="+resp.get("verification_uri",resp.get("verification_url","")))
+    print("expires_in="+str(resp.get("expires_in",300)))
+    print("interval="+str(resp.get("interval",5)))
+except Exception as e:
+    print("error="+str(e),file=sys.stderr)
+    sys.exit(1)
+]=]
 
-local OPENAI_INLINE_SCRIPT = [=[import sys,json,urllib.request,os; p=sys.stdin.read(); b=json.dumps({"model":"MODELNAME","max_tokens":512,"messages":[{"role":"system","content":"Complete the code. Output only the completion text, no explanation, no markdown fences."},{"role":"user","content":p}]}).encode(); req=urllib.request.Request("https://api.openai.com/v1/chat/completions",b,{"Authorization":"Bearer "+os.environ.get("OPENAI_API_KEY",""),"content-type":"application/json"}); r=urllib.request.urlopen(req); print(json.loads(r.read())["choices"][0]["message"]["content"],end="")]=]
+-- Polls for token completion. device_code is passed as sys.argv[1].
+local POLL_SCRIPT = [=[
+import json,urllib.request,urllib.parse,os,datetime,sys,base64
+CLIENT_ID="app_EMoamEEZ73f0CkXaXp7hrann"
+TOKEN_URL="https://auth.openai.com/oauth/token"
+AUTH_FILE=os.path.expanduser("~/.codex/auth.json")
+device_code=sys.argv[1]
+body=urllib.parse.urlencode({"grant_type":"urn:ietf:params:oauth:grant-type:device_code","device_code":device_code,"client_id":CLIENT_ID}).encode()
+req=urllib.request.Request(TOKEN_URL,body,{"content-type":"application/x-www-form-urlencoded"})
+try:
+    resp=json.loads(urllib.request.urlopen(req,timeout=10).read())
+    if "access_token" in resp:
+        account=""
+        if "id_token" in resp:
+            try:
+                p=resp["id_token"].split(".")[1];p+="="*(-len(p)%4)
+                claims=json.loads(base64.urlsafe_b64decode(p))
+                account=claims.get("email",claims.get("sub",""))
+            except:pass
+        auth={"auth_mode":"chatgpt","tokens":{"access_token":resp["access_token"],"refresh_token":resp.get("refresh_token",""),"id_token":resp.get("id_token","")},"last_refresh":datetime.datetime.utcnow().isoformat()+"Z"}
+        os.makedirs(os.path.dirname(AUTH_FILE),exist_ok=True)
+        with open(AUTH_FILE,"w") as f:json.dump(auth,f,indent=2)
+        print("status=authorized")
+        if account:print("account="+account)
+    else:
+        err=resp.get("error","")
+        if err in ("authorization_pending","slow_down"):print("status=pending")
+        else:print("status=error\nerror="+resp.get("error_description",err))
+except Exception as e:
+    print("status=error\nerror="+str(e))
+]=]
 
-local function make_endpoint(script, model)
-  return "python3 -c '" .. script:gsub("MODELNAME", model) .. "'"
-end
+local STATUS_SCRIPT = [=[
+import json,os,time,base64
+AUTH_FILE=os.path.expanduser("~/.codex/auth.json")
+def _exp(t):
+    try:
+        p=t.split(".")[1];p+="="*(-len(p)%4)
+        return json.loads(base64.urlsafe_b64decode(p)).get("exp",0)
+    except:return 0
+env=os.environ.get("OPENAI_API_KEY","")
+if os.path.exists(AUTH_FILE):
+    with open(AUTH_FILE) as f:auth=json.load(f)
+    toks=auth.get("tokens",{})
+    at=toks.get("access_token","")
+    if at:
+        exp=_exp(at);now=time.time()
+        if exp>now:
+            print("status=authenticated")
+            print("expires_in="+str(int(exp-now)))
+            try:
+                p=at.split(".")[1];p+="="*(-len(p)%4)
+                claims=json.loads(base64.urlsafe_b64decode(p))
+                sub=claims.get("email",claims.get("sub",""))
+                if sub:print("account="+sub)
+            except:pass
+        else:
+            rt=toks.get("refresh_token","")
+            print("status=expired_refreshable" if rt else "status=expired")
+    elif env:print("status=api_key")
+    else:print("status=unauthenticated")
+elif env:print("status=api_key")
+else:print("status=unauthenticated")
+]=]
+
+local LOGOUT_SCRIPT = [=[
+import json,os
+AUTH_FILE=os.path.expanduser("~/.codex/auth.json")
+if os.path.exists(AUTH_FILE):
+    with open(AUTH_FILE) as f:auth=json.load(f)
+    auth["tokens"]={}
+    with open(AUTH_FILE,"w") as f:json.dump(auth,f,indent=2)
+    print("ok")
+else:
+    print("not_found")
+]=]
 
 local function trim(text)
   if type(text) ~= "string" then return "" end
   return (text:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
-local function read_string(ctx, suffix, fallback)
-  local v = trim(ctx.settings.get("llm." .. suffix))
+local function parse_kv(text)
+  local t = {}
+  for line in ((text or "") .. "\n"):gmatch("([^\n]+)\n") do
+    local k, v = line:match("^([^=]+)=(.*)$")
+    if k then t[trim(k)] = trim(v) end
+  end
+  return t
+end
+
+local function read_string(ctx, key, fallback)
+  local v = trim(ctx.settings.get("llm." .. key))
   return v ~= "" and v or fallback
 end
 
-local function read_bool(ctx, suffix, fallback)
-  local v = trim(ctx.settings.get("llm." .. suffix))
+local function read_bool(ctx, key, fallback)
+  local v = trim(ctx.settings.get("llm." .. key))
   if v == "" then return fallback end
   v = string.lower(v)
   return v == "1" or v == "true" or v == "yes" or v == "on"
 end
 
-local function declare_settings(ctx)
-  ctx.settings.declare({
-    id = "provider",
-    type = "enum",
-    default = "demo",
-    scope = "user",
-    label = "LLM Provider",
-    description = "AI provider: demo (no API key needed), claude (Anthropic), or openai.",
-    enum_values = { "demo", "claude", "openai" },
-  })
-  ctx.settings.declare({
-    id = "claude.model",
-    type = "string",
-    default = "claude-sonnet-4-6",
-    scope = "user",
-    label = "Claude Model",
-    description = "Anthropic model ID (e.g. claude-sonnet-4-6, claude-opus-4-7).",
-  })
-  ctx.settings.declare({
-    id = "openai.model",
-    type = "string",
-    default = "gpt-4o",
-    scope = "user",
-    label = "OpenAI Model",
-    description = "OpenAI model ID (e.g. gpt-4o, gpt-4o-mini, o1).",
-  })
-  ctx.settings.declare({
-    id = "chat_enabled",
-    type = "bool",
-    default = "true",
-    scope = "user",
-    label = "Enable Chat Agent",
-    description = "Register the LLM chat agent for the host chat command.",
-  })
-  ctx.settings.declare({
-    id = "inline_enabled",
-    type = "bool",
-    default = "true",
-    scope = "user",
-    label = "Enable Inline Completion",
-    description = "Register the LLM inline completion agent.",
-  })
-  ctx.settings.declare({
-    id = "chat_command",
-    type = "string",
-    default = "",
-    scope = "user",
-    label = "Chat Command Override",
-    description = "Custom stdio endpoint for chat. Overrides the provider when non-empty.",
-  })
-  ctx.settings.declare({
-    id = "inline_command",
-    type = "string",
-    default = "",
-    scope = "user",
-    label = "Inline Command Override",
-    description = "Custom stdio endpoint for inline completion. Overrides the provider when non-empty.",
-  })
+local function make_endpoint(script, model)
+  return "python3 -c '" .. script:gsub("MODELID", model) .. "'"
 end
 
 return ide.plugin({
   id = "llm",
 
   setup = function(ctx)
-    declare_settings(ctx)
+    ctx.settings.declare({
+      id = "codex.model",
+      type = "string",
+      default = "gpt-5.4",
+      scope = "user",
+      label = "Codex Model",
+      description = "OpenAI model ID (e.g. gpt-5.4, gpt-4o).",
+    })
+    ctx.settings.declare({
+      id = "chat_enabled",
+      type = "bool",
+      default = "true",
+      scope = "user",
+      label = "Enable Chat Agent",
+      description = "Register the Codex chat agent.",
+    })
+    ctx.settings.declare({
+      id = "inline_enabled",
+      type = "bool",
+      default = "true",
+      scope = "user",
+      label = "Enable Inline Completion",
+      description = "Register the Codex inline completion agent.",
+    })
 
+    -- llm-login: OAuth 2.0 device authorization grant (RFC 8628) against auth.openai.com.
+    -- Reuses ~/.codex/auth.json so credentials are shared with the Codex CLI.
+    ctx.commands.add("llm-login", function(cmd_ctx, args)
+      ctx.process.run_async({"python3", "-c", DEVICE_CODE_SCRIPT}, {}, function(res1)
+        if res1.exit_code ~= 0 then
+          ctx.log("[codex] Login failed: " .. trim(res1.stderr))
+          return
+        end
+        local kv1 = parse_kv(res1.stdout)
+        local device_code = kv1.device_code
+        local uri = kv1.verification_uri
+        local user_code = kv1.user_code
+        local interval = math.max(tonumber(kv1.interval) or 5, 5)
+        local expires_in = tonumber(kv1.expires_in) or 300
+        local max_polls = math.floor(expires_in / interval)
+
+        ctx.log("[codex] Open this URL in your browser to authenticate:")
+        ctx.log("[codex]   " .. (uri ~= "" and uri or "(no URL returned — check output channel)"))
+        if user_code and user_code ~= "" then
+          ctx.log("[codex] Enter code: " .. user_code)
+        end
+        ctx.log("[codex] Waiting for authorization (timeout in " .. expires_in .. "s)...")
+
+        local function poll(attempts)
+          if attempts <= 0 then
+            ctx.log("[codex] Login timed out. Please run llm-login again.")
+            return
+          end
+          ctx.process.run_async({"sleep", tostring(interval)}, {}, function(_)
+            ctx.process.run_async({"python3", "-c", POLL_SCRIPT, device_code}, {}, function(res2)
+              local kv2 = parse_kv(res2.stdout)
+              local status = kv2.status or "error"
+              if status == "authorized" then
+                local msg = "[codex] Authenticated successfully."
+                if kv2.account and kv2.account ~= "" then
+                  msg = "[codex] Authenticated as " .. kv2.account .. "."
+                end
+                ctx.log(msg)
+              elseif status == "pending" then
+                poll(attempts - 1)
+              else
+                ctx.log("[codex] Login error: " .. (kv2.error or "unknown"))
+              end
+            end)
+          end)
+        end
+
+        poll(max_polls)
+      end)
+    end)
+
+    ctx.commands.add("llm-logout", function(cmd_ctx, args)
+      ctx.process.run_async({"python3", "-c", LOGOUT_SCRIPT}, {}, function(res)
+        if trim(res.stdout) == "ok" then
+          ctx.log("[codex] Logged out. Run llm-login to re-authenticate.")
+        else
+          ctx.log("[codex] Not logged in (no auth file found).")
+        end
+      end)
+    end)
+
+    ctx.commands.add("llm-status", function(cmd_ctx, args)
+      ctx.process.run_async({"python3", "-c", STATUS_SCRIPT}, {}, function(res)
+        local kv = parse_kv(res.stdout)
+        local status = kv.status or "unknown"
+        if status == "authenticated" then
+          local msg = "[codex] Authenticated"
+          if kv.account and kv.account ~= "" then
+            msg = msg .. " as " .. kv.account
+          end
+          if kv.expires_in then
+            local mins = math.floor((tonumber(kv.expires_in) or 0) / 60)
+            msg = msg .. " (token valid for ~" .. mins .. "m)"
+          end
+          ctx.log(msg .. ".")
+        elseif status == "expired_refreshable" then
+          ctx.log("[codex] Token expired; will auto-refresh on next API call.")
+        elseif status == "expired" then
+          ctx.log("[codex] Token expired. Run: llm-login")
+        elseif status == "api_key" then
+          ctx.log("[codex] Using OPENAI_API_KEY environment variable.")
+        else
+          ctx.log("[codex] Not authenticated. Run: llm-login")
+        end
+      end)
+    end)
+
+    -- External agents
+    local model = read_string(ctx, "codex.model", "gpt-5.4")
     local chat_enabled = read_bool(ctx, "chat_enabled", true)
     local inline_enabled = read_bool(ctx, "inline_enabled", true)
-    local chat_cmd_override = read_string(ctx, "chat_command", "")
-    local inline_cmd_override = read_string(ctx, "inline_command", "")
 
-    -- Build provider-default commands and register provider metadata.
-    local default_chat_cmd, default_inline_cmd, provider_label
-    local provider = read_string(ctx, "provider", "demo")
-
-    if provider == "openai" then
-      local model = read_string(ctx, "openai.model", "gpt-4o")
-      default_chat_cmd = make_endpoint(OPENAI_CHAT_SCRIPT, model)
-      default_inline_cmd = make_endpoint(OPENAI_INLINE_SCRIPT, model)
-      provider_label = "OpenAI"
-      ctx.ai_providers.add({
-        id = "openai",
-        label = "OpenAI",
-        type = "cloud",
-        models = { model, "gpt-4o", "gpt-4o-mini", "o1", "o3-mini" },
-      })
-    elseif provider == "claude" then
-      local model = read_string(ctx, "claude.model", "claude-sonnet-4-6")
-      default_chat_cmd = make_endpoint(CLAUDE_CHAT_SCRIPT, model)
-      default_inline_cmd = make_endpoint(CLAUDE_INLINE_SCRIPT, model)
-      provider_label = "Anthropic Claude"
-      ctx.ai_providers.add({
-        id = "claude",
-        label = "Anthropic Claude",
-        type = "cloud",
-        models = { model, "claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001" },
-      })
-    else
-      -- "demo" or unrecognised: dummy commands, no API key required.
-      default_chat_cmd = DEMO_CHAT_COMMAND
-      default_inline_cmd = DEMO_INLINE_COMMAND
-      provider_label = "Demo LLM"
-    end
-
-    -- Per-command overrides: non-empty setting wins over provider default.
-    local chat_cmd = chat_cmd_override ~= "" and chat_cmd_override or default_chat_cmd
-    local inline_cmd = inline_cmd_override ~= "" and inline_cmd_override or default_inline_cmd
-
-    if chat_enabled and chat_cmd ~= nil and chat_cmd ~= "" then
+    if chat_enabled then
       ctx.external_agents.add({
-        id = "chat",
-        label = provider_label .. " Chat",
+        id = "codex-chat",
+        label = "Codex Chat",
         protocol = "stdio",
-        endpoint = chat_cmd,
-        capabilities = { "chat" },
+        endpoint = make_endpoint(CHAT_SCRIPT_TMPL, model),
+        capabilities = {"chat"},
       })
     end
 
-    if inline_enabled and inline_cmd ~= nil and inline_cmd ~= "" then
+    if inline_enabled then
       ctx.external_agents.add({
-        id = "inline",
-        label = provider_label .. " Inline",
+        id = "codex-inline",
+        label = "Codex Inline",
         protocol = "stdio",
-        endpoint = inline_cmd,
-        capabilities = { "inline-completion" },
+        endpoint = make_endpoint(INLINE_SCRIPT_TMPL, model),
+        capabilities = {"inline-completion"},
       })
     end
   end,
