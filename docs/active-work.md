@@ -432,7 +432,7 @@ Open work:
     are host-managed
   - `workspace/WorkspaceAiRuntime.*` now owns request IDs, cancellation, background execution,
     and shell wake delivery for external-agent requests
-  - the live shell now supports bottom-panel chat, active conversation tracking, ghost-text inline
+  - the live shell now supports sidebar chat, active conversation tracking, ghost-text inline
     completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
     commands
   - first-pass external-agent execution is wired through stdio subprocesses, and MCP tool

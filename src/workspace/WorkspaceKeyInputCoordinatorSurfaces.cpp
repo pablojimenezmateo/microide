@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace microide::workspace {
 
@@ -345,6 +346,35 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           return true;
         }
         return false;
+    }
+  }
+
+  if (sidebar_mode == SidebarMode::Chat) {
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
+        } else {
+          state_.surface.focus = FocusTarget::Editor;
+        }
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        return operations_.start_chat_request({});
+      case SDLK_PAGEUP:
+        state_.sidebar.scroll_row = std::max(0, state_.sidebar.scroll_row - 8);
+        return true;
+      case SDLK_PAGEDOWN:
+        state_.sidebar.scroll_row += 8;
+        return true;
+      case SDLK_HOME:
+        state_.sidebar.scroll_row = 0;
+        return true;
+      case SDLK_END:
+        state_.sidebar.scroll_row = std::numeric_limits<int>::max();
+        return true;
+      default:
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
   }
 

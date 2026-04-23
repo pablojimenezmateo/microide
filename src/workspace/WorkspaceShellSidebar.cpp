@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <sstream>
 #include <vector>
 
 #include "workspace/WorkspaceGitSidebarPresentation.h"
@@ -15,6 +17,11 @@ namespace {
 constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
+constexpr float kChatSidebarStatusTop = 30.0f;
+constexpr float kChatSidebarTranscriptTop = 48.0f;
+constexpr float kChatSidebarComposerBottomInset = 10.0f;
+constexpr float kChatSidebarComposerHeight = 18.0f;
+constexpr float kChatSidebarComposerGap = 10.0f;
 constexpr float kGitSidebarActionRowTop = 34.0f;
 constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
@@ -29,6 +36,60 @@ SDL_FRect ExpandRect(const SDL_FRect& rect, float padding) {
   }
   return MakeRect(rect.x - padding, rect.y - padding, rect.w + padding * 2.0f,
                   rect.h + padding * 2.0f);
+}
+
+std::vector<std::string> WrapChatSidebarParagraph(const render::TextRenderer& text_renderer,
+                                                  std::string_view text,
+                                                  float max_width) {
+  std::vector<std::string> lines;
+  if (max_width <= 0.0f) {
+    return lines;
+  }
+  std::string trimmed(text);
+  const auto first = trimmed.find_first_not_of(" \t\r");
+  if (first == std::string::npos) {
+    lines.push_back({});
+    return lines;
+  }
+  trimmed.erase(0, first);
+  const auto last = trimmed.find_last_not_of(" \t\r");
+  if (last != std::string::npos) {
+    trimmed.erase(last + 1);
+  }
+  if (trimmed.empty()) {
+    lines.push_back({});
+    return lines;
+  }
+  if (text_renderer.MeasureWidth(trimmed) <= max_width) {
+    lines.push_back(std::move(trimmed));
+    return lines;
+  }
+
+  std::istringstream stream(trimmed);
+  std::vector<std::string> words;
+  for (std::string word; stream >> word;) {
+    words.push_back(std::move(word));
+  }
+  if (words.empty()) {
+    lines.push_back(text_renderer.TruncateToWidth(trimmed, max_width));
+    return lines;
+  }
+
+  std::size_t index = 0;
+  while (index < words.size()) {
+    std::string line = words[index];
+    ++index;
+    while (index < words.size()) {
+      const std::string candidate = line + " " + words[index];
+      if (text_renderer.MeasureWidth(candidate) > max_width) {
+        break;
+      }
+      line = candidate;
+      ++index;
+    }
+    lines.push_back(std::move(line));
+  }
+  return lines;
 }
 
 }  // namespace
@@ -139,6 +200,104 @@ ScrollableListLayout WorkspaceShell::ComputeGitSidebarListLayout(const SDL_FRect
   return ComputeScrollableListLayout(sidebar_rect, GitSidebarListTop(sidebar_rect), line_count,
                                      context_.current_project_state.sidebar.scroll_row, kSidebarInset, kSidebarRowHeight,
                                      kSidebarRowHeight - 2.0f, 0.0f, 0.0f, true);
+}
+
+SDL_FRect WorkspaceShell::ChatSidebarStatusRect(const SDL_FRect& sidebar_rect) const {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  return MakeRect(sidebar_rect.x + kSidebarInset, sidebar_rect.y + kChatSidebarStatusTop,
+                  std::max(0.0f, sidebar_rect.w - kSidebarInset * 2.0f), 14.0f);
+}
+
+SDL_FRect WorkspaceShell::ChatSidebarComposerRect(const SDL_FRect& sidebar_rect) const {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  return MakeRect(sidebar_rect.x + kSidebarInset,
+                  sidebar_rect.y + sidebar_rect.h - kChatSidebarComposerBottomInset -
+                      kChatSidebarComposerHeight,
+                  std::max(0.0f, sidebar_rect.w - kSidebarInset * 2.0f),
+                  kChatSidebarComposerHeight);
+}
+
+ScrollableListLayout WorkspaceShell::ComputeChatSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                                  std::size_t line_count) const {
+  const SDL_FRect composer_rect = ChatSidebarComposerRect(sidebar_rect);
+  const float list_bottom_padding =
+      std::max(0.0f, sidebar_rect.y + sidebar_rect.h - composer_rect.y + kChatSidebarComposerGap);
+  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kChatSidebarTranscriptTop,
+                                     line_count, context_.current_project_state.sidebar.scroll_row,
+                                     kSidebarInset, kSidebarRowHeight, kSidebarRowHeight - 2.0f,
+                                     list_bottom_padding, list_bottom_padding);
+}
+
+std::vector<WorkspaceShell::ChatSidebarLine> WorkspaceShell::BuildChatSidebarLines(
+    const SDL_FRect& sidebar_rect) const {
+  std::vector<ChatSidebarLine> lines;
+  const Conversation* conversation = conversation_registry_.GetConversation(
+      context_.current_project_state.panel.chat.conversation_id);
+  const float text_width = std::max(24.0f, sidebar_rect.w - kSidebarInset * 2.0f - 12.0f);
+  if (conversation == nullptr || conversation->messages.empty()) {
+    lines.push_back(ChatSidebarLine{
+        .kind = ChatSidebarLine::Kind::Placeholder,
+        .role = MessageRole::Assistant,
+        .text = "Ask a question to start a conversation.",
+    });
+    return lines;
+  }
+
+  for (const Message& message : conversation->messages) {
+    const std::string_view header =
+        message.role == MessageRole::User     ? std::string_view{"You"}
+        : message.role == MessageRole::Assistant ? std::string_view{"Assistant"}
+                                                 : std::string_view{"System"};
+    lines.push_back(ChatSidebarLine{
+        .kind = ChatSidebarLine::Kind::Header,
+        .role = message.role,
+        .text = std::string(header),
+    });
+
+    const bool pending_assistant_message =
+        message.role == MessageRole::Assistant &&
+        message.id == context_.current_project_state.panel.chat.pending_assistant_message_id &&
+        context_.current_project_state.panel.chat.request_in_flight;
+    const std::string_view pending_body = "Thinking...";
+    std::string_view remaining =
+        message.content.empty() && pending_assistant_message ? pending_body : message.content;
+    bool emitted_body = false;
+    while (true) {
+      const std::size_t newline = remaining.find('\n');
+      const std::string_view paragraph =
+          newline == std::string_view::npos ? remaining : remaining.substr(0, newline);
+      const auto wrapped = WrapChatSidebarParagraph(text_renderer_, paragraph, text_width);
+      for (const std::string& line : wrapped) {
+        lines.push_back(ChatSidebarLine{
+            .kind = ChatSidebarLine::Kind::Body,
+            .role = message.role,
+            .text = line,
+        });
+        emitted_body = true;
+      }
+      if (newline == std::string_view::npos) {
+        break;
+      }
+      remaining.remove_prefix(newline + 1);
+    }
+    if (!emitted_body) {
+      lines.push_back(ChatSidebarLine{
+          .kind = ChatSidebarLine::Kind::Body,
+          .role = message.role,
+          .text = {},
+      });
+    }
+    lines.push_back(ChatSidebarLine{
+        .kind = ChatSidebarLine::Kind::Spacer,
+        .role = message.role,
+        .text = {},
+    });
+  }
+  return lines;
 }
 
 ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,

@@ -37,6 +37,9 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (sidebar_mode == SidebarMode::Search) {
     return HandleSearchButtonDown(event, layout, local_y);
   }
+  if (sidebar_mode == SidebarMode::Chat) {
+    return HandleChatButtonDown(event, layout, local_y);
+  }
   if (sidebar_mode == SidebarMode::Git) {
     return HandleGitButtonDown(event, layout, local_y);
   }
@@ -171,6 +174,31 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     return true;
   }
   operations_.open_git_sidebar_entry(state_.sidebar.git.selected_index);
+  return true;
+}
+
+bool SidebarMouseCoordinator::HandleChatButtonDown(const SDL_Event& event,
+                                                   const WorkspaceLayout& layout,
+                                                   float local_y) {
+  if (event.button.button != SDL_BUTTON_LEFT) {
+    return true;
+  }
+
+  if (Contains(operations_.chat_sidebar_composer_rect(layout.sidebar), event.button.x,
+               event.button.y)) {
+    return true;
+  }
+
+  if (local_y < 0.0f) {
+    return true;
+  }
+
+  const std::size_t line_count = operations_.chat_sidebar_line_count(layout.sidebar);
+  const auto list_layout = operations_.compute_chat_sidebar_list_layout(layout.sidebar, line_count);
+  const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
+  if (!line_index.has_value() || *line_index < 0 || *line_index >= static_cast<int>(line_count)) {
+    return true;
+  }
   return true;
 }
 
@@ -340,6 +368,14 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
+          .chat_sidebar_composer_rect =
+              [this](const SDL_FRect& rect) { return ChatSidebarComposerRect(rect); },
+          .chat_sidebar_line_count =
+              [this](const SDL_FRect& rect) { return BuildChatSidebarLines(rect).size(); },
+          .compute_chat_sidebar_list_layout =
+              [this](const SDL_FRect& rect, std::size_t count) {
+                return ComputeChatSidebarListLayout(rect, count);
+              },
           .can_stage_all_git_sidebar_entries = [this]() { return CanStageAllGitSidebarEntries(); },
           .git_sidebar_stage_all_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarStageAllButtonRect(rect); },

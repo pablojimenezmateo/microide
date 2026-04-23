@@ -31,6 +31,9 @@ class SidebarMouseCoordinator {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> restore_previous_sidebar;
+    std::function<SDL_FRect(const SDL_FRect&)> chat_sidebar_composer_rect;
+    std::function<std::size_t(const SDL_FRect&)> chat_sidebar_line_count;
+    std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_chat_sidebar_list_layout;
     std::function<bool()> can_stage_all_git_sidebar_entries;
     std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_stage_all_button_rect;
     std::function<bool()> stage_all_git_sidebar_entries;
@@ -88,6 +91,9 @@ class SidebarMouseCoordinator {
   bool HandleGitButtonDown(const SDL_Event& event,
                            const WorkspaceLayout& layout,
                            float local_y);
+  bool HandleChatButtonDown(const SDL_Event& event,
+                            const WorkspaceLayout& layout,
+                            float local_y);
   bool HandleProblemsButtonDown(const SDL_Event& event,
                                 const WorkspaceLayout& layout,
                                 float local_y);

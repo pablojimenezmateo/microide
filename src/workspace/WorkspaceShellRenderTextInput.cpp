@@ -205,7 +205,10 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       };
     }
     case TextInputSurface::ChatComposer: {
-      const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
+      const SDL_FRect prompt_rect =
+          context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Chat
+              ? ChatSidebarComposerRect(layout.sidebar)
+              : BottomPanelCommandPromptRect(layout);
       const float text_x = prompt_rect.x + 6.0f;
       const float text_y = prompt_rect.y + 4.0f;
       const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);

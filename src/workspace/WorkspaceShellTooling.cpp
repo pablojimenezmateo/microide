@@ -5,6 +5,7 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -480,9 +481,13 @@ void WorkspaceShell::ShowChatPanel() {
     context_.current_project_state.panel.chat.conversation_id =
         conversation_registry_.CreateConversation("Chat", std::string{});
   }
-  context_.current_project_state.panel.content = PanelContentKind::Chat;
-  context_.current_project_state.surface.focus = FocusTarget::Panel;
-  RequestBottomPanelRedraw();
+  context_.current_project_state.sidebar.view_id = "chat";
+  context_.current_project_state.sidebar.visible = true;
+  context_.current_project_state.sidebar.temporary = false;
+  context_.current_project_state.sidebar.prev_view_id.clear();
+  context_.current_project_state.sidebar.scroll_row = std::numeric_limits<int>::max();
+  context_.current_project_state.surface.focus = FocusTarget::Sidebar;
+  RequestSidebarRedraw();
 }
 
 void WorkspaceShell::ConsumeTaskRuntimeUpdates() {
@@ -1219,7 +1224,8 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
       .cwd = context_.current_project_state.root,
       .stdin_text = prompt,
   });
-  RequestBottomPanelRedraw();
+  context_.current_project_state.sidebar.scroll_row = std::numeric_limits<int>::max();
+  RequestSidebarRedraw();
   return true;
 }
 
@@ -1247,7 +1253,8 @@ void WorkspaceShell::ConsumeAiRuntimeUpdates() {
       context_.current_project_state.panel.chat.status_text = update->status_text;
       context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
     }
-    RequestBottomPanelRedraw();
+    context_.current_project_state.sidebar.scroll_row = std::numeric_limits<int>::max();
+    RequestSidebarRedraw();
     return;
   }
 

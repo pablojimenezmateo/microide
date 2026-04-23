@@ -17,6 +17,7 @@ enum class SidebarMode {
   None,
   Tree,
   Search,
+  Chat,
   Problems,
   Git,
   Tests,

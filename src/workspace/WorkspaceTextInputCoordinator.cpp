@@ -71,7 +71,12 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       break;
     case TextInputSurface::Command:
     case TextInputSurface::ChatComposer:
-      operations_.request_bottom_panel_command_redraw();
+      if (operations_.active_sidebar_mode() == SidebarMode::Chat &&
+          state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible) {
+        operations_.request_sidebar_redraw();
+      } else {
+        operations_.request_bottom_panel_command_redraw();
+      }
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -147,7 +152,12 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::ChatComposer:
-      operations_.request_bottom_panel_command_redraw();
+      if (operations_.active_sidebar_mode() == SidebarMode::Chat &&
+          state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible) {
+        operations_.request_sidebar_redraw();
+      } else {
+        operations_.request_bottom_panel_command_redraw();
+      }
       break;
     case TextInputSurface::CommitPicker:
       if (text_changed) {
@@ -595,6 +605,7 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
           .request_bottom_panel_command_redraw =
               [this]() { RequestBottomPanelCommandRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
+          .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },

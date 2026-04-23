@@ -68,14 +68,17 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
                : TextInputSurface::SidebarSearchReplace;
   }
 
+  if (context_.current_project_state.surface.focus == FocusTarget::Sidebar &&
+      context_.current_project_state.sidebar.visible &&
+      ActiveSidebarMode() == SidebarMode::Chat) {
+    return TextInputSurface::ChatComposer;
+  }
+
   if (context_.current_project_state.surface.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
     return TextInputSurface::Editor;
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    if (BottomPanelShowsChat()) {
-      return TextInputSurface::ChatComposer;
-    }
     if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
       return TextInputSurface::Terminal;
     }

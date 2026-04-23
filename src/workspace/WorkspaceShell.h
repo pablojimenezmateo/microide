@@ -191,6 +191,19 @@ class WorkspaceShell {
     bool separator = false;
   };
 
+  struct ChatSidebarLine {
+    enum class Kind {
+      Header,
+      Body,
+      Spacer,
+      Placeholder,
+    };
+
+    Kind kind = Kind::Body;
+    MessageRole role = MessageRole::Assistant;
+    std::string text;
+  };
+
   WorkspaceActionContext MakeActionContext();
 
 #ifdef MICROIDE_TESTING
@@ -383,14 +396,12 @@ class WorkspaceShell {
   enum class BottomPanelTabKind {
     Terminal,
     Output,
-    Chat,
   };
 
   struct BottomPanelTabModel {
     BottomPanelTabKind kind = BottomPanelTabKind::Terminal;
     std::size_t terminal_index = 0;
     std::string output_channel_id;
-    std::string chat_conversation_id;
     std::string label;
     std::string tooltip_label;
   };
@@ -794,6 +805,7 @@ class WorkspaceShell {
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
+  void ShowChatSidebar();
   void ShowProblemsSidebar();
   void ShowGitSidebar();
   void ShowTestsSidebar();
@@ -821,6 +833,8 @@ class WorkspaceShell {
                                                              std::size_t line_count) const;
   ScrollableListLayout ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                    std::size_t line_count) const;
+  ScrollableListLayout ComputeChatSidebarListLayout(const SDL_FRect& sidebar_rect,
+                                                    std::size_t line_count) const;
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
   ScrollableListLayout ComputeProblemsSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -829,6 +843,9 @@ class WorkspaceShell {
                                                      std::size_t line_count) const;
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
+  SDL_FRect ChatSidebarComposerRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarStatusRect(const SDL_FRect& sidebar_rect) const;
+  std::vector<ChatSidebarLine> BuildChatSidebarLines(const SDL_FRect& sidebar_rect) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
@@ -1066,7 +1083,6 @@ class WorkspaceShell {
   bool BottomPanelVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
-  bool BottomPanelShowsChat() const;
   BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;

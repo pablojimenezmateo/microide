@@ -26,7 +26,7 @@ The shell is intentionally compact:
 
 - a custom in-window menu bar
 - project tabs above file tabs
-- a persistent left sidebar with tree, search, and source-control modes
+- a persistent left sidebar with tree, search, chat, and source-control modes
 - a central editor workspace with nested splits
 - a docked terminal-and-command pane
 - centered overlays for file finding and commit picking

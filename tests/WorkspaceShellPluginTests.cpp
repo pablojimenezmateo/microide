@@ -1628,8 +1628,8 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "repo llm chat command should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Chat,
-         "chat command should surface the host-owned chat panel");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
+         "chat command should surface the host-owned chat sidebar");
   Expect(messages.size() == 2 && messages.front().content == "explain this file" &&
              messages.back().content == "LLM example reply",
          "repo llm plugin should register a default chat agent response");

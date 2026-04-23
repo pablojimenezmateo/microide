@@ -20,18 +20,6 @@ using namespace detail;
 
 namespace {
 
-std::string_view MessageRoleLabel(MessageRole role) {
-  switch (role) {
-    case MessageRole::User:
-      return "You";
-    case MessageRole::Assistant:
-      return "Assistant";
-    case MessageRole::System:
-    default:
-      return "System";
-  }
-}
-
 const std::vector<terminal::TerminalLine>& EmptyTerminalLines() {
   static const std::vector<terminal::TerminalLine> empty_lines;
   return empty_lines;
@@ -52,7 +40,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                kWorkspaceBottomPanelHeaderHeight);
   const bool terminal_panel = BottomPanelShowsTerminal();
   const bool output_panel = BottomPanelShowsOutput();
-  const bool chat_panel = BottomPanelShowsChat();
   const std::vector<VisibleStripTab> visible_panel_tabs =
       ComputeVisibleBottomPanelTabs(panel_header);
 
@@ -205,13 +192,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           break;
         }
       }
-    } else if (chat_panel) {
-      header_label = "Chat";
-      if (const Conversation* conversation = conversation_registry_.GetConversation(
-              context_.current_project_state.panel.chat.conversation_id);
-          conversation != nullptr && !conversation->title.empty()) {
-        header_label = conversation->title;
-      }
     }
     DrawVCenteredTextOn(text_renderer_, renderer, panel_header, 12.0f, theme_.chrome_text,
                         theme_.chrome_background, header_label);
@@ -221,18 +201,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       output_panel ? OutputChannelEntries(context_.current_project_state.panel.output.channel_id)
                    : nullptr;
   std::optional<std::filesystem::path> current_reference_path;
-  const Conversation* conversation =
-      chat_panel
-          ? conversation_registry_.GetConversation(
-                context_.current_project_state.panel.chat.conversation_id)
-          : nullptr;
   const std::size_t panel_line_count =
       terminal_panel ? terminal_line_count
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
-                                    : chat_panel ? (conversation != nullptr
-                                                        ? conversation->messages.size()
-                                                        : 0)
-                                                 : 0;
+                                    : 0;
 
   const BottomPanelLogLayout panel_layout =
       ComputeBottomPanelLogLayout(layout, panel_line_count);
@@ -336,21 +308,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                  text_renderer_.TruncateToWidth(output_line, panel_layout.text_width));
       continue;
     }
-    if (chat_panel && conversation != nullptr) {
-      const Message& message = conversation->messages[static_cast<std::size_t>(index)];
-      const SDL_Color color =
-          message.role == MessageRole::Assistant
-              ? theme_.text_primary
-              : message.role == MessageRole::User ? theme_.accent : theme_.text_muted;
-      const std::string line =
-          message.render_line.empty()
-              ? std::string(MessageRoleLabel(message.role)) + ": " +
-                    CollapseWhitespace(message.content)
-              : message.render_line;
-      DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, color,
-                 theme_.surface_background,
-                 text_renderer_.TruncateToWidth(line, panel_layout.text_width));
-    }
   }
 
   if (terminal_panel) {
@@ -393,7 +350,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
-  if (context_.current_project_state.panel.command_mode || chat_panel) {
+  if (context_.current_project_state.panel.command_mode) {
     const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
     DrawFilledRect(renderer, command_area, theme_.surface_raised);
     DrawFilledRect(renderer,
@@ -402,19 +359,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                    theme_.border);
 
     const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
-    const std::string status_text =
-        context_.current_project_state.panel.command_mode
-            ? CommandPromptCoordinator::PromptStatusText(
-                  context_.current_project_state.panel.command)
-            : !context_.current_project_state.panel.chat.status_text.empty()
-                ? context_.current_project_state.panel.chat.status_text
-                : "Enter sends the current prompt";
+    const std::string status_text = CommandPromptCoordinator::PromptStatusText(
+        context_.current_project_state.panel.command);
     DrawTextOn(text_renderer_, renderer, command_area.x + 12.0f, status_y, theme_.text_muted,
                theme_.surface_raised, TruncateLabel(status_text, command_area.w - 24.0f));
 
-    const bool command_mode = context_.current_project_state.panel.command_mode;
-    const TextInputSurface panel_surface =
-        command_mode ? TextInputSurface::Command : TextInputSurface::ChatComposer;
+    const TextInputSurface panel_surface = TextInputSurface::Command;
     const TextInputSurface current_surface = CurrentTextInputSurface();
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
     DrawTextFieldFrame(renderer, theme_, prompt_rect, current_surface == panel_surface);
@@ -422,8 +372,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
                                            : std::nullopt;
     const std::string panel_fallback =
-        "> " + (command_mode ? context_.current_project_state.panel.command.input.text
-                             : context_.current_project_state.panel.chat.composer.text);
+        "> " + context_.current_project_state.panel.command.input.text;
     const std::string_view panel_display_text =
         (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
                                                                 : std::string_view(panel_fallback);

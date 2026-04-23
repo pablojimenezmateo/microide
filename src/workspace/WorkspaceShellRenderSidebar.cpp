@@ -255,6 +255,102 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
+  } else if (sidebar_mode == SidebarMode::Chat) {
+    const Conversation* conversation = conversation_registry_.GetConversation(
+        context_.current_project_state.panel.chat.conversation_id);
+    const SDL_FRect status_rect = ChatSidebarStatusRect(layout.sidebar);
+    const std::string title =
+        conversation != nullptr && !conversation->title.empty() ? conversation->title : "Chat";
+    const std::string status =
+        context_.current_project_state.panel.chat.request_in_flight
+            ? context_.current_project_state.panel.chat.status_text
+            : !context_.current_project_state.panel.chat.status_text.empty()
+                ? context_.current_project_state.panel.chat.status_text
+                : "Ready";
+    DrawTextOn(text_renderer_, renderer, status_rect.x,
+               status_rect.y, theme_.text_primary,
+               theme_.surface_background,
+               TruncateLabel(title, status_rect.w));
+    DrawTextOn(text_renderer_, renderer, status_rect.x,
+               status_rect.y + 14.0f, theme_.text_muted,
+               theme_.surface_background,
+               TruncateLabel(status, status_rect.w));
+
+    const auto lines = BuildChatSidebarLines(layout.sidebar);
+    const auto list_layout = ComputeChatSidebarListLayout(layout.sidebar, lines.size());
+    const int scroll_row = list_layout.scroll_row;
+    context_.current_project_state.sidebar.scroll_row = scroll_row;
+
+    for (int row = 0; row < list_layout.visible_rows; ++row) {
+      const int line_index = scroll_row + row;
+      if (line_index >= static_cast<int>(lines.size())) {
+        break;
+      }
+
+      const ChatSidebarLine& line = lines[static_cast<std::size_t>(line_index)];
+      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
+      if (line.kind == ChatSidebarLine::Kind::Spacer) {
+        continue;
+      }
+
+      const bool user_line = line.role == MessageRole::User;
+      const bool assistant_line = line.role == MessageRole::Assistant;
+      const SDL_Color row_background =
+          line.kind == ChatSidebarLine::Kind::Placeholder
+              ? theme_.surface_background
+              : user_line ? theme_.surface_raised : theme_.surface_background;
+      DrawFilledRect(renderer, row_rect, row_background);
+      if (line.kind == ChatSidebarLine::Kind::Header) {
+        const SDL_Color accent = user_line ? theme_.accent
+                                           : assistant_line ? theme_.text_secondary
+                                                            : theme_.text_muted;
+        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h), accent);
+        DrawVCenteredTextOn(text_renderer_, renderer,
+                            MakeRect(row_rect.x + 8.0f, row_rect.y, row_rect.w - 8.0f, row_rect.h),
+                            0.0f, accent, row_background,
+                            TruncateLabel(line.text, row_rect.w - 12.0f));
+        continue;
+      }
+
+      const SDL_Color body_color =
+          line.kind == ChatSidebarLine::Kind::Placeholder
+              ? theme_.text_muted
+              : user_line ? theme_.text_primary : theme_.text_secondary;
+      const float text_left = line.kind == ChatSidebarLine::Kind::Placeholder ? 6.0f : 14.0f;
+      DrawVCenteredTextOn(text_renderer_, renderer,
+                          MakeRect(row_rect.x + text_left, row_rect.y,
+                                   std::max(0.0f, row_rect.w - text_left - 6.0f), row_rect.h),
+                          0.0f, body_color, row_background,
+                          TruncateLabel(line.text, std::max(0.0f, row_rect.w - text_left - 6.0f)));
+    }
+
+    const TextInputSurface current_surface = CurrentTextInputSurface();
+    const bool chat_input_active = current_surface == TextInputSurface::ChatComposer;
+    const auto visual = chat_input_active ? BuildActiveTextInputVisual(layout, std::nullopt)
+                                          : std::nullopt;
+    const SDL_FRect composer_rect = ChatSidebarComposerRect(layout.sidebar);
+    DrawTextFieldFrame(renderer, theme_, composer_rect, chat_input_active);
+    const bool composer_empty = context_.current_project_state.panel.chat.composer.text.empty();
+    const std::string fallback =
+        composer_empty ? "> Ask about this workspace" :
+                         "> " + context_.current_project_state.panel.chat.composer.text;
+    const std::string_view display_text =
+        visual.has_value() && visual->surface == TextInputSurface::ChatComposer &&
+                !visual->displayed_text.empty()
+            ? std::string_view(visual->displayed_text)
+            : std::string_view(fallback);
+    DrawSingleLineTextTail(renderer, composer_rect.x + 6.0f, composer_rect.y + 2.0f,
+                           std::max(1.0f, composer_rect.w - 12.0f),
+                           composer_empty && !chat_input_active ? theme_.text_muted
+                                                                : chat_input_active
+                                                                      ? theme_.text_primary
+                                                                      : theme_.text_secondary,
+                           theme_.surface_background, display_text);
+
+    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
+                            list_layout.visible_units, static_cast<float>(scroll_row),
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar,
+                            true);
   } else if (sidebar_mode == SidebarMode::Git) {
     draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
                        CanStageAllGitSidebarEntries());

@@ -299,6 +299,10 @@ void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
   MakeSidebarCoordinator().ShowSearch(std::move(query), temporary);
 }
 
+void WorkspaceShell::ShowChatSidebar() {
+  MakeSidebarCoordinator().ShowMode(SidebarMode::Chat, false);
+}
+
 void WorkspaceShell::ShowProblemsSidebar() {
   MakeSidebarCoordinator().ShowProblems();
 }

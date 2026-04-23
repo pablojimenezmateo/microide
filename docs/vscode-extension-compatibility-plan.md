@@ -575,7 +575,7 @@ Implementation audit on 2026-04-21:
 | Phase 2 | Complete | The shell now persists contribution settings and sidebar policy, resolves keybindings and menus through contributed registries, renders status items in chrome, and wires plugin setting and redraw callbacks end to end |
 | Phase 3 | Complete | The host now owns save participants, formatter execution, cache-backed local tool installs, completion and code-action runtime queries, task and test execution, output channels, and first-pass debugger command surfaces, all wired through live shell commands, overlays, sidebars, and bottom-panel state |
 | Phase 4 | Complete | The shell now rebuilds SCM, annotation, review, and auth registries from plugin contributions, persists secret storage locally, opens and refreshes virtual documents in live tabs, renders first-pass review markers, and exposes auth state through built-in command and sidebar surfaces |
-| Phase 5 | Complete | The host now owns AI request runtime, inline completion request and accept or dismiss flow, bottom-panel chat, external-agent execution, MCP tool invocation, and shell-visible conversation state with dedicated phase coverage |
+| Phase 5 | Complete | The host now owns AI request runtime, inline completion request and accept or dismiss flow, sidebar chat, external-agent execution, MCP tool invocation, and shell-visible conversation state with dedicated phase coverage |
 
 ### Phase 0. Define the contract
 
@@ -857,7 +857,7 @@ Shipped:
   conversations and inline completions
 - `WorkspaceAiRuntime` now owns request IDs, cancellation, background execution, and shell wake
   delivery for external-agent requests
-- the shell now supports bottom-panel chat, active-conversation tracking, ghost-text inline
+- the shell now supports sidebar chat, active-conversation tracking, ghost-text inline
   completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
   commands
 - first-pass external-agent execution is wired through stdio subprocesses, and MCP tool
@@ -981,8 +981,7 @@ deliberately thin and should not be re-expanded into coordinator-coupled special
 - one host-owned AI runtime owns request IDs, cancellation, and agent invocation; state holders
   such as conversations and inline completions do not own transport logic
 - inline completion renders as ghost text in the editor with accept or dismiss flow only
-- first-pass chat lives in the bottom panel, not the left sidebar, so it reuses existing scroll
-  and input surfaces
+- first-pass chat lives in the left sidebar, with dedicated transcript and composer surfaces
 - tool invocation and permission decisions stay host-owned and surface through output channels or
   prompt flows instead of ad hoc plugin UI
 - keep provider or model selection simple until the runtime, context collection, and transport

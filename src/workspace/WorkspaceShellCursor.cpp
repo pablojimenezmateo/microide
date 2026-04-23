@@ -364,6 +364,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       return CursorKind::Default;
     }
+    if (sidebar_mode == SidebarMode::Chat) {
+      if (Contains(ChatSidebarComposerRect(layout.sidebar), x, y)) {
+        return CursorKind::Text;
+      }
+      const auto lines = BuildChatSidebarLines(layout.sidebar);
+      const auto list_layout = ComputeChatSidebarListLayout(layout.sidebar, lines.size());
+      const auto line_index = ScrollableListIndexAtY(list_layout, y);
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(lines.size())) {
+        return CursorKind::Default;
+      }
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
+      return Contains(row_rect, x, y) ? CursorKind::Default : CursorKind::Default;
+    }
     if (sidebar_mode == SidebarMode::Git) {
       if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&
           CanStageAllGitSidebarEntries()) {
@@ -481,14 +496,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                 ? (OutputChannelEntries(context_.current_project_state.panel.output.channel_id) != nullptr
                        ? OutputChannelEntries(context_.current_project_state.panel.output.channel_id)->size()
                        : 0)
-                : BottomPanelShowsChat()
-                    ? (conversation_registry_.GetConversation(
-                               context_.current_project_state.panel.chat.conversation_id) != nullptr
-                           ? conversation_registry_
-                                 .GetConversation(context_.current_project_state.panel.chat.conversation_id)
-                                 ->messages.size()
-                           : 0)
-                    : 0;
+                : 0;
     if (line_count > 0) {
       const auto panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
       if (panel_layout.scroll.vertical_scrollbar.has_value() &&
@@ -512,7 +520,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         }
       }
     }
-    if ((context_.current_project_state.panel.command_mode || BottomPanelShowsChat()) &&
+    if (context_.current_project_state.panel.command_mode &&
         Contains(BottomPanelCommandPromptRect(layout), x, y)) {
       return CursorKind::Text;
     }

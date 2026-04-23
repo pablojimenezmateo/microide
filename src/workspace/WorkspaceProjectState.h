@@ -43,7 +43,6 @@ enum class PanelContentKind {
   None,
   Terminal,
   Output,
-  Chat,
 };
 
 enum class BufferSearchField {

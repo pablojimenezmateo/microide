@@ -416,8 +416,10 @@ void TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor() {
   const std::size_t original_column = WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column();
 
   WorkspaceShellTestAccess::ShowChatPanel(shell);
-  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
-         "chat key fixture should focus the panel");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "chat key fixture should focus the sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
+         "chat key fixture should activate the chat sidebar");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "hello"),
          "chat key fixture should type into the chat composer");
   Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hello",
@@ -434,6 +436,49 @@ void TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor() {
          "chat key handling should not mutate the underlying editor buffer");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == original_column,
          "chat key handling should not move the underlying editor cursor");
+}
+
+void TestWorkspaceShellSidebarDropdownOffersChatView() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
+  const float click_x = button_rect.x + button_rect.w * 0.5f;
+  const float click_y = button_rect.y + button_rect.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking the sidebar mode control should open the sidebar menu");
+  Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
+         "clicking the sidebar mode control should open the sidebar menu");
+
+  const auto labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
+  Expect(std::find(labels.begin(), labels.end(), "Chat") != labels.end(),
+         "the sidebar dropdown should list the built-in chat view");
+
+  const auto chat_rect = WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Chat");
+  Expect(chat_rect.has_value(),
+         "the sidebar dropdown should expose a clickable chat row");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+             shell, chat_rect->x + chat_rect->w * 0.5f, chat_rect->y + chat_rect->h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "clicking the built-in chat sidebar row should be handled");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "selecting chat from the sidebar dropdown should focus the sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
+         "selecting chat from the sidebar dropdown should activate chat mode");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "chat",
+         "selecting chat from the sidebar dropdown should target the built-in chat view id");
+
+  const auto bottom_panel_tabs = WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
+  Expect(std::find(bottom_panel_tabs.begin(), bottom_panel_tabs.end(), "Chat") ==
+             bottom_panel_tabs.end(),
+         "chat should no longer appear as a bottom-panel tab");
 }
 
 void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
@@ -1140,6 +1185,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
   AddTest(tests, "WorkspaceShell/ChatComposerKeysDoNotLeakIntoEditor",
           TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor);
+  AddTest(tests, "WorkspaceShell/SidebarDropdownOffersChatView",
+          TestWorkspaceShellSidebarDropdownOffersChatView);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",
           TestWorkspaceShellTabTooltipRendersAboveSidebar);
   AddTest(tests, "WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard",

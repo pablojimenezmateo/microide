@@ -191,7 +191,6 @@ std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPane
         .kind = BottomPanelTabKind::Terminal,
         .terminal_index = i,
         .output_channel_id = {},
-        .chat_conversation_id = {},
         .label = label,
         .tooltip_label = label,
     });
@@ -221,24 +220,6 @@ std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPane
         .kind = BottomPanelTabKind::Output,
         .terminal_index = 0,
         .output_channel_id = channel_id,
-        .chat_conversation_id = {},
-        .label = label,
-        .tooltip_label = label,
-    });
-  }
-
-  if (!context_.current_project_state.panel.chat.conversation_id.empty()) {
-    std::string label = "Chat";
-    if (const Conversation* conversation = conversation_registry_.GetConversation(
-            context_.current_project_state.panel.chat.conversation_id);
-        conversation != nullptr && !conversation->title.empty()) {
-      label = conversation->title;
-    }
-    tabs.push_back(BottomPanelTabModel{
-        .kind = BottomPanelTabKind::Chat,
-        .terminal_index = 0,
-        .output_channel_id = {},
-        .chat_conversation_id = context_.current_project_state.panel.chat.conversation_id,
         .label = label,
         .tooltip_label = label,
     });
@@ -277,11 +258,6 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleBotto
     } else if (context_.current_project_state.panel.content == PanelContentKind::Output &&
                tabs[i].kind == BottomPanelTabKind::Output &&
                tabs[i].output_channel_id == context_.current_project_state.panel.output.channel_id) {
-      active_model_index = i;
-    } else if (context_.current_project_state.panel.content == PanelContentKind::Chat &&
-               tabs[i].kind == BottomPanelTabKind::Chat &&
-               tabs[i].chat_conversation_id ==
-                   context_.current_project_state.panel.chat.conversation_id) {
       active_model_index = i;
     }
   }
@@ -326,12 +302,6 @@ bool WorkspaceShell::ActivateBottomPanelTab(std::size_t model_index) {
       context_.current_project_state.panel.content = PanelContentKind::Output;
       context_.current_project_state.panel.output.channel_id = tab.output_channel_id;
       break;
-    case BottomPanelTabKind::Chat:
-      if (!tab.chat_conversation_id.empty()) {
-        context_.current_project_state.panel.chat.conversation_id = tab.chat_conversation_id;
-      }
-      context_.current_project_state.panel.content = PanelContentKind::Chat;
-      break;
   }
 
   context_.current_project_state.surface.focus = FocusTarget::Panel;
@@ -352,24 +322,6 @@ bool WorkspaceShell::CloseBottomPanelTab(std::size_t model_index) {
       break;
     case BottomPanelTabKind::Output:
       CloseOutputChannelTab(tab.output_channel_id);
-      break;
-    case BottomPanelTabKind::Chat:
-      if (context_.current_project_state.panel.chat.conversation_id == tab.chat_conversation_id) {
-        context_.current_project_state.panel.chat.conversation_id.clear();
-        context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
-        context_.current_project_state.panel.chat.request_in_flight = false;
-        context_.current_project_state.panel.chat.status_text.clear();
-      }
-      if (context_.current_project_state.panel.content == PanelContentKind::Chat) {
-        if (ActiveTerminalTab() != nullptr) {
-          context_.current_project_state.panel.content = PanelContentKind::Terminal;
-        } else {
-          context_.current_project_state.panel.content = PanelContentKind::None;
-          if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-            context_.current_project_state.surface.focus = FocusTarget::Editor;
-          }
-        }
-      }
       break;
   }
 

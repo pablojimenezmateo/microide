@@ -93,24 +93,6 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return handled;
   }
   if (state_.surface.focus == FocusTarget::Panel &&
-      state_.panel.content == PanelContentKind::Chat) {
-    switch (event.key) {
-      case SDLK_ESCAPE:
-        state_.surface.focus = FocusTarget::Editor;
-        return true;
-      case SDLK_RETURN:
-      case SDLK_KP_ENTER:
-        return operations_.start_chat_request({});
-      default:
-        break;
-    }
-    const bool handled = operations_.text_input_handle_single_line_key_down(event, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { operations_.request_bottom_panel_command_redraw(); });
-    }
-    return handled;
-  }
-  if (state_.surface.focus == FocusTarget::Panel &&
       state_.panel.content == PanelContentKind::Terminal &&
       operations_.active_terminal_tab() != nullptr) {
     const bool handled = operations_.text_input_handle_terminal_key_down(event, modifiers);
@@ -148,8 +130,8 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
     const bool surface_accepts_paste =
         state_.panel.command_mode ||
-        (state_.surface.focus == FocusTarget::Panel &&
-         state_.panel.content == PanelContentKind::Chat) ||
+        (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
+         operations_.active_sidebar_mode() == SidebarMode::Chat) ||
         (state_.overlay.visible &&
          (state_.overlay.mode == OverlayMode::FileFinder ||
           state_.overlay.mode == OverlayMode::CommitPicker ||

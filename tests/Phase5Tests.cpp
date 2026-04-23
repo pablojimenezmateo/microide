@@ -225,8 +225,8 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "chat runtime should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Chat,
-         "chat command should surface the chat panel");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
+         "chat command should surface the chat sidebar");
   Expect(messages.size() == 2 && messages.front().role == MessageRole::User &&
              messages.front().content == "hello from tests" &&
              messages.back().role == MessageRole::Assistant &&

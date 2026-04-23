@@ -512,8 +512,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
   if (!layout.has_value() || !BottomPanelVisible()) {
     return std::nullopt;
   }
-  return BottomPanelContentRect(*layout, context_.current_project_state.panel.command_mode ||
-                                             BottomPanelShowsChat());
+  return BottomPanelContentRect(*layout, context_.current_project_state.panel.command_mode);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() const {
@@ -658,7 +657,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    return (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) || BottomPanelShowsChat();
+    return BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr;
   }
 
   return false;
@@ -698,14 +697,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
     return ActiveEditorCaretRect(*layout);
   }
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    if (BottomPanelShowsChat()) {
-      const auto visual = BuildActiveTextInputVisual(*layout, std::nullopt);
-      return visual.has_value()
-                 ? std::optional<SDL_FRect>(MakeRect(visual->cursor_x, visual->text_y - 1.0f,
-                                                     std::max(1.0f, text_renderer_.CharWidth()),
-                                                     text_renderer_.LineHeight()))
-                 : std::nullopt;
-    }
     return ActiveTerminalCaretRect(*layout);
   }
   return std::nullopt;

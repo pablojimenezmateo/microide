@@ -142,8 +142,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
     const SDL_FRect panel_content =
-        operations_.bottom_panel_content_rect(
-            layout, state_.panel.command_mode || state_.panel.content == PanelContentKind::Chat);
+        operations_.bottom_panel_content_rect(layout, state_.panel.command_mode);
     if (event.button.button == SDL_BUTTON_RIGHT &&
         Contains(panel_content, event.button.x, event.button.y)) {
       state_.surface.focus = FocusTarget::Panel;
@@ -175,8 +174,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
     const SDL_FRect panel_content =
-        operations_.bottom_panel_content_rect(
-            layout, state_.panel.command_mode || state_.panel.content == PanelContentKind::Chat);
+        operations_.bottom_panel_content_rect(layout, state_.panel.command_mode);
     if (Contains(panel_content, event.button.x, event.button.y)) {
       if (const auto url = operations_.terminal_url_at_point(static_cast<float>(event.button.x),
                                                              static_cast<float>(event.button.y));
@@ -448,13 +446,6 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                     return entries->size();
                   }
                   return std::size_t{0};
-                }
-                if (BottomPanelShowsChat()) {
-                  if (const Conversation* conversation = conversation_registry_.GetConversation(
-                          context_.current_project_state.panel.chat.conversation_id);
-                      conversation != nullptr) {
-                    return conversation->messages.size();
-                  }
                 }
                 return std::size_t{0};
               },
