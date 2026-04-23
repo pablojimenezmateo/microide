@@ -303,7 +303,9 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitio
   }
   {
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
-    InvalidateRuntimeSyntaxStateCaches();
+    if (reload_syntax_definitions && plugin_runtime_.syntax_definitions_changed()) {
+      InvalidateRuntimeSyntaxStateCaches();
+    }
   }
   {
     util::StartupTrace::Scope sidebar_selection_scope("NormalizeSidebarViewSelection");

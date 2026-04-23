@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/WorkspaceShellTesting.h"
 
 #include <chrono>
@@ -639,6 +640,60 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("1 syntax definition") !=
              std::string::npos,
          "plugins-reload feedback should include loaded plugin syntax definitions");
+}
+
+void TestWorkspaceShellPluginsReloadSkipsUnchangedRuntimeSyntaxRebuild() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path notes = project_root / "notes.todo";
+  WriteFile(project_root / "README.md", "syntax fingerprint fixture\n");
+  WriteFile(notes, "TODO item\n");
+
+  WritePluginInit(
+      plugins_root, "syntax",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "syntax"
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bTODO\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "syntax fingerprint fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, notes);
+
+  const std::size_t revision_before =
+      microide::editor::runtime_syntax::RegistryRevision();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "plugins-reload should succeed when syntax definitions are unchanged");
+  const std::size_t revision_after =
+      microide::editor::runtime_syntax::RegistryRevision();
+
+  Expect(revision_after == revision_before,
+         "unchanged plugin syntax files should not rebuild the runtime syntax registry");
+  const auto& tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+  Expect(std::any_of(tokens.begin(), tokens.end(),
+                     [](microide::editor::SyntaxTokenKind kind) {
+                       return kind == microide::editor::SyntaxTokenKind::Keyword;
+                     }),
+         "skipping an unchanged syntax rebuild should preserve active syntax highlighting");
 }
 
 void TestWorkspaceShellPluginWatcherReloadsChangedCommands() {
@@ -1771,6 +1826,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
   AddTest(tests, "WorkspaceShell/PluginsReloadRefreshesRuntimeSyntaxHighlighting",
           TestWorkspaceShellPluginsReloadRefreshesRuntimeSyntaxHighlighting);
+  AddTest(tests, "WorkspaceShell/PluginsReloadSkipsUnchangedRuntimeSyntaxRebuild",
+          TestWorkspaceShellPluginsReloadSkipsUnchangedRuntimeSyntaxRebuild);
   AddTest(tests, "WorkspaceShell/PluginWatcherReloadsChangedCommands",
           TestWorkspaceShellPluginWatcherReloadsChangedCommands);
   AddTest(tests, "WorkspaceShell/PluginWatcherReloadsRuntimeSyntaxHighlighting",

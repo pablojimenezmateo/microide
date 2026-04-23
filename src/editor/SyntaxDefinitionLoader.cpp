@@ -1,12 +1,14 @@
 #include "editor/SyntaxDefinitionLoader.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "platform/Filesystem.h"
+#include "util/TextFileIO.h"
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include <lua.hpp>
@@ -413,6 +415,19 @@ std::vector<std::filesystem::path> DiscoverDefinitionFiles(
   return files;
 }
 
+std::uint64_t Fnv1aAppend(std::uint64_t hash, std::string_view text) {
+  constexpr std::uint64_t kOffsetBasis = 1469598103934665603ULL;
+  constexpr std::uint64_t kPrime = 1099511628211ULL;
+  if (hash == 0) {
+    hash = kOffsetBasis;
+  }
+  for (const unsigned char byte : text) {
+    hash ^= static_cast<std::uint64_t>(byte);
+    hash *= kPrime;
+  }
+  return hash;
+}
+
 #endif
 
 }  // namespace
@@ -438,6 +453,28 @@ std::vector<RuntimeSyntaxDefinitionData> LoadDefinitionsFromDirectories(
 #endif
 
   return definitions;
+}
+
+std::uint64_t DefinitionSourceFingerprint(
+    const std::vector<std::filesystem::path>& directories) {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  (void)directories;
+  return 0;
+#else
+  std::uint64_t fingerprint = 0;
+  for (const auto& path : DiscoverDefinitionFiles(directories)) {
+    fingerprint = Fnv1aAppend(fingerprint, path.generic_string());
+    fingerprint = Fnv1aAppend(fingerprint, "\n");
+    const std::optional<std::string> content = util::ReadTextFile(path);
+    if (content.has_value()) {
+      fingerprint = Fnv1aAppend(fingerprint, *content);
+    } else {
+      fingerprint = Fnv1aAppend(fingerprint, "<unreadable>");
+    }
+    fingerprint = Fnv1aAppend(fingerprint, "\n");
+  }
+  return fingerprint;
+#endif
 }
 
 }  // namespace microide::editor::runtime_syntax

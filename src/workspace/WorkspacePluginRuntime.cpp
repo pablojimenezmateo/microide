@@ -71,6 +71,7 @@ bool WorkspacePluginRuntime::ConsumeAssetChanges(bool force_check) {
 
 bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root,
                                     bool reload_syntax_definitions) {
+  syntax_definitions_changed_ = false;
   bool clean_reload = false;
   {
     util::StartupTrace::Scope host_scope("PluginHost::Reload");
@@ -84,10 +85,17 @@ bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root,
 
   std::vector<std::string> syntax_loader_errors;
   std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> syntax_definitions;
+  const std::vector<std::filesystem::path> syntax_directories = plugin_host_.DataDirectories("syntax");
+  const std::uint64_t fingerprint =
+      editor::runtime_syntax::DefinitionSourceFingerprint(syntax_directories);
+  if (syntax_fingerprint_initialized_ && syntax_source_fingerprint_ == fingerprint) {
+    asset_monitor_.SetProjectRoot(project_root);
+    return clean_reload && runtime_syntax_errors_.empty();
+  }
   {
     util::StartupTrace::Scope load_scope("LoadSyntaxDefinitions");
     syntax_definitions = editor::runtime_syntax::LoadDefinitionsFromDirectories(
-        plugin_host_.DataDirectories("syntax"), &syntax_loader_errors);
+        syntax_directories, &syntax_loader_errors);
   }
 
   runtime_syntax_errors_.clear();
@@ -99,6 +107,9 @@ bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root,
   }
   runtime_syntax_errors_.insert(runtime_syntax_errors_.end(), syntax_loader_errors.begin(),
                                 syntax_loader_errors.end());
+  syntax_fingerprint_initialized_ = true;
+  syntax_source_fingerprint_ = fingerprint;
+  syntax_definitions_changed_ = true;
   asset_monitor_.SetProjectRoot(project_root);
   return clean_reload && runtime_syntax_errors_.empty();
 }
@@ -129,6 +140,9 @@ void WorkspacePluginRuntime::Shutdown() {
   plugin_host_.Shutdown();
   runtime_syntax_plugin_definition_count_ = 0;
   runtime_syntax_errors_.clear();
+  syntax_definitions_changed_ = false;
+  syntax_fingerprint_initialized_ = false;
+  syntax_source_fingerprint_ = 0;
 }
 
 }  // namespace microide::workspace

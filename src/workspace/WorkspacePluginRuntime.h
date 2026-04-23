@@ -37,6 +37,7 @@ class WorkspacePluginRuntime {
   bool ConsumeAssetChanges(bool force_check);
 
   bool Reload(const std::filesystem::path& project_root, bool reload_syntax_definitions = true);
+  bool syntax_definitions_changed() const { return syntax_definitions_changed_; }
   std::string ReloadSummary() const;
 
   void ShutdownHost();
@@ -48,6 +49,9 @@ class WorkspacePluginRuntime {
   plugin::PluginHost plugin_host_;
   std::size_t runtime_syntax_plugin_definition_count_ = 0;
   std::vector<std::string> runtime_syntax_errors_;
+  bool syntax_definitions_changed_ = false;
+  bool syntax_fingerprint_initialized_ = false;
+  std::uint64_t syntax_source_fingerprint_ = 0;
 };
 
 }  // namespace microide::workspace

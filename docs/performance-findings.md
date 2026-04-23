@@ -6,6 +6,7 @@ Updated on 2026-04-22 with asynchronous LSP server initialization to prevent UI 
 Updated on 2026-04-23 with deep-dive static analysis of render-path and edit-path bottlenecks.
 Updated on 2026-04-23 with syntax, viewport, terminal, and output-panel cache fixes from that review.
 Updated on 2026-04-23 with terminal foreground run coalescing, buffer-search caching, SDL text-cache lookup cleanup, and syntax-rule partitioning.
+Updated on 2026-04-23 with unchanged plugin-syntax reload skipping via source fingerprinting.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -385,6 +386,33 @@ Relevant code:
 
 - `src/editor/RuntimeSyntaxRegistry.cpp` (BuildRegistry, ReloadDefinitions)
 - `src/workspace/WorkspacePluginRuntime.cpp` (Reload)
+
+### Plugin syntax reloads now skip unchanged rebuilds
+
+Problem:
+
+- even after earlier startup work, plugin runtime reload still rebuilt runtime syntax definitions
+  whenever syntax reloads were enabled, even if the discovered `syntax/*.lua` files were identical
+  to the previous load
+- that made project open and `plugins-reload` pay Lua parsing plus syntax-registry rebuild cost on
+  every syntax-enabled reload path
+
+Implemented:
+
+- `SyntaxDefinitionLoader` now computes a stable source fingerprint over discovered syntax
+  definition files
+- `WorkspacePluginRuntime` now caches that fingerprint and skips syntax-definition load and
+  registry rebuild entirely when the syntax sources are unchanged
+- `WorkspaceShell` now invalidates editor, compare, and merge syntax state only when the runtime
+  syntax registry actually changed
+- plugin reload regression coverage now verifies an unchanged syntax reload does not bump the
+  runtime syntax registry revision
+
+Impact:
+
+- repeated startup or `plugins-reload` paths no longer pay syntax-registry rebuild cost when
+  plugin syntax files have not changed
+- cold syntax loads and real syntax edits remain the main remaining startup-sensitive path
 
 ## Deep-Dive Findings (2026-04-23)
 
