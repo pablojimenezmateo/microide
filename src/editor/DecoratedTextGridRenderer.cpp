@@ -6,26 +6,12 @@
 
 namespace microide::editor {
 
-namespace {
-
-std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count) {
-  std::size_t byte_offset = 0;
-  std::size_t codepoints_seen = 0;
-  while (byte_offset < text.size() && codepoints_seen < codepoint_count) {
-    byte_offset += util::Utf8SequenceLength(text, byte_offset);
-    ++codepoints_seen;
-  }
-  return byte_offset;
-}
-
-}  // namespace
-
 VisibleTextWindow SliceVisibleColumns(std::string_view text,
                                       std::size_t start_column,
                                       std::size_t visible_columns) {
-  const std::size_t byte_offset = Utf8ByteOffsetForCodepointCount(text, start_column);
+  const std::size_t byte_offset = util::Utf8ByteOffsetForCodepointCount(text, start_column);
   const std::size_t byte_length =
-      Utf8ByteOffsetForCodepointCount(text.substr(byte_offset), visible_columns);
+      util::Utf8ByteOffsetForCodepointCount(text.substr(byte_offset), visible_columns);
   return VisibleTextWindow{
       .text = text.substr(byte_offset, byte_length),
       .byte_offset = byte_offset,

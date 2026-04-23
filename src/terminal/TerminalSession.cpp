@@ -1,6 +1,7 @@
 #include "terminal/TerminalSession.h"
 
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 
 #include <algorithm>
 #include <array>
@@ -301,26 +302,6 @@ bool ClipboardPayloadIsText(std::string_view text) {
     }
   }
   return true;
-}
-
-std::size_t Utf8SequenceLength(unsigned char lead_byte) {
-  if (lead_byte < 0x80) {
-    return 1;
-  }
-  if (lead_byte >= 0xC2 && lead_byte <= 0xDF) {
-    return 2;
-  }
-  if (lead_byte >= 0xE0 && lead_byte <= 0xEF) {
-    return 3;
-  }
-  if (lead_byte >= 0xF0 && lead_byte <= 0xF4) {
-    return 4;
-  }
-  return 0;
-}
-
-bool IsUtf8ContinuationByte(unsigned char byte) {
-  return (byte & 0b1100'0000U) == 0b1000'0000U;
 }
 
 TerminalCell MakeAsciiTerminalCell(char character, const TerminalStyle& style) {
@@ -1048,7 +1029,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
 
           while (true) {
             if (pending_utf8_sequence_.empty()) {
-              const std::size_t sequence_length = Utf8SequenceLength(byte);
+              const std::size_t sequence_length = util::Utf8SequenceLength(byte);
               if (sequence_length == 0) {
                 PutGlyphLocked("\xEF\xBF\xBD");
                 break;
@@ -1061,7 +1042,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
               break;
             }
 
-            if (!IsUtf8ContinuationByte(byte)) {
+            if (!util::IsUtf8ContinuationByte(byte)) {
               PutGlyphLocked("\xEF\xBF\xBD");
               pending_utf8_sequence_.clear();
               continue;
@@ -1069,7 +1050,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
 
             pending_utf8_sequence_.push_back(static_cast<char>(byte));
             const std::size_t sequence_length =
-                Utf8SequenceLength(static_cast<unsigned char>(pending_utf8_sequence_.front()));
+                util::Utf8SequenceLength(
+                    static_cast<unsigned char>(pending_utf8_sequence_.front()));
             if (sequence_length != 0 && pending_utf8_sequence_.size() >= sequence_length) {
               PutGlyphLocked(pending_utf8_sequence_);
               pending_utf8_sequence_.clear();

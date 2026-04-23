@@ -11,6 +11,7 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
 #include <algorithm>
@@ -33,7 +34,6 @@ using microide::workspace::CollapseWhitespace;
 using microide::workspace::CommandCompletionCandidate;
 using microide::workspace::CommonPrefix;
 using microide::workspace::DecodeSessionNodePath;
-using microide::workspace::DetectLineEnding;
 using microide::workspace::EncodeSessionNodePath;
 using microide::workspace::FindBuiltinSidebarView;
 using microide::workspace::FindSidebarView;
@@ -61,9 +61,7 @@ using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 using microide::workspace::QuoteCommandArg;
 using microide::workspace::RelativePathLabel;
-using microide::workspace::RemoveLastUtf8Codepoint;
 using microide::workspace::ReplacePathPrefix;
-using microide::workspace::SerializeLines;
 using microide::workspace::SerializeProjectConfig;
 using microide::workspace::SerializeProjectSession;
 using microide::workspace::SerializeUserConfig;
@@ -75,14 +73,17 @@ using microide::workspace::SidebarViews;
 using microide::workspace::SplitSyntaxLines;
 using microide::workspace::TreeContextTargetKind;
 using microide::workspace::ToLower;
-using microide::workspace::Utf8ByteOffsetForCodepointCount;
-using microide::workspace::Utf8CodepointCount;
 using microide::workspace::WorkspaceCommandNames;
 using microide::workspace::WorkspaceMenuSpecs;
 using microide::workspace::WorkspaceDocumentedCommandUsages;
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceTreeContextMenuItems;
+using microide::util::DetectLineEnding;
+using microide::util::RemoveLastUtf8Codepoint;
 using microide::util::ReadTextFile;
+using microide::util::SerializeLines;
+using microide::util::Utf8ByteOffsetForCodepointCount;
+using microide::util::Utf8CodepointCount;
 using microide::util::WriteTextFileAtomically;
 
 void TestWorkspaceSharedParseCommandLine() {

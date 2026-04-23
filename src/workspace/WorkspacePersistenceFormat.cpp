@@ -4,6 +4,7 @@
 #include <sstream>
 #include <utility>
 
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
@@ -33,28 +34,6 @@ bool ParseFloatToken(std::string_view text, float* value) {
   } catch (...) {
     return false;
   }
-}
-
-std::string LineEndingSessionLabel(editor::TextViewport::LineEnding line_ending) {
-  switch (line_ending) {
-    case editor::TextViewport::LineEnding::CRLF:
-      return "crlf";
-    case editor::TextViewport::LineEnding::CR:
-      return "cr";
-    case editor::TextViewport::LineEnding::LF:
-    default:
-      return "lf";
-  }
-}
-
-editor::TextViewport::LineEnding ParseLineEndingSessionLabel(std::string_view text) {
-  if (text == "crlf") {
-    return editor::TextViewport::LineEnding::CRLF;
-  }
-  if (text == "cr") {
-    return editor::TextViewport::LineEnding::CR;
-  }
-  return editor::TextViewport::LineEnding::LF;
 }
 
 }  // namespace
@@ -300,7 +279,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
         continue;
       }
       it->dirty_snapshot = true;
-      it->line_ending = ParseLineEndingSessionLabel(tokens[2].text);
+      it->line_ending = util::ParseLineEndingLabel(tokens[2].text);
       continue;
     }
     if (version >= 2 && command == "view-buffer-line" && tokens.size() == 3) {
@@ -469,7 +448,7 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
                << view.horizontal_scroll << '\n';
         if (view.dirty_snapshot) {
           stream << "view-dirty " << view.leaf_id << ' '
-                 << QuoteCommandArg(LineEndingSessionLabel(view.line_ending)) << '\n';
+                 << QuoteCommandArg(util::LineEndingLabel(view.line_ending)) << '\n';
           for (const auto& line : view.buffer_lines) {
             stream << "view-buffer-line " << view.leaf_id << ' ' << QuoteCommandArg(line) << '\n';
           }

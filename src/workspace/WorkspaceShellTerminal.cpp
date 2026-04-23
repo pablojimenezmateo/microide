@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string_view>
 
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -14,19 +15,6 @@ namespace {
 constexpr float kBottomPanelTextInset = 12.0f;
 constexpr float kBottomPanelTextTopInset = 8.0f;
 constexpr float kBottomPanelScrollbarTextReserve = 16.0f;
-
-void EraseLastUtf8Codepoint(std::string& text) {
-  if (text.empty()) {
-    return;
-  }
-
-  std::size_t erase_pos = text.size() - 1;
-  while (erase_pos > 0 &&
-         (static_cast<unsigned char>(text[erase_pos]) & 0b1100'0000U) == 0b1000'0000U) {
-    --erase_pos;
-  }
-  text.erase(erase_pos);
-}
 
 std::string TrimTrailingTerminalBlanks(std::string text) {
   while (!text.empty() && (text.back() == '\0' || text.back() == ' ')) {
@@ -313,7 +301,7 @@ void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
 
 void WorkspaceShell::EraseLastTerminalPendingInputCodepoint() {
   if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
-    EraseLastUtf8Codepoint(terminal_tab->pending_input);
+    (void)util::RemoveLastUtf8Codepoint(&terminal_tab->pending_input);
   }
 }
 

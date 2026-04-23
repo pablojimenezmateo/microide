@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "editor/SyntaxHighlighter.h"
+#include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -15,7 +16,7 @@ namespace {
 std::size_t MaxVisualColumnsForLines(const std::vector<std::string>& lines) {
   std::size_t max_columns = 0;
   for (const std::string& line : lines) {
-    max_columns = std::max(max_columns, Utf8CodepointCount(line));
+    max_columns = std::max(max_columns, util::Utf8CodepointCount(line));
   }
   return max_columns;
 }
@@ -431,7 +432,7 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
   merge_tab.result_viewport.SetDirty(
       !merge_tab.persisted_output_baseline.has_value() ||
       *merge_tab.persisted_output_baseline !=
-          SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending));
+          util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending));
   merge_tab.conflicts = BuildMergeTrackedConflicts(merge_tab.model);
   merge_tab.hover_state.reset();
   merge_tab.max_visual_columns =
@@ -609,7 +610,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
   merge_tab.persistable = persistable;
   const std::string& line_ending_source =
       output_text.has_value() ? *output_text : (!current_content.empty() ? current_content : base_content);
-  merge_tab.result_line_ending = DetectLineEnding(line_ending_source);
+  merge_tab.result_line_ending = util::DetectLineEnding(line_ending_source);
   merge_tab.model = compare::BuildMergeModel(base_content, incoming_content, current_content);
   merge_tab.incoming_tokens.resize(merge_tab.model.incoming_lines.size());
   merge_tab.current_tokens.resize(merge_tab.model.current_lines.size());
@@ -632,7 +633,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
     }
     const std::string rendered_text =
         parsed_output.has_value()
-            ? SerializeLines(parsed_output->result_lines, merge_tab.result_line_ending)
+            ? util::SerializeLines(parsed_output->result_lines, merge_tab.result_line_ending)
             : *output_text;
     merge_tab.result_viewport.LoadContent(rendered_text, merge_tab.output_path,
                                           merge_tab.result_line_ending);

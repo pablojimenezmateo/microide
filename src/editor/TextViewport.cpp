@@ -25,29 +25,6 @@ std::string ToLower(std::string_view text) {
   return lowered;
 }
 
-std::string NormalizeLineEndings(std::string_view text) {
-  std::string normalized;
-  normalized.reserve(text.size());
-  for (char character : text) {
-    if (character != '\r') {
-      normalized.push_back(character);
-    }
-  }
-  return normalized;
-}
-
-std::string_view LineEndingText(TextViewport::LineEnding line_ending) {
-  switch (line_ending) {
-    case TextViewport::LineEnding::CRLF:
-      return "\r\n";
-    case TextViewport::LineEnding::CR:
-      return "\r";
-    case TextViewport::LineEnding::LF:
-    default:
-      return "\n";
-  }
-}
-
 }  // namespace
 
 TextViewport::TextViewport() {
@@ -66,9 +43,9 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
     return false;
   }
 
-  const DecodedDocument decoded = DecodeDocument(*content);
+  const util::DecodedText decoded = util::DecodeLines(*content);
   ResetState(decoded.lines, path, decoded.line_ending, decoded.mixed_line_endings,
-             decoded.encoding, false, false);
+             DetectEncoding(*content), false, false);
   return true;
 }
 
@@ -78,8 +55,7 @@ bool TextViewport::Save() {
     return false;
   }
 
-  const std::string text =
-      util::JoinLines(document_->lines, LineEndingText(document_->line_ending));
+  const std::string text = util::SerializeLines(document_->lines, document_->line_ending);
   if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
   }
@@ -93,9 +69,9 @@ void TextViewport::LoadContent(std::string_view content,
                                const std::filesystem::path& path,
                                std::optional<LineEnding> line_ending) {
   EnsureDocument();
-  const DecodedDocument decoded = DecodeDocument(content);
+  const util::DecodedText decoded = util::DecodeLines(content);
   ResetState(decoded.lines, path, line_ending.value_or(decoded.line_ending),
-             line_ending.has_value() ? false : decoded.mixed_line_endings, decoded.encoding,
+             line_ending.has_value() ? false : decoded.mixed_line_endings, DetectEncoding(content),
              false, false);
 }
 
@@ -464,11 +440,10 @@ std::size_t TextViewport::cursor_visual_column() const {
 }
 
 std::string TextViewport::LineEndingLabel() const {
-  const std::string base =
-      document_->line_ending == LineEnding::CRLF ? "CRLF"
-      : document_->line_ending == LineEnding::CR ? "CR"
-                                                 : "LF";
-  return document_->mixed_line_endings ? "mixed:" + base : base;
+  const std::string base = util::LineEndingLabel(document_->line_ending);
+  const std::string upper =
+      base == "crlf" ? "CRLF" : base == "cr" ? "CR" : "LF";
+  return document_->mixed_line_endings ? "mixed:" + upper : upper;
 }
 
 std::string TextViewport::EncodingLabel() const {
@@ -861,7 +836,8 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
 
   const std::vector<std::string> before_lines =
       SliceLines(document_->lines, start.line, end.line + 1);
-  const std::vector<std::string> replacement_lines = util::SplitLines(NormalizeLineEndings(replacement));
+  const std::vector<std::string> replacement_lines =
+      util::SplitLines(util::NormalizeLineEndings(replacement));
 
   std::vector<std::string> after_lines;
   after_lines.reserve(std::max<std::size_t>(1, replacement_lines.size()));
@@ -1144,59 +1120,6 @@ void TextViewport::EnsureDocument() {
   }
 }
 
-TextViewport::DecodedDocument TextViewport::DecodeDocument(std::string_view content) {
-  DecodedDocument decoded;
-  decoded.encoding = DetectEncoding(content);
-
-  std::size_t crlf_count = 0;
-  std::size_t lf_count = 0;
-  std::size_t cr_count = 0;
-  for (std::size_t i = 0; i < content.size(); ++i) {
-    if (content[i] == '\r') {
-      if (i + 1 < content.size() && content[i + 1] == '\n') {
-        ++crlf_count;
-        ++i;
-      } else {
-        ++cr_count;
-      }
-    } else if (content[i] == '\n') {
-      ++lf_count;
-    }
-  }
-
-  const std::size_t present_styles =
-      (crlf_count > 0 ? 1 : 0) + (lf_count > 0 ? 1 : 0) + (cr_count > 0 ? 1 : 0);
-  decoded.mixed_line_endings = present_styles > 1;
-  if (crlf_count >= lf_count && crlf_count >= cr_count && crlf_count > 0) {
-    decoded.line_ending = LineEnding::CRLF;
-  } else if (lf_count >= cr_count && lf_count > 0) {
-    decoded.line_ending = LineEnding::LF;
-  } else if (cr_count > 0) {
-    decoded.line_ending = LineEnding::CR;
-  }
-
-  std::size_t line_start = 0;
-  for (std::size_t i = 0; i < content.size(); ++i) {
-    if (content[i] != '\r' && content[i] != '\n') {
-      continue;
-    }
-
-    decoded.lines.emplace_back(content.substr(line_start, i - line_start));
-    if (content[i] == '\r' && i + 1 < content.size() && content[i + 1] == '\n') {
-      ++i;
-    }
-    line_start = i + 1;
-  }
-
-  if (line_start <= content.size()) {
-    decoded.lines.emplace_back(content.substr(line_start));
-  }
-  if (decoded.lines.empty()) {
-    decoded.lines.push_back("");
-  }
-  return decoded;
-}
-
 TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content) {
   if (content.find('\0') != std::string_view::npos) {
     return TextEncoding::Bytes;
@@ -1209,7 +1132,7 @@ TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content
     return TextEncoding::ASCII;
   }
 
-  return IsValidUtf8(content) ? TextEncoding::UTF8 : TextEncoding::Bytes;
+  return util::IsValidUtf8(content) ? TextEncoding::UTF8 : TextEncoding::Bytes;
 }
 
 TextViewport::TextEncoding TextViewport::DetectEncoding(const std::vector<std::string>& lines) {
@@ -1226,16 +1149,12 @@ TextViewport::TextEncoding TextViewport::DetectEncoding(const std::vector<std::s
       }
     }
 
-    if (!ascii_only && !IsValidUtf8(line)) {
+    if (!ascii_only && !util::IsValidUtf8(line)) {
       return TextEncoding::Bytes;
     }
   }
 
   return ascii_only ? TextEncoding::ASCII : TextEncoding::UTF8;
-}
-
-bool TextViewport::IsValidUtf8(std::string_view content) {
-  return util::IsValidUtf8(content);
 }
 
 std::vector<std::string> TextViewport::SliceLines(const std::vector<std::string>& lines,

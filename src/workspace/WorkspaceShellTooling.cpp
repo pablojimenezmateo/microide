@@ -83,7 +83,7 @@ std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
 }
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return SerializeLines(viewport.lines(), viewport.line_ending());
+  return util::SerializeLines(viewport.lines(), viewport.line_ending());
 }
 
 bool IsUnreservedUriByte(unsigned char ch) {
@@ -391,7 +391,7 @@ void WorkspaceShell::SyncLspForActiveEditableChange(const std::vector<std::strin
   EnsureLspDocumentOpen(*viewport, *client, language_id);
 
   const std::string uri = FileUriForPath(viewport->path());
-  const std::string full_text = SerializeLines(after_lines, viewport->line_ending());
+  const std::string full_text = util::SerializeLines(after_lines, viewport->line_ending());
   if (!client->SupportsIncrementalSync()) {
     client->DidChange(uri, full_text);
     return;

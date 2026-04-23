@@ -29,20 +29,8 @@ std::string EditorTabLabel(const editor::TextViewport& viewport) {
   return viewport.is_placeholder() ? "Welcome" : "Untitled";
 }
 
-std::string_view LineEndingSeparator(editor::TextViewport::LineEnding line_ending) {
-  switch (line_ending) {
-    case editor::TextViewport::LineEnding::CRLF:
-      return "\r\n";
-    case editor::TextViewport::LineEnding::CR:
-      return "\r";
-    case editor::TextViewport::LineEnding::LF:
-    default:
-      return "\n";
-  }
-}
-
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return util::JoinLines(viewport.lines(), LineEndingSeparator(viewport.line_ending()));
+  return util::SerializeLines(viewport.lines(), viewport.line_ending());
 }
 
 void RestoreViewportText(editor::TextViewport& viewport, std::string_view text) {
@@ -127,7 +115,7 @@ bool TabCoordinator::Save(std::size_t index) {
       return false;
     }
     merge_tab.persisted_output_baseline =
-        SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
+        util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
     state_.directory_tree.Refresh();
     operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());
     return true;

@@ -33,27 +33,6 @@ void BeginSelectionIfNeeded(SingleLineTextState* state, bool extend_selection) {
 
 }  // namespace
 
-std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t offset) {
-  offset = ClampCursor(text, offset);
-  if (offset == 0) {
-    return 0;
-  }
-  std::size_t previous = offset - 1;
-  while (previous > 0 &&
-         (static_cast<unsigned char>(text[previous]) & 0xC0u) == 0x80u) {
-    --previous;
-  }
-  return previous;
-}
-
-std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset) {
-  offset = ClampCursor(text, offset);
-  if (offset >= text.size()) {
-    return text.size();
-  }
-  return std::min(text.size(), offset + Utf8SequenceLength(text, offset));
-}
-
 void NormalizeSingleLineTextState(SingleLineTextState* state) {
   if (state == nullptr) {
     return;

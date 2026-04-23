@@ -13,12 +13,6 @@ bool EndsWith(std::string_view text, std::string_view suffix);
 std::string ToLower(std::string_view text);
 
 std::vector<std::string> SplitSyntaxLines(std::string_view text);
-std::string SerializeLines(const std::vector<std::string>& lines,
-                           editor::TextViewport::LineEnding line_ending);
-editor::TextViewport::LineEnding DetectLineEnding(std::string_view text);
-bool RemoveLastUtf8Codepoint(std::string* text);
-std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count);
-std::size_t Utf8CodepointCount(std::string_view text);
 std::string CollapseWhitespace(std::string_view text);
 
 bool QuerySupportsLiteralReplace(std::string_view query);

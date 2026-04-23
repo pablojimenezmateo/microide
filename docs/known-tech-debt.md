@@ -28,72 +28,7 @@ This list intentionally does not repeat issues that were already closed in
 - FIFO text-render cache eviction in `SdlTtfTextBackend`
 - split-editor actions and several open-or-navigate paths mutating the stale floating editor copy
 
-## 1. UTF-8, Line-Ending, and Text-Serialization Logic Is Still Split Across Subsystems
-
-Impact:
-- Medium to high
-- This is a correctness and maintenance problem more than a feature gap
-
-What still happens:
-- Core UTF-8 helpers live in `util/StringUtil.*`, but similar logic still exists elsewhere.
-- Line-ending detection and serialization are partly centralized in
-  `workspace/WorkspaceTextSearch.*`, while `TextViewport` still owns document decode behavior and
-  its own line-ending label or save path.
-- The terminal still keeps its own UTF-8 sequence handling instead of using the shared string
-  utilities directly.
-- `TextRenderer.cpp` still has its own UTF-8 sequence-length helper instead of using the shared
-  one.
-
-Evidence:
-- Shared helpers:
-  - `src/util/StringUtil.h`
-  - `src/util/StringUtil.cpp`
-- Editor-owned decode and encoding detection:
-  - `src/editor/TextViewport.cpp:81`
-  - `src/editor/TextViewport.cpp:1080`
-  - `src/editor/TextViewport.cpp:1184`
-  - `src/editor/TextViewport.cpp:1217`
-- Workspace-owned line-ending helpers:
-  - `src/workspace/WorkspaceTextSearch.h:16`
-  - `src/workspace/WorkspaceTextSearch.cpp:43`
-  - `src/workspace/WorkspaceTextSearch.cpp:52`
-- Terminal-owned UTF-8 sequence assembly:
-  - `src/terminal/TerminalSession.cpp:306`
-  - `src/terminal/TerminalSession.cpp:1050`
-  - `src/terminal/TerminalSession.h:209`
-- Renderer-local UTF-8 helper:
-  - `src/render/TextRenderer.cpp:19`
-
-Why this is still debt:
-- The same logical rules are still expressed in more than one place.
-- It is easy for the editor, workspace search/replace, terminal, and renderer to drift on
-  malformed UTF-8 handling, sequence boundaries, or line-ending behavior.
-- Bug fixes in one subsystem do not automatically improve the others.
-
-What a good fix likely looks like:
-- Move all low-level UTF-8 primitives into `util/StringUtil.*`, including any remaining local
-  `Utf8SequenceLength` variants.
-- Add explicit shared helpers for:
-  - line-ending detection
-  - line serialization with selected ending style
-  - maybe text decode metadata if `TextViewport` should stop owning all document parsing details
-- Leave viewport-specific concepts, such as syntax invalidation and dirty state, in the editor.
-- Leave terminal buffering behavior in the terminal, but make it consume the same UTF-8 boundary
-  primitives as the editor and renderer.
-
-Likely starting files:
-- `src/util/StringUtil.h`
-- `src/util/StringUtil.cpp`
-- `src/editor/TextViewport.cpp`
-- `src/workspace/WorkspaceTextSearch.cpp`
-- `src/terminal/TerminalSession.cpp`
-- `src/render/TextRenderer.cpp`
-
-Recommended follow-up:
-- Add focused tests around malformed UTF-8, CRLF round-tripping, and mixed-ending inputs once the
-  helper move is done.
-
-## 2. `WorkspaceShell` Is Smaller Than Before but Still the Main Ownership Bottleneck
+## 1. `WorkspaceShell` Is Smaller Than Before but Still the Main Ownership Bottleneck
 
 Impact:
 - High
@@ -148,7 +83,7 @@ Recommended follow-up:
 - Reduce the number of `friend class` entries over time instead of adding new ones.
 - Prefer shell-owned narrow services and registries over more helper methods on the shell itself.
 
-## 3. Coordinator Separation Is Still Partly Superficial
+## 2. Coordinator Separation Is Still Partly Superficial
 
 Impact:
 - Medium
@@ -202,7 +137,7 @@ Recommended follow-up:
 - When touching a coordinator for another reason, check whether one or two direct field accesses
   can be replaced with a dedicated API instead of preserving the friend pattern by default.
 
-## 4. Active Editor Viewport Ownership Is Better, but the Migration Is Not Fully Complete
+## 3. Active Editor Viewport Ownership Is Better, but the Migration Is Not Fully Complete
 
 Impact:
 - Medium
@@ -242,7 +177,7 @@ Recommended follow-up:
 - Prefer `ActiveEditorViewport()` and `ActiveNavigableViewport()` in all new code.
 - Treat new direct `text_viewport_` mutations in editor workflows as a code-review smell.
 
-## 5. Render and Hover Paths Still Reach Widely Through the Shell
+## 4. Render and Hover Paths Still Reach Widely Through the Shell
 
 Impact:
 - Medium
@@ -278,7 +213,7 @@ What a good fix likely looks like:
 - Avoid adding new render-time shell queries when a surface-specific view model would do.
 - Keep all actual drawing host-owned, but make the dependency graph smaller.
 
-## 6. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
+## 5. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
 
 Impact:
 - Medium
@@ -311,7 +246,7 @@ Recommended follow-up:
 - Only pursue this if profiling shows file-discovery or file-open churn is still material after the
   recent fixes.
 
-## 7. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
+## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 
 Impact:
 - Medium
@@ -336,7 +271,7 @@ Recommended follow-up:
   - project search across large trees with smart-case and regex modes
   - syntax cache invalidation after plugin reload
 
-## 8. Single-Line Shell Text Inputs Still Lack One Shared Selection-Aware Editor Model
+## 7. Single-Line Shell Text Inputs Still Lack One Shared Selection-Aware Editor Model
 
 Impact:
 - Medium
@@ -382,9 +317,8 @@ Recommended follow-up:
 
 ## Suggested Order For Later Work
 
-1. Centralize remaining UTF-8 and line-ending logic into `util/StringUtil.*`.
-2. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.
-3. Finish the active-viewport migration so stale floating-editor paths are harder to reintroduce.
-4. Build one shared selection-aware editor model for single-line shell inputs.
-5. Revisit project-content and indexing architecture only if profiling still shows meaningful
+1. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.
+2. Finish the active-viewport migration so stale floating-editor paths are harder to reintroduce.
+3. Build one shared selection-aware editor model for single-line shell inputs.
+4. Revisit project-content and indexing architecture only if profiling still shows meaningful
    search or refresh cost after the current fixes.

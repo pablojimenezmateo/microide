@@ -11,6 +11,7 @@
 
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
+#include "util/StringUtil.h"
 
 namespace microide::editor {
 
@@ -35,11 +36,7 @@ struct SelectionRange {
 
 class TextViewport {
  public:
-  enum class LineEnding {
-    LF,
-    CRLF,
-    CR,
-  };
+  using LineEnding = util::LineEnding;
 
   enum class TextEncoding {
     ASCII,
@@ -158,13 +155,6 @@ class TextViewport {
     std::size_t layout_revision = 0;
   };
 
-  struct DecodedDocument {
-    std::vector<std::string> lines;
-    LineEnding line_ending = LineEnding::LF;
-    bool mixed_line_endings = false;
-    TextEncoding encoding = TextEncoding::ASCII;
-  };
-
   struct VisibleLineCacheKey {
     std::size_t line_index = 0;
     std::size_t horizontal_scroll = 0;
@@ -234,10 +224,8 @@ class TextViewport {
                                         const std::vector<std::string>& inserted_lines);
   std::size_t MaxVisualColumns() const;
   void EnsureDocument();
-  static DecodedDocument DecodeDocument(std::string_view content);
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(const std::vector<std::string>& lines);
-  static bool IsValidUtf8(std::string_view content);
   static std::vector<std::string> SliceLines(const std::vector<std::string>& lines,
                                              std::size_t start_line,
                                              std::size_t end_line);

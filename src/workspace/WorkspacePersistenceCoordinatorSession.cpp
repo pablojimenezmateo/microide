@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "util/StringUtil.h"
 #include "util/StartupTrace.h"
 #include "util/TextFileIO.h"
 #include "workspace/WorkspacePersistenceFormat.h"
@@ -185,7 +186,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
       if (persisted_view.dirty_snapshot) {
         editor::TextViewport restored_view;
         restored_view.LoadContent(
-            SerializeLines(persisted_view.buffer_lines, persisted_view.line_ending), view_path,
+            util::SerializeLines(persisted_view.buffer_lines, persisted_view.line_ending), view_path,
             persisted_view.line_ending);
         restored_view.MoveCursorTo(persisted_view.cursor_line, persisted_view.cursor_column);
         restored_view.SetScrollLine(persisted_view.scroll_line);

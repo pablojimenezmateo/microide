@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "editor/SyntaxHighlighter.h"
+#include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -22,7 +23,8 @@ std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   for (const auto& row : model.rows) {
     max_columns = std::max(
         max_columns,
-        std::max(Utf8CodepointCount(row.left_text), Utf8CodepointCount(row.right_text)));
+        std::max(util::Utf8CodepointCount(row.left_text),
+                 util::Utf8CodepointCount(row.right_text)));
   }
   return max_columns;
 }
@@ -71,8 +73,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   std::string right_content;
   if (compare_tab.right_ref == "WORKTREE") {
     right_content = compare_tab.right_viewport.dirty()
-                        ? SerializeLines(compare_tab.right_viewport.lines(),
-                                         compare_tab.right_viewport.line_ending())
+                        ? util::SerializeLines(compare_tab.right_viewport.lines(),
+                                               compare_tab.right_viewport.line_ending())
                         : util::ReadTextFile(right_source_path).value_or("");
   } else {
     const auto right_commit_content =
@@ -415,7 +417,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
 
 void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
   const std::string right_content =
-      SerializeLines(compare_tab.right_viewport.lines(), compare_tab.right_viewport.line_ending());
+      util::SerializeLines(compare_tab.right_viewport.lines(),
+                           compare_tab.right_viewport.line_ending());
   compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content);
   const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
   const auto right_lines = SplitSyntaxLines(right_content);

@@ -45,6 +45,8 @@ The current SDL shell already includes:
   fills, syntax runs, and underline semantics do not degrade just because a file or diff is large
 - checkpointed syntax-highlight state in `TextViewport`, so random jumps in large files reuse
   coarse line-state checkpoints instead of replaying highlight state from file start
+- shared UTF-8 and line-ending utilities across editor, renderer, terminal, and workspace text
+  helpers, so text decoding, serialization, and boundary handling follow one host contract
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar

@@ -478,7 +478,7 @@ void WorkspaceShell::RenderTextComposition(
   }
 
   const std::string_view composition = context_.text_input.composition.text;
-  const std::size_t total_codepoints = Utf8CodepointCount(composition);
+  const std::size_t total_codepoints = util::Utf8CodepointCount(composition);
   const std::size_t selection_start_codepoints =
       context_.text_input.composition.start < 0
           ? total_codepoints
@@ -491,9 +491,9 @@ void WorkspaceShell::RenderTextComposition(
                      selection_start_codepoints +
                          static_cast<std::size_t>(context_.text_input.composition.length));
   const std::size_t selection_start =
-      Utf8ByteOffsetForCodepointCount(composition, selection_start_codepoints);
+      util::Utf8ByteOffsetForCodepointCount(composition, selection_start_codepoints);
   const std::size_t selection_end =
-      Utf8ByteOffsetForCodepointCount(composition, selection_end_codepoints);
+      util::Utf8ByteOffsetForCodepointCount(composition, selection_end_codepoints);
   const std::string_view prefix = composition.substr(0, selection_start);
   const std::string_view selected =
       composition.substr(selection_start, selection_end - selection_start);

@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "util/StringUtil.h"
+
 namespace microide::util {
 
 struct SingleLineTextState {
@@ -18,8 +20,6 @@ struct SingleLineTextSelection {
   std::size_t end = 0;
 };
 
-std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t offset);
-std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset);
 void NormalizeSingleLineTextState(SingleLineTextState* state);
 void SetSingleLineText(SingleLineTextState* state, std::string text);
 bool HasSingleLineSelection(const SingleLineTextState& state);

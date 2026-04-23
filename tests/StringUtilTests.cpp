@@ -10,6 +10,10 @@ namespace {
 
 using microide::util::IsValidUtf8;
 using microide::util::JoinLines;
+using microide::util::LineEnding;
+using microide::util::LineEndingLabel;
+using microide::util::ParseLineEndingLabel;
+using microide::util::SerializeLines;
 using microide::util::SplitLines;
 using microide::util::Utf8SequenceLength;
 
@@ -55,6 +59,28 @@ void TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput() {
          "join lines should keep empty inputs empty");
 }
 
+void TestStringUtilLineEndingHelpersRoundTrip() {
+  const auto decoded = microide::util::DecodeLines("alpha\r\nbeta\rgamma\n");
+  Expect(decoded.lines.size() == 4,
+         "decoded text should preserve logical lines plus the trailing empty row");
+  Expect(decoded.line_ending == LineEnding::CRLF,
+         "decoded text should prefer the dominant line ending style");
+  Expect(decoded.mixed_line_endings,
+         "decoded text should report mixed line endings when multiple styles are present");
+
+  const std::vector<std::string> lines = {"alpha", "beta", "gamma"};
+  Expect(SerializeLines(lines, LineEnding::LF) == "alpha\nbeta\ngamma",
+         "serialize lines should honor LF separators");
+  Expect(SerializeLines(lines, LineEnding::CRLF) == "alpha\r\nbeta\r\ngamma",
+         "serialize lines should honor CRLF separators");
+  Expect(SerializeLines(lines, LineEnding::CR) == "alpha\rbeta\rgamma",
+         "serialize lines should honor CR separators");
+  Expect(LineEndingLabel(LineEnding::CRLF) == "crlf",
+         "line ending labels should expose persistence-friendly lowercase forms");
+  Expect(ParseLineEndingLabel("cr") == LineEnding::CR,
+         "line ending labels should parse back into enum values");
+}
+
 void TestCompareModelHandlesCrLfInputViaSharedSplitter() {
   const auto model =
       microide::compare::BuildCompareModel("alpha\r\nbeta\r\n", "alpha\r\nbeta\r\ngamma\r\n");
@@ -80,6 +106,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestStringUtilSplitLinesNormalizesMixedLineEndings);
   AddTest(tests, "StringUtil/JoinLinesHonorsSeparatorsAndEmptyInput",
           TestStringUtilJoinLinesHonorsSeparatorsAndEmptyInput);
+  AddTest(tests, "StringUtil/LineEndingHelpersRoundTrip",
+          TestStringUtilLineEndingHelpersRoundTrip);
   AddTest(tests, "StringUtil/CompareModelHandlesCrLfInputViaSharedSplitter",
           TestCompareModelHandlesCrLfInputViaSharedSplitter);
 }
