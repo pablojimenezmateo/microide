@@ -2,14 +2,13 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <filesystem>
-#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
-#include <cstdint>
 #include <vector>
 
 namespace microide::tests {
@@ -177,7 +176,6 @@ class TerminalSession {
   void ResetScreenLocked(bool fill_rows);
   void SetAlternateScreenLocked(bool enabled, bool clear);
   void TrimScrollbackLocked();
-  void InvalidateLineSnapshotLocked();
   bool ReserveWakeEvent(Uint32& event_type) const;
   void PushWakeEvent() const;
 
@@ -220,11 +218,6 @@ class TerminalSession {
   std::size_t saved_cursor_column_ = 0;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
-  mutable std::uint64_t lines_generation_ = 0;
-  mutable std::uint64_t cached_snapshot_generation_ = std::numeric_limits<std::uint64_t>::max();
-  mutable std::size_t cached_snapshot_start_row_ = 0;
-  mutable std::size_t cached_snapshot_max_lines_ = 0;
-  mutable std::vector<TerminalLine> cached_snapshot_lines_;
 
 #ifdef MICROIDE_TESTING
   std::string test_sent_bytes_;

@@ -49,11 +49,6 @@ struct TerminalSessionTestAccess {
     session.saved_cursor_row_ = 0;
     session.saved_cursor_column_ = 0;
     session.ResetScrollRegionLocked();
-    session.lines_generation_ = 0;
-    session.cached_snapshot_generation_ = std::numeric_limits<std::uint64_t>::max();
-    session.cached_snapshot_start_row_ = 0;
-    session.cached_snapshot_max_lines_ = 0;
-    session.cached_snapshot_lines_.clear();
 #ifdef MICROIDE_TESTING
     session.test_sent_bytes_.clear();
 #endif

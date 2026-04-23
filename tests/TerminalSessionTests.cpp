@@ -227,6 +227,10 @@ void TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput() {
                  "cached snapshot should expose the current terminal content");
 
   TerminalSessionTestAccess::AppendOutput(session, "\nIJKL");
+  Expect(cached_before.size() == 2,
+         "cached snapshot references should remain stable when terminal output changes");
+  ExpectLineText(cached_before, 1, "EFGH",
+                 "terminal output invalidation should not mutate an outstanding cached snapshot");
 
   const auto& cached_after = session.SnapshotLineRangeCached(1, 2);
   Expect(cached_after.size() == 2,
