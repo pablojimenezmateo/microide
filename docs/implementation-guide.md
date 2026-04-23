@@ -1,5 +1,7 @@
 # MicroIDE Product Guide
 
+Reviewed on 2026-04-23.
+
 This file captures the durable product direction for the current C++/SDL3 codebase.
 Keep it shorter than `docs/active-work.md`.
 
@@ -39,6 +41,8 @@ The current SDL shell already includes:
 - multi-project tabs with app-level workspace restore
 - normal editor tabs, compare tabs, and merge tabs
 - nested shared-buffer splits inside editor tabs
+- a shared decorated text-grid render path across editor, compare, and merge surfaces, so row
+  fills, syntax runs, and underline semantics do not degrade just because a file or diff is large
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
@@ -57,6 +61,8 @@ The current SDL shell already includes:
 - a host-owned plugin runtime service for plugin lifecycle, syntax-asset reload bookkeeping,
   asset watching, and plugin output logging
 - repo-owned Lua dogfood plugins for ESLint diagnostics and host-owned LLM chat or inline completion, exercising the same narrow host APIs exposed to user plugins
+- shared shell render primitives for cards, tooltips, text fields, buttons, list rows, strip tabs,
+  and common chrome glyphs across prompts, overlays, sidebar, panel, and editor-empty states
 - an optional `SDL3_ttf` backend with a debug-text fallback
 
 Current implementation status and active priorities are tracked in `docs/active-work.md`.
@@ -144,11 +150,9 @@ whether the backend is external or built in.
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
 - `docs/plugin-runtime-research.md`: plugin architecture notes and external references
-- `docs/workspace-shell-breakdown-plan.md`: current progress and remaining work for dissolving
-  `WorkspaceShell` into narrower context, service, controller, and eventual view ownership
-- `docs/diff-editor-merge-rewrite-plan.md`: targeted diff and merge rewrite plan
 - `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
+- `docs/known-tech-debt.md`: concrete open debt that still matters after recent refactors
 - `docs/performance-findings.md`: shipped performance work worth preserving
-- `docs/workspace-surface-standardization-audit.md`: cross-surface UI and shell-consistency audit
+- `docs/text-surface-unification.md`: durable text-surface interaction contract
 - `docs/startup-tracing.md`: how to measure startup work
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow

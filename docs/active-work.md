@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-21.
+Reviewed on 2026-04-23.
 
 This is the single source of truth for:
 
@@ -530,7 +530,8 @@ Keep these when you need deeper design context:
 - `AGENTS.md`: repo-level engineering policy, iteration loop, and agent expectations
 - `docs/implementation-guide.md`: durable product direction
 - `docs/plugin-runtime-research.md`: deeper plugin architecture notes and external references
-- `docs/diff-editor-merge-rewrite-plan.md`: subsystem-specific rewrite plan for diff and merge presentation
+- `docs/known-tech-debt.md`: concrete open debt still worth preserving
+- `docs/text-surface-unification.md`: durable text-input and navigable-text interaction contract
 - `docs/production-tech-debt-review.md`: structural debt worth paying down as large phases proceed
 - `docs/performance-findings.md`: concrete shipped performance wins worth preserving
 - `docs/startup-tracing.md`: startup profiling workflow

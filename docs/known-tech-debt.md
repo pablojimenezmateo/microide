@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-04-20.
+Reviewed on 2026-04-23.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -383,11 +383,56 @@ Recommended follow-up:
   - project search across large trees with smart-case and regex modes
   - syntax cache invalidation after plugin reload
 
+## 9. Single-Line Shell Text Inputs Still Lack One Shared Selection-Aware Editor Model
+
+Impact:
+- Medium
+- Text insertion, caret painting, IME composition, and paste routing are standardized, but basic
+  editing behavior still depends too much on per-surface handlers
+
+What still happens:
+- Prompt input, command input, chat composer, overlay query fields, and sidebar search fields now
+  share `WorkspaceTextInputCoordinator` for insertion and composition, but they do not yet share
+  one selection-aware editing state
+- Backspace, escape, submit, some cursor movement, and confirm or cancel behavior still live in
+  prompt, overlay, sidebar, and panel-specific handlers
+- Edit actions such as select-all, copy, and cut are still more complete for viewport-backed
+  surfaces than for these single-line buffers
+
+Why this is still debt:
+- New single-line surfaces can still reintroduce behavior drift even though rendering is now
+  standardized
+- Shortcut parity and menu parity remain easier to regress than they should be
+- Plugin growth will increase the number of prompt-like surfaces over time, which raises the cost
+  of duplicated line-edit logic
+
+What a good fix likely looks like:
+- Introduce one host-owned single-line editor state with:
+  - buffer text
+  - caret position
+  - optional selection range
+  - shared helpers for backspace, delete-forward, left or right movement, home or end, and
+    select-all
+- Keep submit, history, and other surface-specific actions outside that shared editor model
+- Extend tests so keyboard shortcuts and menu actions exercise the same single-line editing path
+
+Likely starting files:
+- `src/util/SingleLineText.h`
+- `src/util/SingleLineText.cpp`
+- `src/workspace/WorkspaceTextInputCoordinator.cpp`
+- `src/workspace/WorkspaceKeyInputCoordinatorSurfaces.cpp`
+- `src/workspace/WorkspaceCommandPromptCoordinator.cpp`
+
+Recommended follow-up:
+- Add focused regression coverage for select-all, copy, cut, left or right movement, and home or
+  end on prompt, command, and overlay inputs once the shared editor model exists.
+
 ## Suggested Order For Later Work
 
 1. Fix syntax-highlight jump latency with checkpointed or bounded work.
 2. Centralize remaining UTF-8 and line-ending logic into `util/StringUtil.*`.
 3. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.
 4. Finish the active-viewport migration so stale floating-editor paths are harder to reintroduce.
-5. Revisit project-content and indexing architecture only if profiling still shows meaningful
+5. Build one shared selection-aware editor model for single-line shell inputs.
+6. Revisit project-content and indexing architecture only if profiling still shows meaningful
    search or refresh cost after the current fixes.

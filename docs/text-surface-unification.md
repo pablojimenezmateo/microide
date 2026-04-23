@@ -1,12 +1,11 @@
 # Text Surface Unification
 
-Reviewed on 2026-04-22.
+Reviewed on 2026-04-23.
 
 This document defines the current contract for text interaction across the workspace shell.
 New text surfaces should fit one of these two families instead of adding one-off clipboard,
-caret, or selection behavior.
-
-The follow-up audit and remaining gaps are tracked in `docs/text-surface-audit.md`.
+caret, or selection behavior. Open implementation debt should be tracked in
+`docs/known-tech-debt.md`, not in a separate audit file.
 
 ## 1. Single-line text-input surfaces
 
