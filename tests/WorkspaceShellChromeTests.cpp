@@ -492,6 +492,103 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
   SDL_DestroySurface(pixels);
 }
 
+void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git tooltip render fixture", "git tooltip render fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+
+  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
+  (void)WorkspaceShellTestAccess::HandleMouseMotion(
+      shell, action_rects[0].x + action_rects[0].w * 0.5f,
+      action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+         "git tooltip fixture should expose the compact action tooltip");
+
+  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredGitSidebarTooltipRect(shell);
+  Expect(tooltip_rect.has_value(), "git tooltip fixture should compute a tooltip rect");
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "git tooltip fixture should capture rendered pixels");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  const SDL_Color actual =
+      ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(tooltip_rect->x + 2.0f)),
+                              static_cast<int>(std::floor(tooltip_rect->y + 2.0f)));
+  Expect(actual.r == theme.surface_raised.r && actual.g == theme.surface_raised.g &&
+             actual.b == theme.surface_raised.b && actual.a == theme.surface_raised.a,
+         "git sidebar tooltips should render with the shared compact tooltip card fill");
+
+  SDL_DestroySurface(pixels);
+}
+
+void TestWorkspaceShellPromptInputRendersSharedFramedField() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "file.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "renamed.txt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "prompt render fixture should expose the rename prompt");
+
+  const SDL_FRect input_rect = WorkspaceShellTestAccess::PromptSurfaceInputRect(shell);
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "prompt render fixture should capture rendered pixels");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  const SDL_Color left_border =
+      ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(input_rect.x)),
+                              static_cast<int>(std::floor(input_rect.y + input_rect.h * 0.5f)));
+  const SDL_Color top_border =
+      ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(input_rect.x + input_rect.w * 0.5f)),
+                              static_cast<int>(std::floor(input_rect.y)));
+  const SDL_Color fill =
+      ReadSurfacePixelOrThrow(pixels, static_cast<int>(std::floor(input_rect.x + input_rect.w * 0.5f)),
+                              static_cast<int>(std::floor(input_rect.y + input_rect.h * 0.5f)));
+  const bool left_matches_accent = left_border.r == theme.accent.r &&
+                                   left_border.g == theme.accent.g &&
+                                   left_border.b == theme.accent.b &&
+                                   left_border.a == theme.accent.a;
+  const bool top_matches_accent = top_border.r == theme.accent.r &&
+                                  top_border.g == theme.accent.g &&
+                                  top_border.b == theme.accent.b &&
+                                  top_border.a == theme.accent.a;
+  Expect(left_matches_accent || top_matches_accent,
+         "active prompt inputs should render the shared framed-field accent border");
+  Expect(fill.r == theme.surface_background.r && fill.g == theme.surface_background.g &&
+             fill.b == theme.surface_background.b && fill.a == theme.surface_background.a,
+         "prompt inputs should render the shared framed-field background");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1045,6 +1142,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",
           TestWorkspaceShellTabTooltipRendersAboveSidebar);
+  AddTest(tests, "WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard",
+          TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
+  AddTest(tests, "WorkspaceShell/PromptInputRendersSharedFramedField",
+          TestWorkspaceShellPromptInputRendersSharedFramedField);
   AddTest(tests, "WorkspaceShell/ShortcutEditActionsReturnEditorInvalidation",
           TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation);
   AddTest(tests, "WorkspaceShell/EditorTabRightClickOpensContextMenu",

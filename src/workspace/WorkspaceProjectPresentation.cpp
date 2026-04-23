@@ -75,7 +75,7 @@ std::string BuildEditorBreadcrumbLabel(const std::filesystem::path& project_root
                                        const std::filesystem::path& path,
                                        bool placeholder) {
   if (path.empty()) {
-    return placeholder ? "welcome" : "untitled";
+    return placeholder ? "Welcome" : "Untitled";
   }
 
   return RelativePathLabel(project_root, path);

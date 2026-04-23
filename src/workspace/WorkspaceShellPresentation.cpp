@@ -35,7 +35,7 @@ std::string WorkspaceShell::ProjectLabel() const {
 
 std::string WorkspaceShell::ProjectLabelForRoot(const std::filesystem::path& root) const {
   if (root.empty()) {
-    return "welcome";
+    return "Welcome";
   }
   const std::string filename = root.filename().string();
   return filename.empty() ? root.lexically_normal().string() : filename;

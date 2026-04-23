@@ -1,12 +1,226 @@
 #pragma once
 
+#include "render/SurfacePrimitives.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <string_view>
 
 namespace microide::workspace::detail {
+
+enum class CardStyle {
+  Raised,
+  Overlay,
+  Tooltip,
+};
+
+enum class ButtonTone {
+  Neutral,
+  Accent,
+  Destructive,
+};
+
+struct ButtonVisualState {
+  bool enabled = true;
+  bool hovered = false;
+  bool active = false;
+};
+
+struct ButtonColors {
+  SDL_Color fill{};
+  SDL_Color border{};
+  SDL_Color text{};
+};
+
+struct TooltipLayout {
+  SDL_FRect rect{};
+  std::string text;
+};
+
+enum class StripAccentEdge {
+  Top,
+  Bottom,
+};
+
+struct StripTabPalette {
+  SDL_Color active_fill{};
+  SDL_Color inactive_fill{};
+  SDL_Color active_text{};
+  SDL_Color inactive_text{};
+  SDL_Color active_glyph{};
+  SDL_Color inactive_glyph{};
+};
+
+struct StripTabStyle {
+  float text_left_padding = 8.0f;
+  float close_right_reserve = 40.0f;
+  StripAccentEdge accent_edge = StripAccentEdge::Top;
+};
+
+inline void FillRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  render::FillRect(renderer, rect, color);
+}
+
+inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  render::OutlineRect(renderer, rect, color);
+}
+
+inline SDL_Color CardBackground(const render::Theme& theme, CardStyle style) {
+  switch (style) {
+    case CardStyle::Overlay:
+      return render::CardBackground(theme, render::CardStyle::Overlay);
+    case CardStyle::Tooltip:
+      return render::CardBackground(theme, render::CardStyle::Tooltip);
+    case CardStyle::Raised:
+    default:
+      return render::CardBackground(theme, render::CardStyle::Raised);
+  }
+}
+
+inline void DrawCardFrame(SDL_Renderer* renderer,
+                          const render::Theme& theme,
+                          const SDL_FRect& rect,
+                          CardStyle style) {
+  render::DrawCardFrame(renderer, theme, rect,
+                        style == CardStyle::Overlay   ? render::CardStyle::Overlay
+                        : style == CardStyle::Tooltip ? render::CardStyle::Tooltip
+                                                      : render::CardStyle::Raised);
+}
+
+inline SDL_FRect DrawTitledCardFrame(SDL_Renderer* renderer,
+                                     const render::Theme& theme,
+                                     const SDL_FRect& rect,
+                                     float header_height,
+                                     CardStyle style) {
+  return render::DrawTitledCardFrame(
+      renderer, theme, rect, header_height,
+      style == CardStyle::Overlay   ? render::CardStyle::Overlay
+      : style == CardStyle::Tooltip ? render::CardStyle::Tooltip
+                                    : render::CardStyle::Raised);
+}
+
+inline ButtonColors ResolveButtonColors(const render::Theme& theme,
+                                        ButtonTone tone,
+                                        const ButtonVisualState& state) {
+  if (!state.enabled) {
+    return ButtonColors{
+        .fill = theme.surface_raised,
+        .border = theme.border,
+        .text = theme.text_muted,
+    };
+  }
+
+  if (state.active) {
+    if (tone == ButtonTone::Destructive) {
+      return ButtonColors{
+          .fill = theme.diff_deleted,
+          .border = theme.diff_deleted,
+          .text = theme.text_primary,
+      };
+    }
+    return ButtonColors{
+        .fill = theme.chrome_active,
+        .border = theme.accent,
+        .text = theme.chrome_active_text,
+    };
+  }
+
+  if (state.hovered) {
+    return ButtonColors{
+        .fill = theme.row_highlight,
+        .border = tone == ButtonTone::Destructive ? theme.diff_deleted : theme.accent,
+        .text = theme.text_primary,
+    };
+  }
+
+  return ButtonColors{
+      .fill = theme.surface_raised,
+      .border = theme.border,
+      .text = tone == ButtonTone::Destructive
+                  ? theme.diff_deleted
+                  : tone == ButtonTone::Accent ? theme.accent : theme.text_secondary,
+  };
+}
+
+inline void DrawButtonCentered(const render::TextRenderer& text_renderer,
+                               SDL_Renderer* renderer,
+                               const render::Theme& theme,
+                               const SDL_FRect& rect,
+                               std::string_view label,
+                               ButtonTone tone,
+                               const ButtonVisualState& state) {
+  const ButtonColors colors = ResolveButtonColors(theme, tone, state);
+  FillRect(renderer, rect, colors.fill);
+  OutlineRect(renderer, rect, colors.border);
+  const float text_width = text_renderer.MeasureWidth(label);
+  const float x = rect.x + std::floor(std::max(0.0f, rect.w - text_width) * 0.5f);
+  const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
+  text_renderer.DrawStringOn(renderer, x, y, colors.text, colors.fill, label);
+}
+
+inline void DrawSelectableRowBackground(SDL_Renderer* renderer,
+                                        const render::Theme& theme,
+                                        const SDL_FRect& rect,
+                                        SDL_Color base_fill,
+                                        bool emphasized,
+                                        bool accent_strip = false,
+                                        SDL_Color accent_color = SDL_Color{}) {
+  const SDL_Color fill = emphasized ? theme.row_highlight : base_fill;
+  FillRect(renderer, rect, fill);
+  if (emphasized && accent_strip) {
+    const SDL_Color strip = accent_color.a == 0 ? theme.accent : accent_color;
+    FillRect(renderer, SDL_FRect{rect.x, rect.y, 2.0f, rect.h}, strip);
+  }
+}
+
+inline void DrawTextFieldFrame(SDL_Renderer* renderer,
+                               const render::Theme& theme,
+                               const SDL_FRect& rect,
+                               bool active) {
+  FillRect(renderer, rect, theme.surface_background);
+  OutlineRect(renderer, rect, active ? theme.accent : theme.border);
+}
+
+inline TooltipLayout BuildTooltipLayout(const render::TextRenderer& text_renderer,
+                                        std::string_view label,
+                                        float max_width,
+                                        float min_width = 160.0f) {
+  const float clamped_max = std::max(min_width, max_width);
+  const std::string text = text_renderer.TruncateToWidth(label, clamped_max - 16.0f);
+  const float width = std::clamp(text_renderer.MeasureWidth(text) + 16.0f, min_width, clamped_max);
+  return TooltipLayout{
+      .rect = SDL_FRect{0.0f, 0.0f, width, text_renderer.LineHeight() + 10.0f},
+      .text = text,
+  };
+}
+
+inline void DrawTooltip(const render::TextRenderer& text_renderer,
+                        SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& rect,
+                        std::string_view text) {
+  render::DrawCardFrame(renderer, theme, rect, render::CardStyle::Tooltip);
+  const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
+  text_renderer.DrawStringOn(renderer, rect.x + 8.0f, y, theme.text_primary,
+                             render::CardBackground(theme, render::CardStyle::Tooltip), text);
+}
+
+inline std::string_view DiagnosticSeverityLabel(editor::DiagnosticSeverity severity) {
+  switch (severity) {
+    case editor::DiagnosticSeverity::Error:
+      return "Error";
+    case editor::DiagnosticSeverity::Warning:
+      return "Warning";
+    case editor::DiagnosticSeverity::Info:
+      return "Info";
+    case editor::DiagnosticSeverity::Hint:
+      return "Hint";
+  }
+  return "Diagnostic";
+}
 
 inline void DrawScrollbarTrack(SDL_Renderer* renderer,
                                const render::Theme& theme,
@@ -15,9 +229,7 @@ inline void DrawScrollbarTrack(SDL_Renderer* renderer,
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
-                         theme.surface_raised.b, theme.surface_raised.a);
-  SDL_RenderFillRect(renderer, &track);
+  FillRect(renderer, track, theme.surface_raised);
 }
 
 inline void DrawScrollbarThumb(SDL_Renderer* renderer,
@@ -29,8 +241,7 @@ inline void DrawScrollbarThumb(SDL_Renderer* renderer,
   }
 
   const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
-  SDL_SetRenderDrawColor(renderer, thumb_color.r, thumb_color.g, thumb_color.b, thumb_color.a);
-  SDL_RenderFillRect(renderer, &thumb);
+  FillRect(renderer, thumb, thumb_color);
 }
 
 inline void DrawScrollbar(SDL_Renderer* renderer,
@@ -104,6 +315,41 @@ inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
   SDL_RenderLine(renderer, cx + 3.0f, cy - 3.0f, cx - 3.0f, cy + 3.0f);
+}
+
+inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float left = std::floor(rect.x + 2.0f);
+  const float mid_x = std::floor(rect.x + rect.w * 0.45f);
+  const float right = std::floor(rect.x + rect.w - 2.0f);
+  const float upper_y = std::floor(rect.y + rect.h * 0.35f);
+  const float lower_y = std::floor(rect.y + rect.h - 3.0f);
+  SDL_RenderLine(renderer, left, upper_y + 2.0f, mid_x, lower_y);
+  SDL_RenderLine(renderer, mid_x, lower_y, right, upper_y);
+}
+
+inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  SDL_RenderLine(renderer, cx - 4.0f, cy, cx + 4.0f, cy);
+  SDL_RenderLine(renderer, cx, cy - 4.0f, cx, cy + 4.0f);
+}
+
+inline void DrawHoverableCloseGlyph(SDL_Renderer* renderer,
+                                    const SDL_FRect& rect,
+                                    bool hovered,
+                                    SDL_Color color,
+                                    SDL_Color hover_color) {
+  DrawCloseGlyph(renderer, rect, hovered ? hover_color : color);
 }
 
 inline void DrawWindowControlGlyph(SDL_Renderer* renderer,
@@ -188,6 +434,91 @@ inline void DrawCenteredTextOn(const render::TextRenderer& text_renderer,
   const float y =
       rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
   DrawText(text_renderer, renderer, x, y, foreground, text);
+}
+
+inline void DrawPrimarySecondaryRowText(const render::TextRenderer& text_renderer,
+                                        SDL_Renderer* renderer,
+                                        const SDL_FRect& rect,
+                                        float text_x,
+                                        float right_edge,
+                                        SDL_Color primary_color,
+                                        SDL_Color secondary_color,
+                                        SDL_Color background,
+                                        std::string_view primary,
+                                        std::string_view secondary,
+                                        float primary_width_fraction = 0.62f,
+                                        float gap = 8.0f) {
+  const float text_y =
+      rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
+  const float max_width = std::max(20.0f, right_edge - text_x);
+  const std::string primary_text = text_renderer.TruncateToWidth(
+      primary, secondary.empty() ? max_width : max_width * primary_width_fraction);
+  DrawTextOn(text_renderer, renderer, text_x, text_y, primary_color, background, primary_text);
+  if (secondary.empty()) {
+    return;
+  }
+  const float secondary_x = text_x + text_renderer.MeasureWidth(primary_text) + gap;
+  const float secondary_width = std::max(0.0f, right_edge - secondary_x);
+  if (secondary_width <= 24.0f) {
+    return;
+  }
+  DrawTextOn(text_renderer, renderer, secondary_x, text_y, secondary_color, background,
+             text_renderer.TruncateToWidth(secondary, secondary_width));
+}
+
+inline void DrawStripTab(const render::TextRenderer& text_renderer,
+                         SDL_Renderer* renderer,
+                         const render::Theme& theme,
+                         const SDL_FRect& rect,
+                         std::string_view label,
+                         bool active,
+                         const StripTabStyle& style,
+                         const StripTabPalette& palette) {
+  const SDL_Color background = active ? palette.active_fill : palette.inactive_fill;
+  FillRect(renderer, rect, background);
+  if (active) {
+    const SDL_FRect accent =
+        style.accent_edge == StripAccentEdge::Top
+            ? SDL_FRect{rect.x, rect.y, rect.w, 2.0f}
+            : SDL_FRect{rect.x, rect.y + rect.h - 2.0f, rect.w, 2.0f};
+    FillRect(renderer, accent, theme.accent);
+  }
+  DrawVCenteredTextOn(text_renderer, renderer, rect, style.text_left_padding,
+                      active ? palette.active_text : palette.inactive_text, background,
+                      text_renderer.TruncateToWidth(
+                          label, std::max(8.0f, rect.w - style.close_right_reserve)));
+}
+
+inline void DrawMenuRow(const render::TextRenderer& text_renderer,
+                        SDL_Renderer* renderer,
+                        const render::Theme& theme,
+                        const SDL_FRect& rect,
+                        std::string_view label,
+                        std::string_view accelerator,
+                        bool enabled,
+                        bool hovered,
+                        bool checked) {
+  const SDL_Color background = hovered && enabled ? theme.row_highlight : theme.overlay_background;
+  const SDL_Color text_color =
+      !enabled ? theme.text_disabled : hovered ? theme.text_primary : theme.text_secondary;
+  const SDL_Color accel_color = !enabled ? theme.text_disabled : theme.text_muted;
+  DrawSelectableRowBackground(renderer, theme, rect, theme.overlay_background, hovered && enabled);
+  if (checked) {
+    DrawCheckGlyph(renderer, MakeRect(rect.x + 8.0f, rect.y + 3.0f, 10.0f, rect.h - 6.0f),
+                   enabled ? theme.accent : theme.text_disabled);
+  }
+  const float accelerator_width =
+      accelerator.empty() ? 0.0f : text_renderer.MeasureWidth(accelerator);
+  const float label_width = std::max(0.0f, rect.w - 42.0f - accelerator_width);
+  DrawVCenteredTextOn(text_renderer, renderer,
+                      MakeRect(rect.x + 24.0f, rect.y, label_width, rect.h), 0.0f, text_color,
+                      background, text_renderer.TruncateToWidth(label, label_width));
+  if (!accelerator.empty()) {
+    DrawVCenteredTextOn(
+        text_renderer, renderer,
+        MakeRect(rect.x + rect.w - accelerator_width - 10.0f, rect.y, accelerator_width, rect.h),
+        0.0f, accel_color, background, accelerator);
+  }
 }
 
 }  // namespace microide::workspace::detail

@@ -295,11 +295,12 @@ WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEnt
     return MakeRect(right_edge - width, row_rect.y + 1.0f, width, row_rect.h - 2.0f);
   };
 
-  const SDL_FRect primary_rect = button_rect(layout.content_right_edge, entry.staged ? "U" : "S");
+  const SDL_FRect primary_rect =
+      button_rect(layout.content_right_edge, entry.staged ? "Unstage" : "Stage");
   layout.primary_rect = primary_rect;
   layout.content_right_edge = primary_rect.x - kGitSidebarEntryButtonGap;
 
-  const SDL_FRect discard_rect = button_rect(layout.content_right_edge, "D");
+  const SDL_FRect discard_rect = button_rect(layout.content_right_edge, "Discard");
   layout.discard_rect = discard_rect;
   layout.content_right_edge = discard_rect.x - 6.0f;
   return layout;

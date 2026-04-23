@@ -1,4 +1,4 @@
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
 #include <cmath>
@@ -19,6 +19,8 @@ namespace {
 constexpr float kSidebarInset = 10.0f;
 
 }  // namespace
+
+using namespace detail;
 
 float WorkspaceShell::MeasureSingleLineTextTail(std::string_view text,
                                                 float available_width) const {
@@ -179,6 +181,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .cursor_x = cursor_x,
           .foreground = theme_.text_primary,
           .background = theme_.row_highlight,
+          .displayed_text = {},
+          .selection_bytes = std::nullopt,
       };
     }
     case TextInputSurface::Command: {
@@ -195,7 +199,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .text_y = text_y,
           .cursor_x = text_x + vm.cursor_x,
           .foreground = theme_.text_primary,
-          .background = theme_.chrome_active,
+          .background = theme_.surface_background,
           .displayed_text = std::move(vm.displayed_text),
           .selection_bytes = vm.selection_bytes,
       };
@@ -214,7 +218,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .text_y = text_y,
           .cursor_x = text_x + vm.cursor_x,
           .foreground = theme_.text_primary,
-          .background = theme_.chrome_active,
+          .background = theme_.surface_background,
           .displayed_text = std::move(vm.displayed_text),
           .selection_bytes = vm.selection_bytes,
       };
@@ -296,7 +300,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .text_y = text_y,
           .cursor_x = text_x + vm.cursor_x,
           .foreground = theme_.text_secondary,
-          .background = theme_.overlay_background,
+          .background = theme_.surface_background,
           .displayed_text = std::move(vm.displayed_text),
           .selection_bytes = vm.selection_bytes,
       };
@@ -307,15 +311,15 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           !context_.current_project_state.overlay.workflow.project_search.editing) {
         return std::nullopt;
       }
-      const float text_x = layout.sidebar.x + kSidebarInset;
-      const float text_y = layout.sidebar.y +
-                           (surface == TextInputSurface::SidebarSearchQuery
-                                ? kProjectSearchQueryTop
-                                : kProjectSearchReplaceTop);
+      const SDL_FRect text_rect =
+          surface == TextInputSurface::SidebarSearchQuery ? ProjectSearchQueryRect(layout.sidebar)
+                                                          : ProjectSearchReplaceRect(layout.sidebar);
+      const float text_x = text_rect.x + 6.0f;
+      const float text_y = text_rect.y + 2.0f;
       const std::string_view prefix =
           surface == TextInputSurface::SidebarSearchQuery ? "search> " : "replace> ";
       const float available_width =
-          std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f);
+          std::max(1.0f, text_rect.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(
           context_.current_project_state.overlay.workflow.project_search.edit_buffer,
           prefix, available_width);
@@ -372,123 +376,6 @@ void WorkspaceShell::UpdateTextInputArea(
   const int cursor =
       std::max(0, static_cast<int>(std::round(cursor_window_x - static_cast<float>(area.x))));
   SDL_SetTextInputArea(render_window, &area, cursor);
-}
-
-void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
-  const auto popup = ActiveEditorHoverPopupLayout();
-  if (!popup.has_value()) {
-    return;
-  }
-
-  const auto draw_text_on = [&](float x,
-                                float y,
-                                SDL_Color foreground,
-                                SDL_Color background,
-                                std::string_view text) {
-    text_renderer_.DrawStringOn(renderer, x, y, foreground, background, text);
-  };
-
-  DrawFilledRect(renderer, popup->rect, theme_.overlay_background);
-  DrawRect(renderer, popup->rect, theme_.border);
-  const float text_x = popup->rect.x + 12.0f;
-  const float text_width = std::max(0.0f, popup->rect.w - 24.0f);
-  float text_y = popup->rect.y + 12.0f;
-
-  if (popup->kind == EditorHoverTarget::Kind::Blame) {
-    const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->blame_line_index);
-    if (blame_line != nullptr) {
-      const auto summary_lines = WrapEditorHoverPopupText(blame_line->summary, text_width, 4);
-      draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                   text_renderer_.TruncateToWidth(blame_line->author, text_width));
-      text_y += text_renderer_.LineHeight() + 2.0f;
-      draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
-                   text_renderer_.TruncateToWidth(blame_line->date, text_width));
-      if (!summary_lines.empty()) {
-        text_y += text_renderer_.LineHeight() + 8.0f;
-        for (std::size_t i = 0; i < summary_lines.size(); ++i) {
-          draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                       summary_lines[i]);
-          text_y += text_renderer_.LineHeight();
-          if (i + 1 < summary_lines.size()) {
-            text_y += 2.0f;
-          }
-        }
-      }
-    }
-  } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
-    const auto title_lines =
-        popup->plugin_hover->title.empty()
-            ? std::vector<std::string>{}
-            : WrapEditorHoverPopupText(popup->plugin_hover->title, text_width, 2);
-    const auto content_lines =
-        popup->plugin_hover->content.empty()
-            ? std::vector<std::string>{}
-            : WrapEditorHoverPopupText(popup->plugin_hover->content, text_width, 6);
-    for (std::size_t i = 0; i < title_lines.size(); ++i) {
-      draw_text_on(text_x, text_y, theme_.text_secondary, theme_.overlay_background,
-                   title_lines[i]);
-      text_y += text_renderer_.LineHeight();
-      if (i + 1 < title_lines.size()) {
-        text_y += 2.0f;
-      }
-    }
-    if (!title_lines.empty() && !content_lines.empty()) {
-      text_y += 8.0f;
-    }
-    for (std::size_t i = 0; i < content_lines.size(); ++i) {
-      draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                   content_lines[i]);
-      text_y += text_renderer_.LineHeight();
-      if (i + 1 < content_lines.size()) {
-        text_y += 2.0f;
-      }
-    }
-  } else if (popup->diagnostic.has_value()) {
-    const auto severity =
-        editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
-    std::string_view severity_label = "Diagnostic";
-    switch (popup->diagnostic->severity) {
-      case editor::DiagnosticSeverity::Error:
-        severity_label = "Error";
-        break;
-      case editor::DiagnosticSeverity::Warning:
-        severity_label = "Warning";
-        break;
-      case editor::DiagnosticSeverity::Info:
-        severity_label = "Info";
-        break;
-      case editor::DiagnosticSeverity::Hint:
-        severity_label = "Hint";
-        break;
-    }
-    const auto message_lines =
-        WrapEditorHoverPopupText(popup->diagnostic->message, text_width, 6);
-    draw_text_on(text_x, text_y, severity, theme_.overlay_background,
-                 text_renderer_.TruncateToWidth(severity_label, text_width));
-    if (!message_lines.empty()) {
-      text_y += text_renderer_.LineHeight() + 8.0f;
-      for (std::size_t i = 0; i < message_lines.size(); ++i) {
-        draw_text_on(text_x, text_y, theme_.text_primary, theme_.overlay_background,
-                     message_lines[i]);
-        text_y += text_renderer_.LineHeight();
-        if (i + 1 < message_lines.size()) {
-          text_y += 2.0f;
-        }
-      }
-    }
-  }
-
-  if (popup->primary_action_rect.has_value()) {
-    const bool action_hovered =
-        last_mouse_position_valid_ && EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
-    DrawFilledRect(renderer, *popup->primary_action_rect,
-                   action_hovered ? theme_.row_highlight : theme_.surface_raised);
-    DrawRect(renderer, *popup->primary_action_rect,
-             action_hovered ? theme_.accent : theme_.border);
-    draw_text_on(popup->primary_action_rect->x + 9.0f, popup->primary_action_rect->y + 4.0f,
-                 action_hovered ? theme_.text_primary : theme_.text_secondary,
-                 action_hovered ? theme_.row_highlight : theme_.surface_raised, "Copy SHA");
-  }
 }
 
 void WorkspaceShell::RenderSingleLineTextSelection(

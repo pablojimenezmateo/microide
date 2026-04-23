@@ -31,6 +31,9 @@ These are implemented and should not be treated as open migration work:
 - SDL3/CMake desktop shell with an event-driven render loop
 - retained scene redraw path with shell-owned invalidation, coalesced dirty regions, partial-to-full promotion, and resize-safe full-redraw fallbacks for outer-layout drags
 - custom menu bar, project tabs, file tabs, breadcrumbs, persistent sidebar, overlays, and docked terminal-and-command pane
+- shell cards, compact tooltips, framed text inputs, buttons, selectable-list backgrounds,
+  popup-menu rows, strip tabs, and common shell glyphs now route through shared workspace render
+  primitives instead of staying fully surface-local
 - project-local workspace state plus app-level restore of open project tabs
 - normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
 - editor open/save/reopen, selection, clipboard, undo/redo, line numbers, horizontal scrolling, dirty tracking, IME hooks, and project-local preferences

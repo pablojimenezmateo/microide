@@ -185,7 +185,7 @@ std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPane
 
     std::string label = terminal_tab->session.LaunchLabel();
     if (label.empty()) {
-      label = "terminal";
+      label = "Terminal";
     }
     tabs.push_back(BottomPanelTabModel{
         .kind = BottomPanelTabKind::Terminal,
@@ -404,7 +404,7 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTermi
 
     std::string label = terminal_tab->session.LaunchLabel();
     if (label.empty()) {
-      label = "terminal";
+      label = "Terminal";
     }
     terminal_indices.push_back(i);
     display_titles.push_back(label);

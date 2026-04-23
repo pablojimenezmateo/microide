@@ -258,6 +258,18 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     return true;
   }
   switch (surface) {
+    case TextInputSurface::Command:
+    case TextInputSurface::PromptInput:
+    case TextInputSurface::FileFinder:
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::ProjectSearchOverlay:
+    case TextInputSurface::CommitPicker:
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::ChatComposer:
+      return false;
     case TextInputSurface::Editor:
       if (operations_.active_editable_viewport() == nullptr) {
         return false;

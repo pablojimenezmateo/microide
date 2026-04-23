@@ -158,6 +158,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInp
       .cursor_x = cursor_x,
       .foreground = theme_.text_primary,
       .background = theme_.editor_background,
+      .displayed_text = {},
+      .selection_bytes = std::nullopt,
   };
 }
 

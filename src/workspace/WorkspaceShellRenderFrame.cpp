@@ -1,4 +1,4 @@
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,45 +10,7 @@
 
 namespace microide::workspace {
 
-namespace {
-
-constexpr float kSidebarHeaderHeight = 26.0f;
-
-void DrawScrollbarTrack(SDL_Renderer* renderer,
-                        const render::Theme& theme,
-                        const SDL_FRect& track) {
-  if (renderer == nullptr || track.w <= 0.0f || track.h <= 0.0f) {
-    return;
-  }
-
-  SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
-                         theme.surface_raised.b, theme.surface_raised.a);
-  SDL_RenderFillRect(renderer, &track);
-}
-
-void DrawScrollbarThumb(SDL_Renderer* renderer,
-                        const render::Theme& theme,
-                        const SDL_FRect& thumb,
-                        bool active = false) {
-  if (renderer == nullptr || thumb.w <= 0.0f || thumb.h <= 0.0f) {
-    return;
-  }
-
-  const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
-  SDL_SetRenderDrawColor(renderer, thumb_color.r, thumb_color.g, thumb_color.b, thumb_color.a);
-  SDL_RenderFillRect(renderer, &thumb);
-}
-
-void DrawScrollbar(SDL_Renderer* renderer,
-                   const render::Theme& theme,
-                   const SDL_FRect& track,
-                   const SDL_FRect& thumb,
-                   bool active = false) {
-  DrawScrollbarTrack(renderer, theme, track);
-  DrawScrollbarThumb(renderer, theme, thumb, active);
-}
-
-}  // namespace
+using namespace detail;
 
 void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
   auto* terminal_tab = ActiveTerminalTab();
@@ -160,8 +122,8 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
                             kWorkspaceDividerThickness, layout.sidebar.h),
                    context_.interaction_state.drag_target == DragTarget::SidebarDivider ? theme_.accent
                                                                       : theme_.border);
-    const SDL_FRect sidebar_header =
-        MakeRect(layout.sidebar.x, layout.sidebar.y, layout.sidebar.w, kSidebarHeaderHeight);
+    const SDL_FRect sidebar_header = MakeRect(layout.sidebar.x, layout.sidebar.y, layout.sidebar.w,
+                                              kWorkspaceHeaderHeight);
     DrawFilledRect(renderer, sidebar_header, theme_.chrome_background);
     DrawFilledRect(renderer,
                    MakeRect(sidebar_header.x,

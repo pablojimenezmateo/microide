@@ -4,6 +4,7 @@
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
@@ -794,6 +795,24 @@ struct WorkspaceShell::TestAccess {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredGitSidebarTooltipLabel(layout.sidebar);
   }
+  static std::optional<SDL_FRect> HoveredGitSidebarTooltipRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const std::string label = shell.HoveredGitSidebarTooltipLabel(layout.sidebar);
+    if (label.empty()) {
+      return std::nullopt;
+    }
+    const auto tooltip = detail::BuildTooltipLayout(
+        shell.text_renderer_, label, std::max(160.0f, layout.full.w - 24.0f));
+    const float tooltip_x =
+        std::clamp(shell.last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                   layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
+    const float tooltip_y =
+        shell.last_mouse_y_ - tooltip.rect.h - 10.0f >= layout.full.y + 8.0f
+            ? shell.last_mouse_y_ - tooltip.rect.h - 10.0f
+            : std::clamp(shell.last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
+                         layout.full.y + layout.full.h - tooltip.rect.h - 8.0f);
+    return MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h);
+  }
   static std::array<SDL_FRect, 3> GitSidebarTopActionRects(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return {shell.GitSidebarStageAllButtonRect(layout.sidebar),
@@ -1063,6 +1082,10 @@ struct WorkspaceShell::TestAccess {
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface_visible;
   }
+  static SDL_FRect PromptSurfaceInputRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return ComputePromptSurfaceInputRect(ComputePromptSurfaceRect(layout.full));
+  }
   static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.input.text;
   }
@@ -1208,6 +1231,14 @@ struct WorkspaceShell::TestAccess {
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.query.text;
+  }
+  static SDL_FRect ProjectSearchQueryRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ProjectSearchQueryRect(layout.sidebar);
+  }
+  static SDL_FRect ProjectSearchReplaceRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ProjectSearchReplaceRect(layout.sidebar);
   }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.overlay.visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {

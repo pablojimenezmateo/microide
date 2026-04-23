@@ -21,8 +21,7 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             return;
           }
 
-          DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
-          DrawRect(renderer, *popup_rect, theme_.border);
+          DrawCardFrame(renderer, theme_, *popup_rect, CardStyle::Overlay);
           for (const VisiblePopupMenuItem& item :
                ComputeVisiblePopupMenuItems(items, active_item_index, *popup_rect)) {
             if (item.separator) {
@@ -34,34 +33,8 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             }
 
             const MenuItemSpec& spec = items[item.index];
-            const SDL_Color background =
-                item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
-            const SDL_Color text_color =
-                !item.enabled ? theme_.text_disabled
-                              : item.hovered ? theme_.text_primary : theme_.text_secondary;
-            const SDL_Color accel_color =
-                !item.enabled ? theme_.text_disabled : theme_.text_muted;
-            DrawFilledRect(renderer, item.rect, background);
-            if (item.checked) {
-              DrawCenteredTextOn(text_renderer_, renderer,
-                                 MakeRect(item.rect.x + 8.0f, item.rect.y, 10.0f, item.rect.h),
-                                 item.enabled ? theme_.accent : theme_.text_disabled, background,
-                                 "x");
-            }
-            const std::string accelerator = MenuItemAccelerator(spec);
-            const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
-            const float label_width = std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
-            DrawVCenteredTextOn(text_renderer_, renderer,
-                                MakeRect(item.rect.x + 24.0f, item.rect.y, label_width, item.rect.h),
-                                0.0f, text_color, background,
-                                TruncateLabel(MenuItemLabel(spec), label_width));
-            if (!accelerator.empty()) {
-              DrawVCenteredTextOn(
-                  text_renderer_, renderer,
-                  MakeRect(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y,
-                           accelerator_width, item.rect.h),
-                  0.0f, accel_color, background, accelerator);
-            }
+            DrawMenuRow(text_renderer_, renderer, theme_, item.rect, MenuItemLabel(spec),
+                        MenuItemAccelerator(spec), item.enabled, item.hovered, item.checked);
           }
         };
     draw_popup_menu(context_.menu_state.active_menu_id, context_.menu_state.active_menu_item_index, std::nullopt);
@@ -81,8 +54,7 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
     return;
   }
 
-  DrawFilledRect(renderer, *popup_rect, theme_.overlay_background);
-  DrawRect(renderer, *popup_rect, theme_.border);
+  DrawCardFrame(renderer, theme_, *popup_rect, CardStyle::Overlay);
   for (const VisiblePopupMenuItem& item : ComputeVisiblePopupMenuItems(
            items, context_.menu_state.tree_context_menu.active_item_index, *popup_rect)) {
     if (item.separator) {
@@ -94,31 +66,8 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
     }
 
     const MenuItemSpec& spec = items[item.index];
-    const SDL_Color background =
-        item.hovered && item.enabled ? theme_.row_highlight : theme_.overlay_background;
-    const SDL_Color text_color =
-        !item.enabled ? theme_.text_disabled
-                      : item.hovered ? theme_.text_primary : theme_.text_secondary;
-    const SDL_Color accel_color = !item.enabled ? theme_.text_disabled : theme_.text_muted;
-    DrawFilledRect(renderer, item.rect, background);
-    if (item.checked) {
-      DrawCenteredTextOn(text_renderer_, renderer,
-                         MakeRect(item.rect.x + 8.0f, item.rect.y, 10.0f, item.rect.h),
-                         item.enabled ? theme_.accent : theme_.text_disabled, background, "x");
-    }
-    const std::string accelerator = MenuItemAccelerator(spec);
-    const float accelerator_width = text_renderer_.MeasureWidth(accelerator);
-    const float label_width = std::max(0.0f, item.rect.w - 42.0f - accelerator_width);
-    DrawVCenteredTextOn(text_renderer_, renderer,
-                        MakeRect(item.rect.x + 24.0f, item.rect.y, label_width, item.rect.h), 0.0f,
-                        text_color, background, TruncateLabel(MenuItemLabel(spec), label_width));
-    if (!accelerator.empty()) {
-      DrawVCenteredTextOn(
-          text_renderer_, renderer,
-          MakeRect(item.rect.x + item.rect.w - accelerator_width - 10.0f, item.rect.y,
-                   accelerator_width, item.rect.h),
-          0.0f, accel_color, background, accelerator);
-    }
+    DrawMenuRow(text_renderer_, renderer, theme_, item.rect, MenuItemLabel(spec),
+                MenuItemAccelerator(spec), item.enabled, item.hovered, item.checked);
   }
 }
 

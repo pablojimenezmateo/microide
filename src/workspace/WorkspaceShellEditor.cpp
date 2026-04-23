@@ -10,7 +10,7 @@ std::string EditorTabLabel(const editor::TextViewport& viewport) {
   if (!viewport.path().empty()) {
     return viewport.path().filename().string();
   }
-  return viewport.is_placeholder() ? "welcome" : "untitled";
+  return viewport.is_placeholder() ? "Welcome" : "Untitled";
 }
 
 }  // namespace

@@ -1,38 +1,10 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
-#include <array>
-#include <charconv>
 #include <string>
 
 namespace microide::workspace {
 
 using namespace detail;
-
-namespace {
-
-void AppendUnsigned(std::string& out, std::size_t value) {
-  std::array<char, 20> scratch;
-  const auto [end, ec] =
-      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
-  if (ec == std::errc{}) {
-    out.append(scratch.data(),
-               static_cast<std::size_t>(end - scratch.data()));
-  }
-}
-
-std::string BuildSelectionSummary(std::size_t selected,
-                                  std::size_t total,
-                                  std::string_view suffix) {
-  std::string summary;
-  summary.reserve(48 + suffix.size());
-  AppendUnsigned(summary, selected + 1);
-  summary += " / ";
-  AppendUnsigned(summary, total);
-  summary += suffix;
-  return summary;
-}
-
-}  // namespace
 
 void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
   if (!context_.current_project_state.overlay.visible) {
@@ -71,23 +43,18 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
 
   DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
   const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
-  const SDL_FRect overlay_header = MakeRect(overlay.x, overlay.y, overlay.w, 30.0f);
   constexpr float kOverlayInset = 18.0f;
-  DrawFilledRect(renderer, overlay, theme_.overlay_background);
-  DrawRect(renderer, overlay, theme_.border);
-  DrawFilledRect(renderer, overlay_header, theme_.chrome_background);
-  DrawFilledRect(renderer,
-                 MakeRect(overlay_header.x,
-                          overlay_header.y + overlay_header.h - kWorkspaceDividerThickness,
-                          overlay_header.w, kWorkspaceDividerThickness),
-                 theme_.border);
+  DrawTitledCardFrame(renderer, theme_, overlay, 32.0f, CardStyle::Overlay);
+  const auto overlay_field_rect = [&](float text_y) {
+    return MakeRect(overlay.x + 12.0f, text_y - 4.0f, std::max(0.0f, overlay.w - 24.0f), 18.0f);
+  };
 
   ClampOverlayScrollRow(overlay);
   const auto overlay_list_layout = ComputeOverlayListLayout(overlay);
   const auto draw_overlay_row = [&](int row_index, int selected_index, std::string_view label) {
     const bool selected = row_index == selected_index;
     SDL_FRect row = ScrollableListRowRect(overlay_list_layout, row_index);
-    DrawFilledRect(renderer, row, selected ? theme_.row_highlight : theme_.surface_raised);
+    DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, selected, selected);
     DrawVCenteredTextOn(text_renderer_, renderer, row, 6.0f,
                         selected ? theme_.text_primary : theme_.text_secondary,
                         selected ? theme_.row_highlight : theme_.surface_raised,
@@ -100,14 +67,16 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                theme_.text_primary, theme_.chrome_background, "Search Buffer");
     const std::string bs_fallback =
         "> " + context_.current_project_state.overlay.workflow.buffer_search.query.text;
+    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
+                       current_surface == TextInputSurface::BufferSearch);
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
-        theme_.overlay_background,
+        theme_.surface_background,
         overlay_display_text(TextInputSurface::BufferSearch, bs_fallback));
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
-            ? "No matches"
+            ? FormatEmptyState("matches")
             : BuildSelectionSummary(
                   context_.current_project_state.overlay.workflow.buffer_search.selected_index,
                   context_.current_project_state.overlay.workflow.buffer_search.matches.size(),
@@ -144,13 +113,19 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         "find: " + context_.current_project_state.overlay.workflow.buffer_search.query.text;
     const std::string br_replace_fallback =
         "replace: " + context_.current_project_state.overlay.workflow.buffer_search.replace_text.text;
+    DrawTextFieldFrame(
+        renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
+        current_surface == TextInputSurface::BufferReplaceSearch);
+    DrawTextFieldFrame(
+        renderer, theme_, overlay_field_rect(overlay.y + 62.0f),
+        current_surface == TextInputSurface::BufferReplaceReplace);
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
         context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Search
             ? theme_.text_primary
             : theme_.text_secondary,
-        theme_.overlay_background,
+        theme_.surface_background,
         overlay_display_text(TextInputSurface::BufferReplaceSearch, br_search_fallback));
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
@@ -158,18 +133,19 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Replace
             ? theme_.text_primary
             : theme_.text_secondary,
-        theme_.overlay_background,
+        theme_.surface_background,
         overlay_display_text(TextInputSurface::BufferReplaceReplace, br_replace_fallback));
     const std::string summary =
         context_.current_project_state.overlay.workflow.buffer_search.matches.empty()
-            ? "No matches"
+            ? FormatEmptyState("matches")
             : BuildSelectionSummary(
                   context_.current_project_state.overlay.workflow.buffer_search.selected_index,
                   context_.current_project_state.overlay.workflow.buffer_search.matches.size(),
-                  " matches  |  Enter replace  Ctrl+Enter replace all");
+                  " matches");
+    const std::string replace_hints = JoinHintSegments({"Enter replace", "Ctrl+Enter replace all"});
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 82.0f,
                theme_.text_muted, theme_.overlay_background,
-               TruncateLabel(summary, overlay.w - 36.0f));
+               TruncateLabel(summary + "  |  " + replace_hints, overlay.w - 36.0f));
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = context_.current_project_state.overlay.scroll_row + row;
       if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.buffer_search.matches.size())) {
@@ -198,14 +174,16 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                theme_.text_primary, theme_.chrome_background, "Project Search");
     const std::string ps_fallback =
         "> " + context_.current_project_state.overlay.workflow.project_search.query.text;
+    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
+                       current_surface == TextInputSurface::ProjectSearchOverlay);
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
-        theme_.overlay_background,
+        theme_.surface_background,
         overlay_display_text(TextInputSurface::ProjectSearchOverlay, ps_fallback));
     const std::string summary =
         context_.current_project_state.overlay.workflow.project_search.results.empty()
-            ? "No results"
+            ? FormatEmptyState("results")
         : context_.current_project_state.overlay.workflow.project_search.truncated
             ? BuildSelectionSummary(
                   context_.current_project_state.overlay.workflow.project_search.selected_index,
@@ -247,10 +225,12 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                context_.current_project_state.overlay.workflow.compare_picker.path.filename().string());
     const std::string cp_fallback =
         "> " + context_.current_project_state.overlay.workflow.compare_picker.query.text;
+    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 62.0f),
+                       current_surface == TextInputSurface::CommitPicker);
     DrawSingleLineTextTail(
         renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
-        theme_.overlay_background,
+        theme_.surface_background,
         overlay_display_text(TextInputSurface::CommitPicker, cp_fallback));
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = context_.current_project_state.overlay.scroll_row + row;
@@ -267,7 +247,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     }
     if (context_.current_project_state.overlay.workflow.compare_picker.matches.empty()) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 92.0f,
-                 theme_.text_muted, theme_.overlay_background, "No matching commits");
+                 theme_.text_muted, theme_.overlay_background, FormatEmptyState("matching commits"));
     }
   } else if (context_.current_project_state.overlay.mode == OverlayMode::Completion) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
@@ -340,7 +320,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                theme_.text_primary, theme_.chrome_background, "Tasks");
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                theme_.text_muted, theme_.overlay_background,
-               "Enter runs the selected task");
+               JoinHintSegments({"Enter run selected task", "Esc cancel"}));
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = context_.current_project_state.overlay.scroll_row + row;
       if (item_index >= static_cast<int>(context_.current_project_state.overlay.workflow.task_picker.entries.size())) {
@@ -365,9 +345,11 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Find File");
+    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
+                       current_surface == TextInputSurface::FileFinder);
     DrawSingleLineTextTail(renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                            std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
-                           theme_.text_secondary, theme_.overlay_background,
+                           theme_.text_secondary, theme_.surface_background,
                            "> " + context_.current_project_state.file_finder.query());
 
     const auto& results = context_.current_project_state.file_finder.results();
@@ -383,7 +365,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     }
     if (results.empty()) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 80.0f,
-                 theme_.text_muted, theme_.overlay_background, "No matching files");
+                 theme_.text_muted, theme_.overlay_background, FormatEmptyState("matching files"));
     }
   }
 

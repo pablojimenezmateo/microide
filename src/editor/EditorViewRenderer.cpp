@@ -8,7 +8,9 @@
 
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsRender.h"
+#include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/WorkspaceUiText.h"
 
 namespace microide::editor {
 
@@ -187,28 +189,22 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   const float card_x = rect.x + std::max(24.0f, (rect.w - card_width) * 0.5f);
   const float card_y = rect.y + std::max(24.0f, rect.h * 0.05f);
   const SDL_FRect card = SDL_FRect{card_x, card_y, std::max(320.0f, card_width), card_height};
-  const SDL_FRect accent = SDL_FRect{card.x, card.y, card.w, 3.0f};
-
-  SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
-                         theme.surface_raised.b, theme.surface_raised.a);
-  SDL_RenderFillRect(renderer, &card);
-  SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b, theme.border.a);
-  SDL_RenderRect(renderer, &card);
-  SDL_SetRenderDrawColor(renderer, theme.accent.r, theme.accent.g, theme.accent.b, theme.accent.a);
-  SDL_RenderFillRect(renderer, &accent);
+  const SDL_FRect header =
+      render::DrawTitledCardFrame(renderer, theme, card, 32.0f, render::CardStyle::Raised);
 
   const float inset_x = card.x + 18.0f;
-  text_renderer.DrawStringOn(renderer, inset_x, card.y + 18.0f, theme.text_primary,
-                             theme.surface_raised, "workspace ready");
-  text_renderer.DrawStringOn(renderer, inset_x, card.y + 40.0f, theme.text_secondary,
+  text_renderer.DrawStringOn(renderer, inset_x, header.y + 8.0f, theme.chrome_text,
+                             theme.chrome_background, "Workspace Ready");
+  text_renderer.DrawStringOn(renderer, inset_x, card.y + 46.0f, theme.text_secondary,
                              theme.surface_raised,
-                             "Open a file from the tree or use this cheat sheet while the editor is empty.");
-  text_renderer.DrawStringOn(renderer, inset_x, card.y + 58.0f, theme.text_muted,
+                             "Open a file from the tree or use this reference while the editor is empty.");
+  text_renderer.DrawStringOn(renderer, inset_x, card.y + 64.0f, theme.text_muted,
                              theme.surface_raised,
-                             "Everything implemented today is listed below: commands on the right, shortcuts on the left.");
+                             microide::workspace::JoinHintSegments(
+                                 {"Commands on the right", "Shortcuts on the left"}));
 
-  const float panels_y = card.y + 92.0f;
-  const float panels_h = card.h - 126.0f;
+  const float panels_y = card.y + 98.0f;
+  const float panels_h = card.h - 132.0f;
   const float panel_gap = 12.0f;
   const float panel_w = (card.w - 36.0f - panel_gap * 2.0f) / 3.0f;
   const SDL_FRect core_panel = SDL_FRect{card.x + 12.0f, panels_y, panel_w, panels_h};

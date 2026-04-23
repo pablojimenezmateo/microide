@@ -31,8 +31,9 @@ void LspManager::RegisterServer(const std::string& language_id,
                                  const std::vector<std::string>& command,
                                  const std::string& root_uri, bool eager_start) {
   servers_[language_id] = ServerEntry{command, root_uri, {}, nullptr};
-  // Note: eager_start is currently unused; servers are started lazily on first use
-  // to avoid race conditions during plugin initialization.
+  if (eager_start) {
+    (void)GetServer(language_id);
+  }
 }
 
 LspClient* LspManager::GetServer(const std::string& language_id) {

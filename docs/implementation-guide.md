@@ -149,5 +149,6 @@ whether the backend is external or built in.
 - `docs/diff-editor-merge-rewrite-plan.md`: targeted diff and merge rewrite plan
 - `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
 - `docs/performance-findings.md`: shipped performance work worth preserving
+- `docs/workspace-surface-standardization-audit.md`: cross-surface UI and shell-consistency audit
 - `docs/startup-tracing.md`: how to measure startup work
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow

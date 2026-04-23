@@ -1,4 +1,4 @@
-#include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
 #include <optional>
@@ -6,9 +6,12 @@
 #include <string>
 #include <string_view>
 
+#include "editor/DiagnosticsRender.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
+
+using namespace detail;
 
 namespace {
 
@@ -60,20 +63,6 @@ std::string NormalizeHoverPopupText(std::string_view text) {
   return normalized;
 }
 
-std::string DiagnosticSeverityLabel(editor::DiagnosticSeverity severity) {
-  switch (severity) {
-    case editor::DiagnosticSeverity::Error:
-      return "Error";
-    case editor::DiagnosticSeverity::Warning:
-      return "Warning";
-    case editor::DiagnosticSeverity::Info:
-      return "Info";
-    case editor::DiagnosticSeverity::Hint:
-      return "Hint";
-  }
-  return "Diagnostic";
-}
-
 float ClampPopupWidth(float preferred_width, float minimum_width, float max_width) {
   const float clamped_max = std::max(1.0f, max_width);
   const float clamped_min = std::min(minimum_width, clamped_max);
@@ -95,6 +84,26 @@ SDL_FRect PositionHoverPopup(const SDL_FRect& anchor_rect,
   x = std::max(editor_surface.x + 8.0f, x);
   y = std::max(editor_surface.y + 8.0f, y);
   return MakeRect(x, y, card_width, card_height);
+}
+
+void DrawHoverPopupLines(const render::TextRenderer& text_renderer,
+                        SDL_Renderer* renderer,
+                        float x,
+                        float* y,
+                        SDL_Color foreground,
+                        SDL_Color background,
+                        const std::vector<std::string>& lines,
+                        float line_gap = kEditorHoverPopupLineGap) {
+  if (y == nullptr) {
+    return;
+  }
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    text_renderer.DrawStringOn(renderer, x, *y, foreground, background, lines[i]);
+    *y += text_renderer.LineHeight();
+    if (i + 1 < lines.size()) {
+      *y += line_gap;
+    }
+  }
 }
 
 }  // namespace
@@ -227,7 +236,7 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
     return std::nullopt;
   }
   const editor::PublishedDiagnostic& diagnostic = *active_editor_hover_target_->diagnostic;
-  const std::string severity = DiagnosticSeverityLabel(diagnostic.severity);
+  const std::string_view severity = DiagnosticSeverityLabel(diagnostic.severity);
   const float severity_width = text_renderer_.MeasureWidth(severity);
   const float message_width =
       std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
@@ -337,6 +346,83 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     lines.push_back(text_renderer_.TruncateToWidth(normalized, max_width));
   }
   return lines;
+}
+
+void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
+  const auto popup = ActiveEditorHoverPopupLayout();
+  if (!popup.has_value()) {
+    return;
+  }
+
+  DrawCardFrame(renderer, theme_, popup->rect, CardStyle::Overlay);
+  const float text_x = popup->rect.x + kEditorHoverPopupPadding;
+  const float text_width =
+      std::max(0.0f, popup->rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = popup->rect.y + kEditorHoverPopupPadding;
+
+  if (popup->kind == EditorHoverTarget::Kind::Blame) {
+    const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->blame_line_index);
+    if (blame_line != nullptr) {
+      const auto summary_lines =
+          WrapEditorHoverPopupText(blame_line->summary, text_width, kEditorHoverPopupMaxSummaryLines);
+      text_renderer_.DrawStringOn(
+          renderer, text_x, text_y, theme_.text_primary, theme_.overlay_background,
+          text_renderer_.TruncateToWidth(blame_line->author, text_width));
+      text_y += text_renderer_.LineHeight() + kEditorHoverPopupLineGap;
+      text_renderer_.DrawStringOn(
+          renderer, text_x, text_y, theme_.text_secondary, theme_.overlay_background,
+          text_renderer_.TruncateToWidth(blame_line->date, text_width));
+      if (!summary_lines.empty()) {
+        text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
+        DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                            theme_.overlay_background, summary_lines);
+      }
+    }
+  } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
+    const auto title_lines =
+        popup->plugin_hover->title.empty()
+            ? std::vector<std::string>{}
+            : WrapEditorHoverPopupText(popup->plugin_hover->title, text_width,
+                                       kEditorHoverPopupMaxPluginTitleLines);
+    const auto content_lines =
+        popup->plugin_hover->content.empty()
+            ? std::vector<std::string>{}
+            : WrapEditorHoverPopupText(popup->plugin_hover->content, text_width,
+                                       kEditorHoverPopupMaxPluginContentLines);
+    DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
+                        theme_.overlay_background, title_lines);
+    if (!title_lines.empty() && !content_lines.empty()) {
+      text_y += kEditorHoverPopupSectionGap;
+    }
+    DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                        theme_.overlay_background, content_lines);
+  } else if (popup->diagnostic.has_value()) {
+    const SDL_Color severity_color =
+        editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
+    const auto message_lines = WrapEditorHoverPopupText(
+        popup->diagnostic->message, text_width, kEditorHoverPopupMaxDiagnosticLines);
+    text_renderer_.DrawStringOn(
+        renderer, text_x, text_y, severity_color, theme_.overlay_background,
+        text_renderer_.TruncateToWidth(DiagnosticSeverityLabel(popup->diagnostic->severity),
+                                       text_width));
+    if (!message_lines.empty()) {
+      text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
+      DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                          theme_.overlay_background, message_lines);
+    }
+  }
+
+  if (popup->primary_action_rect.has_value()) {
+    const bool action_hovered = last_mouse_position_valid_ &&
+                                EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
+    DrawButtonCentered(text_renderer_, renderer, theme_, *popup->primary_action_rect, "Copy SHA",
+                       ButtonTone::Accent,
+                       ButtonVisualState{
+                           .enabled = true,
+                           .hovered = action_hovered,
+                           .active = false,
+                       });
+  }
 }
 
 void WorkspaceShell::UpdateEditorHover(float x, float y) {

@@ -1,8 +1,6 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
-#include <array>
-#include <charconv>
 #include <cmath>
 #include <string>
 
@@ -18,26 +16,6 @@ namespace {
 constexpr float kSidebarInset = 10.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
-
-void AppendUnsigned(std::string& out, std::size_t value) {
-  std::array<char, 20> scratch;
-  const auto [end, ec] =
-      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
-  if (ec == std::errc{}) {
-    out.append(scratch.data(), static_cast<std::size_t>(end - scratch.data()));
-  }
-}
-
-std::string BuildCountStatus(std::string_view prefix,
-                             std::size_t count,
-                             std::string_view suffix) {
-  std::string text;
-  text.reserve(prefix.size() + suffix.size() + 24);
-  text += prefix;
-  AppendUnsigned(text, count);
-  text += suffix;
-  return text;
-}
 
 std::string BuildProjectSearchResultLabel(std::size_t line,
                                           std::size_t column,
@@ -75,19 +53,15 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                                       std::string_view label,
                                       bool enabled,
                                       bool destructive = false) {
-    const bool hovered =
-        enabled && last_mouse_position_valid_ && Contains(button_rect, last_mouse_x_, last_mouse_y_);
-    const SDL_Color fill = hovered ? theme_.row_highlight : theme_.surface_raised;
-    const SDL_Color border =
-        !enabled ? theme_.border
-                 : hovered ? (destructive ? theme_.diff_deleted : theme_.accent)
-                           : theme_.border;
-    const SDL_Color text = !enabled ? theme_.text_muted
-                                    : hovered ? theme_.text_primary
-                                              : destructive ? theme_.diff_deleted : theme_.accent;
-    DrawFilledRect(renderer, button_rect, fill);
-    DrawRect(renderer, button_rect, border);
-    DrawCenteredTextOn(text_renderer_, renderer, button_rect, text, fill, label);
+    DrawButtonCentered(
+        text_renderer_, renderer, theme_, button_rect, label,
+        destructive ? ButtonTone::Destructive : ButtonTone::Accent,
+        ButtonVisualState{
+            .enabled = enabled,
+            .hovered = enabled && last_mouse_position_valid_ &&
+                       Contains(button_rect, last_mouse_x_, last_mouse_y_),
+            .active = false,
+        });
   };
 
   const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
@@ -141,32 +115,34 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const std::string query_fallback = "search> " + std::string(query_text);
     const std::string replace_fallback = "replace> " + std::string(replace_text);
 
+    const SDL_FRect query_rect = ProjectSearchQueryRect(layout.sidebar);
+    const SDL_FRect replace_rect = ProjectSearchReplaceRect(layout.sidebar);
+    DrawTextFieldFrame(renderer, theme_, query_rect,
+                       current_surface == TextInputSurface::SidebarSearchQuery);
+    DrawTextFieldFrame(renderer, theme_, replace_rect,
+                       current_surface == TextInputSurface::SidebarSearchReplace);
     DrawSingleLineTextTail(
-        renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 38.0f,
-        std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
+        renderer, query_rect.x + 6.0f, query_rect.y + 2.0f,
+        std::max(1.0f, query_rect.w - 12.0f),
         editing_query ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
         sidebar_display_text(TextInputSurface::SidebarSearchQuery, query_fallback));
     DrawSingleLineTextTail(
-        renderer, layout.sidebar.x + kSidebarInset, layout.sidebar.y + 54.0f,
-        std::max(1.0f, layout.sidebar.w - kSidebarInset * 2.0f),
+        renderer, replace_rect.x + 6.0f, replace_rect.y + 2.0f,
+        std::max(1.0f, replace_rect.w - 12.0f),
         editing_replace ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
         sidebar_display_text(TextInputSurface::SidebarSearchReplace, replace_fallback));
     const auto draw_search_button = [&](const SDL_FRect& rect,
                                         std::string_view label,
                                         bool active) {
-      const bool hovered =
-          last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
-      const SDL_Color background =
-          active ? (hovered ? theme_.row_highlight : theme_.chrome_active)
-                 : (hovered ? theme_.row_highlight : theme_.surface_raised);
-      const SDL_Color border =
-          active ? theme_.accent : (hovered ? theme_.text_secondary : theme_.border);
-      const SDL_Color text = active || hovered ? theme_.text_primary : theme_.text_secondary;
-      DrawFilledRect(renderer, rect, background);
-      DrawRect(renderer, rect, border);
-      DrawCenteredTextOn(text_renderer_, renderer, rect, text, background, label);
+      DrawButtonCentered(
+          text_renderer_, renderer, theme_, rect, label, ButtonTone::Neutral,
+          ButtonVisualState{
+              .enabled = true,
+              .hovered = last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+              .active = active,
+          });
     };
 
     draw_search_button(ProjectSearchModeButtonRect(layout.sidebar), ProjectSearchModeButtonLabel(),
@@ -180,15 +156,17 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        context_.current_project_state.overlay.workflow.project_search.options.show_hidden);
 
     const std::string match_actions =
-        ProjectSearchCanReplaceAll() ? "/ query  = replace  r rerun  R replace all"
-                                     : "/ query  = replace  r rerun  R needs literal mode";
+        ProjectSearchCanReplaceAll()
+            ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all"})
+            : JoinHintSegments({"/ query", "= replace", "r rerun", "R literal mode required"});
     const std::string status_text =
         context_.current_project_state.overlay.workflow.project_search.editing
-            ? (context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
-                   ? "Editing query  |  Enter apply  Esc cancel"
-                   : "Editing replace  |  Enter apply  Esc cancel")
+            ? (context_.current_project_state.overlay.workflow.project_search.edit_field ==
+                       ProjectSearchEditField::Query
+                   ? JoinHintSegments({"Editing query", "Enter apply", "Esc cancel"})
+                   : JoinHintSegments({"Editing replace", "Enter apply", "Esc cancel"}))
             : !context_.current_project_state.overlay.workflow.project_search.error.empty()
-                ? "Error  |  / query  = replace  r rerun"
+                ? JoinHintSegments({"Error", "/ query", "= replace", "r rerun"})
             : context_.current_project_state.overlay.workflow.project_search.running
                 ? BuildCountStatus(
                       "Searching ",
@@ -196,8 +174,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                       " matches")
             : context_.current_project_state.overlay.workflow.project_search.results.empty()
                 ? (context_.current_project_state.overlay.workflow.project_search.query.text.empty()
-                       ? "/ query  = replace  |  buttons change mode, case, hidden"
-                       : "No matches  |  " + match_actions)
+                       ? JoinHintSegments(
+                             {"/ query", "= replace", "buttons change mode, case, hidden"})
+                       : FormatEmptyState("matches") + "  |  " + match_actions)
             : context_.current_project_state.overlay.workflow.project_search.truncated
                 ? BuildCountStatus(
                       "Showing first ",
@@ -248,9 +227,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const bool selected =
           static_cast<std::size_t>(result_index) ==
           context_.current_project_state.overlay.workflow.project_search.selected_index;
-      if (selected) {
-        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
-      }
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+                                  selected);
 
       const std::string label =
           BuildProjectSearchResultLabel(result.line, result.column, result.preview);
@@ -266,8 +244,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               ? "Error: " + context_.current_project_state.overlay.workflow.project_search.error
           : context_.current_project_state.overlay.workflow.project_search.running
               ? "Searching..."
-          : context_.current_project_state.overlay.workflow.project_search.query.text.empty() ? "Project search is idle"
-                                                           : "No matches";
+          : context_.current_project_state.overlay.workflow.project_search.query.text.empty()
+              ? "Project Search is idle"
+              : FormatEmptyState("matches");
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
                  TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
@@ -323,11 +302,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const auto& entry = context_.current_project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
       const bool selected =
           static_cast<std::size_t>(line.entry_index) == context_.current_project_state.sidebar.git.selected_index;
-      if (selected) {
-        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
-        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
-                       theme_.accent);
-      }
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+                                  selected);
 
       const char git_marker = GitMarker(entry.status);
       const std::string marker_text = git_marker == ' ' ? "" : std::string(1, git_marker);
@@ -339,17 +315,22 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
       const auto draw_button = [&](const SDL_FRect& button_rect,
                                    std::string_view label,
-                                   SDL_Color text_color) {
-        DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
-        DrawCenteredTextOn(text_renderer_, renderer, button_rect, text_color,
-                           selected ? theme_.row_highlight : theme_.surface_background, label);
+                                   ButtonTone tone) {
+        DrawButtonCentered(
+            text_renderer_, renderer, theme_, button_rect, label, tone,
+            ButtonVisualState{
+                .enabled = true,
+                .hovered = false,
+                .active = selected,
+            });
       };
 
       if (actions.primary_rect.has_value()) {
-        draw_button(*actions.primary_rect, entry.staged ? "U" : "S", theme_.accent);
+        draw_button(*actions.primary_rect, entry.staged ? "Unstage" : "Stage",
+                    ButtonTone::Accent);
       }
       if (actions.discard_rect.has_value()) {
-        draw_button(*actions.discard_rect, "D", theme_.diff_deleted);
+        draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive);
       }
 
       if (!marker_text.empty()) {
@@ -367,23 +348,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           selected ? theme_.row_highlight : theme_.surface_background;
       const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
       const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
-      const float text_x = row_rect.x + 6.0f;
-      const float text_y =
-          row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
-      const float label_width = std::max(20.0f, right_edge - text_x);
-      const std::string primary_label =
-          text_renderer_.TruncateToWidth(text_model.primary_label, label_width);
-      DrawTextOn(text_renderer_, renderer, text_x, text_y, primary_color, row_background,
-                 primary_label);
-
-      if (!primary_label.empty() && !text_model.secondary_label.empty()) {
-        const float secondary_x = text_x + text_renderer_.MeasureWidth(primary_label) + 8.0f;
-        const float secondary_width = std::max(0.0f, right_edge - secondary_x);
-        if (secondary_width > 24.0f) {
-          DrawTextOn(text_renderer_, renderer, secondary_x, text_y, secondary_color, row_background,
-                     text_renderer_.TruncateToWidth(text_model.secondary_label, secondary_width));
-        }
-      }
+      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 6.0f, right_edge,
+                                  primary_color, secondary_color, row_background,
+                                  text_model.primary_label, text_model.secondary_label, 1.0f);
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
@@ -406,38 +373,24 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           static_cast<std::size_t>(item_index) == context_.current_project_state.sidebar.problems.selected_index;
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
-      if (selected) {
-        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
-      }
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected);
 
       const SDL_Color severity =
           editor::DiagnosticSeverityColor(theme_, item.diagnostic.severity);
       DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h), severity);
 
-      const float text_x = row_rect.x + 8.0f;
-      const float text_y =
-          row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
-      const float max_width = std::max(20.0f, row_rect.w - 14.0f);
       const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
       const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
-      const std::string primary =
-          text_renderer_.TruncateToWidth(item.primary_label,
-                                         item.detail_label.empty() ? max_width : max_width * 0.58f);
-      DrawTextOn(text_renderer_, renderer, text_x, text_y, primary_color, row_background, primary);
-      if (!item.detail_label.empty()) {
-        const float detail_x = text_x + text_renderer_.MeasureWidth(primary) + 8.0f;
-        const float detail_width = std::max(0.0f, row_rect.x + row_rect.w - 6.0f - detail_x);
-        if (detail_width > 24.0f) {
-          DrawTextOn(text_renderer_, renderer, detail_x, text_y, secondary_color, row_background,
-                     text_renderer_.TruncateToWidth(item.detail_label, detail_width));
-        }
-      }
+      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 8.0f,
+                                  row_rect.x + row_rect.w - 6.0f, primary_color, secondary_color,
+                                  row_background, item.primary_label, item.detail_label, 0.58f);
     }
 
     if (context_.current_project_state.sidebar.problems.entries.empty()) {
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
-                 TruncateLabel("No diagnostics", layout.sidebar.w - kSidebarInset * 2.0f));
+                 TruncateLabel(FormatEmptyState("diagnostics"),
+                               layout.sidebar.w - kSidebarInset * 2.0f));
     }
 
     draw_vertical_scrollbar(list_layout.list_rect,
@@ -462,11 +415,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           static_cast<std::size_t>(item_index) == context_.current_project_state.sidebar.tests.selected_index;
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
-      if (selected) {
-        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
-        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
-                       theme_.accent);
-      }
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+                                  selected);
 
       SDL_Color status_color = theme_.text_muted;
       if (item.status == "passed") {
@@ -480,24 +430,20 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
 
       const std::string status_glyph =
-          item.status == "passed" ? "P"
-          : item.status == "failed" ? "F"
-          : item.status == "errored" ? "E"
-          : item.status == "running" ? "R"
-          : item.status == "skipped" ? "S"
-                                     : "Q";
+          item.status == "passed" ? "Pass"
+          : item.status == "failed" ? "Fail"
+          : item.status == "errored" ? "Error"
+          : item.status == "running" ? "Run"
+          : item.status == "skipped" ? "Skip"
+                                     : "Queued";
       const float text_x = row_rect.x + 8.0f;
       const float text_y =
           row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
       DrawTextOn(text_renderer_, renderer, text_x, text_y, status_color, row_background,
                  status_glyph);
 
-      const float label_x = text_x + 16.0f;
-      const float label_width = std::max(20.0f, row_rect.w - 22.0f);
+      const float label_x = text_x + text_renderer_.MeasureWidth(status_glyph) + 10.0f;
       const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
-      DrawTextOn(text_renderer_, renderer, label_x, text_y, primary_color, row_background,
-                 text_renderer_.TruncateToWidth(item.label, label_width * 0.62f));
-
       std::string detail;
       if (!item.file.empty()) {
         detail = item.file.filename().string();
@@ -506,22 +452,17 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           AppendUnsigned(detail, static_cast<std::size_t>(item.line));
         }
       }
-      if (!detail.empty()) {
-        const float detail_x =
-            label_x + std::min(label_width * 0.62f, text_renderer_.MeasureWidth(item.label)) + 8.0f;
-        const float detail_width = std::max(0.0f, row_rect.x + row_rect.w - 6.0f - detail_x);
-        if (detail_width > 24.0f) {
-          DrawTextOn(text_renderer_, renderer, detail_x, text_y,
-                     selected ? theme_.text_secondary : theme_.text_muted, row_background,
-                     text_renderer_.TruncateToWidth(detail, detail_width));
-        }
-      }
+      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, label_x,
+                                  row_rect.x + row_rect.w - 6.0f, primary_color,
+                                  selected ? theme_.text_secondary : theme_.text_muted,
+                                  row_background, item.label, detail, 0.62f);
     }
 
     const std::string placeholder =
         !context_.current_project_state.sidebar.tests.error.empty()
             ? "Error: " + context_.current_project_state.sidebar.tests.error
-            : context_.current_project_state.sidebar.tests.entries.empty() ? "No tests discovered"
+            : context_.current_project_state.sidebar.tests.entries.empty()
+                ? FormatEmptyState("tests discovered")
                                                                            : std::string{};
     if (!placeholder.empty()) {
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
@@ -552,36 +493,22 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           static_cast<std::size_t>(item_index) == context_.current_project_state.sidebar.plugin.selected_index;
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
-      if (selected) {
-        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
-        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
-                       theme_.accent);
-      }
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+                                  selected);
 
-      const float text_x = row_rect.x + 6.0f;
-      const float text_y =
-          row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
-      const float max_width = std::max(20.0f, row_rect.w - 12.0f);
       const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
       const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
-      const std::string primary =
-          text_renderer_.TruncateToWidth(item.label,
-                                         item.detail.empty() ? max_width : max_width * 0.62f);
-      DrawTextOn(text_renderer_, renderer, text_x, text_y, primary_color, row_background, primary);
-      if (!item.detail.empty()) {
-        const float detail_x = text_x + text_renderer_.MeasureWidth(primary) + 8.0f;
-        const float detail_width = std::max(0.0f, row_rect.x + row_rect.w - 6.0f - detail_x);
-        if (detail_width > 24.0f) {
-          DrawTextOn(text_renderer_, renderer, detail_x, text_y, secondary_color, row_background,
-                     text_renderer_.TruncateToWidth(item.detail, detail_width));
-        }
-      }
+      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 6.0f,
+                                  row_rect.x + row_rect.w - 6.0f, primary_color, secondary_color,
+                                  row_background, item.label, item.detail, 0.62f);
     }
 
     const std::string placeholder =
         !context_.current_project_state.sidebar.plugin.error.empty()
             ? "Error: " + context_.current_project_state.sidebar.plugin.error
-            : context_.current_project_state.sidebar.plugin.items.empty() ? "No items" : std::string{};
+            : context_.current_project_state.sidebar.plugin.items.empty()
+                ? FormatEmptyState("items")
+                : std::string{};
     if (!placeholder.empty()) {
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f,
@@ -625,11 +552,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
       const bool selected =
           static_cast<std::size_t>(entry_index) == context_.current_project_state.directory_tree.selected_index();
-      if (selected) {
-        DrawFilledRect(renderer, row_rect, theme_.row_highlight);
-        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
-                       theme_.accent);
-      }
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+                                  selected);
 
       const float depth_offset = static_cast<float>(entry.depth) * kTreeIndentWidth;
       const float tree_x = row_rect.x + 6.0f + depth_offset;
@@ -674,25 +598,19 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
   const std::string hovered_git_sidebar_tooltip = HoveredGitSidebarTooltipLabel(layout.sidebar);
   if (!hovered_git_sidebar_tooltip.empty()) {
-    const float max_tooltip_width = std::max(120.0f, layout.full.w - 24.0f);
-    const std::string tooltip_text =
-        text_renderer_.TruncateToWidth(hovered_git_sidebar_tooltip, max_tooltip_width - 16.0f);
-    const float tooltip_width =
-        std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
-    const float tooltip_height = text_renderer_.LineHeight() + 10.0f;
+    const auto tooltip =
+        BuildTooltipLayout(text_renderer_, hovered_git_sidebar_tooltip,
+                           std::max(160.0f, layout.full.w - 24.0f));
     const float tooltip_x =
         std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
-                   layout.full.x + layout.full.w - tooltip_width - 8.0f);
+                   layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
     const float tooltip_y =
-        last_mouse_y_ - tooltip_height - 10.0f >= layout.full.y + 8.0f
-            ? last_mouse_y_ - tooltip_height - 10.0f
+        last_mouse_y_ - tooltip.rect.h - 10.0f >= layout.full.y + 8.0f
+            ? last_mouse_y_ - tooltip.rect.h - 10.0f
             : std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
-                         layout.full.y + layout.full.h - tooltip_height - 8.0f);
-    const SDL_FRect tooltip_rect = MakeRect(tooltip_x, tooltip_y, tooltip_width, tooltip_height);
-    DrawFilledRect(renderer, tooltip_rect, theme_.surface_raised);
-    DrawRect(renderer, tooltip_rect, theme_.border);
-    DrawVCenteredTextOn(text_renderer_, renderer, tooltip_rect, 8.0f, theme_.text_primary,
-                        theme_.surface_raised, tooltip_text);
+                         layout.full.y + layout.full.h - tooltip.rect.h - 8.0f);
+    DrawTooltip(text_renderer_, renderer, theme_,
+                MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h), tooltip.text);
   }
 }
 

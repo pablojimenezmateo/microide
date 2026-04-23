@@ -14,17 +14,12 @@ void WorkspaceShell::RenderPromptSurface(
   }
 
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-  DrawFilledRect(renderer, layout.full, SDL_Color{0x05, 0x07, 0x0b, 0xcc});
+  DrawFilledRect(renderer, layout.full, theme_.overlay_backdrop);
 
   const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
-  const SDL_FRect header = MakeRect(dialog.x, dialog.y, dialog.w, 32.0f);
+  const SDL_FRect header = DrawTitledCardFrame(renderer, theme_, dialog, 32.0f, CardStyle::Overlay);
   const SDL_FRect message_rect =
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 36.0f);
-  DrawFilledRect(renderer, dialog, theme_.overlay_background);
-  DrawRect(renderer, dialog, theme_.border);
-  DrawFilledRect(renderer, header, theme_.chrome_background);
-  DrawFilledRect(renderer, MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
-                 theme_.border);
   DrawVCenteredTextOn(text_renderer_, renderer, header, 16.0f, theme_.chrome_text,
                       theme_.chrome_background, PromptSurfaceTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_muted,
@@ -32,8 +27,7 @@ void WorkspaceShell::RenderPromptSurface(
 
   if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
     const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
-    DrawFilledRect(renderer, input_rect, theme_.surface_background);
-    DrawRect(renderer, input_rect, theme_.border);
+    DrawTextFieldFrame(renderer, theme_, input_rect, true);
     const std::string_view prompt_text =
         (active_text_input_visual.has_value() &&
          active_text_input_visual->surface == TextInputSurface::PromptInput &&
@@ -48,13 +42,13 @@ void WorkspaceShell::RenderPromptSurface(
   const auto buttons = ComputePromptSurfaceButtonRects(dialog);
   const auto labels = PromptSurfaceActionLabels();
   for (std::size_t i = 0; i < buttons.size(); ++i) {
-    const bool selected = context_.prompts.surface.selected_button == static_cast<int>(i);
-    const SDL_Color background = selected ? theme_.chrome_active : theme_.surface_raised;
-    DrawFilledRect(renderer, buttons[i], background);
-    DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
-    DrawCenteredTextOn(text_renderer_, renderer, buttons[i],
-                       selected ? theme_.chrome_active_text : theme_.surface_text, background,
-                       labels[i]);
+    DrawButtonCentered(
+        text_renderer_, renderer, theme_, buttons[i], labels[i], ButtonTone::Neutral,
+        ButtonVisualState{
+            .enabled = true,
+            .hovered = false,
+            .active = context_.prompts.surface.selected_button == static_cast<int>(i),
+        });
   }
 }
 
@@ -65,35 +59,32 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
   }
 
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-  DrawFilledRect(renderer, layout.full, SDL_Color{0x05, 0x07, 0x0b, 0xcc});
+  DrawFilledRect(renderer, layout.full, theme_.overlay_backdrop);
 
   const SDL_FRect dialog = ComputeDirtyPromptRect(layout.full);
-  const SDL_FRect header = MakeRect(dialog.x, dialog.y, dialog.w, 32.0f);
+  const SDL_FRect header = DrawTitledCardFrame(renderer, theme_, dialog, 32.0f, CardStyle::Overlay);
   const SDL_FRect message_rect =
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 54.0f);
-  DrawFilledRect(renderer, dialog, theme_.overlay_background);
-  DrawRect(renderer, dialog, theme_.border);
-  DrawFilledRect(renderer, header, theme_.chrome_background);
-  DrawFilledRect(renderer, MakeRect(header.x, header.y + header.h - 1.0f, header.w, 1.0f),
-                 theme_.border);
 
   DrawVCenteredTextOn(text_renderer_, renderer, header, 12.0f, theme_.chrome_text,
                       theme_.chrome_background, DirtyPromptTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_secondary,
              theme_.overlay_background, TruncateLabel(DirtyPromptMessage(), message_rect.w));
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y + 22.0f, theme_.text_muted,
-             theme_.overlay_background, "Enter confirm  Left/Right choose  Esc cancel");
+             theme_.overlay_background,
+             JoinHintSegments({"Enter confirm", "Left/Right choose", "Esc cancel"}));
 
   const auto buttons = ComputeDirtyPromptButtonRects(dialog);
   const auto labels = DirtyPromptActionLabels();
   for (std::size_t i = 0; i < buttons.size(); ++i) {
-    const bool selected = context_.prompts.dirty.selected_action == static_cast<int>(i);
-    DrawFilledRect(renderer, buttons[i],
-                   selected ? theme_.chrome_active : theme_.surface_raised);
-    DrawRect(renderer, buttons[i], selected ? theme_.accent : theme_.border);
-    DrawCenteredTextOn(text_renderer_, renderer, buttons[i],
-                       selected ? theme_.chrome_active_text : theme_.surface_text,
-                       selected ? theme_.chrome_active : theme_.surface_raised, labels[i]);
+    DrawButtonCentered(
+        text_renderer_, renderer, theme_, buttons[i], labels[i],
+        i == 1 ? ButtonTone::Destructive : ButtonTone::Neutral,
+        ButtonVisualState{
+            .enabled = true,
+            .hovered = false,
+            .active = context_.prompts.dirty.selected_action == static_cast<int>(i),
+        });
   }
 
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);

@@ -15,6 +15,7 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/WorkspaceUiText.h"
 
 namespace microide::workspace {
 
@@ -257,10 +258,10 @@ std::string CommandPromptCoordinator::PromptStatusText(const CommandState& comma
   }
   if (command.history_index.has_value()) {
     return "History " + std::to_string(*command.history_index + 1) + " / " +
-           std::to_string(command.history.size()) +
-           "  |  Enter run  Esc cancel  Tab complete";
+           std::to_string(command.history.size()) + "  |  " +
+           JoinHintSegments({"Enter run", "Esc cancel", "Tab complete"});
   }
-  return "Enter run  Esc cancel  Up/Down history  Tab complete";
+  return JoinHintSegments({"Enter run", "Esc cancel", "Up/Down history", "Tab complete"});
 }
 
 bool CommandPromptCoordinator::ExecuteCommandLine(const std::string& command_line) {

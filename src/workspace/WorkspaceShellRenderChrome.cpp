@@ -11,12 +11,19 @@ using namespace detail;
 
 void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                         const WorkspaceLayout& layout) const {
-  const auto draw_tab_close_button = [&](const SDL_FRect& rect,
-                                         SDL_Color color,
+  const auto draw_tab_close_button = [&](const SDL_FRect& rect, SDL_Color color,
                                          SDL_Color hover_color) {
-    const bool hovered =
-        last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
-    DrawCloseGlyph(renderer, rect, hovered ? hover_color : color);
+    DrawHoverableCloseGlyph(renderer, rect,
+                            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+                            color, hover_color);
+  };
+  const StripTabPalette chrome_tab_palette{
+      .active_fill = theme_.chrome_active,
+      .inactive_fill = theme_.surface_raised,
+      .active_text = theme_.chrome_active_text,
+      .inactive_text = theme_.surface_text,
+      .active_glyph = theme_.chrome_text_secondary,
+      .inactive_glyph = theme_.text_disabled,
   };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
@@ -72,17 +79,18 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
   const auto visible_project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
   for (const VisibleStripTab& tab : visible_project_tabs) {
-    DrawFilledRect(renderer, tab.rect, tab.active ? theme_.chrome_active : theme_.surface_raised);
-    if (tab.active) {
-      DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f), theme_.accent);
-    }
-    DrawVCenteredTextOn(text_renderer_, renderer, tab.rect, 10.0f,
-                        tab.active ? theme_.chrome_active_text : theme_.surface_text,
-                        tab.active ? theme_.chrome_active : theme_.surface_raised,
-                        TruncateLabel(tab.display_title, tab.rect.w - 46.0f));
+    DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.active,
+                 StripTabStyle{
+                     .text_left_padding = 10.0f,
+                     .close_right_reserve = 46.0f,
+                     .accent_edge = StripAccentEdge::Top,
+                 },
+                 chrome_tab_palette);
     draw_tab_close_button(tab.close_rect,
-                          tab.active ? theme_.chrome_text_secondary : theme_.text_disabled,
-                          tab.active ? theme_.chrome_active_text : theme_.surface_text);
+                          tab.active ? chrome_tab_palette.active_glyph
+                                     : chrome_tab_palette.inactive_glyph,
+                          tab.active ? chrome_tab_palette.active_text
+                                     : chrome_tab_palette.inactive_text);
   }
 
   std::vector<VisibleStripTab> visible_tabs;
@@ -90,27 +98,28 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     const SDL_FRect placeholder_tab =
         MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
                  std::max(22.0f, layout.tab_strip.h - 2.0f));
-    DrawFilledRect(renderer, placeholder_tab, theme_.chrome_active);
-    DrawFilledRect(renderer, MakeRect(placeholder_tab.x, placeholder_tab.y, placeholder_tab.w, 2.0f),
-                   theme_.accent);
-    DrawVCenteredTextOn(text_renderer_, renderer, placeholder_tab, 10.0f,
-                        theme_.chrome_active_text, theme_.chrome_active, "welcome");
+    DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", true,
+                 StripTabStyle{
+                     .text_left_padding = 10.0f,
+                     .close_right_reserve = 0.0f,
+                     .accent_edge = StripAccentEdge::Top,
+                 },
+                 chrome_tab_palette);
   } else if (!context_.current_project_state.root.empty()) {
     visible_tabs = ComputeVisibleTabs(layout.tab_strip);
     for (const VisibleStripTab& tab : visible_tabs) {
-      DrawFilledRect(renderer, tab.rect,
-                     tab.active ? theme_.chrome_active : theme_.surface_raised);
-      if (tab.active) {
-        DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
-                       theme_.accent);
-      }
-      DrawVCenteredTextOn(text_renderer_, renderer, tab.rect, 10.0f,
-                          tab.active ? theme_.chrome_active_text : theme_.surface_text,
-                          tab.active ? theme_.chrome_active : theme_.surface_raised,
-                          TruncateLabel(tab.display_title, tab.rect.w - 46.0f));
+      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.active,
+                   StripTabStyle{
+                       .text_left_padding = 10.0f,
+                       .close_right_reserve = 46.0f,
+                       .accent_edge = StripAccentEdge::Top,
+                   },
+                   chrome_tab_palette);
       draw_tab_close_button(tab.close_rect,
-                            tab.active ? theme_.chrome_text_secondary : theme_.text_disabled,
-                            tab.active ? theme_.chrome_active_text : theme_.surface_text);
+                            tab.active ? chrome_tab_palette.active_glyph
+                                       : chrome_tab_palette.inactive_glyph,
+                            tab.active ? chrome_tab_palette.active_text
+                                       : chrome_tab_palette.inactive_text);
     }
   }
 
@@ -118,11 +127,9 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
   float breadcrumb_text_right = layout.breadcrumb.x + layout.breadcrumb.w - 12.0f;
   for (const VisibleStatusItem& item : status_items) {
-    const SDL_Color background =
-        item.hovered ? theme_.row_highlight : theme_.surface_raised;
-    const SDL_Color text_color =
-        item.hovered ? theme_.text_primary : theme_.text_secondary;
-    DrawFilledRect(renderer, item.rect, background);
+    const SDL_Color background = item.hovered ? theme_.row_highlight : theme_.surface_raised;
+    const SDL_Color text_color = item.hovered ? theme_.text_primary : theme_.text_secondary;
+    DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.surface_raised, item.hovered);
     DrawRect(renderer, item.rect, theme_.border);
     DrawVCenteredTextOn(text_renderer_, renderer, item.rect, 8.0f, text_color, background,
                         item.item.text);
@@ -156,17 +163,14 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLa
     return std::nullopt;
   }
 
-  const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
-  const std::string tooltip_text =
-      text_renderer_.TruncateToWidth(hovered_tab->tooltip_label, max_tooltip_width - 16.0f);
-  const float tooltip_width =
-      std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+  const auto tooltip =
+      BuildTooltipLayout(text_renderer_, hovered_tab->tooltip_label, std::max(160.0f, layout.full.w - 24.0f));
   const float hovered_tab_center_x = hovered_tab->rect.x + hovered_tab->rect.w * 0.5f;
   const float tooltip_x =
-      std::clamp(hovered_tab_center_x - tooltip_width * 0.5f, layout.full.x + 8.0f,
-                 layout.full.x + layout.full.w - tooltip_width - 8.0f);
-  return MakeRect(tooltip_x, hovered_tab->rect.y + hovered_tab->rect.h + 6.0f, tooltip_width,
-                  text_renderer_.LineHeight() + 10.0f);
+      std::clamp(hovered_tab_center_x - tooltip.rect.w * 0.5f, layout.full.x + 8.0f,
+                 layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
+  return MakeRect(tooltip_x, hovered_tab->rect.y + hovered_tab->rect.h + 6.0f, tooltip.rect.w,
+                  tooltip.rect.h);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredStatusTooltipRect(const WorkspaceLayout& layout) const {
@@ -175,38 +179,27 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredStatusTooltipRect(const Workspac
     return std::nullopt;
   }
 
-  const float max_tooltip_width = std::max(160.0f, layout.full.w - 24.0f);
-  const std::string tooltip_text =
-      text_renderer_.TruncateToWidth(status_tooltip, max_tooltip_width - 16.0f);
-  const float tooltip_width =
-      std::min(max_tooltip_width, text_renderer_.MeasureWidth(tooltip_text) + 16.0f);
+  const auto tooltip =
+      BuildTooltipLayout(text_renderer_, status_tooltip, std::max(160.0f, layout.full.w - 24.0f));
   const float tooltip_x =
       std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
-                 layout.full.x + layout.full.w - tooltip_width - 8.0f);
-  return MakeRect(tooltip_x, layout.breadcrumb.y + layout.breadcrumb.h + 6.0f, tooltip_width,
-                  text_renderer_.LineHeight() + 10.0f);
+                 layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
+  return MakeRect(tooltip_x, layout.breadcrumb.y + layout.breadcrumb.h + 6.0f, tooltip.rect.w,
+                  tooltip.rect.h);
 }
 
 void WorkspaceShell::RenderChromeTooltips(SDL_Renderer* renderer,
                                           const WorkspaceLayout& layout) const {
   if (const auto tooltip_rect = HoveredTabTooltipRect(layout); tooltip_rect.has_value()) {
     const std::string tooltip_label = HoveredTabTooltipLabel(layout.tab_strip);
-    const std::string tooltip_text =
-        text_renderer_.TruncateToWidth(tooltip_label, tooltip_rect->w - 16.0f);
-    DrawFilledRect(renderer, *tooltip_rect, theme_.surface_raised);
-    DrawRect(renderer, *tooltip_rect, theme_.border);
-    DrawVCenteredTextOn(text_renderer_, renderer, *tooltip_rect, 8.0f, theme_.text_primary,
-                        theme_.surface_raised, tooltip_text);
+    DrawTooltip(text_renderer_, renderer, theme_, *tooltip_rect,
+                BuildTooltipLayout(text_renderer_, tooltip_label, tooltip_rect->w).text);
   }
 
   if (const auto tooltip_rect = HoveredStatusTooltipRect(layout); tooltip_rect.has_value()) {
     const std::string tooltip_label = HoveredStatusTooltip(layout.breadcrumb);
-    const std::string tooltip_text =
-        text_renderer_.TruncateToWidth(tooltip_label, tooltip_rect->w - 16.0f);
-    DrawFilledRect(renderer, *tooltip_rect, theme_.surface_raised);
-    DrawRect(renderer, *tooltip_rect, theme_.border);
-    DrawVCenteredTextOn(text_renderer_, renderer, *tooltip_rect, 8.0f, theme_.text_primary,
-                        theme_.surface_raised, tooltip_text);
+    DrawTooltip(text_renderer_, renderer, theme_, *tooltip_rect,
+                BuildTooltipLayout(text_renderer_, tooltip_label, tooltip_rect->w).text);
   }
 }
 

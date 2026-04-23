@@ -111,9 +111,17 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const auto draw_tab_close_button = [&](const SDL_FRect& rect,
                                          SDL_Color color,
                                          SDL_Color hover_color) {
-    const bool hovered =
-        last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
-    DrawCloseGlyph(renderer, rect, hovered ? hover_color : color);
+    DrawHoverableCloseGlyph(renderer, rect,
+                            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+                            color, hover_color);
+  };
+  const StripTabPalette panel_tab_palette{
+      .active_fill = theme_.chrome_active,
+      .inactive_fill = theme_.surface_raised,
+      .active_text = theme_.chrome_active_text,
+      .inactive_text = theme_.surface_text,
+      .active_glyph = theme_.chrome_active_text,
+      .inactive_glyph = theme_.surface_text,
   };
 
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {
@@ -188,23 +196,30 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
   if (!visible_panel_tabs.empty()) {
     for (const VisibleStripTab& tab : visible_panel_tabs) {
-      const SDL_Color background = tab.active ? theme_.chrome_active : theme_.surface_raised;
-      const SDL_Color foreground =
-          tab.active ? theme_.chrome_active_text : theme_.surface_text;
-      DrawFilledRect(renderer, tab.rect, background);
-      if (tab.active) {
-        DrawFilledRect(renderer, MakeRect(tab.rect.x, tab.rect.y, tab.rect.w, 2.0f),
-                       theme_.accent);
-      }
-      DrawVCenteredTextOn(text_renderer_, renderer, tab.rect, 8.0f, foreground, background,
-                          TruncateLabel(tab.display_title, tab.rect.w - 40.0f));
-      draw_tab_close_button(tab.close_rect, foreground, theme_.chrome_active_text);
+      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.active,
+                   StripTabStyle{
+                       .text_left_padding = 8.0f,
+                       .close_right_reserve = 40.0f,
+                       .accent_edge = StripAccentEdge::Top,
+                   },
+                   panel_tab_palette);
+      draw_tab_close_button(tab.close_rect,
+                            tab.active ? panel_tab_palette.active_glyph
+                                       : panel_tab_palette.inactive_glyph,
+                            panel_tab_palette.active_text);
     }
     const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
-    DrawFilledRect(renderer, new_tab_rect, theme_.surface_raised);
-    DrawRect(renderer, new_tab_rect, theme_.border);
-    DrawCenteredTextOn(text_renderer_, renderer, new_tab_rect, theme_.surface_text,
-                       theme_.surface_raised, "+");
+    DrawButtonCentered(
+        text_renderer_, renderer, theme_, new_tab_rect, "", ButtonTone::Neutral,
+        ButtonVisualState{
+            .enabled = true,
+            .hovered = last_mouse_position_valid_ && Contains(new_tab_rect, last_mouse_x_, last_mouse_y_),
+            .active = false,
+        });
+    DrawPlusGlyph(renderer, new_tab_rect,
+                  last_mouse_position_valid_ && Contains(new_tab_rect, last_mouse_x_, last_mouse_y_)
+                      ? theme_.text_primary
+                      : theme_.text_secondary);
   } else {
     std::string header_label = "Command";
     if (output_panel) {
@@ -405,12 +420,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     DrawTextOn(text_renderer_, renderer, command_area.x + 12.0f, status_y, theme_.text_muted,
                theme_.surface_raised, TruncateLabel(status_text, command_area.w - 24.0f));
 
-    const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
-    DrawFilledRect(renderer, prompt_rect, theme_.chrome_active);
     const bool command_mode = context_.current_project_state.panel.command_mode;
     const TextInputSurface panel_surface =
         command_mode ? TextInputSurface::Command : TextInputSurface::ChatComposer;
     const TextInputSurface current_surface = CurrentTextInputSurface();
+    const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
+    DrawTextFieldFrame(renderer, theme_, prompt_rect, current_surface == panel_surface);
     const auto visual =
         (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
                                            : std::nullopt;
@@ -421,8 +436,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
                                                                 : std::string_view(panel_fallback);
     DrawSingleLineTextTail(renderer, prompt_rect.x + 6.0f, prompt_rect.y + 4.0f,
-                           std::max(1.0f, prompt_rect.w - 12.0f), theme_.chrome_active_text,
-                           theme_.chrome_active, panel_display_text);
+                           std::max(1.0f, prompt_rect.w - 12.0f), theme_.text_primary,
+                           theme_.surface_background, panel_display_text);
   }
 
   if (panel_layout.scroll.vertical_scrollbar.has_value()) {
