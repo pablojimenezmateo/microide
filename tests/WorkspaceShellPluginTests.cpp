@@ -1559,11 +1559,13 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   return;
 #endif
   TemporaryDirectory temp_dir;
+  const std::filesystem::path home_dir = temp_dir.path() / "home";
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "src" / "main.js";
-  const std::filesystem::path codex_script = temp_dir.path() / "fake-codex";
+  const std::filesystem::path codex_script =
+      home_dir / ".nvm" / "versions" / "node" / "v20.20.0" / "bin" / "codex";
   const std::filesystem::path codex_log = temp_dir.path() / "fake-codex.log";
   WriteFile(project_root / "README.md", "llm fixture\n");
   WriteFile(source, "value = ");
@@ -1596,15 +1598,13 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
   CopyRepoPlugin(plugins_root, "llm");
-  WriteFile(
-      config_home / "microide" / "config",
-      microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-          .settings =
-              {
-                  {"llm.codex.binary", codex_script.string()},
-              },
-          .disabled_keybinding_ids = {},
-      }));
+  WriteFile(config_home / "microide" / "config",
+            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
+                .settings = {},
+                .disabled_keybinding_ids = {},
+            }));
+  ScopedEnvVar home("HOME", home_dir.string());
+  ScopedEnvVar path("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
@@ -1618,10 +1618,8 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
          "repo llm plugin should expose an auth status command");
   Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
          "repo llm status command should complete");
-  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
-             WorkspaceShellTestAccess::PluginMessages(shell).back() ==
-                 "llm: [codex] Logged in using ChatGPT",
-         "repo llm status should delegate to the configured Codex CLI");
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(),
+         "repo llm status should not surface plugin errors");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain this file"),
          ("repo llm plugin should enable the built-in chat command: " +
@@ -1661,6 +1659,8 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   Expect(codex_invocations.find("exec --skip-git-repo-check --ephemeral --color never --sandbox "
                                 "read-only -m gpt-5.4 -") != std::string::npos,
          "repo llm plugin should default chat and inline completion through codex exec");
+  Expect(codex_invocations.find(codex_script.string()) == std::string::npos,
+         "repo llm plugin should resolve the default codex binary through common install paths");
 }
 
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {

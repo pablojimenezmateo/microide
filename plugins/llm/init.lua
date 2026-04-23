@@ -130,17 +130,74 @@ local function shell_quote(value)
   return "'" .. quoted .. "'"
 end
 
+local function join_shell_command(argv)
+  local parts = {}
+  for i = 1, #argv do
+    parts[#parts + 1] = shell_quote(argv[i])
+  end
+  return table.concat(parts, " ")
+end
+
+local CODEX_WRAPPER_SCRIPT = [=[
+requested="$1"
+shift
+resolve_codex() {
+  candidate="$1"
+  if [ -z "$candidate" ]; then
+    return 1
+  fi
+  case "$candidate" in
+    */*)
+      [ -x "$candidate" ] && {
+        printf '%s\n' "$candidate"
+        return 0
+      }
+      return 1
+      ;;
+  esac
+  if command -v "$candidate" >/dev/null 2>&1; then
+    command -v "$candidate"
+    return 0
+  fi
+  for path in \
+    "$HOME/.nvm/versions/node"/*/bin/"$candidate" \
+    "$HOME/.local/bin/$candidate" \
+    "$HOME/bin/$candidate" \
+    "/usr/local/bin/$candidate" \
+    "/usr/bin/$candidate"
+  do
+    [ -x "$path" ] && {
+      printf '%s\n' "$path"
+      return 0
+    }
+  done
+  return 1
+}
+resolved="$(resolve_codex "$requested")" || {
+  printf '%s\n' "Unable to find Codex CLI '$requested'. Set llm.codex.binary to an absolute path." >&2
+  exit 127
+}
+exec "$resolved" "$@"
+]=]
+
+local function make_codex_process_args(codex_binary, args)
+  local command = {"sh", "-lc", CODEX_WRAPPER_SCRIPT, "sh", codex_binary}
+  for i = 1, #args do
+    command[#command + 1] = args[i]
+  end
+  return command
+end
+
 local function make_codex_endpoint(codex_binary, model)
-  return table.concat({
-    shell_quote(codex_binary),
+  return join_shell_command(make_codex_process_args(codex_binary, {
     "exec",
     "--skip-git-repo-check",
     "--ephemeral",
     "--color", "never",
     "--sandbox", "read-only",
-    "-m", shell_quote(model),
+    "-m", model,
     "-",
-  }, " ")
+  }))
 end
 
 local function resolve_agent_endpoint(ctx, key, default_endpoint)
@@ -257,7 +314,7 @@ return ide.plugin({
 
     ctx.commands.add("llm-logout", function(cmd_ctx, args)
       local codex_binary = read_string(ctx, "codex.binary", "codex")
-      ctx.process.run_async({codex_binary, "logout"}, {}, function(res)
+      ctx.process.run_async(make_codex_process_args(codex_binary, {"logout"}), {}, function(res)
         if res.exit_code == 0 then
           ctx.log("[codex] Logged out.")
           return
@@ -274,7 +331,7 @@ return ide.plugin({
 
     ctx.commands.add("llm-status", function(cmd_ctx, args)
       local codex_binary = read_string(ctx, "codex.binary", "codex")
-      ctx.process.run_async({codex_binary, "login", "status"}, {}, function(res)
+      ctx.process.run_async(make_codex_process_args(codex_binary, {"login", "status"}), {}, function(res)
         local text = trim(res.stdout)
         if res.exit_code == 0 and text ~= "" then
           ctx.log("[codex] " .. text)
