@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace microide::workspace {
@@ -49,6 +51,10 @@ class ReviewCommentsRegistry {
   // Get threads for a document.
   std::vector<ReviewThread> GetThreads(const std::string& uri) const;
 
+  // Check whether a document line has review markers.
+  bool HasComments(const std::string& uri, int line) const;
+  bool HasThreads(const std::string& uri, int line) const;
+
   // Update comment state.
   void UpdateCommentState(const std::string& comment_id, ReviewCommentState state);
 
@@ -65,8 +71,20 @@ class ReviewCommentsRegistry {
   void Clear();
 
  private:
+  struct UriIndex {
+    bool dirty = true;
+    std::vector<std::size_t> thread_indices;
+    std::unordered_map<int, std::vector<std::size_t>> comment_indices_by_line;
+    std::unordered_map<int, std::vector<std::size_t>> thread_indices_by_line;
+  };
+
+  const UriIndex* IndexForUri(const std::string& uri) const;
+  void InvalidateUri(const std::string& uri);
+  void InvalidateAll();
+
   std::vector<ReviewComment> comments_;
   std::vector<ReviewThread> threads_;
+  mutable std::unordered_map<std::string, UriIndex> indices_by_uri_;
 };
 
 }  // namespace microide::workspace

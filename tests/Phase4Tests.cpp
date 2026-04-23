@@ -92,6 +92,19 @@ void TestReviewCommentsRegistryTracksThreadsAndState() {
   const auto threads = registry.GetThreads("virtual://review/readme");
   Expect(threads.size() == 1 && threads.front().state == ReviewCommentState::Active,
          "review comment registry should update stored thread state");
+  Expect(registry.HasComments("virtual://review/readme", 4),
+         "review comment registry should index comments by URI and line");
+  Expect(registry.HasThreads("virtual://review/readme", 4),
+         "review comment registry should index threads by URI and line");
+  Expect(!registry.HasComments("virtual://review/readme", 5),
+         "review comment registry line index should not match unrelated lines");
+
+  registry.RemoveComment("comment-1");
+  Expect(!registry.HasComments("virtual://review/readme", 4),
+         "removing a comment should invalidate the line index");
+  registry.RemoveThread("thread-1");
+  Expect(!registry.HasThreads("virtual://review/readme", 4),
+         "removing a thread should invalidate the line index");
 }
 
 }  // namespace

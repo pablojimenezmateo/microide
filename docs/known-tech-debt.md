@@ -315,6 +315,89 @@ Recommended follow-up:
 - Add focused regression coverage for select-all, copy, cut, left or right movement, and home or
   end on prompt, command, and overlay inputs once the shared editor model exists.
 
+## 8. `WorkspaceReviewComments` Does Linear Scans Per Frame When Review Comments Are Active
+
+Status:
+- Addressed on 2026-04-23 by indexing review comments and threads per URI and line inside
+  `WorkspaceReviewComments`
+
+Impact:
+- High when the review-comments feature is populated; zero cost when there are no comments
+
+Current state:
+- `GetThreads(uri)` and `GetComments(uri, line_index)` now read from indexed URI/line buckets
+- The render path uses `HasThreads(uri, line)` and `HasComments(uri, line)` for marker checks
+- Add, remove, and clear operations invalidate the affected indexes before the next lookup
+
+What remains:
+- No known follow-up for this item unless profiling shows review marker drawing itself is still hot
+
+Relevant code:
+- `src/workspace/WorkspaceReviewComments.cpp` — `GetThreads`, `GetComments`
+- `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
+
+See also `docs/performance-findings.md` — Second Performance Pass, New finding 1.
+
+## 9. `ComputeEditorPaneLayouts` Called Twice Per Render Frame
+
+Impact:
+- Medium; redundant geometry computation on every frame
+
+Current state:
+- `WorkspaceShellRenderFrame.cpp` calls `ComputeEditorPaneLayouts(layout.editor_surface)` once
+  for the main editor render pass and a second time for the scrollbar render pass
+
+What a good fix looks like:
+- Compute pane layout once at the top of the frame, store in a local, and pass to both render passes
+- No caching infrastructure needed; this is a local refactor in one function
+
+Relevant code:
+- `src/workspace/WorkspaceShellRenderFrame.cpp`
+
+See also `docs/performance-findings.md` — Second Performance Pass, New finding 2.
+
+## 10. Terminal Cursor State Acquired Under Three Separate Mutex Locks Per Frame
+
+Impact:
+- Medium; three mutex round-trips on the render thread every frame when terminal is visible
+
+Current state:
+- `cursor_row()`, `cursor_column()`, and `cursor_visible()` on `TerminalSession` each acquire and
+  release the internal mutex independently
+- The terminal render path calls all three per frame, paying three lock/unlock cycles where one
+  combined snapshot would suffice
+
+What a good fix looks like:
+- Add a `CursorSnapshot()` method returning `{cursor_row, cursor_column, cursor_visible}` under a
+  single mutex acquisition
+- Replace the three separate accessor calls in the render path with one `CursorSnapshot()` call
+
+Relevant code:
+- `src/terminal/TerminalSession.h` — `cursor_row()`, `cursor_column()`, `cursor_visible()`
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
+
+See also `docs/performance-findings.md` — Second Performance Pass, New finding 3.
+
+## 11. `std::find` on `marked_lines` Vector in Review-Comment Marker Rendering
+
+Status:
+- Addressed on 2026-04-23 by removing `marked_lines` from render marker drawing
+
+Impact:
+- Medium; O(visible_lines × marked_lines) per frame when review markers are present
+
+Current state:
+- `draw_review_comment_markers` performs direct indexed thread/comment checks per visible line
+- There is no per-frame marked-line vector allocation and no per-line `std::find`
+
+What remains:
+- No known follow-up for this item unless review-marker rendering becomes a measured hotspot again
+
+Relevant code:
+- `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
+
+See also `docs/performance-findings.md` — Second Performance Pass, New finding 4.
+
 ## Suggested Order For Later Work
 
 1. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.

@@ -8,6 +8,9 @@ Updated on 2026-04-23 with syntax, viewport, terminal, and output-panel cache fi
 Updated on 2026-04-23 with terminal foreground run coalescing, buffer-search caching, SDL text-cache lookup cleanup, and syntax-rule partitioning.
 Updated on 2026-04-23 with unchanged plugin-syntax reload skipping via source fingerprinting and
 generated syntax registry reuse on cold plugin syntax reloads.
+Updated on 2026-04-23 with second whole-project static pass confirming all previous fixes and
+identifying four new render-path bottlenecks in review-comment rendering and editor pane layout.
+Updated on 2026-04-23 with review-comment line indexing and O(1) render marker lookups.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -441,6 +444,129 @@ Impact:
   metadata copies instead of recompiling the entire built-in syntax snapshot
 - remaining syntax-load work is dominated by plugin Lua parsing and plugin regex compilation; disk
   caching or parallel plugin parsing should only be promoted if profiling still shows material cost
+
+## Second Performance Pass (2026-04-23)
+
+Static analysis sweep across all render-path source files after the first deep-dive fixes shipped.
+None of these have been measured in a live trace yet — treat the new findings as a prioritized
+investigation queue alongside the still-open item from the first pass.
+
+### Status of first-pass findings
+
+All nine of the Deep-Dive Findings items that were actionable are now confirmed fixed:
+
+- Items 1–5 (PCRE2 thread-local match data, FindAllRegex output buffer, lazy highlight
+  checkpoints, partial cache invalidation from edit line, caret column removed from cache key):
+  code verified in `RuntimeSyntaxRegistry.cpp` and `TextViewport.cpp`/`TextViewport.h`.
+- Items 7, 8, 9, 10, 11, 13 (output-channel snippet caching, terminal foreground run coalescing,
+  buffer-search match caching, SDL text cache heterogeneous lookup, syntax rule pre-partitioning,
+  from_chars for output-line numeric parsing): code verified in respective files.
+
+Item 6 (`SnapshotLineRangeCached` generation counter) is still open — see below.
+Item 12 (`optional<SyntaxState>` memory reduction) remains a low-priority open item.
+
+### Still open from first pass: `SnapshotLineRangeCached` generation counter
+
+`SnapshotLineRangeCached` in `src/terminal/TerminalSession.cpp` now uses a `thread_local
+std::vector<TerminalLine>` to reuse vector storage across frames, but still deep-copies all
+visible terminal cells every frame unconditionally. For 40 visible rows at 200 columns, this is
+8,000 `TerminalCell` copies per frame even when the terminal is completely idle.
+
+Fix: add a `uint64_t snapshot_generation_` counter to `TerminalSession` (incremented inside
+`AppendOutputLocked` and any other writer path), expose a cheap generation-read accessor, and have
+the render thread skip the copy when the generation value matches the one from the last snapshot.
+This makes idle-terminal rendering allocation-free.
+
+Relevant code:
+
+- `src/terminal/TerminalSession.h` — no generation counter field exists
+- `src/terminal/TerminalSession.cpp` — `SnapshotLineRangeCached`, `AppendOutputLocked`
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal render call site
+
+### New finding 1: `WorkspaceReviewComments` O(visible_lines × comments) per-frame scan (HIGH)
+
+Status: fixed.
+
+`GetThreads(uri)` in `WorkspaceReviewComments.cpp` does a linear scan through all stored threads
+and returns a new allocated vector on every call. `GetComments(uri, line_index)` does a linear
+scan through all stored comments on every call. The render path in `WorkspaceShellRenderFrame.cpp`
+calls `GetThreads` once per editor pane per frame to find marked lines, then — if no thread
+markers are present for a line — calls `GetComments` for every visible line. When review comments
+are active this is O(visible_lines × total_comments) per frame.
+
+Fix: build per-URI line→thread and line→comment index maps inside `WorkspaceReviewComments` and
+invalidate them only on `AddThread`, `AddComment`, `UpdateThread`, `DeleteThread`, and
+`ClearForUri`. The render path then does O(1) lookups per line instead of O(total_comments) scans.
+
+Implemented:
+
+- `ReviewCommentsRegistry` now builds per-URI indexes for threads and comments grouped by line.
+- Render-time review markers use `HasThreads(uri, line)` and `HasComments(uri, line)` instead of
+  allocating vectors or scanning all comments per visible line.
+- Regression coverage verifies the URI/line index updates after state changes and removals.
+
+Relevant code:
+
+- `src/workspace/WorkspaceReviewComments.cpp` — `GetThreads`, `GetComments`
+- `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
+- `docs/known-tech-debt.md` — item 8
+
+### New finding 2: `ComputeEditorPaneLayouts` called twice per render frame (MEDIUM)
+
+`WorkspaceShellRenderFrame.cpp` calls `ComputeEditorPaneLayouts(layout.editor_surface)` twice per
+frame — once during the main editor render pass and again during the scrollbar render pass. The
+function recomputes pane geometry from scratch each time.
+
+Fix: compute the pane layout once at the top of the frame, store it in a local, and pass it to
+both passes. No caching infrastructure is needed; this is a straightforward call-site refactor.
+
+Relevant code:
+
+- `src/workspace/WorkspaceShellRenderFrame.cpp` — two separate `ComputeEditorPaneLayouts` calls
+- `docs/known-tech-debt.md` — item 9
+
+### New finding 3: Terminal cursor state acquired under three separate mutex locks per frame (MEDIUM)
+
+The terminal render path calls `cursor_row()`, `cursor_column()`, and `cursor_visible()` as
+separate methods, each of which acquires and releases the `TerminalSession` mutex independently.
+This is three mutex lock/unlock cycles on the render thread per frame when the terminal is visible,
+where one combined snapshot call would suffice.
+
+Fix: add a `CursorSnapshot()` method that captures `{cursor_row, cursor_column, cursor_visible}`
+under a single lock and returns a plain struct. The render path then holds the lock for one
+acquisition instead of three.
+
+Relevant code:
+
+- `src/terminal/TerminalSession.h` — `cursor_row()`, `cursor_column()`, `cursor_visible()`
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
+- `docs/known-tech-debt.md` — item 10
+
+### New finding 4: `std::find` on `marked_lines` vector in `draw_review_comment_markers` (MEDIUM)
+
+Status: fixed.
+
+The `draw_review_comment_markers` lambda in `WorkspaceShellRenderFrame.cpp` calls
+`std::find(marked_lines.begin(), marked_lines.end(), one_based_line)` for each visible line.
+If M lines have markers and N lines are visible, this is O(N × M) per frame. With typical screen
+heights and a populated code review this is hundreds of comparisons per frame for a simple
+membership test.
+
+Fix: replace `marked_lines` with an `std::unordered_set<std::size_t>` or sort-plus-binary-search
+so the per-line lookup is O(1) or O(log M) instead of O(M). The set can be built once per frame
+from `GetThreads()` output (after finding 1 is addressed, this becomes trivially cheap).
+
+Implemented:
+
+- The marker renderer no longer builds `marked_lines`; it performs one indexed thread lookup and
+  one indexed comment lookup per visible line.
+- This removes both the per-frame marked-line vector allocation and the per-visible-line
+  `std::find` membership scan.
+
+Relevant code:
+
+- `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
+- `docs/known-tech-debt.md` — item 11
 
 ## Deep-Dive Findings (2026-04-23)
 

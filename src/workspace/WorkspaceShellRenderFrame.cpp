@@ -178,29 +178,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           }
 
           const std::string uri = viewport.path().generic_string();
-          std::vector<int> marked_lines;
-          for (const ReviewThread& thread : review_comments_registry_.GetThreads(uri)) {
-            if (thread.line > 0 &&
-                std::find(marked_lines.begin(), marked_lines.end(), thread.line) == marked_lines.end()) {
-              marked_lines.push_back(thread.line);
-            }
-          }
-          if (marked_lines.empty()) {
-            for (std::size_t line_index = viewport.scroll_line();
-                 line_index < std::min(viewport.lines().size(),
-                                       viewport.scroll_line() + viewport.visible_lines());
-                 ++line_index) {
-              if (!review_comments_registry_
-                       .GetComments(uri, static_cast<int>(line_index + 1))
-                       .empty()) {
-                marked_lines.push_back(static_cast<int>(line_index + 1));
-              }
-            }
-          }
-          if (marked_lines.empty()) {
-            return;
-          }
-
           const editor::EditorViewMetrics metrics =
               editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, pane_rect);
           for (std::size_t line_index = viewport.scroll_line();
@@ -208,8 +185,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                      viewport.scroll_line() + viewport.visible_lines());
                ++line_index) {
             const int one_based_line = static_cast<int>(line_index + 1);
-            if (std::find(marked_lines.begin(), marked_lines.end(), one_based_line) ==
-                marked_lines.end()) {
+            if (!review_comments_registry_.HasThreads(uri, one_based_line) &&
+                !review_comments_registry_.HasComments(uri, one_based_line)) {
               continue;
             }
             const float y =

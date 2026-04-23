@@ -507,9 +507,12 @@ Current state:
 
 - retained redraw has comparison coverage against clean full redraws
 - search, tab ordering, context-copy flows, and many workspace mutations already have direct regression tests
-- a 2026-04-23 deep-dive identified several untracked render-path bottlenecks; see
-  `docs/performance-findings.md` (Deep-Dive Findings section) and `docs/known-tech-debt.md`
-  items 8–12 for the prioritized list
+- a 2026-04-23 deep-dive identified several untracked render-path bottlenecks; all nine actionable
+  findings from that pass are now confirmed fixed; see `docs/performance-findings.md`
+  (Deep-Dive Findings section) for the full record
+- a 2026-04-23 second static pass confirmed all previous fixes and found four new bottlenecks;
+  see `docs/performance-findings.md` (Second Performance Pass section) and
+  `docs/known-tech-debt.md` items 8–11 for the prioritized list
 
 Open work:
 
@@ -521,12 +524,17 @@ Open work:
   work is policy tuning and regression coverage, not a wholesale redraw rewrite
 - prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
   the right bugs
-- the highest-priority remaining follow-ups from the 2026-04-23 review are now:
-  1. cold syntax-definition reload has been reduced by reusing the precompiled generated registry;
-     unchanged plugin syntax reloads also skip the rebuild, so only promote disk caching or parallel
-     plugin syntax parsing if profiling still shows plugin Lua parsing or plugin regex compilation
-     as material startup cost
-  2. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
+- the highest-priority remaining follow-ups from the second pass are:
+  1. `SnapshotLineRangeCached` generation counter — skip the terminal snapshot copy entirely when
+     the terminal is idle; still the only open item from the first deep-dive (performance-findings
+     Second Performance Pass, still-open section)
+  2. `ComputeEditorPaneLayouts` double call — trivial local refactor in `WorkspaceShellRenderFrame.cpp`
+     (tech-debt item 9)
+  3. terminal cursor triple-lock — straightforward API fix (tech-debt item 10)
+  4. cold syntax-definition reload: only promote disk caching or parallel plugin syntax parsing if
+     profiling shows plugin Lua parsing or plugin regex compilation as material startup cost after
+     the generated-registry reuse landed
+  5. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
      redraw locality can silently regress without changing user-visible behavior
 - measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
   review alone to confirm impact
