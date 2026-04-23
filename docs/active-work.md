@@ -522,11 +522,9 @@ Open work:
 - prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
   the right bugs
 - the highest-priority remaining follow-ups from the 2026-04-23 review are now:
-  1. terminal foreground rendering is still per-cell rather than per-run
-  2. buffer search still lowercases every visible line every frame while active
-  3. `SdlTtfTextBackend::BuildCacheKey` still allocates a `std::string` per draw call
-  4. `ApplyPatternRules` still scans all rules for each region instead of prepartitioned subsets
-  5. syntax-definition reload remains the main measured startup bottleneck
+  1. syntax-definition reload remains the main measured startup bottleneck
+  2. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
+     redraw locality can silently regress without changing user-visible behavior
 - measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
   review alone to confirm impact
 

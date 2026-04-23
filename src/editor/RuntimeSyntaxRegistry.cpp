@@ -171,6 +171,8 @@ struct Definition {
   CompiledRegex signature_regex;
   std::size_t first_rule = 0;
   std::size_t rule_count = 0;
+  std::unordered_map<std::uint32_t, std::vector<std::size_t>> pattern_rule_indices_by_parent;
+  std::unordered_map<std::uint32_t, std::vector<std::size_t>> region_rule_indices_by_parent;
 };
 
 struct Registry {
@@ -453,6 +455,17 @@ BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtim
   if (output.registry.default_definition_id == 0 && !output.registry.definitions.empty()) {
     output.registry.default_definition_id = 1;
   }
+
+  for (Definition& definition : output.registry.definitions) {
+    const std::size_t end_rule = definition.first_rule + definition.rule_count;
+    for (std::size_t index = definition.first_rule; index < end_rule; ++index) {
+      const Rule& rule = output.registry.rules[index];
+      auto& table = rule.kind == GeneratedRuleKind::Pattern
+                        ? definition.pattern_rule_indices_by_parent
+                        : definition.region_rule_indices_by_parent;
+      table[rule.parent_region_id].push_back(index);
+    }
+  }
   return output;
 }
 
@@ -510,12 +523,14 @@ void ApplyPatternRules(const Registry& registry,
     MarkRange(tokens, absolute_offset, absolute_offset + segment.size(), base_kind);
   }
 
-  const std::size_t end_rule = definition.first_rule + definition.rule_count;
+  const auto rule_it = definition.pattern_rule_indices_by_parent.find(parent_region_id);
+  if (rule_it == definition.pattern_rule_indices_by_parent.end()) {
+    return;
+  }
   thread_local std::vector<MatchRange> matches;
-  for (std::size_t index = definition.first_rule; index < end_rule; ++index) {
+  for (const std::size_t index : rule_it->second) {
     const Rule& rule = registry.rules[index];
-    if (rule.parent_region_id != parent_region_id || rule.kind != GeneratedRuleKind::Pattern ||
-        !rule.pattern.valid()) {
+    if (!rule.pattern.valid()) {
       continue;
     }
 
@@ -532,11 +547,13 @@ std::optional<RegionStartMatch> FindEarliestRegionStart(const Registry& registry
                                                         std::string_view segment,
                                                         std::size_t search_limit) {
   std::optional<RegionStartMatch> best_match;
-  const std::size_t end_rule = definition.first_rule + definition.rule_count;
-  for (std::size_t index = definition.first_rule; index < end_rule; ++index) {
+  const auto rule_it = definition.region_rule_indices_by_parent.find(parent_region_id);
+  if (rule_it == definition.region_rule_indices_by_parent.end()) {
+    return std::nullopt;
+  }
+  for (const std::size_t index : rule_it->second) {
     const Rule& rule = registry.rules[index];
-    if (rule.parent_region_id != parent_region_id || rule.kind != GeneratedRuleKind::Region ||
-        !rule.start.valid()) {
+    if (!rule.start.valid()) {
       continue;
     }
 

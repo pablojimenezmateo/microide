@@ -369,11 +369,50 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
   }
 }
 
+std::size_t SdlTtfTextBackend::CacheKeyHash::operator()(const CacheKeyView& key) const noexcept {
+  auto mix = [](std::size_t seed, std::size_t value) {
+    return seed ^ (value + 0x9e3779b9ULL + (seed << 6) + (seed >> 2));
+  };
+
+  std::size_t h = std::hash<std::string_view>{}(key.text);
+  const std::uint32_t packed_foreground =
+      (static_cast<std::uint32_t>(key.color.r) << 24) |
+      (static_cast<std::uint32_t>(key.color.g) << 16) |
+      (static_cast<std::uint32_t>(key.color.b) << 8) |
+      static_cast<std::uint32_t>(key.color.a);
+  h = mix(h, packed_foreground);
+  h = mix(h, key.has_background ? 1u : 0u);
+  if (key.has_background) {
+    const std::uint32_t packed_background =
+        (static_cast<std::uint32_t>(key.background.r) << 24) |
+        (static_cast<std::uint32_t>(key.background.g) << 16) |
+        (static_cast<std::uint32_t>(key.background.b) << 8) |
+        static_cast<std::uint32_t>(key.background.a);
+    h = mix(h, packed_background);
+  }
+  return h;
+}
+
+bool SdlTtfTextBackend::CacheKeyEqual::operator()(const CacheKeyView& lhs,
+                                                  const CacheKeyView& rhs) const noexcept {
+  return lhs.text == rhs.text && lhs.color.r == rhs.color.r && lhs.color.g == rhs.color.g &&
+         lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a &&
+         lhs.has_background == rhs.has_background &&
+         (!lhs.has_background ||
+          (lhs.background.r == rhs.background.r && lhs.background.g == rhs.background.g &&
+           lhs.background.b == rhs.background.b && lhs.background.a == rhs.background.a));
+}
+
 SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,
                                                                SDL_Color color,
                                                                const SDL_Color* background) {
-  const std::string key = BuildCacheKey(text, color, background);
-  if (auto it = cache_.find(key); it != cache_.end()) {
+  const CacheKeyView key_view{
+      .text = text,
+      .color = color,
+      .has_background = background != nullptr,
+      .background = background == nullptr ? SDL_Color{} : *background,
+  };
+  if (auto it = cache_.find(key_view); it != cache_.end()) {
     cache_order_.splice(cache_order_.end(), cache_order_, it->second.order);
     return &it->second;
   }
@@ -399,14 +438,24 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   entry.height = surface->h;
   SDL_DestroySurface(surface);
 
-  // insert_or_assign returns an iterator into the map; store a pointer to the
-  // key stored inside the map node (stable until the node is erased).
-  auto [map_it, _] = cache_.insert_or_assign(key, std::move(entry));
-  cache_order_.push_back(&map_it->first);
+  CacheKey key{
+      .text = std::string(text),
+      .color = color,
+      .has_background = background != nullptr,
+      .background = background == nullptr ? SDL_Color{} : *background,
+  };
+  auto [map_it, inserted] = cache_.emplace(std::move(key), std::move(entry));
+  if (!inserted) {
+    if (map_it->second.texture != nullptr) {
+      SDL_DestroyTexture(map_it->second.texture);
+    }
+    map_it->second = std::move(entry);
+  }
+  cache_order_.push_back(map_it->first);
   map_it->second.order = std::prev(cache_order_.end());
 
   while (cache_order_.size() > kMaxCacheEntries) {
-    auto evict_it = cache_.find(*cache_order_.front());
+    auto evict_it = cache_.find(cache_order_.front());
     cache_order_.pop_front();
     if (evict_it != cache_.end()) {
       if (evict_it->second.texture != nullptr) {
@@ -417,32 +466,6 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   }
 
   return &map_it->second;
-}
-
-std::string SdlTtfTextBackend::BuildCacheKey(std::string_view text,
-                                             SDL_Color color,
-                                             const SDL_Color* background) const {
-  // Pack the color components as raw bytes after a '\n' separator.
-  // Rendered token text never contains newlines, so '\n' is unambiguous.
-  // Raw-byte packing avoids 8 std::to_string calls and the resulting temporaries.
-  std::string key;
-  key.reserve(text.size() + 10);
-  key.append(text);
-  key.push_back('\n');
-  key.push_back(static_cast<char>(color.r));
-  key.push_back(static_cast<char>(color.g));
-  key.push_back(static_cast<char>(color.b));
-  key.push_back(static_cast<char>(color.a));
-  if (background == nullptr) {
-    key.push_back('\x00');
-  } else {
-    key.push_back('\x01');
-    key.push_back(static_cast<char>(background->r));
-    key.push_back(static_cast<char>(background->g));
-    key.push_back(static_cast<char>(background->b));
-    key.push_back(static_cast<char>(background->a));
-  }
-  return key;
 }
 
 }  // namespace microide::render

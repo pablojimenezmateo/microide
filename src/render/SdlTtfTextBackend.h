@@ -11,6 +11,7 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -32,7 +33,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
                   float y,
                   SDL_Color color,
                   std::string_view text) override;
-  void DrawStringOn(SDL_Renderer* renderer,
+ void DrawStringOn(SDL_Renderer* renderer,
                     float x,
                     float y,
                     SDL_Color color,
@@ -40,11 +41,62 @@ class SdlTtfTextBackend final : public TextRendererBackend {
                     std::string_view text) override;
 
  private:
+  struct CacheKeyView {
+    std::string_view text;
+    SDL_Color color{};
+    bool has_background = false;
+    SDL_Color background{};
+  };
+
+  struct CacheKey {
+    std::string text;
+    SDL_Color color{};
+    bool has_background = false;
+    SDL_Color background{};
+
+    operator CacheKeyView() const noexcept {
+      return CacheKeyView{
+          .text = text,
+          .color = color,
+          .has_background = has_background,
+          .background = background,
+      };
+    }
+  };
+
+  struct CacheKeyHash {
+    using is_transparent = void;
+
+    std::size_t operator()(const CacheKey& key) const noexcept {
+      return (*this)(static_cast<CacheKeyView>(key));
+    }
+
+    std::size_t operator()(const CacheKeyView& key) const noexcept;
+  };
+
+  struct CacheKeyEqual {
+    using is_transparent = void;
+
+    bool operator()(const CacheKey& lhs, const CacheKey& rhs) const noexcept {
+      return (*this)(static_cast<CacheKeyView>(lhs), static_cast<CacheKeyView>(rhs));
+    }
+
+    bool operator()(const CacheKey& lhs, const CacheKeyView& rhs) const noexcept {
+      return (*this)(static_cast<CacheKeyView>(lhs), rhs);
+    }
+
+    bool operator()(const CacheKeyView& lhs, const CacheKey& rhs) const noexcept {
+      return (*this)(lhs, static_cast<CacheKeyView>(rhs));
+    }
+
+    bool operator()(const CacheKeyView& lhs, const CacheKeyView& rhs) const noexcept;
+  };
+
   struct CacheEntry {
     SDL_Texture* texture = nullptr;
     int width = 0;
     int height = 0;
-    std::list<const std::string*>::iterator order;
+    std::list<CacheKey>::iterator order;
   };
 
   SdlTtfTextBackend() = default;
@@ -61,9 +113,6 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   CacheEntry* ResolveEntry(std::string_view text,
                            SDL_Color color,
                            const SDL_Color* background);
-  std::string BuildCacheKey(std::string_view text,
-                            SDL_Color color,
-                            const SDL_Color* background) const;
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
@@ -75,8 +124,8 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
-  std::unordered_map<std::string, CacheEntry> cache_;
-  std::list<const std::string*> cache_order_;
+  std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual> cache_;
+  std::list<CacheKey> cache_order_;
 };
 
 }  // namespace microide::render

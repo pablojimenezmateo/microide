@@ -98,6 +98,7 @@ class TextViewport {
   std::size_t visible_lines() const { return visible_lines_; }
   std::size_t visible_columns() const { return visible_columns_; }
   std::size_t line_count() const { return document_->lines.size(); }
+  std::size_t layout_revision() const { return document_ != nullptr ? document_->layout_revision : 0; }
   std::size_t tab_size() const { return tab_size_; }
   std::size_t max_visual_columns() const { return MaxVisualColumns(); }
   std::size_t indent_width() const { return indent_width_; }

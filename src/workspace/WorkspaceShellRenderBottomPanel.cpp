@@ -128,17 +128,44 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       column = run_end;
     }
 
-    for (std::size_t column = 0; column < visible_columns; ++column) {
+    for (std::size_t column = 0; column < visible_columns;) {
       const auto& cell = line.cells[column];
       const bool selected = TerminalCellSelected(row_index, column);
-      const auto [foreground, background] = resolve_terminal_colors(cell.style, selected);
-      (void)background;
-      const float cell_x = x + static_cast<float>(column) * char_width;
-      const std::string_view display_text = cell.DisplayText();
-      if (display_text.empty() || display_text == " ") {
-        continue;
+      const SDL_Color foreground = resolve_terminal_colors(cell.style, selected).first;
+
+      std::size_t run_end = column + 1;
+      while (run_end < visible_columns) {
+        const auto& next_cell = line.cells[run_end];
+        const bool next_selected = TerminalCellSelected(row_index, run_end);
+        const SDL_Color next_foreground =
+            resolve_terminal_colors(next_cell.style, next_selected).first;
+        if (next_foreground.r != foreground.r || next_foreground.g != foreground.g ||
+            next_foreground.b != foreground.b || next_foreground.a != foreground.a) {
+          break;
+        }
+        ++run_end;
       }
-      text_renderer_.DrawString(renderer, cell_x, y, foreground, display_text);
+
+      std::string run_text;
+      run_text.reserve(run_end - column);
+      bool has_non_space = false;
+      for (std::size_t index = column; index < run_end; ++index) {
+        const std::string_view display_text = line.cells[index].DisplayText();
+        if (display_text.empty()) {
+          run_text.push_back(' ');
+          continue;
+        }
+        if (display_text != " ") {
+          has_non_space = true;
+        }
+        run_text.append(display_text);
+      }
+
+      if (has_non_space) {
+        const float run_x = x + static_cast<float>(column) * char_width;
+        text_renderer_.DrawString(renderer, run_x, y, foreground, run_text);
+      }
+      column = run_end;
     }
   };
 

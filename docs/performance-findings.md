@@ -5,6 +5,7 @@ Updated on 2026-04-22 with Git status and syntax definition deferral optimizatio
 Updated on 2026-04-22 with asynchronous LSP server initialization to prevent UI blocking.
 Updated on 2026-04-23 with deep-dive static analysis of render-path and edit-path bottlenecks.
 Updated on 2026-04-23 with syntax, viewport, terminal, and output-panel cache fixes from that review.
+Updated on 2026-04-23 with terminal foreground run coalescing, buffer-search caching, SDL text-cache lookup cleanup, and syntax-rule partitioning.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -60,6 +61,35 @@ Impact:
 
 - idle terminal rendering avoids repeated visible-range transcript copies for unchanged content
 - output panels with code context stop re-highlighting the same visible snippets on every repaint
+
+### Remaining deep-dive render-path fixes
+
+Problem:
+
+- terminal foreground rendering still issued one draw per visible cell even when long spans shared
+  one foreground color
+- buffer search lowercased every visible line every frame while active
+- `SdlTtfTextBackend` still allocated a `std::string` for cache lookup on every draw call
+- syntax rule application still scanned all rules for each region instead of iterating only the
+  relevant subset
+
+Implemented:
+
+- terminal panel rendering now coalesces foreground draws into color runs instead of drawing one
+  cell at a time
+- `EditorViewRenderer` now caches per-line buffer-search match ranges by viewport, layout revision,
+  line index, and lowered query
+- `SdlTtfTextBackend` now uses a transparent structured cache key so cache hits do not allocate a
+  temporary `std::string`
+- runtime syntax definitions now prepartition pattern and region rules by parent region at registry
+  build time so highlight passes iterate only relevant rule subsets
+
+Impact:
+
+- terminal transcript rendering issues materially fewer text draw calls on uniform-color output
+- active buffer search no longer lowercases unchanged visible lines on every repaint
+- SDL text-cache hits now avoid one temporary heap string per draw call
+- syntax highlighting reduces rule-filter overhead on every highlighted segment
 
 ### Startup project-open eager scans
 

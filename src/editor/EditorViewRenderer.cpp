@@ -310,24 +310,45 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (!lowered_search_query.empty()) {
-      const std::string& src = lines[line_index];
-      lowered_line_scratch.resize(src.size());
-      std::transform(src.begin(), src.end(), lowered_line_scratch.begin(),
-                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-      const std::string& lowered_line = lowered_line_scratch;
-      std::size_t match_offset = lowered_line.find(lowered_search_query);
-      while (match_offset != std::string::npos) {
+      const SearchMatchCacheKey cache_key{
+          .viewport = &viewport,
+          .layout_revision = viewport.layout_revision(),
+          .line_index = line_index,
+          .query = lowered_search_query,
+      };
+      auto cache_it = search_match_cache_.find(cache_key);
+      if (cache_it == search_match_cache_.end()) {
+        const std::string& src = lines[line_index];
+        lowered_line_scratch.resize(src.size());
+        std::transform(src.begin(), src.end(), lowered_line_scratch.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::vector<std::pair<std::size_t, std::size_t>> matches;
+        std::size_t match_offset = lowered_line_scratch.find(lowered_search_query);
+        while (match_offset != std::string::npos) {
+          matches.emplace_back(match_offset, match_offset + lowered_search_query.size());
+          match_offset = lowered_line_scratch.find(lowered_search_query, match_offset + 1);
+        }
+        if (search_match_cache_.size() >= kSearchMatchCacheLimit) {
+          search_match_cache_.erase(search_match_cache_order_.front());
+          search_match_cache_order_.pop_front();
+        }
+        auto [inserted_it, _] = search_match_cache_.emplace(cache_key, std::move(matches));
+        search_match_cache_order_.push_back(cache_key);
+        cache_it = inserted_it;
+      }
+
+      for (const auto& [match_start, match_end] : cache_it->second) {
         const std::size_t start_visual =
-            TextLayout::VisualColumnForTextColumn(lines[line_index], match_offset, viewport.tab_size());
+            TextLayout::VisualColumnForTextColumn(lines[line_index], match_start, viewport.tab_size());
         const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
-            lines[line_index], match_offset + lowered_search_query.size(), viewport.tab_size());
+            lines[line_index], match_end, viewport.tab_size());
         const std::size_t visible_start = std::max(start_visual, viewport.horizontal_scroll());
         const std::size_t visible_end = std::min(end_visual,
                                                  viewport.horizontal_scroll() + viewport.visible_columns());
         if (visible_end > visible_start) {
           const bool is_active_match =
               active_search_line &&
-              match_offset == active_search_match->start.column &&
+              match_start == active_search_match->start.column &&
               line_index == active_search_match->start.line;
           row_desc.fills.push_back(DecoratedTextFill{
               .rect =
@@ -342,7 +363,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               .color = is_active_match ? theme.search_match_active : theme.search_match,
           });
         }
-        match_offset = lowered_line.find(lowered_search_query, match_offset + 1);
       }
     }
 
