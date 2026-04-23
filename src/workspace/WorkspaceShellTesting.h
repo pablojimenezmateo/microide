@@ -389,12 +389,12 @@ struct WorkspaceShell::TestAccess {
     shell.DismissInlineCompletion();
   }
   static std::vector<Message> ActiveConversationMessages(const WorkspaceShell& shell) {
-    const auto* conversation = shell.conversation_registry_.GetConversation(
+    const auto* conversation = shell.context_.current_project_state.conversations.GetConversation(
         shell.context_.current_project_state.panel.chat.conversation_id);
     return conversation != nullptr ? conversation->messages : std::vector<Message>{};
   }
   static std::string ActiveConversationProviderId(const WorkspaceShell& shell) {
-    const auto* conversation = shell.conversation_registry_.GetConversation(
+    const auto* conversation = shell.context_.current_project_state.conversations.GetConversation(
         shell.context_.current_project_state.panel.chat.conversation_id);
     return conversation != nullptr ? conversation->provider_id : std::string{};
   }

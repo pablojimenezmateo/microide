@@ -15,6 +15,7 @@
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
 #include "util/SingleLineText.h"
+#include "workspace/WorkspaceConversation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTabState.h"
@@ -166,6 +167,8 @@ struct ChatPanelState {
   int scroll_row = 0;
   bool request_in_flight = false;
   std::string status_text;
+  // Restore warning displayed after session restore detected interrupted requests.
+  bool has_restore_warning = false;
 };
 
 struct InlineCompletionState {
@@ -220,6 +223,8 @@ struct ProjectWorkspaceState {
   EditorPreferences editor_preferences;
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
+  // Chat conversations persisted per-project.
+  ConversationRegistry conversations;
 };
 
 struct ProjectCatalogState {

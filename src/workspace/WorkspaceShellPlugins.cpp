@@ -242,7 +242,6 @@ void WorkspaceShell::RebuildPhase4Registries() {
 void WorkspaceShell::RebuildPhase5Registries() {
   ai_provider_registry_ = AiProviderRegistry{};
   inline_completion_registry_.Clear();
-  conversation_registry_.Clear();
   external_agent_registry_.Clear();
   mcp_tool_registry_.Clear();
   ai_context_manager_.Clear();
@@ -284,7 +283,7 @@ void WorkspaceShell::RebuildPhase5Registries() {
   }
   if (context_.current_project_state.panel.chat.conversation_id.empty()) {
     context_.current_project_state.panel.chat.conversation_id =
-        conversation_registry_.CreateConversation("Chat", {});
+        context_.current_project_state.conversations.CreateConversation("Chat", {});
   }
 }
 

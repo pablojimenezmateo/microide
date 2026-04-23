@@ -6,10 +6,157 @@
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
 #include "util/TextFileIO.h"
+#include "workspace/WorkspaceConversation.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
+
+namespace {
+
+std::string SerializeRequestStatus(RequestStatus status) {
+  switch (status) {
+    case RequestStatus::Idle: return "idle";
+    case RequestStatus::Queued: return "queued";
+    case RequestStatus::Running: return "running";
+    case RequestStatus::Streaming: return "streaming";
+    case RequestStatus::Succeeded: return "succeeded";
+    case RequestStatus::Failed: return "failed";
+    case RequestStatus::Cancelled: return "cancelled";
+  }
+  return "idle";
+}
+
+RequestStatus ParseRequestStatus(const std::string& s) {
+  if (s == "queued") return RequestStatus::Queued;
+  if (s == "running") return RequestStatus::Running;
+  if (s == "streaming") return RequestStatus::Streaming;
+  if (s == "succeeded") return RequestStatus::Succeeded;
+  if (s == "failed") return RequestStatus::Failed;
+  if (s == "cancelled") return RequestStatus::Cancelled;
+  return RequestStatus::Idle;
+}
+
+std::string SerializeToolMode(ToolMode mode) {
+  switch (mode) {
+    case ToolMode::NoTools: return "no_tools";
+    case ToolMode::Ask: return "ask";
+    case ToolMode::Auto: return "auto";
+  }
+  return "ask";
+}
+
+ToolMode ParseToolMode(const std::string& s) {
+  if (s == "no_tools") return ToolMode::NoTools;
+  if (s == "auto") return ToolMode::Auto;
+  return ToolMode::Ask;
+}
+
+std::string SerializeMessageRole(MessageRole role) {
+  switch (role) {
+    case MessageRole::User: return "user";
+    case MessageRole::Assistant: return "assistant";
+    case MessageRole::System: return "system";
+  }
+  return "user";
+}
+
+MessageRole ParseMessageRole(const std::string& s) {
+  if (s == "assistant") return MessageRole::Assistant;
+  if (s == "system") return MessageRole::System;
+  return MessageRole::User;
+}
+
+std::vector<Conversation> RestoreConversations(const PersistedChatState& chat,
+                                               bool* any_interrupted) {
+  std::vector<Conversation> result;
+  result.reserve(chat.conversations.size());
+  for (const auto& pc : chat.conversations) {
+    Conversation conv;
+    conv.id = pc.id;
+    conv.title = pc.title;
+    conv.provider_id = pc.provider_id;
+    conv.model_id = pc.model_id;
+    conv.tool_mode = ParseToolMode(pc.tool_mode);
+    conv.draft = pc.draft;
+    conv.system_prompt = pc.system_prompt;
+    conv.created_at = pc.created_at;
+    conv.updated_at = pc.updated_at;
+    conv.last_request_duration_ms = pc.last_request_duration_ms;
+
+    const RequestStatus stored_status = ParseRequestStatus(pc.status);
+    if (!IsTerminalRequestStatus(stored_status)) {
+      // Non-terminal request interrupted by reload or shutdown.
+      conv.status = RequestStatus::Failed;
+      if (any_interrupted != nullptr) {
+        *any_interrupted = true;
+      }
+    } else {
+      conv.status = stored_status;
+    }
+
+    for (const auto& pm : pc.messages) {
+      Message msg;
+      msg.id = pm.id;
+      msg.role = ParseMessageRole(pm.role);
+      msg.content = pm.content;
+      msg.timestamp = pm.timestamp;
+      msg.provider_id = pm.provider_id;
+      msg.model = pm.model;
+      msg.error = pm.error;
+      msg.request_duration_ms = pm.request_duration_ms;
+      const RequestStatus msg_status = ParseRequestStatus(pm.status);
+      if (!IsTerminalRequestStatus(msg_status)) {
+        msg.status = RequestStatus::Failed;
+        if (msg.error.empty()) {
+          msg.error = "Interrupted by reload or shutdown.";
+        }
+      } else {
+        msg.status = msg_status;
+      }
+      conv.messages.push_back(std::move(msg));
+    }
+    result.push_back(std::move(conv));
+  }
+  return result;
+}
+
+PersistedChatState BuildPersistedChatState(const ConversationRegistry& registry,
+                                           const std::string& active_conversation_id) {
+  PersistedChatState chat;
+  chat.active_conversation_id = active_conversation_id;
+  for (const auto& conv : registry.conversations()) {
+    PersistedConversationState pc;
+    pc.id = conv.id;
+    pc.title = conv.title;
+    pc.provider_id = conv.provider_id;
+    pc.model_id = conv.model_id;
+    pc.status = SerializeRequestStatus(conv.status);
+    pc.tool_mode = SerializeToolMode(conv.tool_mode);
+    pc.draft = conv.draft;
+    pc.system_prompt = conv.system_prompt;
+    pc.created_at = conv.created_at;
+    pc.updated_at = conv.updated_at;
+    pc.last_request_duration_ms = conv.last_request_duration_ms;
+    for (const auto& msg : conv.messages) {
+      PersistedMessageState pm;
+      pm.id = msg.id;
+      pm.role = SerializeMessageRole(msg.role);
+      pm.content = msg.content;
+      pm.timestamp = msg.timestamp;
+      pm.provider_id = msg.provider_id;
+      pm.model = msg.model;
+      pm.status = SerializeRequestStatus(msg.status);
+      pm.request_duration_ms = msg.request_duration_ms;
+      pm.error = msg.error;
+      pc.messages.push_back(std::move(pm));
+    }
+    chat.conversations.push_back(std::move(pc));
+  }
+  return chat;
+}
+
+}  // namespace
 
 std::filesystem::path PersistenceCoordinator::SessionStatePath() const {
   return CurrentProjectState().root.empty() ? std::filesystem::path{}
@@ -290,6 +437,24 @@ bool PersistenceCoordinator::RestoreSessionState() {
   state.sidebar.width = persisted_session.sidebar_width;
   state.panel.height = persisted_session.bottom_panel_height;
 
+  // Restore conversations; convert any non-terminal states to failed.
+  if (!persisted_session.chat.conversations.empty()) {
+    bool any_interrupted = false;
+    std::vector<Conversation> restored =
+        RestoreConversations(persisted_session.chat, &any_interrupted);
+    state.conversations.SetConversations(std::move(restored));
+    state.panel.chat.conversation_id = persisted_session.chat.active_conversation_id;
+    if (any_interrupted) {
+      state.panel.chat.has_restore_warning = true;
+      state.panel.chat.status_text = "Interrupted by reload or shutdown.";
+    }
+    // Validate that active conversation id exists.
+    if (!state.panel.chat.conversation_id.empty() &&
+        state.conversations.GetConversation(state.panel.chat.conversation_id) == nullptr) {
+      state.panel.chat.conversation_id.clear();
+    }
+  }
+
   if (state.open_tabs.empty()) {
     state.text_viewport.SetPlaceholderText(
         "microide\n\n"
@@ -343,6 +508,10 @@ void PersistenceCoordinator::SaveSessionState() {
     }
     persisted_session.tabs.push_back(std::move(*persisted_tab));
   }
+
+  persisted_session.chat = BuildPersistedChatState(
+      CurrentProjectState().conversations,
+      CurrentProjectState().panel.chat.conversation_id);
 
   util::WriteTextFileAtomically(session_path, SerializeProjectSession(persisted_session));
 }

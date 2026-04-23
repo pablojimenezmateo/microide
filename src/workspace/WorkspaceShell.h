@@ -1313,7 +1313,6 @@ class WorkspaceShell {
   ReviewCommentsRegistry review_comments_registry_;
   AiProviderRegistry ai_provider_registry_;
   InlineCompletionRegistry inline_completion_registry_;
-  ConversationRegistry conversation_registry_;
   ExternalAgentRegistry external_agent_registry_;
   McpToolRegistry mcp_tool_registry_;
   AiContextManager ai_context_manager_;

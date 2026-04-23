@@ -235,7 +235,7 @@ ScrollableListLayout WorkspaceShell::ComputeChatSidebarListLayout(const SDL_FRec
 std::vector<WorkspaceShell::ChatSidebarLine> WorkspaceShell::BuildChatSidebarLines(
     const SDL_FRect& sidebar_rect) const {
   std::vector<ChatSidebarLine> lines;
-  const Conversation* conversation = conversation_registry_.GetConversation(
+  const Conversation* conversation = context_.current_project_state.conversations.GetConversation(
       context_.current_project_state.panel.chat.conversation_id);
   const float text_width = std::max(24.0f, sidebar_rect.w - kSidebarInset * 2.0f - 12.0f);
   if (conversation == nullptr || conversation->messages.empty()) {

@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -80,12 +81,45 @@ struct PersistedProjectConfigState {
   std::vector<PersistedSidebarViewPolicy> sidebar_policies;
 };
 
+struct PersistedMessageState {
+  std::string id;
+  std::string role;  // "user", "assistant", "system"
+  std::string content;
+  std::string timestamp;
+  std::string provider_id;
+  std::string model;
+  std::string status;  // serialized RequestStatus
+  std::int64_t request_duration_ms = 0;
+  std::string error;
+};
+
+struct PersistedConversationState {
+  std::string id;
+  std::string title;
+  std::string provider_id;
+  std::string model_id;
+  std::string status;  // serialized RequestStatus
+  std::string tool_mode;  // "no_tools", "ask", "auto"
+  std::string draft;
+  std::string system_prompt;
+  std::string created_at;
+  std::string updated_at;
+  std::int64_t last_request_duration_ms = 0;
+  std::vector<PersistedMessageState> messages;
+};
+
+struct PersistedChatState {
+  std::string active_conversation_id;
+  std::vector<PersistedConversationState> conversations;
+};
+
 struct PersistedProjectSessionState {
   bool sidebar_visible = true;
   float sidebar_width = 288.0f;
   float bottom_panel_height = 184.0f;
   std::size_t active_tab_index = 0;
   std::vector<PersistedEditorTabState> tabs;
+  PersistedChatState chat;
 };
 
 struct PersistedWorkspaceSessionState {

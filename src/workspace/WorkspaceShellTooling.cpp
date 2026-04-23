@@ -479,7 +479,7 @@ void WorkspaceShell::ShowOutputChannel(std::string_view id) {
 void WorkspaceShell::ShowChatPanel() {
   if (context_.current_project_state.panel.chat.conversation_id.empty()) {
     context_.current_project_state.panel.chat.conversation_id =
-        conversation_registry_.CreateConversation("Chat", std::string{});
+        context_.current_project_state.conversations.CreateConversation("Chat", std::string{});
   }
   context_.current_project_state.sidebar.view_id = "chat";
   context_.current_project_state.sidebar.visible = true;
@@ -1178,36 +1178,36 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
 
   ShowChatPanel();
   Conversation* conversation =
-      conversation_registry_.GetConversation(context_.current_project_state.panel.chat.conversation_id);
+      context_.current_project_state.conversations.GetConversation(context_.current_project_state.panel.chat.conversation_id);
   if (conversation == nullptr) {
     context_.current_project_state.panel.chat.conversation_id =
-        conversation_registry_.CreateConversation("Chat", std::string{});
+        context_.current_project_state.conversations.CreateConversation("Chat", std::string{});
     conversation =
-        conversation_registry_.GetConversation(context_.current_project_state.panel.chat.conversation_id);
+        context_.current_project_state.conversations.GetConversation(context_.current_project_state.panel.chat.conversation_id);
   }
   const std::string user_id = GenerateRuntimeMessageId("user");
   const std::string assistant_id = GenerateRuntimeMessageId("assistant");
   conversation->provider_id = agent->id;
-  conversation_registry_.AddMessage(
-      conversation->id,
-      Message{
-          .id = user_id,
-          .role = MessageRole::User,
-          .content = message,
-          .render_line = {},
-          .timestamp = CurrentUtcTimestamp(),
-          .model = {},
-      });
-  conversation_registry_.AddMessage(
-      conversation->id,
-      Message{
-          .id = assistant_id,
-          .role = MessageRole::Assistant,
-          .content = {},
-          .render_line = {},
-          .timestamp = CurrentUtcTimestamp(),
-          .model = agent->id,
-      });
+  {
+    Message user_msg;
+    user_msg.id = user_id;
+    user_msg.role = MessageRole::User;
+    user_msg.content = message;
+    user_msg.timestamp = CurrentUtcTimestamp();
+    user_msg.status = RequestStatus::Succeeded;
+    context_.current_project_state.conversations.AddMessage(conversation->id, user_msg);
+  }
+  {
+    Message assistant_msg;
+    assistant_msg.id = assistant_id;
+    assistant_msg.role = MessageRole::Assistant;
+    assistant_msg.timestamp = CurrentUtcTimestamp();
+    assistant_msg.model = agent->id;
+    assistant_msg.status = RequestStatus::Running;
+    context_.current_project_state.conversations.AddMessage(conversation->id, assistant_msg);
+  }
+  conversation->status = RequestStatus::Running;
+  conversation->last_request_duration_ms = 0;
   context_.current_project_state.panel.chat.pending_assistant_message_id = assistant_id;
   context_.current_project_state.panel.chat.request_in_flight = true;
   context_.current_project_state.panel.chat.status_text = "Waiting for " + agent->label;
@@ -1242,13 +1242,30 @@ void WorkspaceShell::ConsumeAiRuntimeUpdates() {
 
   if (context_.current_project_state.panel.chat.request_in_flight) {
     Conversation* conversation =
-        conversation_registry_.GetConversation(context_.current_project_state.panel.chat.conversation_id);
+        context_.current_project_state.conversations.GetConversation(context_.current_project_state.panel.chat.conversation_id);
     if (!context_.current_project_state.panel.chat.pending_assistant_message_id.empty()) {
       UpdateMessageContent(conversation,
                            context_.current_project_state.panel.chat.pending_assistant_message_id,
                            update->chunk);
     }
     if (update->finished) {
+      const RequestStatus terminal_status =
+          update->succeeded ? RequestStatus::Succeeded : RequestStatus::Failed;
+      if (conversation != nullptr) {
+        conversation->status = terminal_status;
+        // Update the pending assistant message status too.
+        const std::string& msg_id =
+            context_.current_project_state.panel.chat.pending_assistant_message_id;
+        for (auto& msg : conversation->messages) {
+          if (msg.id == msg_id) {
+            msg.status = terminal_status;
+            if (!update->succeeded && !update->status_text.empty()) {
+              msg.error = update->status_text;
+            }
+            break;
+          }
+        }
+      }
       context_.current_project_state.panel.chat.request_in_flight = false;
       context_.current_project_state.panel.chat.status_text = update->status_text;
       context_.current_project_state.panel.chat.pending_assistant_message_id.clear();

@@ -256,7 +256,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else if (sidebar_mode == SidebarMode::Chat) {
-    const Conversation* conversation = conversation_registry_.GetConversation(
+    const Conversation* conversation = context_.current_project_state.conversations.GetConversation(
         context_.current_project_state.panel.chat.conversation_id);
     const SDL_FRect status_rect = ChatSidebarStatusRect(layout.sidebar);
     const std::string title =
