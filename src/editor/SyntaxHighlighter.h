@@ -39,6 +39,10 @@ class SyntaxHighlighter {
                                        const std::filesystem::path& path,
                                        const SyntaxState& state = {},
                                        std::string_view first_line = {});
+  static SyntaxState AdvanceState(std::string_view line,
+                                  const std::filesystem::path& path,
+                                  const SyntaxState& state = {},
+                                  std::string_view first_line = {});
 };
 
 }  // namespace microide::editor

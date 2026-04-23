@@ -128,6 +128,61 @@ void TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits() {
          "viewport cache stats should count highlight queries");
   Expect(stats.highlight_hits == 1,
          "viewport cache stats should treat a repeated highlight lookup as a hit");
+  Expect(stats.highlight_state_advances == 0,
+         "repeated highlight lookups for the same line should not replay prior line state");
+}
+
+void TestTextViewportHighlightCheckpointsBoundFarReplay() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 4096; ++i) {
+    if (!content.empty()) {
+      content.push_back('\n');
+    }
+    content += "int value = 42;";
+  }
+  viewport.LoadContent(content, "/tmp/highlight-checkpoints.cpp");
+
+  (void)viewport.HighlightedLineTokens(0);
+  viewport.ResetCacheStats();
+
+  const auto& tokens = viewport.HighlightedLineTokens(4095);
+  Expect(!tokens.empty(), "far-line syntax queries should still produce tokens");
+
+  const auto stats = viewport.CacheStats();
+  Expect(stats.highlight_state_advances < 128,
+         "far-line syntax queries should replay at most one checkpoint window");
+}
+
+void TestTextViewportHighlightCheckpointsPreserveMultilineState() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 200; ++i) {
+    if (!content.empty()) {
+      content.push_back('\n');
+    }
+    if (i == 10) {
+      content += "/* begin comment";
+    } else if (i == 170) {
+      content += "end comment */ int value = 42;";
+    } else {
+      content += "comment payload";
+    }
+  }
+  viewport.LoadContent(content, "/tmp/highlight-comment.cpp");
+
+  (void)viewport.HighlightedLineTokens(0);
+  const auto& inside_comment_tokens = viewport.HighlightedLineTokens(150);
+  Expect(!inside_comment_tokens.empty(),
+         "multiline syntax queries should still produce tokens inside far regions");
+  Expect(std::all_of(inside_comment_tokens.begin(), inside_comment_tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::Comment; }),
+         "checkpointed syntax replay should preserve multiline comment state across checkpoints");
+
+  const auto& after_comment_tokens = viewport.HighlightedLineTokens(170);
+  Expect(std::any_of(after_comment_tokens.begin(), after_comment_tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Comment; }),
+         "syntax should still recover to non-comment token classes after a multiline region closes");
 }
 
 void TestTextViewportUndoRedoPreservesLatestViewState() {
@@ -257,6 +312,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/CacheStatsTrackWarmLayoutAndHighlightHits",
           TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits);
+  AddTest(tests, "TextViewport/HighlightCheckpointsBoundFarReplay",
+          TestTextViewportHighlightCheckpointsBoundFarReplay);
+  AddTest(tests, "TextViewport/HighlightCheckpointsPreserveMultilineState",
+          TestTextViewportHighlightCheckpointsPreserveMultilineState);
   AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",
           TestTextViewportUndoRedoPreservesLatestViewState);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",

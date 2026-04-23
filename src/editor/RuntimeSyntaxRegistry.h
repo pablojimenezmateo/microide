@@ -49,5 +49,9 @@ HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
                               std::string_view first_line);
+SyntaxState AdvanceState(std::string_view line,
+                         const std::filesystem::path& path,
+                         const SyntaxState& state,
+                         std::string_view first_line = {});
 
 }  // namespace microide::editor::runtime_syntax

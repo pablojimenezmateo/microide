@@ -28,54 +28,7 @@ This list intentionally does not repeat issues that were already closed in
 - FIFO text-render cache eviction in `SdlTtfTextBackend`
 - split-editor actions and several open-or-navigate paths mutating the stale floating editor copy
 
-## 1. Syntax Highlight State Still Scales With Distance From File Start
-
-Impact:
-- High on very large files
-- Correct behavior today, but still capable of blocking the UI when work lands far from the
-  current warm highlight frontier
-
-What still happens:
-- `TextViewport::EnsureHighlightStatesThrough()` advances syntax state line-by-line from the last
-  computed checkpoint to the requested target line.
-- If the target line is far away and no intermediate state was computed, the main thread still
-  has to walk that entire range before tokens are available.
-- The recent work did not change this behavior; it only addressed max-width invalidation.
-
-Evidence:
-- `src/editor/TextViewport.h:190`
-- `src/editor/TextViewport.h:252`
-- `src/editor/TextViewport.cpp:683`
-- `src/editor/TextViewport.cpp:712`
-
-Why this is still debt:
-- Large-file navigation can still turn a single cursor jump, first render, or blame/search-driven
-  reveal into a long synchronous highlight pass.
-- This is especially risky for plugin-era growth because more surfaces now depend on the editor
-  viewport behaving responsively under indirect navigation.
-
-What a good fix likely looks like:
-- Introduce checkpointed highlight states instead of a single contiguous
-  `highlight_state_computed_through_` frontier.
-- Seed checkpoints at coarse intervals, for example every N lines, and lazily fill gaps around
-  the viewport.
-- Bound per-frame highlighting work so a jump to line 80,000 does not require full replay from
-  the beginning before first paint.
-- If background highlighting is introduced later, keep rendering host-owned and surface only
-  prepared token/state data back into the viewport.
-
-Likely starting files:
-- `src/editor/TextViewport.h`
-- `src/editor/TextViewport.cpp`
-- `src/editor/SyntaxHighlighter.cpp`
-
-Recommended follow-up:
-- Measure current worst-case jump latency with `docs/runtime-profiling.md` before changing the
-  design.
-- Add a regression or benchmark case that opens a large syntax-highlighted file and jumps near
-  the end.
-
-## 2. UTF-8, Line-Ending, and Text-Serialization Logic Is Still Split Across Subsystems
+## 1. UTF-8, Line-Ending, and Text-Serialization Logic Is Still Split Across Subsystems
 
 Impact:
 - Medium to high
@@ -140,7 +93,7 @@ Recommended follow-up:
 - Add focused tests around malformed UTF-8, CRLF round-tripping, and mixed-ending inputs once the
   helper move is done.
 
-## 3. `WorkspaceShell` Is Smaller Than Before but Still the Main Ownership Bottleneck
+## 2. `WorkspaceShell` Is Smaller Than Before but Still the Main Ownership Bottleneck
 
 Impact:
 - High
@@ -195,7 +148,7 @@ Recommended follow-up:
 - Reduce the number of `friend class` entries over time instead of adding new ones.
 - Prefer shell-owned narrow services and registries over more helper methods on the shell itself.
 
-## 4. Coordinator Separation Is Still Partly Superficial
+## 3. Coordinator Separation Is Still Partly Superficial
 
 Impact:
 - Medium
@@ -249,7 +202,7 @@ Recommended follow-up:
 - When touching a coordinator for another reason, check whether one or two direct field accesses
   can be replaced with a dedicated API instead of preserving the friend pattern by default.
 
-## 5. Active Editor Viewport Ownership Is Better, but the Migration Is Not Fully Complete
+## 4. Active Editor Viewport Ownership Is Better, but the Migration Is Not Fully Complete
 
 Impact:
 - Medium
@@ -289,7 +242,7 @@ Recommended follow-up:
 - Prefer `ActiveEditorViewport()` and `ActiveNavigableViewport()` in all new code.
 - Treat new direct `text_viewport_` mutations in editor workflows as a code-review smell.
 
-## 6. Render and Hover Paths Still Reach Widely Through the Shell
+## 5. Render and Hover Paths Still Reach Widely Through the Shell
 
 Impact:
 - Medium
@@ -325,7 +278,7 @@ What a good fix likely looks like:
 - Avoid adding new render-time shell queries when a surface-specific view model would do.
 - Keep all actual drawing host-owned, but make the dependency graph smaller.
 
-## 7. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
+## 6. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
 
 Impact:
 - Medium
@@ -358,7 +311,7 @@ Recommended follow-up:
 - Only pursue this if profiling shows file-discovery or file-open churn is still material after the
   recent fixes.
 
-## 8. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
+## 7. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 
 Impact:
 - Medium
@@ -383,7 +336,7 @@ Recommended follow-up:
   - project search across large trees with smart-case and regex modes
   - syntax cache invalidation after plugin reload
 
-## 9. Single-Line Shell Text Inputs Still Lack One Shared Selection-Aware Editor Model
+## 8. Single-Line Shell Text Inputs Still Lack One Shared Selection-Aware Editor Model
 
 Impact:
 - Medium
@@ -429,10 +382,9 @@ Recommended follow-up:
 
 ## Suggested Order For Later Work
 
-1. Fix syntax-highlight jump latency with checkpointed or bounded work.
-2. Centralize remaining UTF-8 and line-ending logic into `util/StringUtil.*`.
-3. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.
-4. Finish the active-viewport migration so stale floating-editor paths are harder to reintroduce.
-5. Build one shared selection-aware editor model for single-line shell inputs.
-6. Revisit project-content and indexing architecture only if profiling still shows meaningful
+1. Centralize remaining UTF-8 and line-ending logic into `util/StringUtil.*`.
+2. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.
+3. Finish the active-viewport migration so stale floating-editor paths are harder to reintroduce.
+4. Build one shared selection-aware editor model for single-line shell inputs.
+5. Revisit project-content and indexing architecture only if profiling still shows meaningful
    search or refresh cost after the current fixes.

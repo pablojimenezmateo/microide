@@ -37,6 +37,8 @@ These are implemented and should not be treated as open migration work:
 - project-local workspace state plus app-level restore of open project tabs
 - normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
 - editor open/save/reopen, selection, clipboard, undo/redo, line numbers, horizontal scrolling, dirty tracking, IME hooks, and project-local preferences
+- syntax-highlight state now uses coarse document checkpoints plus per-line memoized replay, so
+  far jumps in large files do not have to rebuild highlight state from file start
 - single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command/chat input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
 - editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
 - filesystem tree with `.gitignore` handling, git markers, refresh, and trash-backed create/rename/delete flows

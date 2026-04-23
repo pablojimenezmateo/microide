@@ -16,4 +16,11 @@ HighlightedLine SyntaxHighlighter::HighlightLine(std::string_view line,
   return runtime_syntax::HighlightLine(line, path, state, first_line);
 }
 
+SyntaxState SyntaxHighlighter::AdvanceState(std::string_view line,
+                                            const std::filesystem::path& path,
+                                            const SyntaxState& state,
+                                            std::string_view first_line) {
+  return runtime_syntax::AdvanceState(line, path, state, first_line);
+}
+
 }  // namespace microide::editor

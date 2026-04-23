@@ -19,6 +19,8 @@ struct TextViewportCacheStats {
   std::size_t visible_line_hits = 0;
   std::size_t highlight_queries = 0;
   std::size_t highlight_hits = 0;
+  std::size_t highlight_state_advances = 0;
+  std::size_t highlight_checkpoint_advances = 0;
 };
 
 struct TextPosition {
@@ -198,7 +200,9 @@ class TextViewport {
   void InvalidateLayoutCaches();
   void RefreshEncoding();
   void EnsureInitialHighlightState() const;
-  void EnsureHighlightStatesThrough(std::size_t line_index) const;
+  void EnsureHighlightCaches() const;
+  void EnsureHighlightCheckpoints() const;
+  SyntaxState HighlightStateBeforeLine(std::size_t line_index) const;
   std::size_t CurrentLineLength() const;
   void ClampCursorColumn();
   void ClampScrollState();
@@ -262,13 +266,15 @@ class TextViewport {
   mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
-  mutable std::vector<SyntaxState> line_highlight_states_;
-  mutable std::optional<std::size_t> highlight_state_computed_through_;
+  mutable std::vector<std::optional<SyntaxState>> line_highlight_states_;
+  mutable std::vector<SyntaxState> highlight_checkpoints_;
   mutable std::size_t highlight_state_revision_ = 0;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t highlight_queries_ = 0;
   mutable std::size_t highlight_hits_ = 0;
+  mutable std::size_t highlight_state_advances_ = 0;
+  mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
 };
 

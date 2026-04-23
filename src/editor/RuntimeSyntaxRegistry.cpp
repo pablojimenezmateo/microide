@@ -791,4 +791,31 @@ HighlightedLine HighlightLine(std::string_view line,
   return result;
 }
 
+SyntaxState AdvanceState(std::string_view line,
+                         const std::filesystem::path& path,
+                         const SyntaxState& state,
+                         std::string_view first_line) {
+  const Registry& registry = GetRegistry();
+  const std::uint32_t definition_id =
+      state.definition_id != 0 ? state.definition_id
+                               : DetectDefinitionId(registry, path, nullptr, first_line);
+  SyntaxState end_state{definition_id, 0};
+  if (line.empty()) {
+    return end_state;
+  }
+
+  std::vector<SyntaxTokenKind> no_tokens;
+  std::size_t cursor = 0;
+  if (state.region_id != 0 && state.definition_id == definition_id) {
+    cursor = HighlightRegion(registry, definition_id, state.region_id, line, 0, no_tokens,
+                             &end_state);
+    if (end_state.region_id != 0) {
+      return end_state;
+    }
+  }
+
+  HighlightTopLevel(registry, definition_id, line, cursor, no_tokens, &end_state);
+  return end_state;
+}
+
 }  // namespace microide::editor::runtime_syntax

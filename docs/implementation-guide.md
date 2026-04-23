@@ -43,6 +43,8 @@ The current SDL shell already includes:
 - nested shared-buffer splits inside editor tabs
 - a shared decorated text-grid render path across editor, compare, and merge surfaces, so row
   fills, syntax runs, and underline semantics do not degrade just because a file or diff is large
+- checkpointed syntax-highlight state in `TextViewport`, so random jumps in large files reuse
+  coarse line-state checkpoints instead of replaying highlight state from file start
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
