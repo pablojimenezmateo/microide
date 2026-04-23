@@ -241,6 +241,58 @@ void TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput() {
                  "cached snapshot should include newly appended rows after invalidation");
 }
 
+void TestTerminalSessionLineRangeSnapshotSkipsUnchangedGeneration() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "ABCD\nEFGH");
+
+  microide::terminal::TerminalLineRangeSnapshot snapshot;
+  Expect(session.SnapshotLineRangeIfChanged(0, 2, 0, &snapshot),
+         "initial generation-aware snapshot should populate the visible range");
+  Expect(snapshot.lines.size() == 2, "generation-aware snapshot should copy requested rows");
+  ExpectLineText(snapshot.lines, 1, "EFGH",
+                 "generation-aware snapshot should expose terminal content");
+
+  const std::uint64_t stable_generation = snapshot.generation;
+  Expect(!session.SnapshotLineRangeIfChanged(0, 2, stable_generation, &snapshot),
+         "unchanged terminal generation should skip the visible-range copy");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\nIJKL");
+  Expect(session.SnapshotLineRangeIfChanged(1, 2, stable_generation, &snapshot),
+         "terminal output should advance the snapshot generation");
+  Expect(snapshot.generation != stable_generation,
+         "changed terminal content should publish a new generation");
+  ExpectLineText(snapshot.lines, 0, "EFGH",
+                 "changed snapshot should include the requested scrolled range");
+  ExpectLineText(snapshot.lines, 1, "IJKL",
+                 "changed snapshot should include newly appended rows");
+
+  const std::uint64_t latest_generation = snapshot.generation;
+  Expect(session.SnapshotLineRangeIfChanged(0, 2, 0, &snapshot),
+         "callers should be able to force a copy when only the visible range changes");
+  Expect(snapshot.generation == latest_generation,
+         "range-only refresh should preserve the content generation");
+  ExpectLineText(snapshot.lines, 0, "ABCD",
+                 "forced range refresh should replace snapshot rows");
+}
+
+void TestTerminalSessionCursorSnapshotCapturesPositionAndVisibility() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3;4H\x1b[?25l");
+  const microide::terminal::TerminalCursorSnapshot hidden = session.CursorSnapshot();
+  Expect(hidden.row == 2 && hidden.column == 3,
+         "cursor snapshot should capture the current cursor position under one lock");
+  Expect(!hidden.visible, "cursor snapshot should capture hidden cursor state");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?25h");
+  const microide::terminal::TerminalCursorSnapshot visible = session.CursorSnapshot();
+  Expect(visible.row == 2 && visible.column == 3,
+         "cursor snapshot should preserve position across visibility changes");
+  Expect(visible.visible, "cursor snapshot should capture visible cursor state");
+}
+
 void TestTerminalSessionReportsCursorPositionQueries() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -509,6 +561,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines);
   AddTest(tests, "TerminalSession/CachedSnapshotRangeRefreshesAfterOutput",
           TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput);
+  AddTest(tests, "TerminalSession/LineRangeSnapshotSkipsUnchangedGeneration",
+          TestTerminalSessionLineRangeSnapshotSkipsUnchangedGeneration);
+  AddTest(tests, "TerminalSession/CursorSnapshotCapturesPositionAndVisibility",
+          TestTerminalSessionCursorSnapshotCapturesPositionAndVisibility);
   AddTest(tests, "TerminalSession/ReportsCursorPositionQueries",
           TestTerminalSessionReportsCursorPositionQueries);
   AddTest(tests, "TerminalSession/ReportsDeviceAttributesQueries",

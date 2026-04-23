@@ -745,25 +745,27 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(const WorkspaceLa
 
 std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(const WorkspaceLayout& layout) const {
   const auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr || !terminal_tab->session.cursor_visible()) {
+  if (terminal_tab == nullptr) {
+    return std::nullopt;
+  }
+  const terminal::TerminalCursorSnapshot cursor = terminal_tab->session.CursorSnapshot();
+  if (!cursor.visible) {
     return std::nullopt;
   }
 
   const std::size_t line_count = terminal_tab->session.LineCount();
   const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
-  const std::size_t cursor_row = terminal_tab->session.cursor_row();
-  const std::size_t cursor_column = terminal_tab->session.cursor_column();
-  if (cursor_row < static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) ||
-      cursor_row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
-                                             panel_layout.scroll.visible_rows)) {
+  if (cursor.row < static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) ||
+      cursor.row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
+                                            panel_layout.scroll.visible_rows)) {
     return std::nullopt;
   }
 
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
-  const float cursor_x = panel_layout.text_x + static_cast<float>(cursor_column) * char_width;
+  const float cursor_x = panel_layout.text_x + static_cast<float>(cursor.column) * char_width;
   const float cursor_y =
       panel_layout.text_y +
-      static_cast<float>(cursor_row -
+      static_cast<float>(cursor.row -
                          static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
           panel_layout.line_height;
   if (cursor_x > panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {

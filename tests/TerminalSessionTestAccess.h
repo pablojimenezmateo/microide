@@ -48,6 +48,7 @@ struct TerminalSessionTestAccess {
     session.cursor_column_ = 0;
     session.saved_cursor_row_ = 0;
     session.saved_cursor_column_ = 0;
+    session.snapshot_generation_ = 1;
     session.ResetScrollRegionLocked();
 #ifdef MICROIDE_TESTING
     session.test_sent_bytes_.clear();

@@ -156,6 +156,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const WorkspaceLayout& layout,
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect) {
+  const bool render_editor_surface = !ActiveTabIsCompare() && !ActiveTabIsMerge();
+  const std::vector<EditorPaneLayout> editor_panes =
+      render_editor_surface ? ComputeEditorPaneLayouts(layout.editor_surface)
+                            : std::vector<EditorPaneLayout>{};
   if (ActiveTabIsCompare()) {
     RenderCompareSurface(renderer, layout.editor_surface);
   } else if (ActiveTabIsMerge()) {
@@ -201,7 +205,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             DrawFilledRect(renderer, marker_rect, theme_.accent);
           }
         };
-    const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+    const std::vector<EditorPaneLayout>& panes = editor_panes;
     editor::TextViewport* active_viewport = ActiveEditorViewport();
     if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
       if (active_editor_pane_rect != nullptr) {
@@ -279,7 +283,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   } else if (ActiveTabIsMerge()) {
     RenderMergeScrollbars(renderer, layout.editor_surface);
   } else {
-    const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+    const std::vector<EditorPaneLayout>& panes = editor_panes;
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
       editor::TextViewport* viewport =

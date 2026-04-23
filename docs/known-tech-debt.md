@@ -340,16 +340,18 @@ See also `docs/performance-findings.md` — Second Performance Pass, New finding
 
 ## 9. `ComputeEditorPaneLayouts` Called Twice Per Render Frame
 
+Status:
+- Addressed on 2026-04-23 by computing editor pane layouts once in `RenderActiveWorkspaceSurface`
+
 Impact:
 - Medium; redundant geometry computation on every frame
 
 Current state:
-- `WorkspaceShellRenderFrame.cpp` calls `ComputeEditorPaneLayouts(layout.editor_surface)` once
-  for the main editor render pass and a second time for the scrollbar render pass
+- `WorkspaceShellRenderFrame.cpp` computes the pane layout once near the top of the active
+  workspace-surface render path and reuses it for the main editor render pass and scrollbar pass
 
-What a good fix looks like:
-- Compute pane layout once at the top of the frame, store in a local, and pass to both render passes
-- No caching infrastructure needed; this is a local refactor in one function
+What remains:
+- No known follow-up for this item unless profiling shows pane layout computation is still hot
 
 Relevant code:
 - `src/workspace/WorkspaceShellRenderFrame.cpp`
@@ -358,22 +360,22 @@ See also `docs/performance-findings.md` — Second Performance Pass, New finding
 
 ## 10. Terminal Cursor State Acquired Under Three Separate Mutex Locks Per Frame
 
+Status:
+- Addressed on 2026-04-23 by adding `TerminalSession::CursorSnapshot()`
+
 Impact:
 - Medium; three mutex round-trips on the render thread every frame when terminal is visible
 
 Current state:
-- `cursor_row()`, `cursor_column()`, and `cursor_visible()` on `TerminalSession` each acquire and
-  release the internal mutex independently
-- The terminal render path calls all three per frame, paying three lock/unlock cycles where one
-  combined snapshot would suffice
+- Terminal render, caret invalidation, and pending-input capture use `CursorSnapshot()` to read
+  row, column, and visibility under one mutex acquisition
 
-What a good fix looks like:
-- Add a `CursorSnapshot()` method returning `{cursor_row, cursor_column, cursor_visible}` under a
-  single mutex acquisition
-- Replace the three separate accessor calls in the render path with one `CursorSnapshot()` call
+What remains:
+- The legacy scalar accessors still exist for tests and non-hot callers; remove them only if a
+  later cleanup proves they are unused
 
 Relevant code:
-- `src/terminal/TerminalSession.h` — `cursor_row()`, `cursor_column()`, `cursor_visible()`
+- `src/terminal/TerminalSession.h` — `TerminalCursorSnapshot`, `CursorSnapshot()`
 - `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
 
 See also `docs/performance-findings.md` — Second Performance Pass, New finding 3.

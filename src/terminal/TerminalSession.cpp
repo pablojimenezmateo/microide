@@ -375,6 +375,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     cursor_column_ = 0;
     saved_cursor_row_ = 0;
     saved_cursor_column_ = 0;
+    snapshot_generation_ = 1;
     ResetScrollRegionLocked();
     AppendOutputLocked("terminal support is only available on POSIX hosts.");
   }
@@ -460,6 +461,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     cursor_column_ = 0;
     saved_cursor_row_ = 0;
     saved_cursor_column_ = 0;
+    snapshot_generation_ = 1;
     ResetScrollRegionLocked();
   }
 
@@ -525,6 +527,7 @@ void TerminalSession::Stop() {
     if (lines_.empty()) {
       lines_.push_back(TerminalLine{});
     }
+    AdvanceSnapshotGenerationLocked();
   }
 #else
   if (reader_thread_.joinable()) {
@@ -563,6 +566,7 @@ void TerminalSession::Stop() {
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }
+  AdvanceSnapshotGenerationLocked();
 #endif
 }
 
@@ -604,6 +608,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
     }
     EnsureCursorLineExistsLocked();
     TrimScrollbackLocked();
+    AdvanceSnapshotGenerationLocked();
   }
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -724,6 +729,31 @@ const std::vector<TerminalLine>& TerminalSession::SnapshotLineRangeCached(
   return snapshot;
 }
 
+bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
+                                                 std::size_t max_lines,
+                                                 std::uint64_t previous_generation,
+                                                 TerminalLineRangeSnapshot* snapshot) const {
+  if (snapshot == nullptr) {
+    return false;
+  }
+
+  std::scoped_lock lock(mutex_);
+  if (snapshot_generation_ == previous_generation && snapshot->generation == snapshot_generation_) {
+    return false;
+  }
+
+  snapshot->generation = snapshot_generation_;
+  snapshot->lines.clear();
+  if (start_row >= lines_.size() || max_lines == 0) {
+    return true;
+  }
+
+  const std::size_t end_row = std::min(lines_.size(), start_row + max_lines);
+  snapshot->lines.assign(lines_.begin() + static_cast<std::ptrdiff_t>(start_row),
+                         lines_.begin() + static_cast<std::ptrdiff_t>(end_row));
+  return true;
+}
+
 std::string TerminalSession::LaunchLabel() const {
   std::scoped_lock lock(mutex_);
   return launch_label_;
@@ -752,6 +782,15 @@ std::size_t TerminalSession::cursor_column() const {
 bool TerminalSession::cursor_visible() const {
   std::scoped_lock lock(mutex_);
   return cursor_visible_;
+}
+
+TerminalCursorSnapshot TerminalSession::CursorSnapshot() const {
+  std::scoped_lock lock(mutex_);
+  return TerminalCursorSnapshot{
+      .row = cursor_row_,
+      .column = cursor_column_,
+      .visible = cursor_visible_,
+  };
 }
 
 bool TerminalSession::using_alternate_screen() const {
@@ -877,6 +916,7 @@ void TerminalSession::ReaderMain(int master_fd, int child_pid) {
         AppendOutputLocked("[process exited]");
         lines_.push_back(TerminalLine{});
         TrimScrollbackLocked();
+        AdvanceSnapshotGenerationLocked();
       }
     }
   PushWakeEvent();
@@ -1074,6 +1114,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
   }
 
   TrimScrollbackLocked();
+  AdvanceSnapshotGenerationLocked();
 }
 
 void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
@@ -1694,6 +1735,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
   }
   ClampScrollRegionLocked();
   EnsureCursorLineExistsLocked();
+  AdvanceSnapshotGenerationLocked();
 }
 
 void TerminalSession::ResetScreenLocked(bool fill_rows) {
@@ -1704,6 +1746,7 @@ void TerminalSession::ResetScreenLocked(bool fill_rows) {
   saved_cursor_row_ = 0;
   saved_cursor_column_ = 0;
   ResetScrollRegionLocked();
+  AdvanceSnapshotGenerationLocked();
 }
 
 void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
@@ -1961,6 +2004,12 @@ void TerminalSession::TrimScrollbackLocked() {
   saved_cursor_row_ = saved_cursor_row_ > trim_count ? saved_cursor_row_ - trim_count : 0;
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
+  }
+}
+
+void TerminalSession::AdvanceSnapshotGenerationLocked() {
+  if (++snapshot_generation_ == 0) {
+    snapshot_generation_ = 1;
   }
 }
 

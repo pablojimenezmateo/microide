@@ -462,26 +462,33 @@ All nine of the Deep-Dive Findings items that were actionable are now confirmed 
   buffer-search match caching, SDL text cache heterogeneous lookup, syntax rule pre-partitioning,
   from_chars for output-line numeric parsing): code verified in respective files.
 
-Item 6 (`SnapshotLineRangeCached` generation counter) is still open — see below.
+Item 6 (`SnapshotLineRangeCached` generation counter) is now fixed — see below.
 Item 12 (`optional<SyntaxState>` memory reduction) remains a low-priority open item.
 
-### Still open from first pass: `SnapshotLineRangeCached` generation counter
+### Fixed from first pass: `SnapshotLineRangeCached` generation counter
 
-`SnapshotLineRangeCached` in `src/terminal/TerminalSession.cpp` now uses a `thread_local
-std::vector<TerminalLine>` to reuse vector storage across frames, but still deep-copies all
-visible terminal cells every frame unconditionally. For 40 visible rows at 200 columns, this is
-8,000 `TerminalCell` copies per frame even when the terminal is completely idle.
+Status: fixed.
 
-Fix: add a `uint64_t snapshot_generation_` counter to `TerminalSession` (incremented inside
-`AppendOutputLocked` and any other writer path), expose a cheap generation-read accessor, and have
-the render thread skip the copy when the generation value matches the one from the last snapshot.
-This makes idle-terminal rendering allocation-free.
+`TerminalSession` now maintains a `uint64_t snapshot_generation_` counter and exposes
+`SnapshotLineRangeIfChanged`. The bottom-panel render path keeps the active terminal tab's last
+visible line snapshot and skips the deep copy whenever both the visible range and terminal
+generation are unchanged. Idle terminal frames now reuse the previous `TerminalLine` vector.
+
+Implemented:
+
+- Writer paths advance `snapshot_generation_` after output, resize, reset, alternate-screen
+  restore, stop cleanup, and process-exit marker changes.
+- `TerminalTabState` stores the last visible terminal line snapshot plus the first row and visible
+  row count, so range-only changes can force a refresh without pretending content changed.
+- Regression coverage verifies unchanged generations skip the copy and output changes refresh the
+  snapshot.
 
 Relevant code:
 
-- `src/terminal/TerminalSession.h` — no generation counter field exists
-- `src/terminal/TerminalSession.cpp` — `SnapshotLineRangeCached`, `AppendOutputLocked`
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal render call site
+- `src/terminal/TerminalSession.h` — `TerminalLineRangeSnapshot`,
+  `SnapshotLineRangeIfChanged`
+- `src/terminal/TerminalSession.cpp` — `snapshot_generation_`, writer invalidation
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — cached visible terminal lines
 
 ### New finding 1: `WorkspaceReviewComments` O(visible_lines × comments) per-frame scan (HIGH)
 
@@ -513,12 +520,15 @@ Relevant code:
 
 ### New finding 2: `ComputeEditorPaneLayouts` called twice per render frame (MEDIUM)
 
+Status: fixed.
+
 `WorkspaceShellRenderFrame.cpp` calls `ComputeEditorPaneLayouts(layout.editor_surface)` twice per
 frame — once during the main editor render pass and again during the scrollbar render pass. The
 function recomputes pane geometry from scratch each time.
 
-Fix: compute the pane layout once at the top of the frame, store it in a local, and pass it to
-both passes. No caching infrastructure is needed; this is a straightforward call-site refactor.
+Fix implemented: the editor pane layout is computed once near the top of
+`RenderActiveWorkspaceSurface` and reused by both the main editor render pass and scrollbar pass.
+No caching infrastructure was needed.
 
 Relevant code:
 
@@ -527,14 +537,16 @@ Relevant code:
 
 ### New finding 3: Terminal cursor state acquired under three separate mutex locks per frame (MEDIUM)
 
+Status: fixed.
+
 The terminal render path calls `cursor_row()`, `cursor_column()`, and `cursor_visible()` as
 separate methods, each of which acquires and releases the `TerminalSession` mutex independently.
 This is three mutex lock/unlock cycles on the render thread per frame when the terminal is visible,
 where one combined snapshot call would suffice.
 
-Fix: add a `CursorSnapshot()` method that captures `{cursor_row, cursor_column, cursor_visible}`
-under a single lock and returns a plain struct. The render path then holds the lock for one
-acquisition instead of three.
+Fix implemented: `CursorSnapshot()` captures `{cursor_row, cursor_column, cursor_visible}` under a
+single lock and returns a plain struct. Terminal render, caret invalidation, and pending-input
+submission now use that snapshot instead of separate cursor accessors.
 
 Relevant code:
 
@@ -657,14 +669,17 @@ Relevant code:
 
 ### 6. Terminal `SnapshotLineRange` deep-copies lines every frame (HIGH — terminal render)
 
+Status: fixed on 2026-04-23.
+
 Every frame that renders the terminal panel calls `SnapshotLineRange`, which acquires the mutex
 and deep-copies all visible `TerminalLine` objects. Each `TerminalLine` contains a
 `std::vector<TerminalCell>`, so for 40 visible rows at 200 columns each, this is 8,000 cell
 copies plus 40 vector copies per frame, even when the terminal has been idle.
 
-Fix: Add a generation counter incremented by the writer thread on every write. The render thread
-checks whether the generation has changed since the last snapshot; if not, it reuses the previous
-frame's terminal lines without copying. This makes the common idle-terminal case allocation-free.
+Fix: added a generation counter incremented by terminal writer paths. The render thread checks
+whether the generation and visible range changed since the last snapshot; if not, it reuses the
+previous frame's terminal lines without copying. This makes the common idle-terminal case
+allocation-free.
 
 Relevant code:
 

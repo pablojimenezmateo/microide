@@ -311,14 +311,13 @@ void WorkspaceShell::SubmitTerminalPendingInput() {
     return;
   }
 
-  const std::size_t cursor_row = terminal_tab->session.cursor_row();
-  const std::size_t cursor_column = terminal_tab->session.cursor_column();
+  const terminal::TerminalCursorSnapshot cursor = terminal_tab->session.CursorSnapshot();
   const std::size_t start_row =
-      FindWrappedInvocationStartRow(terminal_tab->session, cursor_row);
+      FindWrappedInvocationStartRow(terminal_tab->session, cursor.row);
   const auto lines =
-      terminal_tab->session.SnapshotLineRange(start_row, cursor_row - start_row + 1);
+      terminal_tab->session.SnapshotLineRange(start_row, cursor.row - start_row + 1);
   const CapturedTerminalInvocation captured =
-      CaptureVisibleTerminalInvocation(lines, cursor_row - start_row, cursor_column);
+      CaptureVisibleTerminalInvocation(lines, cursor.row - start_row, cursor.column);
   terminal_tab->last_command_start_row = start_row + captured.start_row;
   terminal_tab->last_command_invocation = captured.text;
   terminal_tab->last_command_prompt_prefix.clear();

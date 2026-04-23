@@ -511,6 +511,8 @@ Current state:
   findings from that pass are now confirmed fixed; see `docs/performance-findings.md`
   (Deep-Dive Findings section) for the full record
 - a 2026-04-23 second static pass confirmed all previous fixes and found four new bottlenecks;
+  the review-comment marker, terminal snapshot generation, editor-pane-layout, and terminal cursor
+  lock items from that pass are now fixed;
   see `docs/performance-findings.md` (Second Performance Pass section) and
   `docs/known-tech-debt.md` items 8–11 for the prioritized list
 
@@ -524,17 +526,15 @@ Open work:
   work is policy tuning and regression coverage, not a wholesale redraw rewrite
 - prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
   the right bugs
-- the highest-priority remaining follow-ups from the second pass are:
-  1. `SnapshotLineRangeCached` generation counter — skip the terminal snapshot copy entirely when
-     the terminal is idle; still the only open item from the first deep-dive (performance-findings
-     Second Performance Pass, still-open section)
-  2. `ComputeEditorPaneLayouts` double call — trivial local refactor in `WorkspaceShellRenderFrame.cpp`
-     (tech-debt item 9)
-  3. terminal cursor triple-lock — straightforward API fix (tech-debt item 10)
-  4. cold syntax-definition reload: only promote disk caching or parallel plugin syntax parsing if
+- the highest-priority remaining follow-ups from the performance passes are:
+  1. cold syntax-definition reload: only promote disk caching or parallel plugin syntax parsing if
      profiling shows plugin Lua parsing or plugin regex compilation as material startup cost after
      the generated-registry reuse landed
-  5. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
+  2. output-panel snippet highlighting cache from the deep-dive list, if traces show output-panel
+     rendering is still hot during large command output views
+  3. `optional<SyntaxState>` memory reduction remains low priority unless profiling shows checkpoint
+     memory pressure
+  4. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
      redraw locality can silently regress without changing user-visible behavior
 - measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
   review alone to confirm impact

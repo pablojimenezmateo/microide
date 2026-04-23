@@ -131,6 +131,9 @@ struct TerminalSelectionPosition {
 
 struct TerminalTabState {
   terminal::TerminalSession session;
+  terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
+  std::size_t visible_lines_first_row = 0;
+  std::size_t visible_lines_max_rows = 0;
   int scroll_row = 0;
   bool follow_tail = true;
   bool focus_events_active = false;

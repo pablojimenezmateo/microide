@@ -42,6 +42,17 @@ struct TerminalLine {
   bool wrapped_from_previous = false;
 };
 
+struct TerminalCursorSnapshot {
+  std::size_t row = 0;
+  std::size_t column = 0;
+  bool visible = true;
+};
+
+struct TerminalLineRangeSnapshot {
+  std::uint64_t generation = 0;
+  std::vector<TerminalLine> lines;
+};
+
 class TerminalSession {
  public:
   enum class Key {
@@ -88,12 +99,17 @@ class TerminalSession {
   std::vector<TerminalLine> SnapshotLineRange(std::size_t start_row, std::size_t max_lines) const;
   const std::vector<TerminalLine>& SnapshotLineRangeCached(std::size_t start_row,
                                                            std::size_t max_lines) const;
+  bool SnapshotLineRangeIfChanged(std::size_t start_row,
+                                  std::size_t max_lines,
+                                  std::uint64_t previous_generation,
+                                  TerminalLineRangeSnapshot* snapshot) const;
   std::string LaunchLabel() const;
   std::size_t rows() const;
   std::size_t columns() const;
   std::size_t cursor_row() const;
   std::size_t cursor_column() const;
   bool cursor_visible() const;
+  TerminalCursorSnapshot CursorSnapshot() const;
   bool using_alternate_screen() const;
   bool ConsumeWakeEvent();
   bool WantsMouseCapture() const;
@@ -176,6 +192,7 @@ class TerminalSession {
   void ResetScreenLocked(bool fill_rows);
   void SetAlternateScreenLocked(bool enabled, bool clear);
   void TrimScrollbackLocked();
+  void AdvanceSnapshotGenerationLocked();
   bool ReserveWakeEvent(Uint32& event_type) const;
   void PushWakeEvent() const;
 
@@ -218,6 +235,7 @@ class TerminalSession {
   std::size_t saved_cursor_column_ = 0;
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
+  std::uint64_t snapshot_generation_ = 1;
 
 #ifdef MICROIDE_TESTING
   std::string test_sent_bytes_;

@@ -241,12 +241,23 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
   const std::size_t first_row =
       static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
-  const std::vector<terminal::TerminalLine>& terminal_lines =
-      terminal_panel && ActiveTerminalTab() != nullptr
-          ? ActiveTerminalTab()->session.SnapshotLineRangeCached(
-                first_row,
-                static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)))
-          : EmptyTerminalLines();
+  const std::vector<terminal::TerminalLine>* terminal_lines = &EmptyTerminalLines();
+  if (terminal_panel) {
+    if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+      const std::size_t visible_rows =
+          static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows));
+      const bool same_visible_range =
+          terminal_tab->visible_lines_first_row == first_row &&
+          terminal_tab->visible_lines_max_rows == visible_rows;
+      const std::uint64_t previous_generation =
+          same_visible_range ? terminal_tab->visible_lines_snapshot.generation : 0;
+      terminal_tab->session.SnapshotLineRangeIfChanged(
+          first_row, visible_rows, previous_generation, &terminal_tab->visible_lines_snapshot);
+      terminal_tab->visible_lines_first_row = first_row;
+      terminal_tab->visible_lines_max_rows = visible_rows;
+      terminal_lines = &terminal_tab->visible_lines_snapshot.lines;
+    }
+  }
 
   for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
     const int index = panel_layout.scroll.vertical_scroll + row;
@@ -256,7 +267,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const float line_y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
     if (terminal_panel) {
       draw_terminal_line(panel_layout.text_x, line_y, panel_layout.text_width,
-                         terminal_lines[static_cast<std::size_t>(index) - first_row],
+                         (*terminal_lines)[static_cast<std::size_t>(index) - first_row],
                          static_cast<std::size_t>(index));
       continue;
     }
@@ -343,32 +354,31 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   }
 
   if (terminal_panel) {
-    if (auto* active_terminal = ActiveTerminalTab();
-        active_terminal != nullptr && active_terminal->session.cursor_visible()) {
-      const std::size_t cursor_row = active_terminal->session.cursor_row();
-      const std::size_t cursor_column = active_terminal->session.cursor_column();
-      if (cursor_row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) &&
-          cursor_row <
+    if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
+      const terminal::TerminalCursorSnapshot cursor = active_terminal->session.CursorSnapshot();
+      if (cursor.visible &&
+          cursor.row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) &&
+          cursor.row <
               static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
                                        panel_layout.scroll.visible_rows) &&
           (context_.current_project_state.surface.focus != FocusTarget::Panel ||
            CaretVisibleNow())) {
         const float char_width = std::max(1.0f, text_renderer_.CharWidth());
-        const float cursor_x = panel_layout.text_x + static_cast<float>(cursor_column) * char_width;
+        const float cursor_x = panel_layout.text_x + static_cast<float>(cursor.column) * char_width;
         const float cursor_y =
             panel_layout.text_y +
-            static_cast<float>(cursor_row -
+            static_cast<float>(cursor.row -
                                static_cast<std::size_t>(panel_layout.scroll.vertical_scroll)) *
                 panel_layout.line_height;
         if (cursor_x <= panel_layout.content_rect.x + panel_layout.content_rect.w - char_width) {
           DrawFilledRect(renderer,
                          MakeRect(cursor_x, cursor_y - 1.0f, char_width, panel_layout.line_height),
                          theme_.cursor);
-          if (cursor_row >= first_row &&
-              cursor_row - first_row < terminal_lines.size()) {
-            const auto& line = terminal_lines[cursor_row - first_row];
-            if (cursor_column < line.cells.size()) {
-              const auto& cell = line.cells[cursor_column];
+          if (cursor.row >= first_row &&
+              cursor.row - first_row < terminal_lines->size()) {
+            const auto& line = (*terminal_lines)[cursor.row - first_row];
+            if (cursor.column < line.cells.size()) {
+              const auto& cell = line.cells[cursor.column];
               const auto display_text = cell.DisplayText();
               if (!display_text.empty()) {
                 const SDL_Color cursor_foreground =
