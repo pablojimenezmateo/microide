@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceShellTesting.h"
 
 #include <chrono>
@@ -1562,19 +1563,41 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "src" / "main.js";
+  const std::filesystem::path chat_script = temp_dir.path() / "chat-agent.py";
+  const std::filesystem::path inline_script = temp_dir.path() / "inline-agent.py";
   WriteFile(project_root / "README.md", "llm fixture\n");
   WriteFile(source, "value = ");
+  WriteFile(chat_script,
+            "import sys\n"
+            "sys.stdin.read()\n"
+            "print(\"LLM example reply\", end=\"\")\n");
+  WriteFile(inline_script,
+            "import sys\n"
+            "sys.stdin.read()\n"
+            "print(\"llm_inline_suggestion\", end=\"\")\n");
   CopyRepoPlugin(plugins_root, "llm");
-
+  WriteFile(
+      config_home / "microide" / "config",
+      microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
+          .settings =
+              {
+                  {"llm.chat_command", "python3 " + chat_script.string()},
+                  {"llm.inline_command", "python3 " + inline_script.string()},
+              },
+          .disabled_keybinding_ids = {},
+      }));
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
+  Expect(shell.Initialize({}), "llm plugin test should restore user config before opening a project");
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "llm plugin fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain this file"),
-         "repo llm plugin should enable the built-in chat command");
+         ("repo llm plugin should enable the built-in chat command: " +
+          DescribePluginState(shell))
+             .c_str());
   Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "repo llm chat command should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
@@ -1584,7 +1607,9 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
              messages.back().content == "LLM example reply",
          "repo llm plugin should register a default chat agent response");
   Expect(WorkspaceShellTestAccess::ActiveConversationProviderId(shell) == "llm.chat",
-         "repo llm chat conversations should record the repo plugin provider id");
+         ("repo llm chat conversations should record the repo plugin provider id; got " +
+          WorkspaceShellTestAccess::ActiveConversationProviderId(shell))
+             .c_str());
 
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);

@@ -198,6 +198,14 @@ local function make_endpoint(script, model)
   return "python3 -c '" .. script:gsub("MODELID", model) .. "'"
 end
 
+local function resolve_agent_endpoint(ctx, key, default_endpoint)
+  local override = read_string(ctx, key, "")
+  if override ~= "" then
+    return override
+  end
+  return default_endpoint
+end
+
 return ide.plugin({
   id = "llm",
 
@@ -208,7 +216,7 @@ return ide.plugin({
       default = "gpt-5.4",
       scope = "user",
       label = "Codex Model",
-      description = "OpenAI model ID (e.g. gpt-5.4, gpt-4o).",
+      description = "OpenAI model ID for Codex-backed chat and inline completion.",
     })
     ctx.settings.declare({
       id = "chat_enabled",
@@ -225,6 +233,22 @@ return ide.plugin({
       scope = "user",
       label = "Enable Inline Completion",
       description = "Register the Codex inline completion agent.",
+    })
+    ctx.settings.declare({
+      id = "chat_command",
+      type = "string",
+      default = "",
+      scope = "user",
+      label = "Chat Command Override",
+      description = "Optional stdio command used instead of the built-in Codex chat endpoint.",
+    })
+    ctx.settings.declare({
+      id = "inline_command",
+      type = "string",
+      default = "",
+      scope = "user",
+      label = "Inline Command Override",
+      description = "Optional stdio command used instead of the built-in Codex inline endpoint.",
     })
 
     -- llm-login: OAuth 2.0 device authorization grant (RFC 8628) against auth.openai.com.
@@ -318,23 +342,27 @@ return ide.plugin({
     local model = read_string(ctx, "codex.model", "gpt-5.4")
     local chat_enabled = read_bool(ctx, "chat_enabled", true)
     local inline_enabled = read_bool(ctx, "inline_enabled", true)
+    local chat_endpoint =
+      resolve_agent_endpoint(ctx, "chat_command", make_endpoint(CHAT_SCRIPT_TMPL, model))
+    local inline_endpoint =
+      resolve_agent_endpoint(ctx, "inline_command", make_endpoint(INLINE_SCRIPT_TMPL, model))
 
     if chat_enabled then
       ctx.external_agents.add({
-        id = "codex-chat",
+        id = "chat",
         label = "Codex Chat",
         protocol = "stdio",
-        endpoint = make_endpoint(CHAT_SCRIPT_TMPL, model),
+        endpoint = chat_endpoint,
         capabilities = {"chat"},
       })
     end
 
     if inline_enabled then
       ctx.external_agents.add({
-        id = "codex-inline",
+        id = "inline",
         label = "Codex Inline",
         protocol = "stdio",
-        endpoint = make_endpoint(INLINE_SCRIPT_TMPL, model),
+        endpoint = inline_endpoint,
         capabilities = {"inline-completion"},
       })
     end
