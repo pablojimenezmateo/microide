@@ -507,14 +507,32 @@ Current state:
 
 - retained redraw has comparison coverage against clean full redraws
 - search, tab ordering, context-copy flows, and many workspace mutations already have direct regression tests
+- a 2026-04-23 deep-dive identified several untracked render-path bottlenecks; see
+  `docs/performance-findings.md` (Deep-Dive Findings section) and `docs/known-tech-debt.md`
+  items 8–12 for the prioritized list
 
 Open work:
 
 - add regression tests whenever a bug is fixed; do not rely on “should be covered already”
 - keep retained redraw comparison tests serial under SDL dummy video because they share global SDL state
-- keep profiling startup, redraw, typing, scrolling, and idle behavior with the tracing docs in this directory
-- preserve the current redraw architecture unless profiling shows a new hotspot; the remaining work is policy tuning and regression coverage, not a wholesale redraw rewrite
-- prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching the right bugs
+- keep profiling startup, redraw, typing, scrolling, and idle behavior with the tracing docs in
+  this directory
+- preserve the current redraw architecture unless profiling shows a new hotspot; the remaining
+  work is policy tuning and regression coverage, not a wholesale redraw rewrite
+- prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
+  the right bugs
+- the highest-priority unvalidated bottlenecks from the 2026-04-23 review are:
+  1. `CreateMatchData` malloc per PCRE2 match in `RuntimeSyntaxRegistry` — hundreds of allocs per
+     frame on the syntax highlight path; fix with thread-local match data
+  2. `EnsureHighlightCheckpoints` full O(n) scan blocking render after every edit — fix with
+     partial invalidation from the edit line forward and lazy checkpoint building
+  3. `InvalidateDerivedCaches` full cache clear on every keystroke — fix with range-aware
+     partial invalidation
+  4. `VisibleLineCacheKey` includes caret column causing excess cache misses on cursor movement
+  5. Terminal `SnapshotLineRange` copies all visible lines every frame even when idle
+  6. Output panel calls `HighlightLine` on every visible code snippet every frame
+- measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
+  review alone to confirm impact
 
 ## Deferred Or Out Of Scope
 

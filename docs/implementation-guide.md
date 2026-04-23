@@ -156,6 +156,7 @@ whether the backend is external or built in.
 - `docs/plugin-runtime-research.md`: plugin architecture notes and external references
 - `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
 - `docs/known-tech-debt.md`: concrete open debt that still matters after recent refactors
+- `docs/macos-support-plan.md`: host-platform plan for bringing `microide` to macOS
 - `docs/performance-findings.md`: shipped performance work worth preserving
 - `docs/text-surface-unification.md`: durable text-surface interaction contract
 - `docs/startup-tracing.md`: how to measure startup work

@@ -3,6 +3,7 @@
 Last reviewed on 2026-04-22 after startup profiling focused on project-open overhead.
 Updated on 2026-04-22 with Git status and syntax definition deferral optimizations.
 Updated on 2026-04-22 with asynchronous LSP server initialization to prevent UI blocking.
+Updated on 2026-04-23 with deep-dive static analysis of render-path and edit-path bottlenecks.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -303,6 +304,209 @@ Relevant code:
 
 - `src/editor/RuntimeSyntaxRegistry.cpp` (BuildRegistry, ReloadDefinitions)
 - `src/workspace/WorkspacePluginRuntime.cpp` (Reload)
+
+## Deep-Dive Findings (2026-04-23)
+
+This section records bottlenecks found by static code review across all hot paths. None of these
+have been measured in a live trace yet — treat them as a prioritized investigation queue rather
+than confirmed numbers.
+
+### 1. `CreateMatchData` malloc on every PCRE2 match (CRITICAL — render hot path)
+
+Every call to `FindFirstRegex` and `FindAllRegex` in `RuntimeSyntaxRegistry.cpp` calls
+`pattern.CreateMatchData()` which maps directly to `pcre2_match_data_create_from_pattern` — a
+heap allocation. These functions are called for every rule on every visible line during syntax
+highlighting. With ~50 visible rows and dozens of pattern rules per definition, this is hundreds
+of malloc/free cycles per frame just for match data.
+
+Fix: Use a thread-local `RegexMatchData` per compiled pattern. The match data is only used on the
+calling thread and can be re-used across calls without locking. This eliminates the allocation
+entirely for the fast (cache-hit) path.
+
+Relevant code:
+
+- `src/editor/RuntimeSyntaxRegistry.cpp` — `FindFirstRegex`, `FindAllRegex`
+- `src/util/RegexUtil.h` — `CompiledRegex::CreateMatchData`
+
+### 2. `FindAllRegex` heap-allocates a vector per rule per segment (CRITICAL — render hot path)
+
+`ApplyPatternRules` calls `FindAllRegex` which returns a `std::vector<MatchRange>` by value for
+every pattern rule on every text segment. This triggers a heap allocation for every rule-segment
+combination on every visible line per frame.
+
+Fix: Pass an output `std::vector<MatchRange>&` parameter (cleared before use) so callers can
+reuse a single pre-allocated buffer across all calls on one line, or use a thread-local match
+buffer.
+
+Relevant code:
+
+- `src/editor/RuntimeSyntaxRegistry.cpp` — `FindAllRegex`, `ApplyPatternRules`
+
+### 3. `EnsureHighlightCheckpoints` blocks the render thread on first access (CRITICAL — typing / file-open)
+
+`InvalidateDerivedCaches` (called on every edit) clears all syntax checkpoints. The next render
+call triggers `EnsureHighlightCheckpoints`, which synchronously advances through every line in
+the document to rebuild checkpoints. For a 10,000-line file at the current `kHighlightCheckpointInterval`
+of 128, this is ~78 full `AdvanceState` passes, each running PCRE2 matches against a full line.
+This blocks the first frame after every edit.
+
+Fix: Build checkpoints lazily — only advance to the checkpoint that covers the first visible line,
+not the entire document. Checkpoints further down can be built incrementally as the user scrolls.
+A simpler short-term fix is to only invalidate checkpoints from the edited line forward rather
+than clearing the entire array on every mutation.
+
+Relevant code:
+
+- `src/editor/TextViewport.cpp` — `EnsureHighlightCheckpoints`, `InvalidateDerivedCaches`
+- `src/editor/TextViewport.h` — `kHighlightCheckpointInterval = 128`
+
+### 4. `InvalidateDerivedCaches` does a full clear on every keystroke (HIGH — typing latency)
+
+Any edit calls `InvalidateDerivedCaches()`, which clears all 256 highlight cache entries, all 256
+visible-line cache entries, all per-line syntax states, and all checkpoints. For large files, the
+next render has to rebuild caches from scratch for the full visible region.
+
+Fix: On range edits, only invalidate caches at or after `range.start.line`. Lines before the edit
+point are unaffected and their caches remain valid. This requires passing the edit start line into
+`InvalidateDerivedCaches` and flushing only the relevant tail of each cache structure.
+
+Relevant code:
+
+- `src/editor/TextViewport.cpp` — `InvalidateDerivedCaches`, `ApplyHistoryEntry`
+
+### 5. `VisibleLineCacheKey` includes `caret_text_column` causing excess cache misses (HIGH — cursor movement)
+
+The cache key for `VisibleLineLayout` includes `caret_text_column`, which differs on every
+horizontal cursor movement. The actual text layout (text, source_columns, text_offsets) does not
+depend on the caret position. Only `caret_visible` and `caret_column` in the `LayoutLine` depend
+on the caret. This means every left/right arrow key causes a cache miss for the current line, even
+though the rendered text is identical.
+
+Fix: Separate caret computation from text layout. `BuildVisibleLine` should return only the text
+layout; caret visibility and column can be computed separately at render time from the same inputs
+without a cache lookup. This lets the cache key drop `caret_text_column` entirely.
+
+Relevant code:
+
+- `src/editor/TextViewport.h` — `VisibleLineCacheKey`, line 158–180
+- `src/editor/TextViewport.cpp` — `VisibleLineLayout`, line 461
+- `src/editor/TextLayout.cpp` — `BuildVisibleLine`
+
+### 6. Terminal `SnapshotLineRange` deep-copies lines every frame (HIGH — terminal render)
+
+Every frame that renders the terminal panel calls `SnapshotLineRange`, which acquires the mutex
+and deep-copies all visible `TerminalLine` objects. Each `TerminalLine` contains a
+`std::vector<TerminalCell>`, so for 40 visible rows at 200 columns each, this is 8,000 cell
+copies plus 40 vector copies per frame, even when the terminal has been idle.
+
+Fix: Add a generation counter incremented by the writer thread on every write. The render thread
+checks whether the generation has changed since the last snapshot; if not, it reuses the previous
+frame's terminal lines without copying. This makes the common idle-terminal case allocation-free.
+
+Relevant code:
+
+- `src/terminal/TerminalSession.cpp` — `SnapshotLineRange`, line 705
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — line 269
+
+### 7. Output panel calls `HighlightLine` on every visible line every frame (HIGH — output panel)
+
+When the output panel shows code-context snippets, line 314 of `WorkspaceShellRenderBottomPanel.cpp`
+calls `editor::runtime_syntax::HighlightLine` on every visible code snippet every frame. This
+runs the full PCRE2 regex highlighter per line per frame even when the output hasn't changed.
+
+Fix: Cache the highlighted tokens for each output channel entry; invalidate the cache only when
+the channel appends new entries. A simple `std::vector<HighlightedLine>` parallel to the channel's
+entry list is enough.
+
+Relevant code:
+
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — line 314
+- `src/workspace/WorkspaceOutputChannels.*`
+
+### 8. Terminal foreground rendering is per-cell rather than per-run (MEDIUM — terminal render)
+
+The terminal cell renderer (line 183 of `WorkspaceShellRenderBottomPanel.cpp`) loops over every
+cell and calls `DrawString` for each non-space character. Backgrounds are already coalesced into
+runs, but foreground text is not. A line of 200 ASCII characters with the same foreground color
+produces 200 `DrawString` calls instead of one.
+
+Fix: Apply the same run-coalescing logic used for backgrounds to foreground rendering. Build a
+contiguous text string for each run of cells sharing the same foreground color and draw the whole
+run in a single `DrawString` call. This is especially impactful for terminal output that is
+predominantly one color.
+
+Relevant code:
+
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — `draw_terminal_line` lambda, line 156–194
+
+### 9. Buffer search lowercases every visible line every frame (MEDIUM — editor render)
+
+When buffer search is active, `EditorViewRenderer::Render` lowercases every visible source line
+and searches it on every frame, even when neither the query nor the document has changed. For 50
+visible rows of 200 characters each, this is 10,000 characters lowercased and scanned per frame.
+
+Fix: Cache search match ranges per line, keyed by (line_index, document_revision, query). Only
+recompute when the query or document revision changes. The hit-testing already uses a sorted match
+list; the rendering can use the same list.
+
+Relevant code:
+
+- `src/editor/EditorViewRenderer.cpp` — `Render`, line 312–347
+
+### 10. `SdlTtfTextBackend::BuildCacheKey` allocates a `std::string` per draw call (MEDIUM — render)
+
+Every call to `DrawString` or `DrawStringOn` allocates a `std::string` via `BuildCacheKey` before
+doing the cache lookup. For a frame with 3,000 text draw calls, this is 3,000 temporary string
+allocations even when every call is a cache hit.
+
+Fix: Use a heterogeneous hash lookup with a compound key struct (pointer+length, color bytes) so
+the cache lookup can proceed from a stack-allocated key without ever allocating a `std::string`.
+This requires replacing `std::unordered_map<std::string, ...>` with a custom-hashed map that
+accepts a string-view-like key for lookups.
+
+Relevant code:
+
+- `src/render/SdlTtfTextBackend.cpp` — `BuildCacheKey`, `ResolveEntry`
+
+### 11. `ApplyPatternRules` iterates all rules to find pattern rules for a region (MEDIUM — syntax)
+
+For every text segment in every line, `ApplyPatternRules` loops over all rules in the definition
+(`definition.rule_count` can be dozens) and skips any that don't match `parent_region_id` or
+aren't pattern rules. This is O(all_rules) filtering per segment.
+
+Fix: Pre-partition the rule list by parent_region_id at registry-build time. Store per-region
+rule index ranges so `ApplyPatternRules` and `FindEarliestRegionStart` can iterate only the
+relevant subset.
+
+Relevant code:
+
+- `src/editor/RuntimeSyntaxRegistry.cpp` — `ApplyPatternRules`, `FindEarliestRegionStart`
+
+### 12. `line_highlight_states_` uses `optional<SyntaxState>` (LOW — memory)
+
+The per-line state cache uses `std::vector<std::optional<SyntaxState>>`. Each `optional` adds
+a bool + padding, making each element ~24 bytes on 64-bit. For a 10,000-line file this is ~240KB
+just for this vector. The "uncached" sentinel can instead be `SyntaxState{definition_id=0}`,
+collapsing to a plain `std::vector<SyntaxState>` at ~16 bytes per entry (~160KB).
+
+Relevant code:
+
+- `src/editor/TextViewport.h` — `line_highlight_states_`, line 257
+
+### 13. `ParseUnsignedStrict` allocates a string for `std::stoull` (LOW — output panel)
+
+Line 41 of `WorkspaceShellRenderBottomPanel.cpp`:
+
+```cpp
+const unsigned long long parsed = std::stoull(std::string(text), &parsed_length);
+```
+
+This allocates a temporary string every time an output line is checked for a numeric field.
+`std::from_chars` does the same work without allocation and is available in C++17.
+
+Relevant code:
+
+- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — `ParseUnsignedStrict`, line 35
 
 ## Still Worth Doing
 
