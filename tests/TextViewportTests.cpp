@@ -132,6 +132,23 @@ void TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits() {
          "repeated highlight lookups for the same line should not replay prior line state");
 }
 
+void TestTextViewportCaretMovementKeepsVisibleLineLayoutCached() {
+  TextViewport viewport;
+  viewport.LoadContent("int value = 42;\n", "/tmp/cache-caret.cpp");
+  viewport.SetViewportSize(12, 80);
+
+  (void)viewport.VisibleLineLayout(0);
+  viewport.ResetCacheStats();
+  viewport.MoveCursorHorizontal(1);
+  (void)viewport.VisibleLineLayout(0);
+
+  const auto stats = viewport.CacheStats();
+  Expect(stats.visible_line_queries == 1,
+         "cursor-only movement should still query the visible-line cache once");
+  Expect(stats.visible_line_hits == 1,
+         "cursor-only movement should reuse cached visible-line text layout");
+}
+
 void TestTextViewportHighlightCheckpointsBoundFarReplay() {
   TextViewport viewport;
   std::string content;
@@ -183,6 +200,32 @@ void TestTextViewportHighlightCheckpointsPreserveMultilineState() {
   Expect(std::any_of(after_comment_tokens.begin(), after_comment_tokens.end(),
                      [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Comment; }),
          "syntax should still recover to non-comment token classes after a multiline region closes");
+}
+
+void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 4096; ++i) {
+    if (!content.empty()) {
+      content.push_back('\n');
+    }
+    content += "int value = 42;";
+  }
+  viewport.LoadContent(content, "/tmp/highlight-edit-tail.cpp");
+
+  (void)viewport.HighlightedLineTokens(4095);
+  viewport.MoveCursorTo(4095, viewport.lines().back().size());
+  viewport.InsertText(" // tail");
+  viewport.ResetCacheStats();
+
+  const auto& tokens = viewport.HighlightedLineTokens(4095);
+  Expect(!tokens.empty(), "tail edits should preserve syntax tokens for the edited line");
+
+  const auto stats = viewport.CacheStats();
+  Expect(stats.highlight_checkpoint_advances == 0,
+         "tail edits should not rebuild previously valid highlight checkpoints");
+  Expect(stats.highlight_state_advances < 128,
+         "tail edits should only replay the local checkpoint window");
 }
 
 void TestTextViewportUndoRedoPreservesLatestViewState() {
@@ -312,10 +355,14 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/CacheStatsTrackWarmLayoutAndHighlightHits",
           TestTextViewportCacheStatsTrackWarmLayoutAndHighlightHits);
+  AddTest(tests, "TextViewport/CaretMovementKeepsVisibleLineLayoutCached",
+          TestTextViewportCaretMovementKeepsVisibleLineLayoutCached);
   AddTest(tests, "TextViewport/HighlightCheckpointsBoundFarReplay",
           TestTextViewportHighlightCheckpointsBoundFarReplay);
   AddTest(tests, "TextViewport/HighlightCheckpointsPreserveMultilineState",
           TestTextViewportHighlightCheckpointsPreserveMultilineState);
+  AddTest(tests, "TextViewport/EditingNearTailDoesNotRebuildFarCheckpoints",
+          TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints);
   AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",
           TestTextViewportUndoRedoPreservesLatestViewState);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",

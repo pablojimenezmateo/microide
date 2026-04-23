@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,18 @@ struct RegionStartMatch {
 };
 
 using CompiledRegex = util::CompiledRegex;
-std::vector<MatchRange> FindAllRegex(std::string_view text, const CompiledRegex& pattern);
+void FindAllRegex(std::string_view text,
+                  const CompiledRegex& pattern,
+                  std::vector<MatchRange>& matches);
+
+util::RegexMatchData& ReusableMatchData(const CompiledRegex& pattern) {
+  thread_local std::unordered_map<const CompiledRegex*, util::RegexMatchData> match_data_by_pattern;
+  auto [it, inserted] = match_data_by_pattern.try_emplace(&pattern);
+  if (inserted || !it->second.valid()) {
+    it->second = pattern.CreateMatchData();
+  }
+  return it->second;
+}
 
 std::string NormalizePattern(std::string_view pattern) {
   std::string normalized;
@@ -75,15 +87,17 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
   }
   if (skip != nullptr && skip->valid()) {
     thread_local std::string masked_buf;
+    thread_local std::vector<MatchRange> skip_matches;
     masked_buf.assign(text);
-    for (const MatchRange match : FindAllRegex(text, *skip)) {
+    FindAllRegex(text, *skip, skip_matches);
+    for (const MatchRange match : skip_matches) {
       std::fill(masked_buf.begin() + static_cast<std::ptrdiff_t>(match.start),
                 masked_buf.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
     }
     return FindFirstRegex(masked_buf, pattern, nullptr);
   }
 
-  auto match_data = pattern.CreateMatchData();
+  auto& match_data = ReusableMatchData(pattern);
   if (!match_data.valid()) {
     return std::nullopt;
   }
@@ -100,15 +114,17 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
   return MatchRange{range.start, range.end};
 }
 
-std::vector<MatchRange> FindAllRegex(std::string_view text, const CompiledRegex& pattern) {
-  std::vector<MatchRange> matches;
+void FindAllRegex(std::string_view text,
+                  const CompiledRegex& pattern,
+                  std::vector<MatchRange>& matches) {
+  matches.clear();
   if (!pattern.valid() || text.empty()) {
-    return matches;
+    return;
   }
 
-  auto match_data = pattern.CreateMatchData();
+  auto& match_data = ReusableMatchData(pattern);
   if (!match_data.valid()) {
-    return matches;
+    return;
   }
 
   for (std::size_t offset = 0; offset <= text.size();) {
@@ -129,8 +145,6 @@ std::vector<MatchRange> FindAllRegex(std::string_view text, const CompiledRegex&
     matches.push_back(MatchRange{range.start, range.end});
     offset = range.end;
   }
-
-  return matches;
 }
 
 bool RegexMatches(std::string_view text, const CompiledRegex& pattern) {
@@ -497,6 +511,7 @@ void ApplyPatternRules(const Registry& registry,
   }
 
   const std::size_t end_rule = definition.first_rule + definition.rule_count;
+  thread_local std::vector<MatchRange> matches;
   for (std::size_t index = definition.first_rule; index < end_rule; ++index) {
     const Rule& rule = registry.rules[index];
     if (rule.parent_region_id != parent_region_id || rule.kind != GeneratedRuleKind::Pattern ||
@@ -504,7 +519,8 @@ void ApplyPatternRules(const Registry& registry,
       continue;
     }
 
-    for (const MatchRange match : FindAllRegex(segment, rule.pattern)) {
+    FindAllRegex(segment, rule.pattern, matches);
+    for (const MatchRange match : matches) {
       MarkRange(tokens, absolute_offset + match.start, absolute_offset + match.end, rule.group);
     }
   }

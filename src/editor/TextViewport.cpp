@@ -464,28 +464,42 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
   }
 
   ++visible_line_queries_;
-  const std::size_t caret_column =
-      line_index == cursor_line_ ? cursor_column_ : document_->lines[line_index].size();
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
       .horizontal_scroll = horizontal_scroll_,
       .visible_columns = visible_columns_,
       .tab_size = tab_size_,
-      .caret_text_column = caret_column,
   };
+  LayoutLine layout;
   if (const auto it = visible_line_cache_.find(cache_key); it != visible_line_cache_.end()) {
     ++visible_line_hits_;
-    return it->second;
+    layout = it->second;
+  } else {
+    layout = TextLayout::BuildVisibleLine(document_->lines[line_index], horizontal_scroll_,
+                                          visible_columns_, tab_size_);
+    if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
+      visible_line_cache_.erase(visible_line_cache_order_.front());
+      visible_line_cache_order_.pop_front();
+    }
+    visible_line_cache_.emplace(cache_key, layout);
+    visible_line_cache_order_.push_back(cache_key);
   }
 
-  LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[line_index], horizontal_scroll_,
-                                                   visible_columns_, caret_column, tab_size_);
-  if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
-    visible_line_cache_.erase(visible_line_cache_order_.front());
-    visible_line_cache_order_.pop_front();
+  if (line_index == cursor_line_) {
+    const std::size_t caret_visual = TextLayout::VisualColumnForTextColumn(
+        document_->lines[line_index], cursor_column_, tab_size_);
+    if (caret_visual >= horizontal_scroll_ &&
+        caret_visual <= horizontal_scroll_ + visible_columns_) {
+      layout.caret_visible = true;
+      layout.caret_column = caret_visual - horizontal_scroll_;
+    } else {
+      layout.caret_visible = false;
+      layout.caret_column = 0;
+    }
+  } else {
+    layout.caret_visible = false;
+    layout.caret_column = 0;
   }
-  visible_line_cache_.emplace(cache_key, layout);
-  visible_line_cache_order_.push_back(cache_key);
   return layout;
 }
 
@@ -649,55 +663,80 @@ void TextViewport::EnsureHighlightCaches() const {
   }
 
   EnsureInitialHighlightState();
-  if (highlight_state_revision_ != document_->layout_revision ||
-      line_highlight_states_.size() != document_->lines.size()) {
+  if (highlight_state_revision_ != document_->layout_revision) {
     line_highlight_states_.assign(document_->lines.size(), std::nullopt);
     highlight_checkpoints_.clear();
     highlight_state_revision_ = document_->layout_revision;
   }
+  if (line_highlight_states_.size() != document_->lines.size()) {
+    line_highlight_states_.assign(document_->lines.size(), std::nullopt);
+  }
+  const std::size_t checkpoint_count =
+      ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
+  if (highlight_checkpoints_.size() != checkpoint_count) {
+    highlight_checkpoints_.assign(checkpoint_count, std::nullopt);
+  }
+  if (!highlight_checkpoints_.empty()) {
+    highlight_checkpoints_.front() = *initial_highlight_state_;
+  }
 }
 
-void TextViewport::EnsureHighlightCheckpoints() const {
+void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const {
   EnsureHighlightCaches();
-  if (!syntax_highlighting_enabled() || document_->lines.empty() || !highlight_checkpoints_.empty()) {
+  if (!syntax_highlighting_enabled() || document_->lines.empty() ||
+      checkpoint_index >= highlight_checkpoints_.size()) {
+    return;
+  }
+  if (highlight_checkpoints_[checkpoint_index].has_value()) {
     return;
   }
 
-  const std::size_t checkpoint_count =
-      ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
-  highlight_checkpoints_.assign(checkpoint_count, *initial_highlight_state_);
+  std::size_t previous_checkpoint = checkpoint_index;
+  while (previous_checkpoint > 0 &&
+         !highlight_checkpoints_[previous_checkpoint].has_value()) {
+    --previous_checkpoint;
+  }
 
-  SyntaxState state = *initial_highlight_state_;
-  for (std::size_t line = 0; line < document_->lines.size(); ++line) {
-    state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
-    ++highlight_checkpoint_advances_;
+  SyntaxState state = previous_checkpoint == 0
+                          ? *initial_highlight_state_
+                          : *highlight_checkpoints_[previous_checkpoint];
+  std::size_t line = previous_checkpoint * kHighlightCheckpointInterval;
+  const std::size_t target_line =
+      std::min(document_->lines.size(), checkpoint_index * kHighlightCheckpointInterval);
+  for (; line < target_line; ++line) {
+    if (line_highlight_states_[line].has_value()) {
+      state = *line_highlight_states_[line];
+    } else {
+      state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+      line_highlight_states_[line] = state;
+      ++highlight_checkpoint_advances_;
+    }
     const std::size_t next_line = line + 1;
-    if (next_line < document_->lines.size() && next_line % kHighlightCheckpointInterval == 0) {
+    if (next_line < document_->lines.size() &&
+        next_line % kHighlightCheckpointInterval == 0) {
       highlight_checkpoints_[next_line / kHighlightCheckpointInterval] = state;
     }
   }
 }
 
 SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const {
-  EnsureHighlightCheckpoints();
+  EnsureHighlightCaches();
   if (line_index == 0) {
     return *initial_highlight_state_;
   }
 
-  const std::size_t checkpoint_line =
-      (line_index / kHighlightCheckpointInterval) * kHighlightCheckpointInterval;
-  std::size_t start_line = checkpoint_line;
-  SyntaxState state = highlight_checkpoints_[checkpoint_line / kHighlightCheckpointInterval];
+  const std::size_t checkpoint_index = line_index / kHighlightCheckpointInterval;
+  EnsureHighlightCheckpoint(checkpoint_index);
+  const std::size_t checkpoint_line = checkpoint_index * kHighlightCheckpointInterval;
+  SyntaxState state = checkpoint_index == 0
+                          ? *initial_highlight_state_
+                          : *highlight_checkpoints_[checkpoint_index];
 
-  for (std::size_t candidate = line_index; candidate > checkpoint_line; --candidate) {
-    if (line_highlight_states_[candidate - 1].has_value()) {
-      state = *line_highlight_states_[candidate - 1];
-      start_line = candidate;
-      break;
+  for (std::size_t line = checkpoint_line; line < line_index; ++line) {
+    if (line_highlight_states_[line].has_value()) {
+      state = *line_highlight_states_[line];
+      continue;
     }
-  }
-
-  for (std::size_t line = start_line; line < line_index; ++line) {
     state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
     line_highlight_states_[line] = state;
     ++highlight_state_advances_;
@@ -706,15 +745,71 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
 }
 
 void TextViewport::InvalidateDerivedCaches() {
+  InvalidateDerivedCaches(0);
+}
+
+void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
   EnsureDocument();
   ++document_->layout_revision;
-  visible_line_cache_.clear();
-  visible_line_cache_order_.clear();
-  highlight_cache_.clear();
-  highlight_cache_order_.clear();
-  initial_highlight_state_.reset();
-  line_highlight_states_.clear();
-  highlight_checkpoints_.clear();
+  const std::size_t safe_start = std::min(start_line, document_->lines.size());
+
+  if (safe_start == 0) {
+    visible_line_cache_.clear();
+    visible_line_cache_order_.clear();
+    highlight_cache_.clear();
+    highlight_cache_order_.clear();
+    initial_highlight_state_.reset();
+    line_highlight_states_.clear();
+    highlight_checkpoints_.clear();
+    highlight_state_revision_ = document_->layout_revision;
+    return;
+  }
+
+  for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
+    if (it->first.line_index >= safe_start) {
+      it = visible_line_cache_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  visible_line_cache_order_.erase(
+      std::remove_if(visible_line_cache_order_.begin(), visible_line_cache_order_.end(),
+                     [&](const VisibleLineCacheKey& key) { return key.line_index >= safe_start; }),
+      visible_line_cache_order_.end());
+
+  for (auto it = highlight_cache_.begin(); it != highlight_cache_.end();) {
+    if (it->first >= safe_start) {
+      it = highlight_cache_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  highlight_cache_order_.erase(
+      std::remove_if(highlight_cache_order_.begin(), highlight_cache_order_.end(),
+                     [&](std::size_t line_index) { return line_index >= safe_start; }),
+      highlight_cache_order_.end());
+
+  if (line_highlight_states_.size() != document_->lines.size()) {
+    line_highlight_states_.resize(document_->lines.size(), std::nullopt);
+  }
+  for (std::size_t line = safe_start; line < line_highlight_states_.size(); ++line) {
+    line_highlight_states_[line].reset();
+  }
+
+  const std::size_t checkpoint_count =
+      document_->lines.empty() ? 0
+                               : ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
+  if (highlight_checkpoints_.size() != checkpoint_count) {
+    highlight_checkpoints_.resize(checkpoint_count, std::nullopt);
+  }
+  const std::size_t checkpoint_start = safe_start / kHighlightCheckpointInterval;
+  for (std::size_t index = checkpoint_start; index < highlight_checkpoints_.size(); ++index) {
+    highlight_checkpoints_[index].reset();
+  }
+  if (!highlight_checkpoints_.empty()) {
+    EnsureInitialHighlightState();
+    highlight_checkpoints_.front() = *initial_highlight_state_;
+  }
   highlight_state_revision_ = document_->layout_revision;
 }
 
@@ -728,7 +823,7 @@ void TextViewport::InvalidateVisualColumnCache() {
 
 void TextViewport::InvalidateLayoutCaches() {
   InvalidateVisualColumnCache();
-  InvalidateDerivedCaches();
+  InvalidateDerivedCaches(0);
 }
 
 void TextViewport::InvalidateSyntaxHighlighting() {
@@ -807,7 +902,7 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   RefreshEncoding();
-  InvalidateDerivedCaches();
+  InvalidateDerivedCaches(start_line);
   UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);
   EnsureCursorVisible();
 }

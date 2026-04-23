@@ -77,18 +77,9 @@ std::size_t TextLayout::NextTextColumn(const std::string& line, std::size_t text
 LayoutLine TextLayout::BuildVisibleLine(const std::string& line,
                                         std::size_t horizontal_scroll,
                                         std::size_t visible_columns,
-                                        std::size_t caret_text_column,
                                         std::size_t tab_size) {
   LayoutLine result;
   result.visual_columns = VisualColumnForTextColumn(line, line.size(), tab_size);
-
-  const std::size_t caret_visual =
-      VisualColumnForTextColumn(line, caret_text_column, tab_size);
-  if (caret_visual >= horizontal_scroll &&
-      caret_visual <= horizontal_scroll + visible_columns) {
-    result.caret_visible = true;
-    result.caret_column = caret_visual - horizontal_scroll;
-  }
 
   if (visible_columns == 0) {
     return result;

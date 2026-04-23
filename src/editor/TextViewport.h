@@ -160,12 +160,10 @@ class TextViewport {
     std::size_t horizontal_scroll = 0;
     std::size_t visible_columns = 0;
     std::size_t tab_size = 0;
-    std::size_t caret_text_column = 0;
 
     bool operator==(const VisibleLineCacheKey& o) const noexcept {
       return line_index == o.line_index && horizontal_scroll == o.horizontal_scroll &&
-             visible_columns == o.visible_columns && tab_size == o.tab_size &&
-             caret_text_column == o.caret_text_column;
+             visible_columns == o.visible_columns && tab_size == o.tab_size;
     }
   };
 
@@ -175,7 +173,6 @@ class TextViewport {
       h ^= k.horizontal_scroll * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
       h ^= k.visible_columns * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
       h ^= k.tab_size * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
-      h ^= k.caret_text_column * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
       return h;
     }
   };
@@ -218,11 +215,13 @@ class TextViewport {
                      const std::vector<std::string>& replacement,
                      bool record_undo);
   void InvalidateDerivedCaches();
+  void InvalidateDerivedCaches(std::size_t start_line);
   void InvalidateVisualColumnCache();
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
                                         const std::vector<std::string>& inserted_lines);
   std::size_t MaxVisualColumns() const;
+  void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(const std::vector<std::string>& lines);
@@ -255,7 +254,7 @@ class TextViewport {
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<std::optional<SyntaxState>> line_highlight_states_;
-  mutable std::vector<SyntaxState> highlight_checkpoints_;
+  mutable std::vector<std::optional<SyntaxState>> highlight_checkpoints_;
   mutable std::size_t highlight_state_revision_ = 0;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;

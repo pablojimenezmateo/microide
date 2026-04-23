@@ -604,6 +604,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
     }
     EnsureCursorLineExistsLocked();
     TrimScrollbackLocked();
+    InvalidateLineSnapshotLocked();
   }
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -704,14 +705,35 @@ std::vector<TerminalLine> TerminalSession::SnapshotLines() const {
 
 std::vector<TerminalLine> TerminalSession::SnapshotLineRange(std::size_t start_row,
                                                              std::size_t max_lines) const {
+  return SnapshotLineRangeCached(start_row, max_lines);
+}
+
+const std::vector<TerminalLine>& TerminalSession::SnapshotLineRangeCached(
+    std::size_t start_row,
+    std::size_t max_lines) const {
   std::scoped_lock lock(mutex_);
   if (start_row >= lines_.size() || max_lines == 0) {
-    return {};
+    cached_snapshot_start_row_ = start_row;
+    cached_snapshot_max_lines_ = max_lines;
+    cached_snapshot_generation_ = lines_generation_;
+    cached_snapshot_lines_.clear();
+    return cached_snapshot_lines_;
+  }
+
+  if (cached_snapshot_generation_ == lines_generation_ &&
+      cached_snapshot_start_row_ == start_row &&
+      cached_snapshot_max_lines_ == max_lines) {
+    return cached_snapshot_lines_;
   }
 
   const std::size_t end_row = std::min(lines_.size(), start_row + max_lines);
-  return std::vector<TerminalLine>(lines_.begin() + static_cast<std::ptrdiff_t>(start_row),
-                                   lines_.begin() + static_cast<std::ptrdiff_t>(end_row));
+  cached_snapshot_lines_.assign(
+      lines_.begin() + static_cast<std::ptrdiff_t>(start_row),
+      lines_.begin() + static_cast<std::ptrdiff_t>(end_row));
+  cached_snapshot_start_row_ = start_row;
+  cached_snapshot_max_lines_ = max_lines;
+  cached_snapshot_generation_ = lines_generation_;
+  return cached_snapshot_lines_;
 }
 
 std::string TerminalSession::LaunchLabel() const {
@@ -1064,6 +1086,13 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
   }
 
   TrimScrollbackLocked();
+  InvalidateLineSnapshotLocked();
+}
+
+void TerminalSession::InvalidateLineSnapshotLocked() {
+  ++lines_generation_;
+  cached_snapshot_generation_ = std::numeric_limits<std::uint64_t>::max();
+  cached_snapshot_lines_.clear();
 }
 
 void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {

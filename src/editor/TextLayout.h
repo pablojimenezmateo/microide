@@ -30,7 +30,6 @@ class TextLayout {
   static LayoutLine BuildVisibleLine(const std::string& line,
                                      std::size_t horizontal_scroll,
                                      std::size_t visible_columns,
-                                     std::size_t caret_text_column,
                                      std::size_t tab_size);
 
  private:

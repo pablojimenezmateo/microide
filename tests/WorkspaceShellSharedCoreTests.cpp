@@ -10,6 +10,7 @@
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
@@ -76,6 +77,7 @@ using microide::workspace::ToLower;
 using microide::workspace::WorkspaceCommandNames;
 using microide::workspace::WorkspaceMenuSpecs;
 using microide::workspace::WorkspaceDocumentedCommandUsages;
+using microide::workspace::WorkspaceOutputChannels;
 using microide::workspace::WorkspaceShell;
 using microide::workspace::WorkspaceTreeContextMenuItems;
 using microide::util::DetectLineEnding;
@@ -205,6 +207,30 @@ void TestWorkspaceSharedAtomicTextWrite() {
          "atomic text writer should not leave a sibling temp file behind");
 
   std::filesystem::remove_all(temp_root);
+}
+
+void TestWorkspaceOutputChannelsParseAndCacheContextSnippets() {
+  WorkspaceOutputChannels channels;
+  channels.AppendLine("build", "Build", "src/main.cpp:12:3");
+  channels.AppendLine("build", "Build", " > 12 | int value = 42;");
+
+  const auto* parsed = channels.ParsedEntryAt("build", 1);
+  Expect(parsed != nullptr, "output channels should retain parsed metadata for appended rows");
+  Expect(parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet,
+         "context snippet rows should be identified during append");
+  Expect(parsed->prefix == " > 12 | ",
+         "context snippet parsing should preserve the gutter prefix");
+  Expect(parsed->code == "int value = 42;",
+         "context snippet parsing should preserve the code payload");
+
+  const auto* highlighted = channels.HighlightedContextSnippet("build", 1, "/tmp/main.cpp");
+  Expect(highlighted != nullptr, "context snippets should lazily build syntax-highlight caches");
+  Expect(highlighted->tokens.size() == parsed->code.size(),
+         "highlighted context snippets should keep one token per byte");
+
+  channels.Clear("build");
+  Expect(channels.ParsedEntryAt("build", 0) == nullptr,
+         "clearing a channel should drop cached parsed snippet metadata");
 }
 
 void TestWorkspaceSharedCommandCompletionHelpers() {
@@ -576,6 +602,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/SerializeLines", TestWorkspaceSharedSerializeLines);
   AddTest(tests, "WorkspaceShared/ReadFileText", TestWorkspaceSharedReadFileText);
   AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);
+  AddTest(tests, "WorkspaceShared/OutputChannelsParseAndCacheContextSnippets",
+          TestWorkspaceOutputChannelsParseAndCacheContextSnippets);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);

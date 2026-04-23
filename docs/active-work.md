@@ -521,16 +521,12 @@ Open work:
   work is policy tuning and regression coverage, not a wholesale redraw rewrite
 - prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
   the right bugs
-- the highest-priority unvalidated bottlenecks from the 2026-04-23 review are:
-  1. `CreateMatchData` malloc per PCRE2 match in `RuntimeSyntaxRegistry` — hundreds of allocs per
-     frame on the syntax highlight path; fix with thread-local match data
-  2. `EnsureHighlightCheckpoints` full O(n) scan blocking render after every edit — fix with
-     partial invalidation from the edit line forward and lazy checkpoint building
-  3. `InvalidateDerivedCaches` full cache clear on every keystroke — fix with range-aware
-     partial invalidation
-  4. `VisibleLineCacheKey` includes caret column causing excess cache misses on cursor movement
-  5. Terminal `SnapshotLineRange` copies all visible lines every frame even when idle
-  6. Output panel calls `HighlightLine` on every visible code snippet every frame
+- the highest-priority remaining follow-ups from the 2026-04-23 review are now:
+  1. terminal foreground rendering is still per-cell rather than per-run
+  2. buffer search still lowercases every visible line every frame while active
+  3. `SdlTtfTextBackend::BuildCacheKey` still allocates a `std::string` per draw call
+  4. `ApplyPatternRules` still scans all rules for each region instead of prepartitioned subsets
+  5. syntax-definition reload remains the main measured startup bottleneck
 - measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
   review alone to confirm impact
 

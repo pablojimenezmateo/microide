@@ -4,11 +4,62 @@ Last reviewed on 2026-04-22 after startup profiling focused on project-open over
 Updated on 2026-04-22 with Git status and syntax definition deferral optimizations.
 Updated on 2026-04-22 with asynchronous LSP server initialization to prevent UI blocking.
 Updated on 2026-04-23 with deep-dive static analysis of render-path and edit-path bottlenecks.
+Updated on 2026-04-23 with syntax, viewport, terminal, and output-panel cache fixes from that review.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
 
 ## Fixed In This Pass
+
+### Syntax highlight hot-path allocation and cache invalidation cleanup
+
+Problem:
+
+- syntax highlighting allocated PCRE2 match data on every regex use and allocated match vectors per
+  rule application
+- viewport edits cleared all checkpoints and per-line syntax state, so the first repaint after a
+  keystroke could rebuild highlight state much farther than necessary
+- visible-line layout caching treated caret-only movement as a text-layout miss
+
+Implemented:
+
+- `RuntimeSyntaxRegistry` now reuses thread-local match data per compiled pattern and reuses one
+  match buffer per pattern-rule pass instead of allocating per regex call
+- `TextViewport` now invalidates derived highlight state from the edited line forward instead of
+  clearing the whole document
+- highlight checkpoints are now built lazily per needed checkpoint instead of synchronously
+  rebuilding the full checkpoint array on first post-edit access
+- visible-line cache keys no longer include the caret column; caret placement is recomputed from
+  cached line layout at query time
+- direct viewport coverage now verifies cursor-only movement still hits the visible-line cache and
+  tail edits do not rebuild far checkpoints
+
+Impact:
+
+- syntax highlighting removes a large class of per-frame heap churn on highlighted lines
+- ordinary edits no longer force whole-document checkpoint rebuilds before the next painted line
+- left/right caret movement now reuses cached text layout for the active line
+
+### Terminal visible-range and output-snippet caching
+
+Problem:
+
+- terminal panel rendering deep-copied the visible terminal lines every frame even while idle
+- output-panel code snippets reran the full syntax highlighter every frame for visible snippet rows
+
+Implemented:
+
+- `TerminalSession` now caches the last requested visible line-range snapshot and invalidates it
+  only when transcript lines actually change
+- `WorkspaceOutputChannels` now parses output reference lines and code-context snippets on append,
+  and caches snippet highlighting by resolved path instead of recomputing it every frame
+- focused tests now cover cached terminal visible snapshots and cached output-channel snippet
+  parsing/highlighting
+
+Impact:
+
+- idle terminal rendering avoids repeated visible-range transcript copies for unchanged content
+- output panels with code context stop re-highlighting the same visible snippets on every repaint
 
 ### Startup project-open eager scans
 
