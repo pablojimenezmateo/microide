@@ -1563,26 +1563,45 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "src" / "main.js";
-  const std::filesystem::path chat_script = temp_dir.path() / "chat-agent.py";
-  const std::filesystem::path inline_script = temp_dir.path() / "inline-agent.py";
+  const std::filesystem::path codex_script = temp_dir.path() / "fake-codex";
+  const std::filesystem::path codex_log = temp_dir.path() / "fake-codex.log";
   WriteFile(project_root / "README.md", "llm fixture\n");
   WriteFile(source, "value = ");
-  WriteFile(chat_script,
-            "import sys\n"
-            "sys.stdin.read()\n"
-            "print(\"LLM example reply\", end=\"\")\n");
-  WriteFile(inline_script,
-            "import sys\n"
-            "sys.stdin.read()\n"
-            "print(\"llm_inline_suggestion\", end=\"\")\n");
+  WriteFile(
+      codex_script,
+      "#!/bin/sh\n"
+      "log_file='" + codex_log.string() + "'\n"
+      "printf '%s\\n' \"$*\" >> \"$log_file\"\n"
+      "command_name=\"$1\"\n"
+      "shift\n"
+      "if [ \"$command_name\" = \"login\" ] && [ \"$1\" = \"status\" ]; then\n"
+      "  printf '%s\\n' 'Logged in using ChatGPT'\n"
+      "  exit 0\n"
+      "fi\n"
+      "if [ \"$command_name\" = \"logout\" ]; then\n"
+      "  exit 0\n"
+      "fi\n"
+      "if [ \"$command_name\" != \"exec\" ]; then\n"
+      "  printf '%s\\n' \"unexpected command: $command_name\" >&2\n"
+      "  exit 1\n"
+      "fi\n"
+      "input=$(cat)\n"
+      "case \"$input\" in\n"
+      "  *\"Complete the code at line \"*) printf '%s' 'llm_inline_suggestion' ;;\n"
+      "  *) printf '%s' 'LLM example reply' ;;\n"
+      "esac\n");
+  std::filesystem::permissions(
+      codex_script,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+          std::filesystem::perms::owner_exec,
+      std::filesystem::perm_options::replace);
   CopyRepoPlugin(plugins_root, "llm");
   WriteFile(
       config_home / "microide" / "config",
       microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
           .settings =
               {
-                  {"llm.chat_command", "python3 " + chat_script.string()},
-                  {"llm.inline_command", "python3 " + inline_script.string()},
+                  {"llm.codex.binary", codex_script.string()},
               },
           .disabled_keybinding_ids = {},
       }));
@@ -1593,6 +1612,16 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "llm plugin fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "llm-status"),
+         "repo llm plugin should expose an auth status command");
+  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
+         "repo llm status command should complete");
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() ==
+                 "llm: [codex] Logged in using ChatGPT",
+         "repo llm status should delegate to the configured Codex CLI");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain this file"),
          ("repo llm plugin should enable the built-in chat command: " +
@@ -1625,6 +1654,13 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() ==
              "value = llm_inline_suggestion",
          "accepting the repo llm inline completion should edit the active buffer");
+
+  const std::string codex_invocations = ReadFile(codex_log);
+  Expect(codex_invocations.find("login status") != std::string::npos,
+         "repo llm plugin should invoke codex login status by default");
+  Expect(codex_invocations.find("exec --skip-git-repo-check --ephemeral --color never --sandbox "
+                                "read-only -m gpt-5.4 -") != std::string::npos,
+         "repo llm plugin should default chat and inline completion through codex exec");
 }
 
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {

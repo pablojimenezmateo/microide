@@ -1,75 +1,5 @@
 local ide = require("microide")
 
--- Auth helper embedded in endpoint scripts.
--- All string literals use double quotes; single quotes must not appear here
--- because the endpoint string is wrapped in single quotes by the shell.
-local AUTH_HELPER = [=[
-import json,os,time,base64,urllib.request,urllib.parse,datetime
-_AF=os.path.expanduser("~/.codex/auth.json")
-_CID="app_EMoamEEZ73f0CkXaXp7hrann"
-_TU="https://auth.openai.com/oauth/token"
-def _exp(t):
-    try:
-        p=t.split(".")[1];p+=("="*(-len(p)%4))
-        return json.loads(base64.urlsafe_b64decode(p)).get("exp",0)
-    except:
-        return 0
-def _refresh(auth,toks,rt):
-    body=urllib.parse.urlencode({"grant_type":"refresh_token","client_id":_CID,"refresh_token":rt}).encode()
-    req=urllib.request.Request(_TU,body,{"content-type":"application/x-www-form-urlencoded"})
-    resp=json.loads(urllib.request.urlopen(req,timeout=10).read())
-    toks["access_token"]=resp["access_token"]
-    if "refresh_token" in resp:toks["refresh_token"]=resp["refresh_token"]
-    auth["tokens"]=toks
-    auth["last_refresh"]=datetime.datetime.utcnow().isoformat()+"Z"
-    with open(_AF,"w") as f:json.dump(auth,f,indent=2)
-    return resp["access_token"]
-def get_token():
-    env=os.environ.get("OPENAI_API_KEY","")
-    if not os.path.exists(_AF):
-        if env:return env
-        raise SystemExit("Not authenticated. Run llm-login.")
-    with open(_AF) as f:auth=json.load(f)
-    toks=auth.get("tokens",{})
-    at=toks.get("access_token","");rt=toks.get("refresh_token","")
-    if not at:
-        if env:return env
-        raise SystemExit("No token. Run llm-login.")
-    if _exp(at)>time.time()+60:return at
-    if rt:
-        try:return _refresh(auth,toks,rt)
-        except:pass
-    return at
-]=]
-
--- Chat endpoint: stdin → one user turn → stdout. Must be single-quote-free.
-local CHAT_SCRIPT_TMPL = AUTH_HELPER .. [=[
-import sys
-try:
-    p=sys.stdin.read();t=get_token()
-    body=json.dumps({"model":"MODELID","max_tokens":4096,"messages":[{"role":"user","content":p}]}).encode()
-    req=urllib.request.Request("https://api.openai.com/v1/chat/completions",body,{"Authorization":"Bearer "+t,"content-type":"application/json"})
-    print(json.loads(urllib.request.urlopen(req,timeout=60).read())["choices"][0]["message"]["content"],end="")
-except SystemExit as e:
-    print(str(e),file=sys.stderr);sys.exit(1)
-except Exception as e:
-    print("API error: "+str(e),file=sys.stderr);sys.exit(1)
-]=]
-
--- Inline endpoint: same structure, code-completion system prompt. Must be single-quote-free.
-local INLINE_SCRIPT_TMPL = AUTH_HELPER .. [=[
-import sys
-try:
-    p=sys.stdin.read();t=get_token()
-    body=json.dumps({"model":"MODELID","max_tokens":512,"messages":[{"role":"system","content":"Complete the code. Output only the completion text, no explanation, no markdown fences."},{"role":"user","content":p}]}).encode()
-    req=urllib.request.Request("https://api.openai.com/v1/chat/completions",body,{"Authorization":"Bearer "+t,"content-type":"application/json"})
-    print(json.loads(urllib.request.urlopen(req,timeout=30).read())["choices"][0]["message"]["content"],end="")
-except SystemExit as e:
-    print(str(e),file=sys.stderr);sys.exit(1)
-except Exception as e:
-    print("API error: "+str(e),file=sys.stderr);sys.exit(1)
-]=]
-
 -- Scripts below run via ctx.process.run_async argv arrays, so any characters are allowed.
 
 local DEVICE_CODE_SCRIPT = [=[
@@ -194,8 +124,23 @@ local function read_bool(ctx, key, fallback)
   return v == "1" or v == "true" or v == "yes" or v == "on"
 end
 
-local function make_endpoint(script, model)
-  return "python3 -c '" .. script:gsub("MODELID", model) .. "'"
+local function shell_quote(value)
+  local quoted = tostring(value or "")
+  quoted = quoted:gsub("'", "'\\''")
+  return "'" .. quoted .. "'"
+end
+
+local function make_codex_endpoint(codex_binary, model)
+  return table.concat({
+    shell_quote(codex_binary),
+    "exec",
+    "--skip-git-repo-check",
+    "--ephemeral",
+    "--color", "never",
+    "--sandbox", "read-only",
+    "-m", shell_quote(model),
+    "-",
+  }, " ")
 end
 
 local function resolve_agent_endpoint(ctx, key, default_endpoint)
@@ -217,6 +162,14 @@ return ide.plugin({
       scope = "user",
       label = "Codex Model",
       description = "OpenAI model ID for Codex-backed chat and inline completion.",
+    })
+    ctx.settings.declare({
+      id = "codex.binary",
+      type = "string",
+      default = "codex",
+      scope = "user",
+      label = "Codex Binary",
+      description = "Path to the Codex CLI binary used for chat, inline completion, and status checks.",
     })
     ctx.settings.declare({
       id = "chat_enabled",
@@ -303,49 +256,65 @@ return ide.plugin({
     end)
 
     ctx.commands.add("llm-logout", function(cmd_ctx, args)
-      ctx.process.run_async({"python3", "-c", LOGOUT_SCRIPT}, {}, function(res)
-        if trim(res.stdout) == "ok" then
-          ctx.log("[codex] Logged out. Run llm-login to re-authenticate.")
-        else
-          ctx.log("[codex] Not logged in (no auth file found).")
+      local codex_binary = read_string(ctx, "codex.binary", "codex")
+      ctx.process.run_async({codex_binary, "logout"}, {}, function(res)
+        if res.exit_code == 0 then
+          ctx.log("[codex] Logged out.")
+          return
         end
+        ctx.process.run_async({"python3", "-c", LOGOUT_SCRIPT}, {}, function(fallback)
+          if trim(fallback.stdout) == "ok" then
+            ctx.log("[codex] Logged out. Run llm-login to re-authenticate.")
+          else
+            ctx.log("[codex] Not logged in (no auth file found).")
+          end
+        end)
       end)
     end)
 
     ctx.commands.add("llm-status", function(cmd_ctx, args)
-      ctx.process.run_async({"python3", "-c", STATUS_SCRIPT}, {}, function(res)
-        local kv = parse_kv(res.stdout)
-        local status = kv.status or "unknown"
-        if status == "authenticated" then
-          local msg = "[codex] Authenticated"
-          if kv.account and kv.account ~= "" then
-            msg = msg .. " as " .. kv.account
-          end
-          if kv.expires_in then
-            local mins = math.floor((tonumber(kv.expires_in) or 0) / 60)
-            msg = msg .. " (token valid for ~" .. mins .. "m)"
-          end
-          ctx.log(msg .. ".")
-        elseif status == "expired_refreshable" then
-          ctx.log("[codex] Token expired; will auto-refresh on next API call.")
-        elseif status == "expired" then
-          ctx.log("[codex] Token expired. Run: llm-login")
-        elseif status == "api_key" then
-          ctx.log("[codex] Using OPENAI_API_KEY environment variable.")
-        else
-          ctx.log("[codex] Not authenticated. Run: llm-login")
+      local codex_binary = read_string(ctx, "codex.binary", "codex")
+      ctx.process.run_async({codex_binary, "login", "status"}, {}, function(res)
+        local text = trim(res.stdout)
+        if res.exit_code == 0 and text ~= "" then
+          ctx.log("[codex] " .. text)
+          return
         end
+        ctx.process.run_async({"python3", "-c", STATUS_SCRIPT}, {}, function(fallback)
+          local kv = parse_kv(fallback.stdout)
+          local status = kv.status or "unknown"
+          if status == "authenticated" then
+            local msg = "[codex] Authenticated"
+            if kv.account and kv.account ~= "" then
+              msg = msg .. " as " .. kv.account
+            end
+            if kv.expires_in then
+              local mins = math.floor((tonumber(kv.expires_in) or 0) / 60)
+              msg = msg .. " (token valid for ~" .. mins .. "m)"
+            end
+            ctx.log(msg .. ".")
+          elseif status == "expired_refreshable" then
+            ctx.log("[codex] Token expired; will auto-refresh on next API call.")
+          elseif status == "expired" then
+            ctx.log("[codex] Token expired. Run: llm-login")
+          elseif status == "api_key" then
+            ctx.log("[codex] Using OPENAI_API_KEY environment variable.")
+          else
+            ctx.log("[codex] Not authenticated. Run: llm-login")
+          end
+        end)
       end)
     end)
 
     -- External agents
     local model = read_string(ctx, "codex.model", "gpt-5.4")
+    local codex_binary = read_string(ctx, "codex.binary", "codex")
     local chat_enabled = read_bool(ctx, "chat_enabled", true)
     local inline_enabled = read_bool(ctx, "inline_enabled", true)
     local chat_endpoint =
-      resolve_agent_endpoint(ctx, "chat_command", make_endpoint(CHAT_SCRIPT_TMPL, model))
+      resolve_agent_endpoint(ctx, "chat_command", make_codex_endpoint(codex_binary, model))
     local inline_endpoint =
-      resolve_agent_endpoint(ctx, "inline_command", make_endpoint(INLINE_SCRIPT_TMPL, model))
+      resolve_agent_endpoint(ctx, "inline_command", make_codex_endpoint(codex_binary, model))
 
     if chat_enabled then
       ctx.external_agents.add({
