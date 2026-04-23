@@ -530,11 +530,7 @@ Open work:
   1. cold syntax-definition reload: only promote disk caching or parallel plugin syntax parsing if
      profiling shows plugin Lua parsing or plugin regex compilation as material startup cost after
      the generated-registry reuse landed
-  2. output-panel snippet highlighting cache from the deep-dive list, if traces show output-panel
-     rendering is still hot during large command output views
-  3. `optional<SyntaxState>` memory reduction remains low priority unless profiling shows checkpoint
-     memory pressure
-  4. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
+  2. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
      redraw locality can silently regress without changing user-visible behavior
 - measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
   review alone to confirm impact

@@ -463,7 +463,7 @@ All nine of the Deep-Dive Findings items that were actionable are now confirmed 
   from_chars for output-line numeric parsing): code verified in respective files.
 
 Item 6 (`SnapshotLineRangeCached` generation counter) is now fixed — see below.
-Item 12 (`optional<SyntaxState>` memory reduction) remains a low-priority open item.
+Item 12 (`optional<SyntaxState>` memory reduction) is now fixed.
 
 ### Fixed from first pass: `SnapshotLineRangeCached` generation counter
 
@@ -688,13 +688,16 @@ Relevant code:
 
 ### 7. Output panel calls `HighlightLine` on every visible line every frame (HIGH — output panel)
 
+Status: fixed.
+
 When the output panel shows code-context snippets, line 314 of `WorkspaceShellRenderBottomPanel.cpp`
 calls `editor::runtime_syntax::HighlightLine` on every visible code snippet every frame. This
 runs the full PCRE2 regex highlighter per line per frame even when the output hasn't changed.
 
-Fix: Cache the highlighted tokens for each output channel entry; invalidate the cache only when
-the channel appends new entries. A simple `std::vector<HighlightedLine>` parallel to the channel's
-entry list is enough.
+Fix: `WorkspaceOutputChannels` parses context snippets on append and stores a per-entry
+highlight cache. The render path asks `HighlightedContextSnippet` for cached tokens; highlighting
+is only recomputed when the snippet has not been highlighted yet or the resolved path changes.
+`Clear` drops the parsed metadata and cached tokens with the channel entries.
 
 Relevant code:
 
@@ -762,10 +765,16 @@ Relevant code:
 
 ### 12. `line_highlight_states_` uses `optional<SyntaxState>` (LOW — memory)
 
+Status: fixed on 2026-04-23.
+
 The per-line state cache uses `std::vector<std::optional<SyntaxState>>`. Each `optional` adds
 a bool + padding, making each element ~24 bytes on 64-bit. For a 10,000-line file this is ~240KB
 just for this vector. The "uncached" sentinel can instead be `SyntaxState{definition_id=0}`,
 collapsing to a plain `std::vector<SyntaxState>` at ~16 bytes per entry (~160KB).
+
+Fix: `line_highlight_states_` and `highlight_checkpoints_` now store plain `SyntaxState` values.
+`SyntaxState{}` is the uncached sentinel, and cached syntax definitions use non-zero
+`definition_id` values.
 
 Relevant code:
 

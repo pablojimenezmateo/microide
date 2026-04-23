@@ -254,8 +254,8 @@ class TextViewport {
   mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
-  mutable std::vector<std::optional<SyntaxState>> line_highlight_states_;
-  mutable std::vector<std::optional<SyntaxState>> highlight_checkpoints_;
+  mutable std::vector<SyntaxState> line_highlight_states_;
+  mutable std::vector<SyntaxState> highlight_checkpoints_;
   mutable std::size_t highlight_state_revision_ = 0;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;

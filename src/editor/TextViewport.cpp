@@ -17,6 +17,10 @@ constexpr std::size_t kVisibleLineCacheLimit = 256;
 constexpr std::size_t kHighlightCacheLimit = 256;
 constexpr std::size_t kHighlightCheckpointInterval = 128;
 
+bool IsCachedHighlightState(const SyntaxState& state) {
+  return state.definition_id != 0;
+}
+
 std::string ToLower(std::string_view text) {
   std::string lowered(text);
   std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
@@ -664,17 +668,17 @@ void TextViewport::EnsureHighlightCaches() const {
 
   EnsureInitialHighlightState();
   if (highlight_state_revision_ != document_->layout_revision) {
-    line_highlight_states_.assign(document_->lines.size(), std::nullopt);
+    line_highlight_states_.assign(document_->lines.size(), SyntaxState{});
     highlight_checkpoints_.clear();
     highlight_state_revision_ = document_->layout_revision;
   }
   if (line_highlight_states_.size() != document_->lines.size()) {
-    line_highlight_states_.assign(document_->lines.size(), std::nullopt);
+    line_highlight_states_.assign(document_->lines.size(), SyntaxState{});
   }
   const std::size_t checkpoint_count =
       ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
   if (highlight_checkpoints_.size() != checkpoint_count) {
-    highlight_checkpoints_.assign(checkpoint_count, std::nullopt);
+    highlight_checkpoints_.assign(checkpoint_count, SyntaxState{});
   }
   if (!highlight_checkpoints_.empty()) {
     highlight_checkpoints_.front() = *initial_highlight_state_;
@@ -687,25 +691,25 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
       checkpoint_index >= highlight_checkpoints_.size()) {
     return;
   }
-  if (highlight_checkpoints_[checkpoint_index].has_value()) {
+  if (IsCachedHighlightState(highlight_checkpoints_[checkpoint_index])) {
     return;
   }
 
   std::size_t previous_checkpoint = checkpoint_index;
   while (previous_checkpoint > 0 &&
-         !highlight_checkpoints_[previous_checkpoint].has_value()) {
+         !IsCachedHighlightState(highlight_checkpoints_[previous_checkpoint])) {
     --previous_checkpoint;
   }
 
   SyntaxState state = previous_checkpoint == 0
                           ? *initial_highlight_state_
-                          : *highlight_checkpoints_[previous_checkpoint];
+                          : highlight_checkpoints_[previous_checkpoint];
   std::size_t line = previous_checkpoint * kHighlightCheckpointInterval;
   const std::size_t target_line =
       std::min(document_->lines.size(), checkpoint_index * kHighlightCheckpointInterval);
   for (; line < target_line; ++line) {
-    if (line_highlight_states_[line].has_value()) {
-      state = *line_highlight_states_[line];
+    if (IsCachedHighlightState(line_highlight_states_[line])) {
+      state = line_highlight_states_[line];
     } else {
       state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
       line_highlight_states_[line] = state;
@@ -730,11 +734,11 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
   const std::size_t checkpoint_line = checkpoint_index * kHighlightCheckpointInterval;
   SyntaxState state = checkpoint_index == 0
                           ? *initial_highlight_state_
-                          : *highlight_checkpoints_[checkpoint_index];
+                          : highlight_checkpoints_[checkpoint_index];
 
   for (std::size_t line = checkpoint_line; line < line_index; ++line) {
-    if (line_highlight_states_[line].has_value()) {
-      state = *line_highlight_states_[line];
+    if (IsCachedHighlightState(line_highlight_states_[line])) {
+      state = line_highlight_states_[line];
       continue;
     }
     state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
@@ -790,21 +794,21 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
       highlight_cache_order_.end());
 
   if (line_highlight_states_.size() != document_->lines.size()) {
-    line_highlight_states_.resize(document_->lines.size(), std::nullopt);
+    line_highlight_states_.resize(document_->lines.size(), SyntaxState{});
   }
   for (std::size_t line = safe_start; line < line_highlight_states_.size(); ++line) {
-    line_highlight_states_[line].reset();
+    line_highlight_states_[line] = SyntaxState{};
   }
 
   const std::size_t checkpoint_count =
       document_->lines.empty() ? 0
                                : ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
   if (highlight_checkpoints_.size() != checkpoint_count) {
-    highlight_checkpoints_.resize(checkpoint_count, std::nullopt);
+    highlight_checkpoints_.resize(checkpoint_count, SyntaxState{});
   }
   const std::size_t checkpoint_start = safe_start / kHighlightCheckpointInterval;
   for (std::size_t index = checkpoint_start; index < highlight_checkpoints_.size(); ++index) {
-    highlight_checkpoints_[index].reset();
+    highlight_checkpoints_[index] = SyntaxState{};
   }
   if (!highlight_checkpoints_.empty()) {
     EnsureInitialHighlightState();
