@@ -7,6 +7,7 @@
 #include <pcre2.h>
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -76,45 +77,21 @@ class CompiledRegex {
 
     int error_code = 0;
     PCRE2_SIZE error_offset = 0;
-    code_ = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()), pattern.size(), options,
-                          &error_code, &error_offset, nullptr);
-    if (code_ == nullptr && !error_prefix_.empty()) {
+    pcre2_code* code = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()), pattern.size(),
+                                     options, &error_code, &error_offset, nullptr);
+    if (code != nullptr) {
+      code_ = std::shared_ptr<pcre2_code>(code, pcre2_code_free);
+    } else if (!error_prefix_.empty()) {
       error_ = BuildRegexErrorMessage(error_prefix_, error_code, error_offset);
     }
-  }
-
-  ~CompiledRegex() {
-    if (code_ != nullptr) {
-      pcre2_code_free(code_);
-    }
-  }
-
-  CompiledRegex(const CompiledRegex&) = delete;
-  CompiledRegex& operator=(const CompiledRegex&) = delete;
-
-  CompiledRegex(CompiledRegex&& other) noexcept
-      : code_(std::exchange(other.code_, nullptr)),
-        error_prefix_(std::move(other.error_prefix_)),
-        error_(std::move(other.error_)) {}
-
-  CompiledRegex& operator=(CompiledRegex&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-    if (code_ != nullptr) {
-      pcre2_code_free(code_);
-    }
-    code_ = std::exchange(other.code_, nullptr);
-    error_prefix_ = std::move(other.error_prefix_);
-    error_ = std::move(other.error_);
-    return *this;
   }
 
   bool valid() const { return code_ != nullptr; }
   const std::string& error() const { return error_; }
 
   RegexMatchData CreateMatchData() const {
-    return RegexMatchData(valid() ? pcre2_match_data_create_from_pattern(code_, nullptr) : nullptr);
+    return RegexMatchData(valid() ? pcre2_match_data_create_from_pattern(code_.get(), nullptr)
+                                  : nullptr);
   }
 
   int Match(std::string_view text,
@@ -124,7 +101,7 @@ class CompiledRegex {
     if (!valid() || !match_data.valid()) {
       return PCRE2_ERROR_BADOPTION;
     }
-    return pcre2_match(code_, reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), offset,
+    return pcre2_match(code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), offset,
                        options, match_data.get(), nullptr);
   }
 
@@ -146,7 +123,7 @@ class CompiledRegex {
   }
 
  private:
-  pcre2_code* code_ = nullptr;
+  std::shared_ptr<pcre2_code> code_;
   std::string error_prefix_;
   std::string error_;
 };

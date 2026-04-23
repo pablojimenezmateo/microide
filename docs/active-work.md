@@ -522,9 +522,10 @@ Open work:
 - prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
   the right bugs
 - the highest-priority remaining follow-ups from the 2026-04-23 review are now:
-  1. cold syntax-definition reload remains the main measured startup bottleneck; unchanged plugin
-     syntax reloads now skip the rebuild, so the remaining work is on first-load or real-change
-     cost rather than repeated no-op reloads
+  1. cold syntax-definition reload has been reduced by reusing the precompiled generated registry;
+     unchanged plugin syntax reloads also skip the rebuild, so only promote disk caching or parallel
+     plugin syntax parsing if profiling still shows plugin Lua parsing or plugin regex compilation
+     as material startup cost
   2. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
      redraw locality can silently regress without changing user-visible behavior
 - measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code

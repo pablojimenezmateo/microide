@@ -31,6 +31,24 @@ void TestRegexUtilBuildsPrefixedErrorMessages() {
          "regex util should preserve the caller-supplied error prefix");
 }
 
+void TestRegexUtilCopiesCompiledPatterns() {
+  microide::util::CompiledRegex regex("beta", 0);
+  Expect(regex.valid(), "copy fixture should compile a valid regex");
+
+  microide::util::CompiledRegex copy = regex;
+  auto match_data = copy.CreateMatchData();
+  Expect(match_data.valid(), "copied compiled regexes should create match data");
+
+  const int rc = copy.Match("alpha beta gamma", 0, match_data);
+  Expect(rc >= 0, "copied compiled regexes should match input");
+
+  microide::util::RegexMatchRange range;
+  Expect(copy.CaptureRange(match_data, std::string_view("alpha beta gamma").size(), &range),
+         "copied compiled regexes should expose capture ranges");
+  Expect(range.start == 6 && range.end == 10,
+         "copied compiled regexes should preserve the compiled pattern");
+}
+
 }  // namespace
 
 void RegisterRegexUtilTests(std::vector<TestCase>& tests) {
@@ -38,6 +56,8 @@ void RegisterRegexUtilTests(std::vector<TestCase>& tests) {
           TestRegexUtilCompilesAndCapturesMatchRanges);
   AddTest(tests, "RegexUtil/BuildsPrefixedErrorMessages",
           TestRegexUtilBuildsPrefixedErrorMessages);
+  AddTest(tests, "RegexUtil/CopiesCompiledPatterns",
+          TestRegexUtilCopiesCompiledPatterns);
 }
 
 }  // namespace microide::tests

@@ -125,6 +125,17 @@ local function eslint_command(ctx, relative_path, report_path, use_yarn)
   }
 end
 
+local function tsc_binary(ctx)
+  local project_root = ctx.workspace.project_root()
+  if ctx.files.exists("node_modules/.bin/tsc") then
+    if type(project_root) == "string" and project_root ~= "" then
+      return project_root .. "/node_modules/.bin/tsc"
+    end
+    return "node_modules/.bin/tsc"
+  end
+  return "tsc"
+end
+
 local function tsc_command(ctx, relative_path)
   if has_yarn_lock(ctx) then
     return {
@@ -194,17 +205,6 @@ local function decode_eslint_reports_from_result(result)
   end
 
   return nil
-end
-
-local function tsc_binary(ctx)
-  local project_root = ctx.workspace.project_root()
-  if ctx.files.exists("node_modules/.bin/tsc") then
-    if type(project_root) == "string" and project_root ~= "" then
-      return project_root .. "/node_modules/.bin/tsc"
-    end
-    return "node_modules/.bin/tsc"
-  end
-  return "tsc"
 end
 
 local function active_relative_path(ctx)

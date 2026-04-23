@@ -6,7 +6,8 @@ Updated on 2026-04-22 with asynchronous LSP server initialization to prevent UI 
 Updated on 2026-04-23 with deep-dive static analysis of render-path and edit-path bottlenecks.
 Updated on 2026-04-23 with syntax, viewport, terminal, and output-panel cache fixes from that review.
 Updated on 2026-04-23 with terminal foreground run coalescing, buffer-search caching, SDL text-cache lookup cleanup, and syntax-rule partitioning.
-Updated on 2026-04-23 with unchanged plugin-syntax reload skipping via source fingerprinting.
+Updated on 2026-04-23 with unchanged plugin-syntax reload skipping via source fingerprinting and
+generated syntax registry reuse on cold plugin syntax reloads.
 
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
@@ -413,6 +414,33 @@ Impact:
 - repeated startup or `plugins-reload` paths no longer pay syntax-registry rebuild cost when
   plugin syntax files have not changed
 - cold syntax loads and real syntax edits remain the main remaining startup-sensitive path
+
+### Cold plugin syntax reloads reuse the generated registry
+
+Problem:
+
+- when plugin syntax definitions did change, `BuildRegistry` still recompiled every generated
+  built-in syntax regex before appending the small set of plugin definitions
+- that made real plugin syntax edits pay the full generated-registry PCRE2 compile cost even
+  though the generated snapshot is immutable for the lifetime of the process
+
+Implemented:
+
+- `RuntimeSyntaxRegistry` now builds the generated syntax registry once, partitions its rules once,
+  and copies it into new runtime registries on cold plugin syntax reloads
+- `CompiledRegex` now uses shared ownership for compiled PCRE2 code, so copying generated rules and
+  definitions does not recompile regexes or duplicate compiled regex storage
+- plugin syntax definitions still compile fresh on real changes, then the cached generated registry
+  is appended with corrected rule and definition offsets
+- regex regression coverage now verifies copied compiled patterns remain matchable and can create
+  independent match data
+
+Impact:
+
+- first-load or real-change plugin syntax reloads now compile only plugin syntax plus cheap generated
+  metadata copies instead of recompiling the entire built-in syntax snapshot
+- remaining syntax-load work is dominated by plugin Lua parsing and plugin regex compilation; disk
+  caching or parallel plugin parsing should only be promoted if profiling still shows material cost
 
 ## Deep-Dive Findings (2026-04-23)
 

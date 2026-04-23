@@ -434,16 +434,84 @@ void AppendGeneratedDefinitions(Registry& registry) {
   }
 }
 
+void PartitionDefinitionRules(Registry& registry) {
+  for (Definition& definition : registry.definitions) {
+    definition.pattern_rule_indices_by_parent.clear();
+    definition.region_rule_indices_by_parent.clear();
+    const std::size_t end_rule = definition.first_rule + definition.rule_count;
+    for (std::size_t index = definition.first_rule; index < end_rule; ++index) {
+      const Rule& rule = registry.rules[index];
+      auto& table = rule.kind == GeneratedRuleKind::Pattern
+                        ? definition.pattern_rule_indices_by_parent
+                        : definition.region_rule_indices_by_parent;
+      table[rule.parent_region_id].push_back(index);
+    }
+  }
+}
+
+Registry BuildGeneratedRegistry() {
+  Registry registry;
+  AppendGeneratedDefinitions(registry);
+  for (std::size_t i = 0; i < registry.definitions.size(); ++i) {
+    if (registry.definitions[i].filetype == "unknown") {
+      registry.default_definition_id = static_cast<std::uint32_t>(i + 1);
+      break;
+    }
+  }
+  if (registry.default_definition_id == 0 && !registry.definitions.empty()) {
+    registry.default_definition_id = 1;
+  }
+  PartitionDefinitionRules(registry);
+  return registry;
+}
+
+const Registry& BuiltInRegistry() {
+  static const Registry registry = BuildGeneratedRegistry();
+  return registry;
+}
+
+void AppendRegistryWithOffset(Registry& destination, const Registry& source) {
+  const std::size_t rule_offset = destination.rules.size();
+  const std::size_t definition_offset = destination.definitions.size();
+
+  destination.rules.reserve(destination.rules.size() + source.rules.size());
+  for (Rule rule : source.rules) {
+    if (rule.first_child != 0) {
+      rule.first_child += rule_offset;
+    }
+    if (rule.parent_region_id != 0) {
+      rule.parent_region_id += static_cast<std::uint32_t>(rule_offset);
+    }
+    destination.rules.push_back(std::move(rule));
+  }
+
+  destination.definitions.reserve(destination.definitions.size() + source.definitions.size());
+  for (Definition definition : source.definitions) {
+    definition.first_rule += rule_offset;
+    destination.definitions.push_back(std::move(definition));
+  }
+
+  if (destination.default_definition_id == 0 && source.default_definition_id != 0) {
+    destination.default_definition_id =
+        static_cast<std::uint32_t>(definition_offset + source.default_definition_id);
+  }
+}
+
 BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtime_definitions,
                           std::vector<std::string>* errors) {
   BuildOutput output;
+  if (runtime_definitions.empty()) {
+    output.registry = BuiltInRegistry();
+    return output;
+  }
+
   for (const auto& definition : runtime_definitions) {
     if (AppendRuntimeDefinition(output.registry, definition, errors)) {
       ++output.loaded_runtime_definition_count;
     }
   }
 
-  AppendGeneratedDefinitions(output.registry);
+  AppendRegistryWithOffset(output.registry, BuiltInRegistry());
 
   for (std::size_t i = 0; i < output.registry.definitions.size(); ++i) {
     if (output.registry.definitions[i].filetype == "unknown") {
@@ -456,16 +524,7 @@ BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtim
     output.registry.default_definition_id = 1;
   }
 
-  for (Definition& definition : output.registry.definitions) {
-    const std::size_t end_rule = definition.first_rule + definition.rule_count;
-    for (std::size_t index = definition.first_rule; index < end_rule; ++index) {
-      const Rule& rule = output.registry.rules[index];
-      auto& table = rule.kind == GeneratedRuleKind::Pattern
-                        ? definition.pattern_rule_indices_by_parent
-                        : definition.region_rule_indices_by_parent;
-      table[rule.parent_region_id].push_back(index);
-    }
-  }
+  PartitionDefinitionRules(output.registry);
   return output;
 }
 
