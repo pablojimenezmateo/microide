@@ -357,6 +357,9 @@ class WorkspaceShell {
     bool active = false;
     std::string display_title;
     std::string tooltip_label;
+    std::string badge_text;
+    SDL_Color badge_color{};
+    bool show_badge = false;
     ChatStatus chat_status = ChatStatus::None;
   };
 

@@ -1,15 +1,28 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <utility>
 #include <vector>
+
+#include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
 
 namespace {
 
 constexpr float kBottomPanelHeaderButtonSize = 18.0f;
+constexpr float kProjectTabBadgeWidth = 24.0f;
+
+std::string ProjectTabBadgeText(std::string_view label) {
+  for (const unsigned char ch : label) {
+    if (std::isalnum(ch) != 0) {
+      return std::string(1, static_cast<char>(std::toupper(ch)));
+    }
+  }
+  return "P";
+}
 
 }  // namespace
 
@@ -50,7 +63,9 @@ float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return 156.0f;
   }
-  return std::clamp(text_renderer_.MeasureWidth(ProjectTabDisplayTitle(index)) + 58.0f, 156.0f,
+  return std::clamp(text_renderer_.MeasureWidth(ProjectTabDisplayTitle(index)) + 58.0f +
+                        kProjectTabBadgeWidth,
+                    156.0f,
                     260.0f);
 }
 
@@ -91,8 +106,9 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
   for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     display_titles.push_back(ProjectTabDisplayTitle(i));
     tooltip_labels.push_back(ProjectTabTooltipLabel(i));
-    widths.push_back(std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f, 156.0f,
-                                260.0f));
+    widths.push_back(std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f +
+                                    kProjectTabBadgeWidth,
+                                156.0f, 260.0f));
   }
 
   const float tab_y = project_tab_strip.y + 2.0f;
@@ -108,6 +124,14 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
       tab_y, tab_height, {}, context_.project_catalog.active_index, display_titles, tooltip_labels);
   for (VisibleStripTab& tab : tabs) {
     const ProjectChatSummary summary = SummarizeProjectChatState(tab.index);
+    const ProjectWorkspaceState* project = ProjectCatalogEntry(tab.index);
+    const std::filesystem::path root = ProjectCatalogRoot(tab.index);
+    tab.badge_text = ProjectTabBadgeText(ProjectLabelForRoot(root));
+    tab.badge_color =
+        project != nullptr && project->project_base_color.has_value()
+            ? *project->project_base_color
+            : DefaultProjectBaseColor(root);
+    tab.show_badge = true;
     tab.chat_status =
         summary.state == ProjectChatSummary::State::Running ? VisibleStripTab::ChatStatus::Running
         : summary.state == ProjectChatSummary::State::Failed ? VisibleStripTab::ChatStatus::Failed

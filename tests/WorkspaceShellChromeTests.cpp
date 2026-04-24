@@ -524,6 +524,22 @@ void TestWorkspaceShellProjectTabsExposeChatStatusSummary() {
          "project tab tooltips should summarize failed chat state");
 }
 
+void TestWorkspaceShellProjectTabsShowBadges() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "alpha-project";
+  WriteFile(root / "README.md", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project badge fixture should open the project");
+
+  Expect(WorkspaceShellTestAccess::ProjectTabShowsBadge(shell, 0),
+         "project tabs should render a badge");
+  Expect(WorkspaceShellTestAccess::ProjectTabBadgeText(shell, 0) == "A",
+         "project tab badges should use the project initial");
+}
+
 void TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1452,6 +1468,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation);
   AddTest(tests, "WorkspaceShell/ProjectTabsExposeChatStatusSummary",
           TestWorkspaceShellProjectTabsExposeChatStatusSummary);
+  AddTest(tests, "WorkspaceShell/ProjectTabsShowBadges",
+          TestWorkspaceShellProjectTabsShowBadges);
   AddTest(tests, "WorkspaceShell/ChatTranscriptShowsMarkdownMetadataAndToolEvents",
           TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents);
   AddTest(tests, "WorkspaceShell/ChatTranscriptLocalLinksOpenFiles",

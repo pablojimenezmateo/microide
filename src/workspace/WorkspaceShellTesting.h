@@ -867,6 +867,26 @@ struct WorkspaceShell::TestAccess {
     }
     return WorkspaceShell::VisibleStripTab::ChatStatus::None;
   }
+  static std::string ProjectTabBadgeText(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.badge_text;
+      }
+    }
+    return {};
+  }
+  static bool ProjectTabShowsBadge(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.show_badge;
+      }
+    }
+    return false;
+  }
   static SDL_FRect EditorTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {

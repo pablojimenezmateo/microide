@@ -158,7 +158,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
   if (!visible_panel_tabs.empty()) {
     for (const VisibleStripTab& tab : visible_panel_tabs) {
-      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.active,
+      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+                   tab.badge_color, tab.show_badge, tab.active,
                    StripTabStyle{
                        .text_left_padding = 8.0f,
                        .close_right_reserve = 40.0f,

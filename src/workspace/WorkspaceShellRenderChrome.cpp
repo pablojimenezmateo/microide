@@ -79,9 +79,12 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
   const auto visible_project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
   for (const VisibleStripTab& tab : visible_project_tabs) {
-    DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.active,
+    DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+                 tab.badge_color, tab.show_badge, tab.active,
                  StripTabStyle{
                      .text_left_padding = 10.0f,
+                     .badge_size = 16.0f,
+                     .badge_gap = 8.0f,
                      .close_right_reserve = 46.0f,
                      .accent_edge = StripAccentEdge::Top,
                  },
@@ -104,7 +107,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     const SDL_FRect placeholder_tab =
         MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
                  std::max(22.0f, layout.tab_strip.h - 2.0f));
-    DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", true,
+    DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
                  StripTabStyle{
                      .text_left_padding = 10.0f,
                      .close_right_reserve = 0.0f,
@@ -114,7 +117,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   } else if (!context_.current_project_state.root.empty()) {
     visible_tabs = ComputeVisibleTabs(layout.tab_strip);
     for (const VisibleStripTab& tab : visible_tabs) {
-      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.active,
+      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+                   tab.badge_color, tab.show_badge, tab.active,
                    StripTabStyle{
                        .text_left_padding = 10.0f,
                        .close_right_reserve = 46.0f,

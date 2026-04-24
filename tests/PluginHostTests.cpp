@@ -225,6 +225,47 @@ return ide.plugin({
          "duplicate plugin ids should also be forwarded to the host error sink");
 }
 
+void TestPluginHostSkipsBackupPluginDirectories() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+
+  WriteFile(project_root / "README.md", "plugin host backup fixture\n");
+  WritePluginInit(
+      global_plugins, "sample",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "sample",
+  setup = function(ctx)
+    ctx.commands.add("sample.run", function() end)
+  end
+})
+)");
+  WritePluginInit(
+      global_plugins, "sample.bak-20260424",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "sample",
+  setup = function(ctx)
+    ctx.commands.add("sample.backup", function() end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "plugin reload should skip backup plugin directories");
+  Expect(host.LoadedPluginCount() == 1, "backup plugin directories should not be loaded");
+  Expect(host.CommandNames().size() == 1 && host.CommandNames().front() == "sample.run",
+         "backup plugin directories should not register commands");
+}
+
 void TestPluginHostPhase2Apis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -954,6 +995,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
   AddTest(tests, "PluginHost/RejectsDuplicatePluginIds",
           TestPluginHostRejectsDuplicatePluginIds);
+  AddTest(tests, "PluginHost/SkipsBackupPluginDirectories",
+          TestPluginHostSkipsBackupPluginDirectories);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase2StatusApis", TestPluginHostPhase2StatusApis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
