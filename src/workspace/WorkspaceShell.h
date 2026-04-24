@@ -1200,6 +1200,8 @@ class WorkspaceShell {
                          std::string* error_message = nullptr);
   bool ClearProviderApiKey(std::string_view provider_id, std::string* error_message = nullptr);
   ProviderAuthStatus GetProviderAuthStatus(std::string_view provider_id) const;
+  std::string ProviderApiKeyStorageKey(const AiProviderSpec& provider) const;
+  std::optional<std::string> ResolveProviderApiKey(const AiProviderSpec& provider) const;
   void ConsumeLspCallbacks();
   bool ConsumePluginAsyncProcessCallbacks();
   bool RequestInlineCompletion(std::string* error_message = nullptr);

@@ -139,6 +139,17 @@ std::string ToolOutputSummary(std::string_view output_json) {
   return TruncateSummary(CollapseWhitespaceForSummary(output_json));
 }
 
+std::string ProviderApiKeySettingId(const AiProviderSpec& provider) {
+  if (!provider.plugin_id.empty()) {
+    return provider.plugin_id + ".api_key";
+  }
+  const std::size_t separator = provider.id.find('.');
+  const std::string prefix = separator == std::string::npos
+                                 ? provider.id
+                                 : provider.id.substr(0, separator);
+  return prefix.empty() ? std::string{} : prefix + ".api_key";
+}
+
 std::string JoinSummaryParts(const std::vector<std::string>& parts) {
   std::string result;
   for (const std::string& part : parts) {
@@ -403,6 +414,28 @@ const char* ToolPermissionDecisionLabel(ToolPermissionLevel permission) {
 }
 
 }  // namespace
+
+std::string WorkspaceShell::ProviderApiKeyStorageKey(const AiProviderSpec& provider) const {
+  return !provider.api_key_name.empty() ? provider.api_key_name : provider.id + ".api_key";
+}
+
+std::optional<std::string> WorkspaceShell::ResolveProviderApiKey(
+    const AiProviderSpec& provider) const {
+  if (const std::optional<std::string> stored =
+          secret_storage_.Retrieve(ProviderApiKeyStorageKey(provider));
+      stored.has_value() && !stored->empty()) {
+    return stored;
+  }
+  const std::string setting_id = ProviderApiKeySettingId(provider);
+  if (setting_id.empty()) {
+    return std::nullopt;
+  }
+  if (const std::optional<std::string> configured = GetSettingValue(setting_id);
+      configured.has_value() && !configured->empty()) {
+    return configured;
+  }
+  return std::nullopt;
+}
 
 const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceShell::OutputChannels() const {
   return output_channels_.Channels();
@@ -1729,8 +1762,8 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
 
   std::string api_key;
   if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent->id);
-      provider != nullptr && !provider->api_key_name.empty()) {
-    api_key = secret_storage_.Retrieve(provider->api_key_name).value_or("");
+      provider != nullptr) {
+    api_key = ResolveProviderApiKey(*provider).value_or("");
   }
   if (!provider_bridge_manager_.IsBridgeRunning(agent->id) &&
       !provider_bridge_manager_.StartBridge(agent->id,
@@ -1903,8 +1936,8 @@ bool WorkspaceShell::RetryActiveChatRequest(std::string* error_message) {
 
   std::string api_key;
   if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent->id);
-      provider != nullptr && !provider->api_key_name.empty()) {
-    api_key = secret_storage_.Retrieve(provider->api_key_name).value_or("");
+      provider != nullptr) {
+    api_key = ResolveProviderApiKey(*provider).value_or("");
   }
   if (!provider_bridge_manager_.IsBridgeRunning(agent->id) &&
       !provider_bridge_manager_.StartBridge(agent->id, agent->command, api_key,
@@ -2449,9 +2482,7 @@ bool WorkspaceShell::SetProviderApiKey(std::string_view provider_id,
     }
     return false;
   }
-  const std::string key = !provider->api_key_name.empty()
-                              ? provider->api_key_name
-                              : std::string(provider_id) + ".api_key";
+  const std::string key = ProviderApiKeyStorageKey(*provider);
   if (!secret_storage_.Store(key, std::string(api_key))) {
     if (error_message != nullptr) {
       *error_message = "Failed to store API key for " + std::string(provider_id);
@@ -2476,9 +2507,8 @@ bool WorkspaceShell::ClearProviderApiKey(std::string_view provider_id,
     error_message->clear();
   }
   const AiProviderSpec* provider = ai_provider_registry_.FindProvider(std::string(provider_id));
-  const std::string key = (provider != nullptr && !provider->api_key_name.empty())
-                              ? provider->api_key_name
-                              : std::string(provider_id) + ".api_key";
+  const std::string key = provider != nullptr ? ProviderApiKeyStorageKey(*provider)
+                                              : std::string(provider_id) + ".api_key";
   secret_storage_.Delete(key);
   provider_bridge_manager_.StopBridge(std::string(provider_id));
   return true;
@@ -2489,10 +2519,7 @@ ProviderAuthStatus WorkspaceShell::GetProviderAuthStatus(std::string_view provid
   if (provider == nullptr) {
     return ProviderAuthStatus::Unknown;
   }
-  const std::string key = !provider->api_key_name.empty()
-                              ? provider->api_key_name
-                              : std::string(provider_id) + ".api_key";
-  if (!secret_storage_.Contains(key)) {
+  if (!ResolveProviderApiKey(*provider).has_value()) {
     return ProviderAuthStatus::KeyMissing;
   }
   // If a bridge is running, return the bridge's reported auth status.

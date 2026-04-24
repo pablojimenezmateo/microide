@@ -1859,6 +1859,7 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
             microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
                 .settings =
                     {
+                        {"openai.api_key", "secret-openai"},
                         {"openai.binary", bridge_binary.string()},
                         {"openai.base_url", server.base_url},
                         {"openai.model", "gpt-4.1-mini"},
@@ -1876,13 +1877,9 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
              WorkspaceShellTestAccess::AiProviders(shell).front().id == "openai.chat",
          "openai plugin should register one host-owned AI provider");
 
-  std::string error_message;
-  Expect(WorkspaceShellTestAccess::SetProviderApiKey(shell, "openai.chat", "secret-openai",
-                                                     &error_message),
-         ("openai plugin should store API keys in the host secret store: " + error_message).c_str());
   Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") ==
              ProviderAuthStatus::KeyPresent,
-         "setting the API key should make the provider readable before validation");
+         "user config API keys should make the provider readable before validation");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain provider bridge"),
          "openai plugin should drive the built-in chat command");
@@ -1908,17 +1905,11 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
          "plugin reload should preserve the conversation transcript");
   Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") !=
              ProviderAuthStatus::KeyMissing,
-         "plugin reload should preserve the host-owned stored credential");
+         "plugin reload should preserve the configured API key");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain reload"),
          "openai plugin should still answer after reload");
   Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
          "openai plugin chat after reload should complete");
-
-  Expect(WorkspaceShellTestAccess::ClearProviderApiKey(shell, "openai.chat", &error_message),
-         ("openai plugin should clear stored API keys: " + error_message).c_str());
-  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") ==
-             ProviderAuthStatus::KeyMissing,
-         "clearing the API key should return the provider to the missing-key state");
 
   server.process.Shutdown();
 }
@@ -2026,6 +2017,7 @@ void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
             microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
                 .settings =
                     {
+                        {"anthropic.api_key", "secret-anthropic"},
                         {"anthropic.binary", bridge_binary.string()},
                         {"anthropic.base_url", server.base_url},
                         {"anthropic.model", "claude-sonnet-4-6"},
@@ -2043,11 +2035,9 @@ void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
              WorkspaceShellTestAccess::AiProviders(shell).front().id == "anthropic.chat",
          "anthropic plugin should register one host-owned AI provider");
 
-  std::string error_message;
-  Expect(WorkspaceShellTestAccess::SetProviderApiKey(
-             shell, "anthropic.chat", "secret-anthropic", &error_message),
-         ("anthropic plugin should store API keys in the host secret store: " + error_message)
-             .c_str());
+  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "anthropic.chat") ==
+             ProviderAuthStatus::KeyPresent,
+         "user config API keys should make anthropic readable before validation");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain anthropic bridge"),
          "anthropic plugin should drive the built-in chat command");
   Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),

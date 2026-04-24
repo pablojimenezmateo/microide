@@ -40,6 +40,14 @@ return ide.plugin({
       label = "OpenAI Model",
       description = "Default OpenAI model ID for chat requests.",
     })
+    ctx.settings.declare({
+      id = "api_key",
+      type = "string",
+      default = "",
+      scope = "user",
+      label = "OpenAI API Key",
+      description = "API key used for OpenAI chat requests.",
+    })
 
     local binary = read_string(ctx, "binary", "microide_provider_bridge")
     local base_url = read_string(ctx, "base_url", "https://api.openai.com")
