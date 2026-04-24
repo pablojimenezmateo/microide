@@ -209,8 +209,21 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       return true;
     }
   }
-  if (event.button.clicks >= 2) {
+  const Uint64 now_ms = SDL_GetTicks();
+  const float click_x = static_cast<float>(event.button.x);
+  const float click_y = static_cast<float>(event.button.y);
+  const bool own_double_click =
+      interaction_state_.last_title_bar_click_ms > 0 &&
+      now_ms - interaction_state_.last_title_bar_click_ms < 400 &&
+      std::abs(click_x - interaction_state_.last_title_bar_click_x) < 5.0f &&
+      std::abs(click_y - interaction_state_.last_title_bar_click_y) < 5.0f;
+  if (event.button.clicks == 2 || own_double_click) {
+    interaction_state_.last_title_bar_click_ms = 0;
     operations_.set_pending_window_action(WorkspaceShell::WindowAction::ToggleMaximize);
+  } else {
+    interaction_state_.last_title_bar_click_ms = now_ms;
+    interaction_state_.last_title_bar_click_x = click_x;
+    interaction_state_.last_title_bar_click_y = click_y;
   }
   operations_.request_chrome_redraw();
   return true;

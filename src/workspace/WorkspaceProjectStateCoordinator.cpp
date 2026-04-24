@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 #include <vector>
@@ -262,13 +263,16 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
   context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
   context_.current_project_state.sidebar.scroll_row = 0;
+  context_.current_project_state.directory_tree.RefreshGitStatuses();
   if (ActiveSidebarMode() == SidebarMode::Git) {
-    context_.current_project_state.directory_tree.RefreshGitStatuses();
     RefreshGitSidebar();
   } else {
     context_.current_project_state.sidebar.git = GitSidebarState{};
   }
   RefreshProblemsSidebar();
+
+  project_file_watcher_.SetRoots({context_.current_project_state.root});
+  project_file_watcher_.SetPollInterval(std::chrono::milliseconds(2000));
 
   if (ActiveSidebarMode() == SidebarMode::Search &&
       !context_.current_project_state.overlay.workflow.project_search.query.text.empty()) {

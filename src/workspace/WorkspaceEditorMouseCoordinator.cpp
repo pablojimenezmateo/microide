@@ -98,6 +98,11 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   viewport->MoveCursorToVisualColumn(line, visual_column,
                                      (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+  if (event.button.clicks == 2) {
+    viewport->SelectWordAtCursor();
+  } else if (event.button.clicks >= 3) {
+    viewport->SelectLineAtCursor();
+  }
   operations_.reset_caret_blink();
   state_.surface.focus = FocusTarget::Editor;
   if (event.button.button == SDL_BUTTON_MIDDLE) {

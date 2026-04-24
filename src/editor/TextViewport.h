@@ -121,6 +121,8 @@ class TextViewport {
   bool DeleteSelectedText();
   void ClearSelection();
   void SelectAll();
+  void SelectWordAtCursor();
+  void SelectLineAtCursor();
   void InvalidateSyntaxHighlighting();
 
  private:

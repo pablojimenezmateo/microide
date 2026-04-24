@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDL3/SDL.h>
+
 #include <cstddef>
 #include <vector>
 
@@ -45,6 +47,9 @@ struct InteractionState {
   std::vector<std::size_t> drag_editor_split_path;
   std::size_t drag_editor_split_divider_index = 0;
   TabDragState tab_drag;
+  Uint64 last_title_bar_click_ms = 0;
+  float last_title_bar_click_x = 0.0f;
+  float last_title_bar_click_y = 0.0f;
 };
 
 }  // namespace microide::workspace

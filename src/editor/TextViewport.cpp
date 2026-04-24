@@ -622,6 +622,44 @@ void TextViewport::SelectAll() {
   EnsureCursorVisible();
 }
 
+void TextViewport::SelectWordAtCursor() {
+  if (document_->lines.empty()) {
+    return;
+  }
+  const std::string& line = document_->lines[cursor_line_];
+  const std::size_t col = std::min(cursor_column_, line.size());
+  auto is_word_char = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+  };
+  std::size_t start = col;
+  std::size_t end = col;
+  if (col < line.size() && is_word_char(line[col])) {
+    while (start > 0 && is_word_char(line[start - 1])) {
+      --start;
+    }
+    while (end < line.size() && is_word_char(line[end])) {
+      ++end;
+    }
+  }
+  if (start == end) {
+    return;
+  }
+  selection_anchor_ = TextPosition{cursor_line_, start};
+  cursor_column_ = end;
+  preferred_column_ = cursor_visual_column();
+  EnsureCursorVisible();
+}
+
+void TextViewport::SelectLineAtCursor() {
+  if (document_->lines.empty()) {
+    return;
+  }
+  selection_anchor_ = TextPosition{cursor_line_, 0};
+  cursor_column_ = document_->lines[cursor_line_].size();
+  preferred_column_ = cursor_visual_column();
+  EnsureCursorVisible();
+}
+
 void TextViewport::ResetState(std::vector<std::string> lines,
                               const std::filesystem::path& path,
                               LineEnding line_ending,

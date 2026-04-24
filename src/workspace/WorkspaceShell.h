@@ -1473,6 +1473,7 @@ class WorkspaceShell {
   mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
+  platform::FileTreeWatcher project_file_watcher_;
   WorkspacePluginRuntime plugin_runtime_;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
