@@ -2,11 +2,31 @@
 
 ## Mission
 
-Build `microide` for correctness first and performance second, with the project currently in the
-middle of a large plugin-support expansion.
+Build `microide` as the fastest, lowest-footprint AI-focused desktop IDE — a compact C++/SDL3
+single-window application with no GPU acceleration requirement, keyboard-first workflows,
+best-in-class diff and merge, and AI as a built-in first-class capability.
 
 Do not optimize for keeping old boundaries alive. If the correct fix breaks compatibility, touches
 many files, or requires a broader refactor, prefer the better design.
+
+## Product Pillars
+
+MicroIDE's durable built-in capabilities are:
+
+- **Editor** — text editing, UTF-8, IME, undo/redo, syntax highlighting, blame, splits
+- **Diff & Merge** — compare tabs (HEAD, commits, outgoing), three-way merge tabs, shared
+  row-decoration pipeline; see `openspec/specs/diff-merge-editor/spec.md` for the contract
+- **Search** — async project search (literal + regex), replace-in-project, file finder
+- **Git** — working-tree changes, staging, conflicts, outgoing files, blame
+- **Terminal** — PTY-backed tabs with scrollback, alternate screen, full ANSI support
+- **AI** — host-owned chat pane, ghost-text inline completion, MCP tool execution, provider
+  bridges; see `openspec/specs/ai-workflows/spec.md` for the contract
+- **Plugins** — Lua 5.4 runtime with narrow host-owned registries for commands, sidebars,
+  settings, keybindings, status items, diagnostics, hover, formatters, tasks, tools, tests,
+  SCM, auth, and AI providers
+
+The authoritative product thesis, priority order, and non-goals live in
+`openspec/specs/product-vision/spec.md`.
 
 ## Priority Order
 
@@ -22,13 +42,6 @@ When tradeoffs conflict, use this order:
 Compatibility is not a default constraint. Internal APIs, temporary abstractions, and stale call
 patterns can be broken or removed if that is the cleanest way to improve the system.
 
-## Current Project Reality
-
-- plugin support is an active phase and will be large
-- broad refactors are acceptable if they produce better host boundaries
-- the product is still built around built-in editor, compare, merge, search, git, and terminal workflows
-- plugins may extend the shell, but they should not force the host to expose raw coordinator internals
-
 ## Default Engineering Stance
 
 - Prefer correct behavior over minimal diffs.
@@ -37,7 +50,7 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 - Delete dead code, stale docs, and temporary compatibility shims as soon as the new path is established.
 - Keep the host small and explicit; registries and services are better extension points than giant mutable objects.
 
-## Plugin-Phase Rules
+## Plugin Rules
 
 - Do not expose `WorkspaceShell` wholesale to plugins.
 - Prefer host-owned registries, commands, sidebars, and services over ad hoc plugin hooks.
@@ -53,11 +66,12 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 - Use `docs/startup-tracing.md` and `docs/runtime-profiling.md` instead of guessing.
 - Preserve typing, scrolling, resize, and startup responsiveness even when adding features.
 - Prefer deleting redundant work over caching everything by default.
+- The durable performance budget contract lives in `openspec/specs/performance-budgets/spec.md`.
 
 ## Architecture Rules
 
 - Keep ownership narrow and obvious.
-- Prefer small focused translation units over catch-all “shared” files.
+- Prefer small focused translation units over catch-all "shared" files.
 - Push external tool and OS integration behind `src/project/*` or similarly narrow service boundaries.
 - Keep UI orchestration thin; deterministic logic belongs in testable helpers.
 - Avoid hidden coupling through mutable global state.
@@ -77,6 +91,7 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 - Keep `docs/implementation-guide.md` aligned with durable product direction.
 - Update subsystem design docs when a change materially alters the intended architecture.
 - Remove stale or split-brain docs rather than leaving contradictory guidance around.
+- When a durable policy changes, update the relevant `openspec/specs/` file in the same commit.
 
 ## Iteration Loop
 

@@ -29,10 +29,11 @@ Purpose: first-stop operating guide for agents working in this repository.
 When guidance conflicts, use this order:
 
 1. `AGENTS.md`
-2. `docs/active-work.md`
-3. `docs/implementation-guide.md`
-4. Focused subsystem docs in `docs/`
-5. The handbook under `guidelines/`
+2. `openspec/specs/` — authoritative product contracts (vision, diff/merge, AI, performance budgets)
+3. `docs/active-work.md`
+4. `docs/implementation-guide.md`
+5. Focused subsystem docs in `docs/`
+6. The handbook under `guidelines/`
 
 ## Agent Best Practices
 

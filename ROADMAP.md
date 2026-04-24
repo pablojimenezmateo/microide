@@ -124,14 +124,15 @@ host boundaries and no major latency regressions.
 Focus this phase on:
 
 - real LSP and DAP workflows that MicroIDE actually wants to keep, not protocol checkbox growth
-- real AI workflows that justify the current chat and inline-completion surfaces
+- real AI workflows against the contracts in `openspec/specs/ai-workflows/spec.md`: chat, inline
+  completion, MCP permission flow, bounded context collection, and provider-bridge correctness
 - project, git, and file-watch correctness under active background work
 - continued shell-boundary reduction where validation exposes the wrong ownership seam
 
 Do not expand this phase into:
 
 - richer debugger UX beyond what the first-pass runtime already supports
-- broader AI surface area just because the runtime can technically support it
+- AI surface area that contradicts the host-owned contract in `openspec/specs/ai-workflows/spec.md`
 - plugin background execution unless a real plugin is blocked on it
 - speculative renderer rewrites without profiling evidence
 
@@ -216,13 +217,15 @@ Continue with:
 
 ### 3. Diff and merge rewrite
 
-Follow `docs/diff-editor-merge-rewrite-plan.md`.
+The durable behavioral contract for this work lives in `openspec/specs/diff-merge-editor/spec.md`.
+The implementation plan lives in `docs/diff-editor-merge-rewrite-plan.md` (create if missing).
 
 Target end state:
 - editor, compare, and merge share one row-decoration and text-grid rendering pipeline
 - diff semantics do not degrade based on file-size thresholds
 - compare and merge highlighting use the same layered rendering contract
-- optimization happens after the rewritten semantics are correct and measured
+- optimization happens after the rewritten semantics are correct and measured, using
+  `microide_diff_bench` as the reference before/after tool
 
 ### 4. Keep shrinking the shell-centered architecture
 
@@ -243,6 +246,20 @@ These are explicitly deferred or out of scope unless deliberately promoted into 
 - debugger UX beyond the already-landed first-pass runtime and command plumbing
 - feature work added only because a protocol supports it rather than because MicroIDE needs it
 
+## Deferred Follow-ups From This Change
+
+These were identified during the vision-alignment pass and should each become their own change:
+
+1. **Unified decorated text-grid pipeline** — implement the shared row-decoration and text-grid
+   rendering path across editor, compare, and merge as specified in
+   `openspec/specs/diff-merge-editor/spec.md`. Requires `docs/diff-editor-merge-rewrite-plan.md`
+   to exist first (currently missing — create it as the first task of that change).
+2. **Numeric performance thresholds** — once a reference host is declared, add concrete
+   millisecond startup, typing, and scroll frame targets to `openspec/specs/performance-budgets/spec.md`.
+3. **Large-file diff-semantic correctness audit** — verify that the shipped diff pipeline has no
+   file-size-threshold degradation paths; fix any found, per the no-degradation requirement in
+   `openspec/specs/diff-merge-editor/spec.md`.
+
 ## Working Rules
 
 - every meaningful bug fix adds or tightens regression coverage
@@ -253,11 +270,14 @@ These are explicitly deferred or out of scope unless deliberately promoted into 
 
 ## Companion Docs
 
+- `openspec/specs/product-vision/spec.md`: authoritative product thesis and in-scope/non-goal list
+- `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
+- `openspec/specs/ai-workflows/spec.md`: durable AI surface contract
+- `openspec/specs/performance-budgets/spec.md`: durable performance budget and measurement policy
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `docs/implementation-guide.md`: durable product direction
-- `docs/production-tech-debt-review.md`: next structural debt after the large shell-breakdown pass
 - `docs/known-tech-debt.md`: concrete remaining debt worth preserving as a queue
-- `docs/diff-editor-merge-rewrite-plan.md`: detailed compare and merge rewrite plan
+- `docs/diff-editor-merge-rewrite-plan.md`: detailed compare and merge rewrite plan (create if missing)
 - `docs/performance-findings.md`: shipped performance wins worth preserving
 - `docs/startup-tracing.md`: startup profiling workflow
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow

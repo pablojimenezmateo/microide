@@ -556,12 +556,20 @@ These are not current project work unless deliberately promoted into their own p
 
 Keep these when you need deeper design context:
 
+- `openspec/specs/product-vision/spec.md`: authoritative product thesis and non-goals
+- `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
+- `openspec/specs/ai-workflows/spec.md`: durable AI surface contract
+- `openspec/specs/performance-budgets/spec.md`: durable performance budget policy
 - `AGENTS.md`: repo-level engineering policy, iteration loop, and agent expectations
 - `docs/implementation-guide.md`: durable product direction
 - `docs/plugin-runtime-research.md`: deeper plugin architecture notes and external references
 - `docs/known-tech-debt.md`: concrete open debt still worth preserving
 - `docs/text-surface-unification.md`: durable text-input and navigable-text interaction contract
-- `docs/production-tech-debt-review.md`: structural debt worth paying down as large phases proceed
 - `docs/performance-findings.md`: concrete shipped performance wins worth preserving
 - `docs/startup-tracing.md`: startup profiling workflow
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow
+
+Archived (shipped or superseded):
+- `docs/archive/chat-pane-plan.md`: chat pane design — shipped in Phase 5
+- `docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5
+- `docs/archive/production-tech-debt-review.md`: 2026-04-20 structural debt review — major items resolved by the shell-breakdown pass

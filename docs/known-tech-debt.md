@@ -7,7 +7,7 @@ This document records the meaningful debt that remains after commit `0aa44cb`
 
 Use this file for deferred work that is real, actionable, and still open.
 Use `docs/active-work.md` for current priorities.
-Use `docs/production-tech-debt-review.md` for the broader architectural review.
+The broader architectural review (from 2026-04-20) is archived at `docs/archive/production-tech-debt-review.md`.
 
 ## Scope
 

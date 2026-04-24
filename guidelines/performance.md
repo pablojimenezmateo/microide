@@ -48,3 +48,9 @@ Collect evidence when work touches:
 - Compare measurements before and after the change.
 - Call out tradeoffs when a correctness fix knowingly costs performance.
 - Update docs when the performance workflow, benchmark expectations, or preserved constraints materially change.
+
+## Durable Budget Contract
+
+The authoritative latency, CPU, idle, and measured-before-merged policy lives in
+`openspec/specs/performance-budgets/spec.md`. This guide explains the workflow; the spec defines
+what changes must prove before merge.

@@ -6,6 +6,8 @@ Purpose: define the durable system shape, subsystem boundaries, and integration 
 
 - `microide` is a native desktop IDE shell, not a service platform.
 - The host is intentionally small and explicit: built-in workflows stay built in, and plugins extend narrow registries and services.
+- The authoritative product scope (in-scope capabilities, non-goals, priority order) lives in `openspec/specs/product-vision/spec.md`.
+- The durable diff and merge behavioral contract lives in `openspec/specs/diff-merge-editor/spec.md`.
 - Presentation and orchestration live primarily in `src/workspace`.
 - Core editor, compare, and terminal behavior stays in focused model or helper modules.
 - OS, filesystem, subprocess, git, search, and plugin-runtime integrations stay behind narrow service boundaries.

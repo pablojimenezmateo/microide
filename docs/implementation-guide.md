@@ -1,6 +1,6 @@
 # MicroIDE Product Guide
 
-Reviewed on 2026-04-23.
+Reviewed on 2026-04-24.
 
 This file captures the durable product direction for the current C++/SDL3 codebase.
 Keep it shorter than `docs/active-work.md`.
@@ -65,6 +65,10 @@ The current SDL shell already includes:
 - a host-owned plugin runtime service for plugin lifecycle, syntax-asset reload bookkeeping,
   asset watching, and plugin output logging
 - repo-owned Lua dogfood plugins for ESLint diagnostics and host-owned LLM chat or inline completion, exercising the same narrow host APIs exposed to user plugins
+- a host-owned chat pane with conversation rail, provider/model selector, multiline draft composer, markdown transcript rendering, and project-tab chat status summaries
+- ghost-text inline completion with accept/dismiss, backed by the AI provider bridge
+- MCP tool invocations with per-agent permission levels, session-scoped approvals, and persisted transcript events
+- a native `microide_provider_bridge` binary for direct stdio-backed provider communication
 - shared shell render primitives for cards, tooltips, text fields, buttons, list rows, strip tabs,
   and common chrome glyphs across prompts, overlays, sidebar, panel, and editor-empty states
 - an optional `SDL3_ttf` backend with a debug-text fallback
@@ -73,7 +77,7 @@ Current implementation status and active priorities are tracked in `docs/active-
 
 ## Durable Product Decisions
 
-These decisions should stay fixed unless there is a clear product reason to revisit them:
+The authoritative product thesis — including in-scope capabilities, priority order, and non-goals — lives in `openspec/specs/product-vision/spec.md`. The decisions below are the operational corollaries that govern day-to-day implementation choices.
 
 - startup uses the launch working directory as the initial project root
 - automatic project-root detection is out of scope
@@ -84,22 +88,25 @@ These decisions should stay fixed unless there is a clear product reason to revi
 - the sidebar stays persistent across tab switches
 - a terminal tab should be open by default for loaded projects
 - colorscheme and editor preferences remain project-local
-- compare, merge, search, git, and terminal workflows are built-in product features, not plugins
-- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-loaded syntax data, but they do not replace built-in editing, search, git, compare, merge, terminal, or built-in diagnostics workflows
+- compare, merge, search, git, terminal, chat, and inline completion workflows are built-in product features, not plugins
+- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-loaded syntax data, but they do not replace built-in editing, search, git, compare, merge, terminal, chat, or inline completion workflows
 - plugin dogfooding should continue to favor small repo-owned examples over widening the host API speculatively; add new plugin-facing seams only when a real plugin needs them
 
 ## Explicit Non-Goals
 
 These are out of scope unless deliberately added as a separate phase:
 
-- debugging
+- full debugger UI beyond first-pass start/stop and output-channel plumbing
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - cloud or collaboration features
-- AI/chat surfaces
 - account systems and sync
 - native GitHub-style review dashboards
 - recent-project and recent-file surfaces
 - soft wrap
+- native OS menu bar integration
+
+AI, chat, and inline completion are **in scope** as built-in, host-owned workflows. See
+`openspec/specs/ai-workflows/spec.md` for the durable contract.
 
 Broad LSP coverage is not an implicit requirement of the current shell; only validated workflows
 should stay in scope.
@@ -151,13 +158,15 @@ whether the backend is external or built in.
 
 ## Documentation Map
 
+- `openspec/specs/product-vision/spec.md`: authoritative product thesis, in-scope capabilities, priority order, and non-goals
+- `openspec/specs/diff-merge-editor/spec.md`: durable behavioral contract for compare and merge tabs
+- `openspec/specs/ai-workflows/spec.md`: durable contract for chat, inline completion, MCP tools, and provider bridges
+- `openspec/specs/performance-budgets/spec.md`: durable latency, CPU, and measurement policy
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
 - `docs/plugin-runtime-research.md`: plugin architecture notes and external references
-- `docs/production-tech-debt-review.md`: structural debt review for large refactor phases
 - `docs/known-tech-debt.md`: concrete open debt that still matters after recent refactors
 - `docs/macos-support-plan.md`: host-platform plan for bringing `microide` to macOS
 - `docs/performance-findings.md`: shipped performance work worth preserving
-- `docs/text-surface-unification.md`: durable text-surface interaction contract
 - `docs/startup-tracing.md`: how to measure startup work
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow
