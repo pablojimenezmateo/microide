@@ -438,6 +438,92 @@ void TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor() {
          "chat key handling should not move the underlying editor cursor");
 }
 
+void TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ShowChatPanel(shell);
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "hello"),
+         "multiline chat draft fixture should type the first line");
+  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "plain Enter in the chat composer should insert a newline");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "world"),
+         "multiline chat draft fixture should type the second line");
+  Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hello\nworld",
+         "chat composer should preserve multiline draft text");
+
+  const std::string first_conversation_id = WorkspaceShellTestAccess::ActiveConversationId(shell);
+  Expect(WorkspaceShellTestAccess::CreateChatConversation(shell),
+         "creating a second conversation should succeed");
+  Expect(WorkspaceShellTestAccess::ChatComposerInput(shell).empty(),
+         "new conversations should start with an empty draft");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "second draft"),
+         "second conversation should accept its own draft text");
+  const std::string second_conversation_id = WorkspaceShellTestAccess::ActiveConversationId(shell);
+  Expect(second_conversation_id != first_conversation_id,
+         "creating a second conversation should switch the active conversation");
+
+  Expect(WorkspaceShellTestAccess::ActivateChatConversation(shell, first_conversation_id),
+         "switching back to the first conversation should succeed");
+  Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hello\nworld",
+         "switching conversations should restore the first conversation draft");
+
+  Expect(WorkspaceShellTestAccess::ActivateChatConversation(shell, second_conversation_id),
+         "switching back to the second conversation should succeed");
+  Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "second draft",
+         "each conversation should retain its own draft buffer");
+}
+
+void TestWorkspaceShellProjectTabsExposeChatStatusSummary() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "project-a";
+  const std::filesystem::path root_b = temp_dir.path() / "project-b";
+  WriteFile(root_a / "README.md", "a\n");
+  WriteFile(root_b / "README.md", "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "chat status fixture should open the first project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "chat status fixture should open the second project");
+
+  auto& project_a = WorkspaceShellTestAccess::ProjectState(shell, 0);
+  project_a.panel.chat.conversation_id = project_a.conversations.CreateConversation("Chat", {});
+  auto* running_conversation =
+      project_a.conversations.GetConversation(project_a.panel.chat.conversation_id);
+  Expect(running_conversation != nullptr, "first project should create a chat conversation");
+  running_conversation->status = microide::workspace::RequestStatus::Running;
+
+  auto& project_b = WorkspaceShellTestAccess::ProjectState(shell, 1);
+  project_b.panel.chat.conversation_id = project_b.conversations.CreateConversation("Chat", {});
+  auto* failed_conversation =
+      project_b.conversations.GetConversation(project_b.panel.chat.conversation_id);
+  Expect(failed_conversation != nullptr, "second project should create a chat conversation");
+  failed_conversation->status = microide::workspace::RequestStatus::Failed;
+
+  Expect(WorkspaceShellTestAccess::ProjectTabChatStatus(shell, 0) ==
+             WorkspaceShell::VisibleStripTab::ChatStatus::Running,
+         "project tabs should expose a running chat marker when any conversation is in flight");
+  Expect(WorkspaceShellTestAccess::ProjectTabChatStatus(shell, 1) ==
+             WorkspaceShell::VisibleStripTab::ChatStatus::Failed,
+         "project tabs should expose a failed chat marker when attention is needed");
+  Expect(WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 0).find("Chat running") !=
+             std::string::npos,
+         "project tab tooltips should summarize running chat state");
+  Expect(WorkspaceShellTestAccess::ProjectTabTooltipLabel(shell, 1).find("attention needed") !=
+             std::string::npos,
+         "project tab tooltips should summarize failed chat state");
+}
+
 void TestWorkspaceShellSidebarDropdownOffersChatView() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1185,6 +1271,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
   AddTest(tests, "WorkspaceShell/ChatComposerKeysDoNotLeakIntoEditor",
           TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor);
+  AddTest(tests, "WorkspaceShell/ChatComposerSupportsMultilineDraftsPerConversation",
+          TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation);
+  AddTest(tests, "WorkspaceShell/ProjectTabsExposeChatStatusSummary",
+          TestWorkspaceShellProjectTabsExposeChatStatusSummary);
   AddTest(tests, "WorkspaceShell/SidebarDropdownOffersChatView",
           TestWorkspaceShellSidebarDropdownOffersChatView);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "editor/TextViewport.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/FileIndex.h"
@@ -160,10 +161,20 @@ struct OutputPanelState {
   int scroll_row = 0;
 };
 
+enum class ChatPaneFocusRegion {
+  Rail,
+  Header,
+  Transcript,
+  Composer,
+};
+
 struct ChatPanelState {
   std::string conversation_id;
+  std::string request_conversation_id;
   std::string pending_assistant_message_id;
-  util::SingleLineTextState composer;
+  editor::TextViewport composer;
+  ChatPaneFocusRegion focus_region = ChatPaneFocusRegion::Composer;
+  std::size_t header_focus_index = 0;
   int scroll_row = 0;
   bool request_in_flight = false;
   Uint64 request_started_ticks = 0;

@@ -89,9 +89,8 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
   display_titles.reserve(context_.project_catalog.entries.size());
   tooltip_labels.reserve(context_.project_catalog.entries.size());
   for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
-    const std::filesystem::path root = ProjectCatalogRoot(i);
     display_titles.push_back(ProjectTabDisplayTitle(i));
-    tooltip_labels.push_back(root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string());
+    tooltip_labels.push_back(ProjectTabTooltipLabel(i));
     widths.push_back(std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f, 156.0f,
                                 260.0f));
   }
@@ -102,11 +101,19 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
   const float start_x = project_tab_strip.x + 12.0f;
   const float max_tab_x =
       std::max(start_x + 120.0f, project_tab_strip.x + project_tab_strip.w - 12.0f);
-  return BuildVisibleStripTabs(
+  auto tabs = BuildVisibleStripTabs(
       widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(context_.project_catalog.tab_scroll_index, 0,
                                           std::max(0, static_cast<int>(context_.project_catalog.entries.size()) - 1))),
       tab_y, tab_height, {}, context_.project_catalog.active_index, display_titles, tooltip_labels);
+  for (VisibleStripTab& tab : tabs) {
+    const ProjectChatSummary summary = SummarizeProjectChatState(tab.index);
+    tab.chat_status =
+        summary.state == ProjectChatSummary::State::Running ? VisibleStripTab::ChatStatus::Running
+        : summary.state == ProjectChatSummary::State::Failed ? VisibleStripTab::ChatStatus::Failed
+                                                             : VisibleStripTab::ChatStatus::None;
+  }
+  return tabs;
 }
 
 float WorkspaceShell::TabWidthForIndex(std::size_t index) const {

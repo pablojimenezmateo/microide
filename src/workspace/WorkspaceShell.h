@@ -234,6 +234,7 @@ class WorkspaceShell {
   using PanelState = workspace::PanelState;
   using OutputPanelState = workspace::OutputPanelState;
   using ChatPanelState = workspace::ChatPanelState;
+  using ChatPaneFocusRegion = workspace::ChatPaneFocusRegion;
   using ProjectWorkspaceState = workspace::ProjectWorkspaceState;
   using ProjectCatalogState = workspace::ProjectCatalogState;
   using WorkspaceContext = workspace::WorkspaceContext;
@@ -284,6 +285,7 @@ class WorkspaceShell {
     float text_x = 0.0f;
     float text_y = 0.0f;
     float cursor_x = 0.0f;
+    float cursor_y = 0.0f;
     SDL_Color foreground{};
     SDL_Color background{};
     std::string displayed_text;
@@ -355,12 +357,19 @@ class WorkspaceShell {
   };
 
   struct VisibleStripTab {
+    enum class ChatStatus {
+      None,
+      Running,
+      Failed,
+    };
+
     std::size_t index = 0;
     SDL_FRect rect{};
     SDL_FRect close_rect{};
     bool active = false;
     std::string display_title;
     std::string tooltip_label;
+    ChatStatus chat_status = ChatStatus::None;
   };
 
   struct VisibleMenuBarItem {
@@ -404,6 +413,52 @@ class WorkspaceShell {
     std::string output_channel_id;
     std::string label;
     std::string tooltip_label;
+  };
+
+  struct ChatSidebarLayout {
+    SDL_FRect rail_rect{};
+    SDL_FRect rail_list_rect{};
+    SDL_FRect rail_new_rect{};
+    SDL_FRect content_rect{};
+    SDL_FRect header_rect{};
+    SDL_FRect header_title_rect{};
+    SDL_FRect header_primary_action_rect{};
+    SDL_FRect header_secondary_action_rect{};
+    SDL_FRect provider_rect{};
+    SDL_FRect model_rect{};
+    SDL_FRect tool_mode_rect{};
+    SDL_FRect auth_rect{};
+    SDL_FRect transcript_rect{};
+    SDL_FRect composer_rect{};
+  };
+
+  struct ChatHeaderAction {
+    enum class Kind {
+      None,
+      NewConversation,
+      DeleteConversation,
+      Cancel,
+      Retry,
+      Provider,
+      Model,
+      ToolMode,
+    };
+
+    Kind kind = Kind::None;
+    SDL_FRect rect{};
+    std::string label;
+    bool enabled = false;
+  };
+
+  struct ProjectChatSummary {
+    enum class State {
+      Idle,
+      Running,
+      Failed,
+    };
+
+    State state = State::Idle;
+    std::string tooltip;
   };
 
  private:
@@ -835,6 +890,7 @@ class WorkspaceShell {
                                                    std::size_t line_count) const;
   ScrollableListLayout ComputeChatSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
+  ChatSidebarLayout ComputeChatSidebarLayout(const SDL_FRect& sidebar_rect) const;
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
   ScrollableListLayout ComputeProblemsSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -845,7 +901,30 @@ class WorkspaceShell {
                                                       std::size_t line_count) const;
   SDL_FRect ChatSidebarComposerRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect ChatSidebarStatusRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarTranscriptRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarConversationRailRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarConversationNewRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarConversationRowRect(const SDL_FRect& sidebar_rect,
+                                           std::size_t index) const;
+  std::vector<ChatHeaderAction> BuildChatHeaderActions(const SDL_FRect& sidebar_rect) const;
   std::vector<ChatSidebarLine> BuildChatSidebarLines(const SDL_FRect& sidebar_rect) const;
+  Conversation* ActiveConversation();
+  const Conversation* ActiveConversation() const;
+  bool ActivateChatConversation(std::string_view conversation_id);
+  void SyncActiveConversationDraft();
+  void LoadChatComposerDraft();
+  bool CreateChatConversation();
+  bool DeleteActiveChatConversation();
+  bool CancelActiveChatRequest();
+  bool RetryActiveChatRequest(std::string* error_message = nullptr);
+  std::vector<const AiProviderSpec*> ChatProviders() const;
+  std::vector<std::string> ChatModelsForConversation(const Conversation& conversation) const;
+  void CycleActiveConversationProvider(int delta = 1);
+  void CycleActiveConversationModel(int delta = 1);
+  void CycleActiveConversationToolMode(int delta = 1);
+  std::string ChatComposerText() const;
+  std::string ChatAuthBannerText(const Conversation* conversation) const;
+  ProjectChatSummary SummarizeProjectChatState(std::size_t project_index) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
@@ -1204,6 +1283,7 @@ class WorkspaceShell {
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;
+  std::string ProjectTabTooltipLabel(std::size_t index) const;
   std::string TruncateLabel(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;

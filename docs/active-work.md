@@ -433,9 +433,10 @@ Open work:
   - `workspace/WorkspaceProviderBridge.*` now owns long-lived stdio provider bridges, auth
     checks, capability negotiation, model enumeration, and shell wake delivery for chat and inline
     completion requests
-  - the live shell now supports sidebar chat, active conversation tracking, ghost-text inline
-    completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
-    commands
+  - the live shell now supports a host-owned chat pane shell with conversation rail, header
+    provider or model or tool controls, multiline draft composer with per-conversation retention,
+    project-tab chat status summaries, ghost-text inline completion with accept or dismiss flow,
+    and built-in `chat`, `inline-complete`, and `mcp` commands
   - first-pass external-agent execution is wired through long-lived stdio subprocesses, and MCP
     tool invocation flows through host-owned permission-checked command surfaces and output
     channels
@@ -445,8 +446,8 @@ Open work:
 
 Open work:
 
-- keep provider and model selection simple until the request runtime and shell-owned conversation
-  flow need more depth
+- replace the remaining line-based transcript rendering with markdown blocks, secure link hit
+  testing, and transcript metadata instead of continuing to grow the provisional text layout
 - broaden the external-agent runtime beyond stdio only when a real HTTP, WebSocket, or ACP-backed
   integration requires it
 - add richer streamed updates, tool-permission prompts, and broader `WorkspaceAiContext`
