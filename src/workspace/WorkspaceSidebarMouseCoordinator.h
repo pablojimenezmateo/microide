@@ -47,8 +47,9 @@ class SidebarMouseCoordinator {
     std::function<void(int)> cycle_active_chat_provider;
     std::function<void(int)> cycle_active_chat_model;
     std::function<void(int)> cycle_active_chat_tool_mode;
-    std::function<std::size_t(const SDL_FRect&)> chat_sidebar_line_count;
+    std::function<std::size_t(const SDL_FRect&)> chat_transcript_line_count;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_chat_sidebar_list_layout;
+    std::function<bool(const SDL_FRect&, float, float)> activate_chat_link_at_point;
     std::function<bool()> can_stage_all_git_sidebar_entries;
     std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_stage_all_button_rect;
     std::function<bool()> stage_all_git_sidebar_entries;

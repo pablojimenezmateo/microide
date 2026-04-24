@@ -364,6 +364,22 @@ struct WorkspaceShell::TestAccess {
   static std::string ChatComposerInput(const WorkspaceShell& shell) {
     return shell.ChatComposerText();
   }
+  static std::vector<std::string> ChatTranscriptRows(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ChatTranscriptDebugLines(layout.sidebar);
+  }
+  static std::optional<SDL_FPoint> ChatTranscriptLinkPoint(WorkspaceShell& shell,
+                                                           std::string_view match) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto rect = shell.FindChatTranscriptLinkRect(layout.sidebar, match);
+    if (!rect.has_value()) {
+      return std::nullopt;
+    }
+    return SDL_FPoint{
+        .x = rect->x + rect->w * 0.5f,
+        .y = rect->y + rect->h * 0.5f,
+    };
+  }
   static WorkspaceShell::OverlayMode ActiveOverlayMode(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode;
   }
@@ -415,6 +431,9 @@ struct WorkspaceShell::TestAccess {
   }
   static bool RetryActiveChatRequest(WorkspaceShell& shell, std::string* error_message = nullptr) {
     return shell.RetryActiveChatRequest(error_message);
+  }
+  static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell& shell) {
+    return shell.context_.current_project_state;
   }
   static WorkspaceShell::ProjectWorkspaceState& ProjectState(WorkspaceShell& shell,
                                                              std::size_t index) {

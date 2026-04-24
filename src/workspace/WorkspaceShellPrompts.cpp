@@ -196,6 +196,25 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
   context_.prompts.surface.action = action;
   context_.prompts.surface.path = path.lexically_normal();
   util::SetSingleLineText(&context_.prompts.surface.input, std::move(input));
+  context_.prompts.surface.detail.clear();
+  context_.prompts.surface.selected_button = 0;
+  context_.current_project_state.surface.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
+}
+
+void WorkspaceShell::OpenExternalUrlPrompt(std::string url) {
+  if (url.empty()) {
+    return;
+  }
+
+  RequestPromptRedraw();
+  context_.prompts.surface_visible = true;
+  context_.prompts.surface_previous_focus = context_.current_project_state.surface.focus;
+  context_.prompts.surface.kind = PromptSurfaceState::Kind::Confirm;
+  context_.prompts.surface.action = PromptSurfaceState::Action::OpenExternalUrl;
+  context_.prompts.surface.path.clear();
+  util::SetSingleLineText(&context_.prompts.surface.input, {});
+  context_.prompts.surface.detail = std::move(url);
   context_.prompts.surface.selected_button = 0;
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
   RequestPromptRedraw();
@@ -223,6 +242,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Delete";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard All Changes";
+    case PromptSurfaceState::Action::OpenExternalUrl:
+      return "Open External Link";
   }
   return "Prompt";
 }
@@ -243,6 +264,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Move " + label + " to trash?";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
+    case PromptSurfaceState::Action::OpenExternalUrl:
+      return "Open " + context_.prompts.surface.detail + " in your browser?";
   }
   return {};
 }
@@ -259,6 +282,8 @@ std::array<std::string, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Delete", "Cancel"};
     case PromptSurfaceState::Action::DiscardGitChanges:
       return {"Discard All", "Cancel"};
+    case PromptSurfaceState::Action::OpenExternalUrl:
+      return {"Open Link", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -295,6 +320,13 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::OpenExternalUrl) {
+    const std::string url = context_.prompts.surface.detail;
+    const bool opened = !url.empty() && OpenExternalUrl(url);
+    DismissPromptSurface(!opened);
+    return;
+  }
   MakePathMutationCoordinator().ConfirmPromptSurface(resolution);
 }
 

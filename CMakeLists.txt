@@ -244,6 +244,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellBootstrapper.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
+  src/workspace/WorkspaceChatTranscript.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp

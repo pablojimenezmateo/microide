@@ -524,6 +524,180 @@ void TestWorkspaceShellProjectTabsExposeChatStatusSummary() {
          "project tab tooltips should summarize failed chat state");
 }
 
+void TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target = root / "src" / "main.cpp";
+  WriteFile(target, "line 1\nline 2\nline 3\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowChatPanel(shell);
+
+  auto& project = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  if (project.panel.chat.conversation_id.empty()) {
+    project.panel.chat.conversation_id = project.conversations.CreateConversation("Chat", {});
+  }
+  auto* conversation =
+      project.conversations.GetConversation(project.panel.chat.conversation_id);
+  Expect(conversation != nullptr, "markdown transcript fixture should expose a conversation");
+
+  microide::workspace::Message message;
+  message.id = "assistant-1";
+  message.role = microide::workspace::MessageRole::Assistant;
+  message.content =
+      "# Heading\n"
+      "Visit [main](src/main.cpp:2:3)\n"
+      "- item one\n"
+      "> quoted\n"
+      "```cpp\n"
+      "int value = 1;\n"
+      "```";
+  message.timestamp = "2026-04-24T10:00:00Z";
+  message.provider_id = "openai.chat";
+  message.model = "gpt-4o-mini";
+  message.status = microide::workspace::RequestStatus::Succeeded;
+  message.request_duration_ms = 1500;
+  message.tool_events.push_back(microide::workspace::ToolEvent{
+      .tool_id = "read_file",
+      .display_name = "read_file",
+      .arguments_summary = "src/main.cpp",
+      .status = "completed",
+      .started_at = "2026-04-24T10:00:00Z",
+      .finished_at = "2026-04-24T10:00:01Z",
+      .duration_ms = 12,
+      .error = {},
+      .output_summary = "3 lines",
+  });
+  conversation->messages.push_back(std::move(message));
+
+  const std::vector<std::string> rows = WorkspaceShellTestAccess::ChatTranscriptRows(shell);
+  Expect(std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+           return row.find("Assistant") != std::string::npos;
+         }) &&
+             std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+               return row.find("Succeeded") != std::string::npos;
+             }) &&
+             std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+               return row.find("1.5 s") != std::string::npos;
+             }),
+         "chat transcript metadata should surface request state and timing");
+  Expect(std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+           return row.find("Heading") != std::string::npos;
+         }),
+         "markdown headings should render into transcript rows");
+  Expect(std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+           return row.find("- item one") != std::string::npos;
+         }),
+         "markdown list items should render into transcript rows");
+  Expect(std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+           return row.find("> quoted") != std::string::npos;
+         }),
+         "markdown block quotes should render into transcript rows");
+  Expect(std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+           return row.find("int value = 1;") != std::string::npos;
+         }),
+         "markdown fenced code blocks should render into transcript rows");
+  Expect(std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+           return row.find("Tool") != std::string::npos;
+         }) &&
+             std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+               return row.find("read_file") != std::string::npos;
+             }) &&
+             std::any_of(rows.begin(), rows.end(), [](const std::string& row) {
+               return row.find("3 lines") != std::string::npos;
+             }),
+         "chat transcript should surface tool activity metadata");
+}
+
+void TestWorkspaceShellChatTranscriptLocalLinksOpenFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target = root / "src" / "main.cpp";
+  WriteFile(target, "line 1\nline 2\nline 3\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowChatPanel(shell);
+
+  auto& project = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  if (project.panel.chat.conversation_id.empty()) {
+    project.panel.chat.conversation_id = project.conversations.CreateConversation("Chat", {});
+  }
+  auto* conversation =
+      project.conversations.GetConversation(project.panel.chat.conversation_id);
+  Expect(conversation != nullptr, "local-link transcript fixture should expose a conversation");
+
+  microide::workspace::Message message;
+  message.id = "assistant-local-link";
+  message.role = microide::workspace::MessageRole::Assistant;
+  message.content = "Open [main](src/main.cpp:2:3)";
+  message.status = microide::workspace::RequestStatus::Succeeded;
+  conversation->messages.push_back(std::move(message));
+
+  const auto point = WorkspaceShellTestAccess::ChatTranscriptLinkPoint(shell, "src/main.cpp:2:3");
+  Expect(point.has_value(), "local chat links should expose a clickable hit region");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point->x, point->y, SDL_BUTTON_LEFT),
+         "clicking a local chat link should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() ==
+             target.lexically_normal(),
+         "clicking a local chat link should open the referenced file");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 2,
+         "clicking a local chat link should navigate to the referenced line and column");
+}
+
+void TestWorkspaceShellChatTranscriptRemoteLinksRequireConfirmation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "notes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowChatPanel(shell);
+
+  auto& project = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  if (project.panel.chat.conversation_id.empty()) {
+    project.panel.chat.conversation_id = project.conversations.CreateConversation("Chat", {});
+  }
+  auto* conversation =
+      project.conversations.GetConversation(project.panel.chat.conversation_id);
+  Expect(conversation != nullptr, "remote-link transcript fixture should expose a conversation");
+
+  microide::workspace::Message message;
+  message.id = "assistant-remote-link";
+  message.role = microide::workspace::MessageRole::Assistant;
+  message.content = "Docs: [OpenAI](https://example.com/docs)";
+  message.status = microide::workspace::RequestStatus::Succeeded;
+  conversation->messages.push_back(std::move(message));
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(
+      shell, [&](std::string_view url) {
+        opened_url = std::string(url);
+        return true;
+      });
+
+  const auto point =
+      WorkspaceShellTestAccess::ChatTranscriptLinkPoint(shell, "https://example.com/docs");
+  Expect(point.has_value(), "remote chat links should expose a clickable hit region");
+  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point->x, point->y, SDL_BUTTON_LEFT),
+         "clicking a remote chat link should be handled");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "remote chat links should require explicit host confirmation");
+  Expect(opened_url.empty(),
+         "clicking a remote chat link should not open the URL before confirmation");
+
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  Expect(opened_url == "https://example.com/docs",
+         "confirming the remote-link prompt should route through the host URL opener");
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "confirming the remote-link prompt should dismiss the prompt surface");
+}
+
 void TestWorkspaceShellSidebarDropdownOffersChatView() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1275,6 +1449,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation);
   AddTest(tests, "WorkspaceShell/ProjectTabsExposeChatStatusSummary",
           TestWorkspaceShellProjectTabsExposeChatStatusSummary);
+  AddTest(tests, "WorkspaceShell/ChatTranscriptShowsMarkdownMetadataAndToolEvents",
+          TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents);
+  AddTest(tests, "WorkspaceShell/ChatTranscriptLocalLinksOpenFiles",
+          TestWorkspaceShellChatTranscriptLocalLinksOpenFiles);
+  AddTest(tests, "WorkspaceShell/ChatTranscriptRemoteLinksRequireConfirmation",
+          TestWorkspaceShellChatTranscriptRemoteLinksRequireConfirmation);
   AddTest(tests, "WorkspaceShell/SidebarDropdownOffersChatView",
           TestWorkspaceShellSidebarDropdownOffersChatView);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",

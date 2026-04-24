@@ -435,8 +435,9 @@ Open work:
     completion requests
   - the live shell now supports a host-owned chat pane shell with conversation rail, header
     provider or model or tool controls, multiline draft composer with per-conversation retention,
-    project-tab chat status summaries, ghost-text inline completion with accept or dismiss flow,
-    and built-in `chat`, `inline-complete`, and `mcp` commands
+    project-tab chat status summaries, markdown transcript rendering with safe local-link opening
+    and remote-link confirmation, ghost-text inline completion with accept or dismiss flow, and
+    built-in `chat`, `inline-complete`, and `mcp` commands
   - first-pass external-agent execution is wired through long-lived stdio subprocesses, and MCP
     tool invocation flows through host-owned permission-checked command surfaces and output
     channels
@@ -446,8 +447,8 @@ Open work:
 
 Open work:
 
-- replace the remaining line-based transcript rendering with markdown blocks, secure link hit
-  testing, and transcript metadata instead of continuing to grow the provisional text layout
+- add host-owned tool approval prompts, remembered session approvals, and richer in-transcript tool
+  execution plumbing on top of the shipped transcript and provider bridge paths
 - broaden the external-agent runtime beyond stdio only when a real HTTP, WebSocket, or ACP-backed
   integration requires it
 - add richer streamed updates, tool-permission prompts, and broader `WorkspaceAiContext`

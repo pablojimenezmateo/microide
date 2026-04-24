@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "compare/CompareModel.h"
@@ -189,19 +190,6 @@ class WorkspaceShell {
     bool checked = false;
     bool hovered = false;
     bool separator = false;
-  };
-
-  struct ChatSidebarLine {
-    enum class Kind {
-      Header,
-      Body,
-      Spacer,
-      Placeholder,
-    };
-
-    Kind kind = Kind::Body;
-    MessageRole role = MessageRole::Assistant;
-    std::string text;
   };
 
   WorkspaceActionContext MakeActionContext();
@@ -462,6 +450,96 @@ class WorkspaceShell {
   };
 
  private:
+  struct ChatLinkTarget {
+    enum class Kind {
+      LocalFile,
+      RemoteUrl,
+    };
+
+    Kind kind = Kind::RemoteUrl;
+    std::filesystem::path path;
+    std::string url;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+
+  enum class ChatTextStyle {
+    Normal,
+    Muted,
+    Emphasis,
+    Strong,
+    InlineCode,
+    Link,
+  };
+
+  struct ChatInlineFragment {
+    std::string text;
+    ChatTextStyle style = ChatTextStyle::Normal;
+    std::optional<ChatLinkTarget> link;
+  };
+
+  struct ChatMarkdownBlock {
+    enum class Kind {
+      Paragraph,
+      Heading,
+      Quote,
+      ListItem,
+      CodeBlock,
+    };
+
+    Kind kind = Kind::Paragraph;
+    std::size_t level = 0;
+    bool ordered_list = false;
+    std::vector<ChatInlineFragment> fragments;
+    std::vector<std::string> code_lines;
+  };
+
+  struct ChatMarkdownDocument {
+    std::uint64_t content_hash = 0;
+    std::vector<ChatMarkdownBlock> blocks;
+  };
+
+  struct ChatTranscriptSegment {
+    std::string text;
+    ChatTextStyle style = ChatTextStyle::Normal;
+    std::optional<ChatLinkTarget> link;
+  };
+
+  struct ChatTranscriptRow {
+    enum class Kind {
+      Meta,
+      Body,
+      Code,
+      Tool,
+      Error,
+      Placeholder,
+      Spacer,
+    };
+
+    enum class Tone {
+      Normal,
+      Heading,
+      Quote,
+      List,
+    };
+
+    Kind kind = Kind::Body;
+    Tone tone = Tone::Normal;
+    MessageRole role = MessageRole::Assistant;
+    std::string prefix;
+    std::vector<ChatTranscriptSegment> segments;
+  };
+
+  struct ChatTranscriptHitRegion {
+    SDL_FRect rect{};
+    ChatLinkTarget target;
+  };
+
+  struct ChatTranscriptLayout {
+    std::vector<ChatTranscriptRow> rows;
+    std::vector<ChatTranscriptHitRegion> hit_regions;
+  };
+
   struct EditorSplitSlot {
     TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
     std::size_t index = 0;
@@ -907,7 +985,12 @@ class WorkspaceShell {
   SDL_FRect ChatSidebarConversationRowRect(const SDL_FRect& sidebar_rect,
                                            std::size_t index) const;
   std::vector<ChatHeaderAction> BuildChatHeaderActions(const SDL_FRect& sidebar_rect) const;
-  std::vector<ChatSidebarLine> BuildChatSidebarLines(const SDL_FRect& sidebar_rect) const;
+  std::size_t ChatTranscriptLineCount(const SDL_FRect& sidebar_rect) const;
+  bool HasChatTranscriptLinkAtPoint(const SDL_FRect& sidebar_rect, float x, float y) const;
+  bool ActivateChatTranscriptLinkAtPoint(const SDL_FRect& sidebar_rect, float x, float y);
+  std::vector<std::string> ChatTranscriptDebugLines(const SDL_FRect& sidebar_rect) const;
+  std::optional<SDL_FRect> FindChatTranscriptLinkRect(const SDL_FRect& sidebar_rect,
+                                                      std::string_view match) const;
   Conversation* ActiveConversation();
   const Conversation* ActiveConversation() const;
   bool ActivateChatConversation(std::string_view conversation_id);
@@ -1186,6 +1269,7 @@ class WorkspaceShell {
   std::string SelectedTerminalText() const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url) const;
+  void OpenExternalUrlPrompt(std::string url);
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
@@ -1355,6 +1439,9 @@ class WorkspaceShell {
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
   void UpdateMouseCursor(float x, float y);
+  ChatTranscriptLayout BuildChatTranscriptLayout(const SDL_FRect& sidebar_rect) const;
+  const ChatMarkdownDocument& ParsedChatMarkdown(std::string_view text) const;
+  ChatMarkdownDocument ParseChatMarkdown(std::string_view text) const;
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
@@ -1416,6 +1503,7 @@ class WorkspaceShell {
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
   std::function<bool(std::string_view)> external_url_opener_;
+  mutable std::unordered_map<std::uint64_t, ChatMarkdownDocument> chat_markdown_cache_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
   bool quit_requested_ = false;

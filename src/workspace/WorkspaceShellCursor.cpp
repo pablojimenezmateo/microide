@@ -383,16 +383,20 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (Contains(ChatSidebarComposerRect(layout.sidebar), x, y)) {
         return CursorKind::Text;
       }
-      const auto lines = BuildChatSidebarLines(layout.sidebar);
-      const auto list_layout = ComputeChatSidebarListLayout(layout.sidebar, lines.size());
+      const std::size_t line_count = ChatTranscriptLineCount(layout.sidebar);
+      const auto list_layout = ComputeChatSidebarListLayout(layout.sidebar, line_count);
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
       if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(lines.size())) {
+          *line_index >= static_cast<int>(line_count)) {
         return CursorKind::Default;
       }
       const SDL_FRect row_rect =
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      return Contains(row_rect, x, y) ? CursorKind::Default : CursorKind::Default;
+      if (!Contains(row_rect, x, y)) {
+        return CursorKind::Default;
+      }
+      return HasChatTranscriptLinkAtPoint(layout.sidebar, x, y) ? CursorKind::Pointer
+                                                                : CursorKind::Default;
     }
     if (sidebar_mode == SidebarMode::Git) {
       if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&

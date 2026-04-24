@@ -252,10 +252,13 @@ bool SidebarMouseCoordinator::HandleChatButtonDown(const SDL_Event& event,
   }
 
   state_.panel.chat.focus_region = ChatPaneFocusRegion::Transcript;
-  const std::size_t line_count = operations_.chat_sidebar_line_count(layout.sidebar);
+  const std::size_t line_count = operations_.chat_transcript_line_count(layout.sidebar);
   const auto list_layout = operations_.compute_chat_sidebar_list_layout(layout.sidebar, line_count);
   const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
   if (!line_index.has_value() || *line_index < 0 || *line_index >= static_cast<int>(line_count)) {
+    return true;
+  }
+  if (operations_.activate_chat_link_at_point(layout.sidebar, event.button.x, event.button.y)) {
     return true;
   }
   return true;
@@ -458,11 +461,15 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](int delta) { CycleActiveConversationModel(delta); },
           .cycle_active_chat_tool_mode =
               [this](int delta) { CycleActiveConversationToolMode(delta); },
-          .chat_sidebar_line_count =
-              [this](const SDL_FRect& rect) { return BuildChatSidebarLines(rect).size(); },
+          .chat_transcript_line_count =
+              [this](const SDL_FRect& rect) { return ChatTranscriptLineCount(rect); },
           .compute_chat_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeChatSidebarListLayout(rect, count);
+              },
+          .activate_chat_link_at_point =
+              [this](const SDL_FRect& rect, float x, float y) {
+                return ActivateChatTranscriptLinkAtPoint(rect, x, y);
               },
           .can_stage_all_git_sidebar_entries = [this]() { return CanStageAllGitSidebarEntries(); },
           .git_sidebar_stage_all_button_rect =

@@ -48,12 +48,14 @@ struct PromptSurfaceState {
     RenamePath,
     DeletePath,
     DiscardGitChanges,
+    OpenExternalUrl,
   };
 
   Kind kind = Kind::None;
   Action action = Action::CreateFile;
   std::filesystem::path path;
   util::SingleLineTextState input;
+  std::string detail;
   int selected_button = 0;
 };
 
