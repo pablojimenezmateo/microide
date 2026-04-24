@@ -560,10 +560,13 @@ void TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents() {
   message.status = microide::workspace::RequestStatus::Succeeded;
   message.request_duration_ms = 1500;
   message.tool_events.push_back(microide::workspace::ToolEvent{
+      .call_id = "tool-1",
       .tool_id = "read_file",
       .display_name = "read_file",
       .arguments_summary = "src/main.cpp",
       .status = "completed",
+      .permission_decision = "session",
+      .capability_scope = "read_file",
       .started_at = "2026-04-24T10:00:00Z",
       .finished_at = "2026-04-24T10:00:01Z",
       .duration_ms = 12,

@@ -115,6 +115,22 @@ std::vector<Conversation> RestoreConversations(const PersistedChatState& chat,
       } else {
         msg.status = msg_status;
       }
+      for (const auto& tool : pm.tool_events) {
+        msg.tool_events.push_back(ToolEvent{
+            .call_id = tool.call_id,
+            .tool_id = tool.tool_id,
+            .display_name = tool.display_name,
+            .arguments_summary = tool.arguments_summary,
+            .status = tool.status,
+            .permission_decision = tool.permission_decision,
+            .capability_scope = tool.capability_scope,
+            .started_at = tool.started_at,
+            .finished_at = tool.finished_at,
+            .duration_ms = tool.duration_ms,
+            .error = tool.error,
+            .output_summary = tool.output_summary,
+        });
+      }
       conv.messages.push_back(std::move(msg));
     }
     result.push_back(std::move(conv));
@@ -151,6 +167,22 @@ PersistedChatState BuildPersistedChatState(const ConversationRegistry& registry,
       pm.status = SerializeRequestStatus(msg.status);
       pm.request_duration_ms = msg.request_duration_ms;
       pm.error = msg.error;
+      for (const auto& tool : msg.tool_events) {
+        pm.tool_events.push_back(PersistedMessageState::PersistedToolEventState{
+            .call_id = tool.call_id,
+            .tool_id = tool.tool_id,
+            .display_name = tool.display_name,
+            .arguments_summary = tool.arguments_summary,
+            .status = tool.status,
+            .permission_decision = tool.permission_decision,
+            .capability_scope = tool.capability_scope,
+            .started_at = tool.started_at,
+            .finished_at = tool.finished_at,
+            .duration_ms = tool.duration_ms,
+            .error = tool.error,
+            .output_summary = tool.output_summary,
+        });
+      }
       pc.messages.push_back(std::move(pm));
     }
     chat.conversations.push_back(std::move(pc));

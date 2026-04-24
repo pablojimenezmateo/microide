@@ -746,7 +746,8 @@ class WorkspaceShell {
   void ConfirmPromptSurface(DirtyPathResolution resolution = DirtyPathResolution::RequirePrompt);
   std::string PromptSurfaceTitle() const;
   std::string PromptSurfaceMessage() const;
-  std::array<std::string, 2> PromptSurfaceActionLabels() const;
+  std::string PromptSurfaceDetail() const;
+  std::vector<std::string> PromptSurfaceActionLabels() const;
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
@@ -1191,6 +1192,9 @@ class WorkspaceShell {
                          std::string* error_message = nullptr);
   bool StartChatRequest(std::string message, std::string* error_message = nullptr);
   void ConsumeProviderBridgeUpdates();
+  void ExpirePendingToolApprovals();
+  bool ResolveChatToolApprovalPrompt(bool allow, bool remember_for_session);
+  void ShowPendingToolApprovalPrompt(ProjectWorkspaceState& project);
   bool SetProviderApiKey(std::string_view provider_id,
                          std::string_view api_key,
                          std::string* error_message = nullptr);

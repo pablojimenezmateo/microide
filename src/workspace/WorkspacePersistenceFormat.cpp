@@ -229,6 +229,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
   std::optional<PersistedEditorTabState> current_tab;
   std::optional<PersistedConversationState> current_conv;
   std::optional<PersistedMessageState> current_msg;
+  std::optional<PersistedMessageState::PersistedToolEventState> current_tool;
   std::istringstream stream{std::string(text)};
   std::string line;
   while (std::getline(stream, line)) {
@@ -242,7 +243,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     if (command == "version") {
       version_ok = tokens.size() == 2 &&
                    (tokens[1].text == "1" || tokens[1].text == "2" || tokens[1].text == "3" ||
-                    tokens[1].text == "4");
+                    tokens[1].text == "4" || tokens[1].text == "5");
       version = version_ok ? std::stoi(tokens[1].text) : 0;
       continue;
     }
@@ -270,6 +271,10 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (version >= 3 && command == "conv-begin" && tokens.size() == 2) {
+      if (current_tool.has_value() && current_msg.has_value()) {
+        current_msg->tool_events.push_back(std::move(*current_tool));
+        current_tool.reset();
+      }
       if (current_msg.has_value() && current_conv.has_value()) {
         current_conv->messages.push_back(std::move(*current_msg));
         current_msg.reset();
@@ -282,6 +287,10 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (version >= 3 && command == "conv-end") {
+      if (current_tool.has_value() && current_msg.has_value()) {
+        current_msg->tool_events.push_back(std::move(*current_tool));
+        current_tool.reset();
+      }
       if (current_msg.has_value() && current_conv.has_value()) {
         current_conv->messages.push_back(std::move(*current_msg));
         current_msg.reset();
@@ -316,11 +325,51 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       } else if (command == "conv-last-request-duration-ms" && tokens.size() == 2) {
         ParseInt64Token(tokens[1].text, &current_conv->last_request_duration_ms);
       } else if (command == "msg-begin" && tokens.size() == 2) {
+        if (current_tool.has_value() && current_msg.has_value()) {
+          current_msg->tool_events.push_back(std::move(*current_tool));
+          current_tool.reset();
+        }
         if (current_msg.has_value()) {
           current_conv->messages.push_back(std::move(*current_msg));
         }
         current_msg = PersistedMessageState{};
         current_msg->id = tokens[1].text;
+      } else if (version >= 5 && command == "tool-begin" && tokens.size() == 2 &&
+                 current_msg.has_value()) {
+        if (current_tool.has_value()) {
+          current_msg->tool_events.push_back(std::move(*current_tool));
+        }
+        current_tool = PersistedMessageState::PersistedToolEventState{};
+        current_tool->call_id = tokens[1].text;
+      } else if (version >= 5 && command == "tool-end" && current_msg.has_value()) {
+        if (current_tool.has_value()) {
+          current_msg->tool_events.push_back(std::move(*current_tool));
+          current_tool.reset();
+        }
+      } else if (version >= 5 && current_tool.has_value()) {
+        if (command == "tool-id" && tokens.size() == 2) {
+          current_tool->tool_id = tokens[1].text;
+        } else if (command == "tool-name" && tokens.size() == 2) {
+          current_tool->display_name = tokens[1].text;
+        } else if (command == "tool-args" && tokens.size() == 2) {
+          current_tool->arguments_summary = tokens[1].text;
+        } else if (command == "tool-status" && tokens.size() == 2) {
+          current_tool->status = tokens[1].text;
+        } else if (command == "tool-permission" && tokens.size() == 2) {
+          current_tool->permission_decision = tokens[1].text;
+        } else if (command == "tool-scope" && tokens.size() == 2) {
+          current_tool->capability_scope = tokens[1].text;
+        } else if (command == "tool-started" && tokens.size() == 2) {
+          current_tool->started_at = tokens[1].text;
+        } else if (command == "tool-finished" && tokens.size() == 2) {
+          current_tool->finished_at = tokens[1].text;
+        } else if (command == "tool-duration-ms" && tokens.size() == 2) {
+          ParseInt64Token(tokens[1].text, &current_tool->duration_ms);
+        } else if (command == "tool-error" && tokens.size() == 2) {
+          current_tool->error = tokens[1].text;
+        } else if (command == "tool-output" && tokens.size() == 2) {
+          current_tool->output_summary = tokens[1].text;
+        }
       } else if (current_msg.has_value()) {
         if (command == "msg-role" && tokens.size() == 2) {
           current_msg->role = tokens[1].text;
@@ -502,6 +551,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
   }
   // Flush any open conversation/message at end of stream.
   if (version >= 3) {
+    if (current_tool.has_value() && current_msg.has_value()) {
+      current_msg->tool_events.push_back(std::move(*current_tool));
+    }
     if (current_msg.has_value() && current_conv.has_value()) {
       current_conv->messages.push_back(std::move(*current_msg));
     }
@@ -515,7 +567,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
 
 std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   std::ostringstream stream;
-  stream << "version 4\n";
+  stream << "version 5\n";
   stream << "sidebar-visible " << (state.sidebar_visible ? 1 : 0) << '\n';
   stream << "sidebar-width " << state.sidebar_width << '\n';
   stream << "bottom-panel-height " << state.bottom_panel_height << '\n';
@@ -643,6 +695,43 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
       }
       if (!msg.content.empty()) {
         stream << "msg-content " << QuoteCommandArg(msg.content) << '\n';
+      }
+      for (const auto& tool : msg.tool_events) {
+        stream << "tool-begin " << QuoteCommandArg(tool.call_id) << '\n';
+        if (!tool.tool_id.empty()) {
+          stream << "tool-id " << QuoteCommandArg(tool.tool_id) << '\n';
+        }
+        if (!tool.display_name.empty()) {
+          stream << "tool-name " << QuoteCommandArg(tool.display_name) << '\n';
+        }
+        if (!tool.arguments_summary.empty()) {
+          stream << "tool-args " << QuoteCommandArg(tool.arguments_summary) << '\n';
+        }
+        if (!tool.status.empty()) {
+          stream << "tool-status " << QuoteCommandArg(tool.status) << '\n';
+        }
+        if (!tool.permission_decision.empty()) {
+          stream << "tool-permission " << QuoteCommandArg(tool.permission_decision) << '\n';
+        }
+        if (!tool.capability_scope.empty()) {
+          stream << "tool-scope " << QuoteCommandArg(tool.capability_scope) << '\n';
+        }
+        if (!tool.started_at.empty()) {
+          stream << "tool-started " << QuoteCommandArg(tool.started_at) << '\n';
+        }
+        if (!tool.finished_at.empty()) {
+          stream << "tool-finished " << QuoteCommandArg(tool.finished_at) << '\n';
+        }
+        if (tool.duration_ms != 0) {
+          stream << "tool-duration-ms " << tool.duration_ms << '\n';
+        }
+        if (!tool.error.empty()) {
+          stream << "tool-error " << QuoteCommandArg(tool.error) << '\n';
+        }
+        if (!tool.output_summary.empty()) {
+          stream << "tool-output " << QuoteCommandArg(tool.output_summary) << '\n';
+        }
+        stream << "tool-end\n";
       }
     }
     stream << "conv-end\n";

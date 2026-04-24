@@ -598,10 +598,29 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = kPluginAsyncPollDelayMs;
     }
   }
+  const auto update_delay_from_project = [&](const ProjectWorkspaceState& project) {
+    if (!project.panel.chat.pending_tool_approval.has_value() ||
+        project.panel.chat.pending_tool_approval->expires_at_ticks == 0) {
+      return;
+    }
+    const Uint64 now = SDL_GetTicks();
+    const Uint64 expires_at = project.panel.chat.pending_tool_approval->expires_at_ticks;
+    const Uint32 delay = expires_at <= now ? 1 : static_cast<Uint32>(expires_at - now);
+    if (!next_delay.has_value() || delay < *next_delay) {
+      next_delay = delay;
+    }
+  };
+  update_delay_from_project(context_.current_project_state);
+  for (const auto& entry : context_.project_catalog.entries) {
+    if (entry != nullptr) {
+      update_delay_from_project(*entry);
+    }
+  }
   return next_delay;
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
+  ExpirePendingToolApprovals();
   if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
     return EventResult{
         .handled = true,

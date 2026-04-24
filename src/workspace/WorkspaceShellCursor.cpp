@@ -195,7 +195,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   if (context_.prompts.surface_visible) {
     const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
-    for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(dialog)) {
+    for (const SDL_FRect& button :
+         ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count)) {
       if (Contains(button, x, y)) {
         return CursorKind::Pointer;
       }

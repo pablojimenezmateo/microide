@@ -122,6 +122,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, {"error": {"message": "invalid api key"}})
             return
         if provider == "openai" and self.path == "/v1/chat/completions":
+            messages = payload.get("messages", [])
+            if payload.get("tools") and not any(entry.get("role") == "tool" for entry in messages):
+                self._send(200, {
+                    "choices": [{
+                        "message": {
+                            "content": "",
+                            "tool_calls": [{
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": payload["tools"][0]["function"]["name"],
+                                    "arguments": "{\"ping\":1}"
+                                }
+                            }]
+                        }
+                    }]
+                })
+                return
+            if any(entry.get("role") == "tool" for entry in messages):
+                self._send(200, {
+                    "choices": [{
+                        "message": {
+                            "content": "openai tool reply"
+                        }
+                    }]
+                })
+                return
             self._send(200, {
                 "choices": [{
                     "message": {
@@ -1896,6 +1923,88 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
   server.process.Shutdown();
 }
 
+void TestWorkspaceShellRepoOpenAiPluginApprovesNativeToolCalls() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "provider bridge tool call\n");
+  CopyRepoPlugin(plugins_root, "openai");
+  WritePluginInit(
+      plugins_root, "phase5-openai-tool",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "phase5-openai-tool",
+  setup = function(ctx)
+    ctx.mcp_tools.add({
+      id = "echo",
+      name = "Echo",
+      description = "Echo tool",
+      input_schema = "{\"type\":\"object\"}",
+      run = function(input_json)
+        return { output = "{\"pong\":1}" }
+      end
+    })
+  end
+})
+)lua");
+
+  FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
+  const std::filesystem::path bridge_binary = BuiltProviderBridgeBinary();
+  Expect(std::filesystem::is_regular_file(bridge_binary),
+         "openai tool-call test requires the native provider bridge binary");
+
+  WriteFile(config_home / "microide" / "config",
+            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
+                .settings =
+                    {
+                        {"openai.binary", bridge_binary.string()},
+                        {"openai.base_url", server.base_url},
+                        {"openai.model", "gpt-4.1-mini"},
+                    },
+                .disabled_keybinding_ids = {},
+            }));
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(shell.Initialize({}),
+         "openai tool-call test should restore user config before opening a project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "openai tool-call fixture should open the project");
+
+  std::string error_message;
+  Expect(WorkspaceShellTestAccess::SetProviderApiKey(shell, "openai.chat", "secret-openai",
+                                                     &error_message),
+         ("openai tool-call test should store API keys in the host secret store: " + error_message)
+             .c_str());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat use a tool"),
+         "openai tool-call test should drive the built-in chat command");
+
+  const Uint64 prompt_deadline = SDL_GetTicks() + 2000;
+  while (!WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
+         SDL_GetTicks() <= prompt_deadline) {
+    WorkspaceShellTestAccess::ConsumeProviderBridgeUpdates(shell);
+    WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    SDL_Delay(5);
+  }
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "native OpenAI tool calls should surface the host approval prompt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 0);
+
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+         "native OpenAI tool-call request should complete after approval");
+  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
+  Expect(messages.size() == 2 && messages.back().content == "openai tool reply" &&
+             messages.back().tool_events.size() == 1 &&
+             messages.back().tool_events.front().status == "Completed",
+         "native OpenAI tool calls should round-trip through the host approval and transcript path");
+
+  server.process.Shutdown();
+}
+
 void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2215,6 +2324,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion);
   AddTest(tests, "WorkspaceShell/RepoOpenAiPluginUsesNativeBridge",
           TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge);
+  AddTest(tests, "WorkspaceShell/RepoOpenAiPluginApprovesNativeToolCalls",
+          TestWorkspaceShellRepoOpenAiPluginApprovesNativeToolCalls);
   AddTest(tests, "WorkspaceShell/RepoAnthropicPluginUsesNativeBridge",
           TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",

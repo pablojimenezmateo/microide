@@ -3,11 +3,16 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -27,9 +32,26 @@ struct HttpResponse {
 };
 
 struct ProviderState {
+  struct ToolResponse {
+    bool denied = false;
+    std::string output_json;
+    std::string error;
+  };
+
+  struct ActiveRequest {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool cancelled = false;
+    std::unordered_map<std::string, ToolResponse> tool_responses;
+  };
+
   BridgeOptions options;
   std::string api_key;
   std::vector<std::string> cached_models;
+  std::mutex write_mutex;
+  std::mutex requests_mutex;
+  std::unordered_map<std::string, std::shared_ptr<ActiveRequest>> active_requests;
+  std::vector<std::thread> worker_threads;
 };
 
 std::string TrimTrailingSlash(std::string text) {
@@ -66,7 +88,7 @@ JsonObject BuildCapabilities() {
   JsonObject capabilities;
   capabilities["chat"] = true;
   capabilities["streaming"] = false;
-  capabilities["tool_call"] = false;
+  capabilities["tool_call"] = true;
   capabilities["system_prompt"] = true;
   capabilities["model_enumeration"] = true;
   capabilities["structured_output"] = false;
@@ -74,7 +96,8 @@ JsonObject BuildCapabilities() {
   return capabilities;
 }
 
-void WriteJsonLine(const JsonValue& value) {
+void WriteJsonLine(ProviderState* state, const JsonValue& value) {
+  std::lock_guard lock(state->write_mutex);
   std::cout << util::SerializeJson(value) << '\n';
   std::cout.flush();
 }
@@ -364,6 +387,170 @@ JsonArray BuildAnthropicMessages(const JsonValue& request) {
   return result;
 }
 
+struct ProviderToolSpec {
+  std::string id;
+  std::string display_name;
+  std::string description;
+  JsonValue input_schema = JsonObject{};
+};
+
+std::vector<ProviderToolSpec> ParseToolSpecs(const JsonValue& request) {
+  std::vector<ProviderToolSpec> tools;
+  const JsonValue& values = request["tools"];
+  if (!values.IsArray()) {
+    return tools;
+  }
+  for (const JsonValue& entry : values.AsArray()) {
+    if (!entry.IsObject()) {
+      continue;
+    }
+    ProviderToolSpec tool;
+    tool.id = entry["id"].AsString();
+    tool.display_name = entry["display_name"].AsString();
+    tool.description = entry["description"].AsString();
+    if (const auto schema = util::ParseJson(entry["input_schema"].AsString());
+        schema.has_value() && schema->IsObject()) {
+      tool.input_schema = *schema;
+    } else {
+      tool.input_schema = JsonObject{};
+    }
+    if (!tool.id.empty()) {
+      tools.push_back(std::move(tool));
+    }
+  }
+  return tools;
+}
+
+std::string CollapseWhitespace(std::string_view text) {
+  std::string out;
+  bool in_space = false;
+  for (char ch : text) {
+    const bool whitespace = ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+    if (whitespace) {
+      if (!in_space && !out.empty()) {
+        out.push_back(' ');
+      }
+      in_space = true;
+      continue;
+    }
+    in_space = false;
+    out.push_back(ch);
+  }
+  return out;
+}
+
+std::string SummarizeArguments(std::string_view arguments_json) {
+  std::string summary = CollapseWhitespace(arguments_json);
+  constexpr std::size_t kMaxSummaryLength = 160;
+  if (summary.size() > kMaxSummaryLength) {
+    summary.resize(kMaxSummaryLength - 3);
+    summary += "...";
+  }
+  return summary;
+}
+
+std::shared_ptr<ProviderState::ActiveRequest> FindActiveRequest(ProviderState* state,
+                                                                std::string_view request_id) {
+  if (state == nullptr || request_id.empty()) {
+    return nullptr;
+  }
+  std::lock_guard lock(state->requests_mutex);
+  const auto it = state->active_requests.find(std::string(request_id));
+  return it != state->active_requests.end() ? it->second : nullptr;
+}
+
+std::optional<ProviderState::ToolResponse> WaitForToolResponse(
+    const std::shared_ptr<ProviderState::ActiveRequest>& request,
+    std::string_view tool_call_id) {
+  if (request == nullptr || tool_call_id.empty()) {
+    return std::nullopt;
+  }
+
+  std::unique_lock lock(request->mutex);
+  request->cv.wait(lock, [&]() {
+    return request->cancelled ||
+           request->tool_responses.find(std::string(tool_call_id)) != request->tool_responses.end();
+  });
+  if (request->cancelled) {
+    return std::nullopt;
+  }
+  auto it = request->tool_responses.find(std::string(tool_call_id));
+  if (it == request->tool_responses.end()) {
+    return std::nullopt;
+  }
+  ProviderState::ToolResponse response = std::move(it->second);
+  request->tool_responses.erase(it);
+  return response;
+}
+
+bool EmitToolCall(ProviderState* state,
+                  std::string_view request_id,
+                  const ProviderToolSpec& tool,
+                  std::string_view tool_call_id,
+                  std::string arguments_json) {
+  if (state == nullptr || request_id.empty() || tool_call_id.empty() || tool.id.empty()) {
+    return false;
+  }
+
+  JsonObject payload;
+  payload["type"] = "tool_call";
+  payload["request_id"] = std::string(request_id);
+  payload["tool_call_id"] = std::string(tool_call_id);
+  payload["tool_id"] = tool.id;
+  payload["display_name"] = !tool.display_name.empty() ? tool.display_name : tool.id;
+  payload["arguments_json"] = arguments_json;
+  payload["arguments_summary"] = SummarizeArguments(arguments_json);
+  payload["capability_scope"] = tool.id;
+  WriteJsonLine(state, JsonValue(std::move(payload)));
+  return true;
+}
+
+std::string ParseDoneError(const JsonValue& payload, long status_code) {
+  std::string error = ErrorMessageFromJson(payload);
+  if (error.empty()) {
+    error = "Provider request failed with HTTP " + std::to_string(status_code);
+  }
+  return error;
+}
+
+JsonArray BuildOpenAiToolPayload(const std::vector<ProviderToolSpec>& tools) {
+  JsonArray result;
+  result.reserve(tools.size());
+  for (const auto& tool : tools) {
+    JsonObject function;
+    function["name"] = tool.id;
+    function["description"] = tool.description;
+    function["parameters"] = tool.input_schema;
+
+    JsonObject entry;
+    entry["type"] = "function";
+    entry["function"] = JsonValue(std::move(function));
+    result.push_back(JsonValue(std::move(entry)));
+  }
+  return result;
+}
+
+JsonArray BuildAnthropicToolPayload(const std::vector<ProviderToolSpec>& tools) {
+  JsonArray result;
+  result.reserve(tools.size());
+  for (const auto& tool : tools) {
+    JsonObject entry;
+    entry["name"] = tool.id;
+    entry["description"] = tool.description;
+    entry["input_schema"] = tool.input_schema;
+    result.push_back(JsonValue(std::move(entry)));
+  }
+  return result;
+}
+
+const ProviderToolSpec* FindToolSpec(const std::vector<ProviderToolSpec>& tools,
+                                     std::string_view tool_id) {
+  const auto it = std::find_if(tools.begin(), tools.end(), [&](const ProviderToolSpec& tool) {
+    return tool.id == tool_id;
+  });
+  return it != tools.end() ? &*it : nullptr;
+}
+
 void HandleInitialize(ProviderState* state, const JsonValue&) {
   JsonObject response;
   response["type"] = "initialized";
@@ -377,7 +564,7 @@ void HandleInitialize(ProviderState* state, const JsonValue&) {
     models_json.push_back(model);
   }
   response["models"] = JsonValue(std::move(models_json));
-  WriteJsonLine(JsonValue(std::move(response)));
+  WriteJsonLine(state, JsonValue(std::move(response)));
 }
 
 void HandleAuthCheck(ProviderState* state) {
@@ -391,7 +578,7 @@ void HandleAuthCheck(ProviderState* state) {
   if (!error_message.empty()) {
     response["error"] = error_message;
   }
-  WriteJsonLine(JsonValue(std::move(response)));
+  WriteJsonLine(state, JsonValue(std::move(response)));
 }
 
 void HandleModelList(ProviderState* state) {
@@ -409,87 +596,270 @@ void HandleModelList(ProviderState* state) {
   if (!error_message.empty()) {
     response["error"] = error_message;
   }
-  WriteJsonLine(JsonValue(std::move(response)));
+  WriteJsonLine(state, JsonValue(std::move(response)));
 }
 
-void HandleChat(ProviderState* state, const JsonValue& request) {
+void WriteDoneResponse(ProviderState* state,
+                       std::string_view request_id,
+                       std::string_view status,
+                       std::string content,
+                       std::string error) {
   JsonObject response;
   response["type"] = "done";
-  response["request_id"] = request["request_id"].AsString();
+  response["request_id"] = std::string(request_id);
+  response["status"] = std::string(status);
+  response["success"] = std::string_view(status) == "succeeded";
+  response["content"] = std::move(content);
+  response["error"] = std::move(error);
+  WriteJsonLine(state, JsonValue(std::move(response)));
+}
+
+bool RequestCancelled(const std::shared_ptr<ProviderState::ActiveRequest>& request) {
+  if (request == nullptr) {
+    return true;
+  }
+  std::lock_guard lock(request->mutex);
+  return request->cancelled;
+}
+
+bool HandleOpenAiToolCalls(ProviderState* state,
+                           const JsonValue& response,
+                           const std::vector<ProviderToolSpec>& tools,
+                           JsonArray* messages,
+                           const std::shared_ptr<ProviderState::ActiveRequest>& active_request,
+                           std::string_view request_id) {
+  const JsonValue& choices = response["choices"];
+  if (!choices.IsArray() || choices.AsArray().empty()) {
+    return false;
+  }
+  const JsonValue& message = choices[0]["message"];
+  const JsonValue& tool_calls = message["tool_calls"];
+  if (!tool_calls.IsArray() || tool_calls.AsArray().empty()) {
+    return false;
+  }
+
+  if (messages != nullptr) {
+    messages->push_back(message);
+  }
+
+  for (const JsonValue& tool_call : tool_calls.AsArray()) {
+    if (!tool_call.IsObject()) {
+      continue;
+    }
+    const std::string tool_call_id = tool_call["id"].AsString();
+    const std::string tool_id = tool_call["function"]["name"].AsString();
+    const std::string arguments_json = tool_call["function"]["arguments"].AsString();
+    const ProviderToolSpec fallback_tool{
+        .id = tool_id,
+        .display_name = tool_id,
+        .description = {},
+        .input_schema = JsonObject{},
+    };
+    const ProviderToolSpec* tool = FindToolSpec(tools, tool_id);
+    EmitToolCall(state, request_id, tool != nullptr ? *tool : fallback_tool, tool_call_id,
+                 arguments_json);
+    const auto tool_response = WaitForToolResponse(active_request, tool_call_id);
+    if (!tool_response.has_value()) {
+      WriteDoneResponse(state, request_id, "cancelled", {}, "Cancelled");
+      return true;
+    }
+    if (tool_response->denied) {
+      WriteDoneResponse(state, request_id, "failed", {}, tool_response->error);
+      return true;
+    }
+
+    JsonObject tool_message;
+    tool_message["role"] = "tool";
+    tool_message["tool_call_id"] = tool_call_id;
+    tool_message["content"] = tool_response->output_json;
+    if (messages != nullptr) {
+      messages->push_back(JsonValue(std::move(tool_message)));
+    }
+  }
+
+  return true;
+}
+
+bool HandleAnthropicToolCalls(ProviderState* state,
+                              const JsonValue& response,
+                              const std::vector<ProviderToolSpec>& tools,
+                              JsonArray* messages,
+                              const std::shared_ptr<ProviderState::ActiveRequest>& active_request,
+                              std::string_view request_id) {
+  const JsonValue& content = response["content"];
+  if (!content.IsArray()) {
+    return false;
+  }
+
+  JsonArray tool_results;
+  bool saw_tool_call = false;
+  for (const JsonValue& part : content.AsArray()) {
+    if (!part.IsObject() || part["type"].AsString() != "tool_use") {
+      continue;
+    }
+    saw_tool_call = true;
+    const std::string tool_call_id = part["id"].AsString();
+    const std::string tool_id = part["name"].AsString();
+    const std::string arguments_json = util::SerializeJson(part["input"]);
+    const ProviderToolSpec fallback_tool{
+        .id = tool_id,
+        .display_name = tool_id,
+        .description = {},
+        .input_schema = JsonObject{},
+    };
+    const ProviderToolSpec* tool = FindToolSpec(tools, tool_id);
+    EmitToolCall(state, request_id, tool != nullptr ? *tool : fallback_tool, tool_call_id,
+                 arguments_json);
+    const auto tool_response = WaitForToolResponse(active_request, tool_call_id);
+    if (!tool_response.has_value()) {
+      WriteDoneResponse(state, request_id, "cancelled", {}, "Cancelled");
+      return true;
+    }
+    if (tool_response->denied) {
+      WriteDoneResponse(state, request_id, "failed", {}, tool_response->error);
+      return true;
+    }
+
+    JsonObject tool_result;
+    tool_result["type"] = "tool_result";
+    tool_result["tool_use_id"] = tool_call_id;
+    tool_result["content"] = tool_response->output_json;
+    tool_results.push_back(JsonValue(std::move(tool_result)));
+  }
+
+  if (!saw_tool_call) {
+    return false;
+  }
+
+  if (messages != nullptr) {
+    JsonObject assistant_message;
+    assistant_message["role"] = "assistant";
+    assistant_message["content"] = content;
+    messages->push_back(JsonValue(std::move(assistant_message)));
+
+    JsonObject result_message;
+    result_message["role"] = "user";
+    result_message["content"] = JsonValue(std::move(tool_results));
+    messages->push_back(JsonValue(std::move(result_message)));
+  }
+  return true;
+}
+
+void HandleChatRequest(ProviderState* state,
+                       JsonValue request,
+                       std::shared_ptr<ProviderState::ActiveRequest> active_request) {
+  const std::string request_id = request["request_id"].AsString();
 
   if (state == nullptr || state->api_key.empty()) {
-    response["success"] = false;
-    response["error"] = "Missing API key";
-    response["content"] = "";
-    WriteJsonLine(JsonValue(std::move(response)));
+    WriteDoneResponse(state, request_id, "failed", {}, "Missing API key");
     return;
   }
 
-  JsonObject payload;
-  payload["model"] = ResolveModel(*state, request);
-  std::vector<std::string> headers;
-
-  std::string url;
+  const std::vector<ProviderToolSpec> tools = ParseToolSpecs(request);
+  JsonArray openai_messages;
+  JsonArray anthropic_messages;
   if (state->options.provider == "anthropic") {
-    payload["max_tokens"] = static_cast<std::int64_t>(2048);
-    const std::string system_prompt = request["system_prompt"].AsString();
-    if (!system_prompt.empty()) {
-      payload["system"] = system_prompt;
-    }
-    payload["messages"] = JsonValue(BuildAnthropicMessages(request));
-    url = JoinUrl(state->options.base_url, "/v1/messages");
+    anthropic_messages = BuildAnthropicMessages(request);
+  } else {
+    openai_messages = BuildOpenAiMessages(request);
+  }
+
+  std::vector<std::string> headers;
+  if (state->options.provider == "anthropic") {
     headers.emplace_back("x-api-key: " + state->api_key);
     headers.emplace_back("anthropic-version: 2023-06-01");
     headers.emplace_back("content-type: application/json");
   } else {
-    payload["messages"] = JsonValue(BuildOpenAiMessages(request));
-    payload["stream"] = false;
-    url = JoinUrl(state->options.base_url, "/v1/chat/completions");
     headers.emplace_back("Authorization: Bearer " + state->api_key);
     headers.emplace_back("content-type: application/json");
   }
 
-  const HttpResponse http_response =
-      PerformRequest("POST", url, headers, util::SerializeJson(JsonValue(std::move(payload))));
-  if (!http_response.error.empty()) {
-    response["success"] = false;
-    response["error"] = http_response.error;
-    response["content"] = "";
-    WriteJsonLine(JsonValue(std::move(response)));
-    return;
-  }
-
-  const auto parsed = util::ParseJson(http_response.body);
-  if (!parsed.has_value()) {
-    response["success"] = false;
-    response["error"] = "Provider returned malformed JSON";
-    response["content"] = "";
-    WriteJsonLine(JsonValue(std::move(response)));
-    return;
-  }
-
-  if (http_response.status_code < 200 || http_response.status_code >= 300) {
-    std::string error = ErrorMessageFromJson(*parsed);
-    if (error.empty()) {
-      error = "Provider request failed with HTTP " + std::to_string(http_response.status_code);
+  while (true) {
+    if (RequestCancelled(active_request)) {
+      WriteDoneResponse(state, request_id, "cancelled", {}, "Cancelled");
+      return;
     }
-    response["success"] = false;
-    response["error"] = error;
-    response["content"] = "";
-    WriteJsonLine(JsonValue(std::move(response)));
+
+    JsonObject payload;
+    payload["model"] = ResolveModel(*state, request);
+    std::string url;
+    if (state->options.provider == "anthropic") {
+      payload["max_tokens"] = static_cast<std::int64_t>(2048);
+      const std::string system_prompt = request["system_prompt"].AsString();
+      if (!system_prompt.empty()) {
+        payload["system"] = system_prompt;
+      }
+      payload["messages"] = anthropic_messages;
+      if (!tools.empty()) {
+        payload["tools"] = BuildAnthropicToolPayload(tools);
+      }
+      url = JoinUrl(state->options.base_url, "/v1/messages");
+    } else {
+      payload["messages"] = openai_messages;
+      payload["stream"] = false;
+      if (!tools.empty()) {
+        payload["tools"] = BuildOpenAiToolPayload(tools);
+      }
+      url = JoinUrl(state->options.base_url, "/v1/chat/completions");
+    }
+
+    const HttpResponse http_response =
+        PerformRequest("POST", url, headers, util::SerializeJson(JsonValue(std::move(payload))));
+    if (!http_response.error.empty()) {
+      WriteDoneResponse(state, request_id, "failed", {}, http_response.error);
+      return;
+    }
+
+    const auto parsed = util::ParseJson(http_response.body);
+    if (!parsed.has_value()) {
+      WriteDoneResponse(state, request_id, "failed", {}, "Provider returned malformed JSON");
+      return;
+    }
+
+    if (http_response.status_code < 200 || http_response.status_code >= 300) {
+      WriteDoneResponse(state, request_id, "failed", {},
+                        ParseDoneError(*parsed, http_response.status_code));
+      return;
+    }
+
+    const bool handled_tool_call =
+        state->options.provider == "anthropic"
+            ? HandleAnthropicToolCalls(state, *parsed, tools, &anthropic_messages, active_request,
+                                       request_id)
+            : HandleOpenAiToolCalls(state, *parsed, tools, &openai_messages, active_request,
+                                    request_id);
+    if (handled_tool_call) {
+      if (RequestCancelled(active_request)) {
+        WriteDoneResponse(state, request_id, "cancelled", {}, "Cancelled");
+        return;
+      }
+      if (state->options.provider == "anthropic") {
+        const JsonValue& content = (*parsed)["content"];
+        bool has_tool_use = false;
+        if (content.IsArray()) {
+          for (const JsonValue& part : content.AsArray()) {
+            if (part.IsObject() && part["type"].AsString() == "tool_use") {
+              has_tool_use = true;
+              break;
+            }
+          }
+        }
+        if (has_tool_use) {
+          continue;
+        }
+      } else if ((*parsed)["choices"][0]["message"]["tool_calls"].IsArray() &&
+                 !(*parsed)["choices"][0]["message"]["tool_calls"].AsArray().empty()) {
+        continue;
+      }
+    }
+
+    const std::string content =
+        state->options.provider == "anthropic"
+            ? ParseAnthropicContent(*parsed)
+            : ParseOpenAiContent(*parsed);
+    WriteDoneResponse(state, request_id, "succeeded", content, {});
     return;
   }
-
-  std::string content;
-  if (state->options.provider == "anthropic") {
-    content = ParseAnthropicContent(*parsed);
-  } else {
-    content = ParseOpenAiContent(*parsed);
-  }
-  response["success"] = true;
-  response["error"] = "";
-  response["content"] = content;
-  WriteJsonLine(JsonValue(std::move(response)));
 }
 
 }  // namespace
@@ -505,17 +875,14 @@ int RunProviderBridge(const BridgeOptions& options) {
     return 1;
   }
 
-  ProviderState state{
-      .options =
-          BridgeOptions{
-              .provider = options.provider,
-              .base_url = TrimTrailingSlash(options.base_url),
-              .default_model = options.default_model.empty() ? FallbackModel(options.provider)
-                                                             : options.default_model,
-          },
-      .api_key = {},
-      .cached_models = FallbackModels(options.provider),
+  ProviderState state;
+  state.options = BridgeOptions{
+      .provider = options.provider,
+      .base_url = TrimTrailingSlash(options.base_url),
+      .default_model = options.default_model.empty() ? FallbackModel(options.provider)
+                                                     : options.default_model,
   };
+  state.cached_models = FallbackModels(options.provider);
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -542,14 +909,65 @@ int RunProviderBridge(const BridgeOptions& options) {
       continue;
     }
     if (type == "chat") {
-      HandleChat(&state, *request);
+      const std::string request_id = (*request)["request_id"].AsString();
+      if (request_id.empty()) {
+        continue;
+      }
+      auto active_request = std::make_shared<ProviderState::ActiveRequest>();
+      {
+        std::lock_guard lock(state.requests_mutex);
+        state.active_requests[request_id] = active_request;
+      }
+      state.worker_threads.emplace_back([&state, request = *request, active_request, request_id]() mutable {
+        HandleChatRequest(&state, std::move(request), active_request);
+        std::lock_guard lock(state.requests_mutex);
+        state.active_requests.erase(request_id);
+      });
+      continue;
+    }
+    if (type == "tool_result" || type == "tool_denied") {
+      const std::string request_id = (*request)["request_id"].AsString();
+      const std::string tool_call_id = (*request)["tool_call_id"].AsString();
+      if (request_id.empty() || tool_call_id.empty()) {
+        continue;
+      }
+      if (auto active_request = FindActiveRequest(&state, request_id); active_request != nullptr) {
+        std::lock_guard lock(active_request->mutex);
+        ProviderState::ToolResponse response;
+        response.denied = type == "tool_denied";
+        response.output_json = (*request)["output"].AsString();
+        response.error = (*request)["error"].AsString();
+        active_request->tool_responses[tool_call_id] = std::move(response);
+        active_request->cv.notify_all();
+      }
       continue;
     }
     if (type == "cancel") {
+      const std::string request_id = (*request)["request_id"].AsString();
+      if (auto active_request = FindActiveRequest(&state, request_id); active_request != nullptr) {
+        std::lock_guard lock(active_request->mutex);
+        active_request->cancelled = true;
+        active_request->cv.notify_all();
+      }
       continue;
     }
     if (type == "shutdown") {
+      std::lock_guard requests_lock(state.requests_mutex);
+      for (const auto& [id, active_request] : state.active_requests) {
+        if (active_request == nullptr) {
+          continue;
+        }
+        std::lock_guard active_lock(active_request->mutex);
+        active_request->cancelled = true;
+        active_request->cv.notify_all();
+      }
       break;
+    }
+  }
+
+  for (auto& worker : state.worker_threads) {
+    if (worker.joinable()) {
+      worker.join();
     }
   }
 

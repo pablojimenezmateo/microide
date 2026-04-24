@@ -37,7 +37,7 @@ constexpr float kDirtyPromptButtonWidth = 96.0f;
 constexpr float kDirtyPromptButtonHeight = 28.0f;
 constexpr float kDirtyPromptButtonGap = 10.0f;
 constexpr float kPromptSurfaceWidth = 520.0f;
-constexpr float kPromptSurfaceHeight = 188.0f;
+constexpr float kPromptSurfaceHeight = 216.0f;
 constexpr float kPromptSurfaceInputHeight = 24.0f;
 constexpr float kPromptSurfaceButtonWidth = 108.0f;
 constexpr float kPromptSurfaceButtonHeight = 28.0f;
@@ -261,15 +261,20 @@ SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
                   full.y + std::floor((full.h - height) * 0.5f), width, height);
 }
 
-std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog) {
-  const float total_width = kPromptSurfaceButtonWidth * 2.0f + kPromptSurfaceButtonGap;
+std::vector<SDL_FRect> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog, int button_count) {
+  const int resolved_count = std::max(1, button_count);
+  const float total_width = kPromptSurfaceButtonWidth * static_cast<float>(resolved_count) +
+                            kPromptSurfaceButtonGap * static_cast<float>(resolved_count - 1);
   const float start_x = dialog.x + dialog.w - total_width - 16.0f;
   const float y = dialog.y + dialog.h - kPromptSurfaceButtonHeight - 16.0f;
-  return {
-      MakeRect(start_x, y, kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight),
-      MakeRect(start_x + kPromptSurfaceButtonWidth + kPromptSurfaceButtonGap, y,
-               kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight),
-  };
+  std::vector<SDL_FRect> rects;
+  rects.reserve(static_cast<std::size_t>(resolved_count));
+  for (int i = 0; i < resolved_count; ++i) {
+    rects.push_back(MakeRect(start_x + static_cast<float>(i) *
+                                           (kPromptSurfaceButtonWidth + kPromptSurfaceButtonGap),
+                             y, kPromptSurfaceButtonWidth, kPromptSurfaceButtonHeight));
+  }
+  return rects;
 }
 
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog) {

@@ -921,6 +921,12 @@ WorkspaceShell::ChatTranscriptLayout WorkspaceShell::BuildChatTranscriptLayout(
     parts.push_back("Tool");
     parts.push_back(!event.display_name.empty() ? event.display_name : event.tool_id);
     parts.push_back(event.status);
+    if (!event.permission_decision.empty()) {
+      parts.push_back(event.permission_decision);
+    }
+    if (!event.capability_scope.empty()) {
+      parts.push_back(event.capability_scope);
+    }
     if (const std::string duration = FormatDurationMs(event.duration_ms); !duration.empty()) {
       parts.push_back(duration);
     }

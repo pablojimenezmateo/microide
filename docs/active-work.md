@@ -439,16 +439,16 @@ Open work:
     and remote-link confirmation, ghost-text inline completion with accept or dismiss flow, and
     built-in `chat`, `inline-complete`, and `mcp` commands
   - first-pass external-agent execution is wired through long-lived stdio subprocesses, and MCP
-    tool invocation flows through host-owned permission-checked command surfaces and output
+    tool invocation now flows through host-owned permission checks, per-project chat approval
+    prompts, session-scoped remembered approvals, persisted transcript tool events, and output
     channels
   - repo-owned `openai` and `anthropic` plugins now use the native `microide_provider_bridge`
-    binary for direct API-key-backed chat instead of shell wrappers or vendor CLIs
+    binary for direct API-key-backed chat and host-mediated tool calls instead of shell wrappers or
+    vendor CLIs
   - dedicated end-to-end coverage now lives in `tests/Phase5Tests.cpp`
 
 Open work:
 
-- add host-owned tool approval prompts, remembered session approvals, and richer in-transcript tool
-  execution plumbing on top of the shipped transcript and provider bridge paths
 - broaden the external-agent runtime beyond stdio only when a real HTTP, WebSocket, or ACP-backed
   integration requires it
 - add richer streamed updates, tool-permission prompts, and broader `WorkspaceAiContext`

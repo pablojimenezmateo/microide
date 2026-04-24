@@ -34,10 +34,13 @@ enum class ToolMode {
 };
 
 struct ToolEvent {
+  std::string call_id;
   std::string tool_id;
   std::string display_name;
   std::string arguments_summary;
   std::string status;
+  std::string permission_decision;
+  std::string capability_scope;
   std::string started_at;
   std::string finished_at;
   std::int64_t duration_ms = 0;

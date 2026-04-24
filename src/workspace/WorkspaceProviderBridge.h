@@ -26,7 +26,9 @@ namespace microide::workspace {
 // Protocol (host → bridge):
 //   {"type":"initialize","api_key":"..."}\n
 //   {"type":"chat","request_id":"r1","model":"...","system_prompt":"...","tool_mode":"no_tools",
-//    "messages":[{"role":"user","content":"..."}]}\n
+//    "messages":[{"role":"user","content":"..."}],"tools":[...]}\n
+//   {"type":"tool_result","request_id":"r1","tool_call_id":"call-1","output":"{}"}\n
+//   {"type":"tool_denied","request_id":"r1","tool_call_id":"call-1","error":"..."}\n
 //   {"type":"cancel","request_id":"r1"}\n
 //   {"type":"model_list"}\n
 //   {"type":"auth_check"}\n
@@ -35,20 +37,41 @@ namespace microide::workspace {
 // Protocol (bridge → host):
 //   {"type":"initialized","capabilities":{"chat":true,...},"models":["..."]}\n
 //   {"type":"chunk","request_id":"r1","content":"..."}\n
-//   {"type":"done","request_id":"r1","success":true,"content":"...","error":""}\n
+//   {"type":"tool_call","request_id":"r1","tool_call_id":"call-1","tool_id":"...",
+//    "display_name":"...","arguments_json":"{}","arguments_summary":"..."}\n
+//   {"type":"done","request_id":"r1","status":"succeeded","content":"...","error":""}\n
 //   {"type":"auth_status","status":"valid"}\n   // "valid" | "invalid" | "missing"
 //   {"type":"model_list","models":["..."]}\n
 //
 // "done" may carry a full "content" field (non-streaming), or just close a streaming sequence.
 class WorkspaceProviderBridgeManager {
  public:
+  struct ToolSpec {
+    std::string id;
+    std::string display_name;
+    std::string description;
+    std::string input_schema;
+  };
+
   struct ChatUpdate {
+    enum class Kind {
+      Chunk,
+      ToolCall,
+      Done,
+    };
+
+    Kind kind = Kind::Chunk;
     std::string agent_id;
     std::string request_id;
     std::string chunk;
-    bool finished = false;
-    bool succeeded = false;
     std::string status_text;
+    std::string terminal_status;
+    std::string tool_call_id;
+    std::string tool_id;
+    std::string display_name;
+    std::string arguments_json;
+    std::string arguments_summary;
+    std::string capability_scope;
   };
 
   WorkspaceProviderBridgeManager();
@@ -85,7 +108,20 @@ class WorkspaceProviderBridgeManager {
                 const std::vector<std::pair<std::string, std::string>>& messages,
                 const std::string& model,
                 const std::string& system_prompt,
-                const std::string& tool_mode);
+                const std::string& tool_mode,
+                const std::vector<ToolSpec>& tools);
+
+  // Return a successful tool result to the bridge.
+  bool SendToolResult(const std::string& agent_id,
+                      const std::string& request_id,
+                      const std::string& tool_call_id,
+                      const std::string& output_json);
+
+  // Tell the bridge that the host denied or failed a tool invocation.
+  bool SendToolDenied(const std::string& agent_id,
+                      const std::string& request_id,
+                      const std::string& tool_call_id,
+                      const std::string& error_message);
 
   // Ask the bridge to cancel the given request.
   void CancelRequest(const std::string& agent_id, const std::string& request_id);

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "platform/AsyncSubprocess.h"
+#include "util/JsonValue.h"
 
 namespace microide::workspace {
 
@@ -31,142 +32,34 @@ struct WorkspaceProviderBridgeManager::BridgeEntry {
 // ---------------------------------------------------------------------------
 
 namespace {
+using microide::util::JsonArray;
+using microide::util::JsonObject;
+using microide::util::JsonValue;
 
-std::string JsonEscape(std::string_view s) {
-  std::string out;
-  out.reserve(s.size());
-  for (char c : s) {
-    switch (c) {
-      case '"':  out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n";  break;
-      case '\r': out += "\\r";  break;
-      case '\t': out += "\\t";  break;
-      default:   out += c;      break;
-    }
-  }
-  return out;
-}
-
-// Extract a string value for a top-level key from a flat JSON object.
-std::optional<std::string> JsonGetString(std::string_view json, std::string_view key) {
-  const std::string needle = "\"" + std::string(key) + "\"";
-  std::size_t pos = 0;
-  while (pos < json.size()) {
-    const auto found = json.find(needle, pos);
-    if (found == std::string_view::npos) return std::nullopt;
-    pos = found + needle.size();
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-    if (pos >= json.size() || json[pos] != ':') continue;
-    ++pos;
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-    if (pos >= json.size() || json[pos] != '"') return std::nullopt;
-    ++pos;
-    std::string value;
-    while (pos < json.size() && json[pos] != '"') {
-      if (json[pos] == '\\' && pos + 1 < json.size()) {
-        ++pos;
-        switch (json[pos]) {
-          case '"':  value += '"';  break;
-          case '\\': value += '\\'; break;
-          case 'n':  value += '\n'; break;
-          case 'r':  value += '\r'; break;
-          case 't':  value += '\t'; break;
-          default:   value += json[pos]; break;
-        }
-      } else {
-        value += json[pos];
-      }
-      ++pos;
-    }
-    return value;
-  }
-  return std::nullopt;
-}
-
-// Extract a boolean value for a top-level key.
-std::optional<bool> JsonGetBool(std::string_view json, std::string_view key) {
-  const std::string needle = "\"" + std::string(key) + "\"";
-  const auto found = json.find(needle);
-  if (found == std::string_view::npos) return std::nullopt;
-  std::size_t pos = found + needle.size();
-  while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-  if (pos >= json.size() || json[pos] != ':') return std::nullopt;
-  ++pos;
-  while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-  if (pos + 4 <= json.size() && json.substr(pos, 4) == "true")  return true;
-  if (pos + 5 <= json.size() && json.substr(pos, 5) == "false") return false;
-  return std::nullopt;
-}
-
-// Extract an array of strings for a top-level key.
-std::vector<std::string> JsonGetStringArray(std::string_view json, std::string_view key) {
-  const std::string needle = "\"" + std::string(key) + "\"";
-  const auto found = json.find(needle);
-  if (found == std::string_view::npos) return {};
-  std::size_t pos = found + needle.size();
-  while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-  if (pos >= json.size() || json[pos] != ':') return {};
-  ++pos;
-  while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n')) ++pos;
-  if (pos >= json.size() || json[pos] != '[') return {};
-  ++pos;
-  std::vector<std::string> result;
-  while (pos < json.size() && json[pos] != ']') {
-    while (pos < json.size() && json[pos] != '"' && json[pos] != ']') ++pos;
-    if (pos >= json.size() || json[pos] == ']') break;
-    ++pos;
-    std::string item;
-    while (pos < json.size() && json[pos] != '"') {
-      if (json[pos] == '\\' && pos + 1 < json.size()) {
-        ++pos;
-        item += json[pos];
-      } else {
-        item += json[pos];
-      }
-      ++pos;
-    }
-    if (pos < json.size()) ++pos;
-    result.push_back(std::move(item));
+JsonArray BuildMessagesJson(const std::vector<std::pair<std::string, std::string>>& messages) {
+  JsonArray result;
+  result.reserve(messages.size());
+  for (const auto& [role, content] : messages) {
+    JsonObject message;
+    message["role"] = role;
+    message["content"] = content;
+    result.push_back(JsonValue(std::move(message)));
   }
   return result;
 }
 
-// Extract the raw text of a nested JSON object for the given key (e.g. "capabilities":{...}).
-// Returns an empty string if not found.
-std::string JsonGetObject(std::string_view json, std::string_view key) {
-  const std::string needle = "\"" + std::string(key) + "\"";
-  const auto found = json.find(needle);
-  if (found == std::string_view::npos) return {};
-  std::size_t pos = found + needle.size();
-  while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-  if (pos >= json.size() || json[pos] != ':') return {};
-  ++pos;
-  while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-  if (pos >= json.size() || json[pos] != '{') return {};
-  const std::size_t start = pos;
-  int depth = 0;
-  while (pos < json.size()) {
-    if (json[pos] == '{') ++depth;
-    else if (json[pos] == '}') { --depth; if (depth == 0) { ++pos; break; } }
-    ++pos;
+JsonArray BuildToolsJson(const std::vector<WorkspaceProviderBridgeManager::ToolSpec>& tools) {
+  JsonArray result;
+  result.reserve(tools.size());
+  for (const auto& tool : tools) {
+    JsonObject entry;
+    entry["id"] = tool.id;
+    entry["display_name"] = tool.display_name;
+    entry["description"] = tool.description;
+    entry["input_schema"] = tool.input_schema;
+    result.push_back(JsonValue(std::move(entry)));
   }
-  return std::string(json.substr(start, pos - start));
-}
-
-// Build the messages JSON array from (role, content) pairs.
-std::string BuildMessagesJson(const std::vector<std::pair<std::string, std::string>>& messages) {
-  std::string out = "[";
-  for (std::size_t i = 0; i < messages.size(); ++i) {
-    if (i > 0) out += ',';
-    out += "{\"role\":\"";
-    out += JsonEscape(messages[i].first);
-    out += "\",\"content\":\"";
-    out += JsonEscape(messages[i].second);
-    out += "\"}";
-  }
-  out += ']';
-  return out;
+  return result;
 }
 
 }  // namespace
@@ -269,9 +162,10 @@ bool WorkspaceProviderBridgeManager::StartBridge(const std::string& agent_id,
   }
 
   // Send the initialize command with the API key.
-  const std::string init_cmd =
-      "{\"type\":\"initialize\",\"api_key\":\"" + JsonEscape(api_key) + "\"}\n";
-  WriteCommand(agent_id, init_cmd);
+  JsonObject init_payload;
+  init_payload["type"] = "initialize";
+  init_payload["api_key"] = api_key;
+  WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(init_payload))) + "\n");
   return true;
 }
 
@@ -287,31 +181,61 @@ bool WorkspaceProviderBridgeManager::SendChat(
     const std::vector<std::pair<std::string, std::string>>& messages,
     const std::string& model,
     const std::string& system_prompt,
-    const std::string& tool_mode) {
-  const std::string cmd =
-      "{\"type\":\"chat\""
-      ",\"request_id\":\"" + JsonEscape(request_id) + "\""
-      ",\"model\":\"" + JsonEscape(model) + "\""
-      ",\"system_prompt\":\"" + JsonEscape(system_prompt) + "\""
-      ",\"tool_mode\":\"" + JsonEscape(tool_mode) + "\""
-      ",\"messages\":" + BuildMessagesJson(messages) +
-      "}\n";
-  return WriteCommand(agent_id, cmd);
+    const std::string& tool_mode,
+    const std::vector<ToolSpec>& tools) {
+  JsonObject payload;
+  payload["type"] = "chat";
+  payload["request_id"] = request_id;
+  payload["model"] = model;
+  payload["system_prompt"] = system_prompt;
+  payload["tool_mode"] = tool_mode;
+  payload["messages"] = BuildMessagesJson(messages);
+  payload["tools"] = BuildToolsJson(tools);
+  return WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(payload))) + "\n");
+}
+
+bool WorkspaceProviderBridgeManager::SendToolResult(const std::string& agent_id,
+                                                    const std::string& request_id,
+                                                    const std::string& tool_call_id,
+                                                    const std::string& output_json) {
+  JsonObject payload;
+  payload["type"] = "tool_result";
+  payload["request_id"] = request_id;
+  payload["tool_call_id"] = tool_call_id;
+  payload["output"] = output_json;
+  return WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(payload))) + "\n");
+}
+
+bool WorkspaceProviderBridgeManager::SendToolDenied(const std::string& agent_id,
+                                                    const std::string& request_id,
+                                                    const std::string& tool_call_id,
+                                                    const std::string& error_message) {
+  JsonObject payload;
+  payload["type"] = "tool_denied";
+  payload["request_id"] = request_id;
+  payload["tool_call_id"] = tool_call_id;
+  payload["error"] = error_message;
+  return WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(payload))) + "\n");
 }
 
 void WorkspaceProviderBridgeManager::CancelRequest(const std::string& agent_id,
                                                    const std::string& request_id) {
-  const std::string cmd =
-      "{\"type\":\"cancel\",\"request_id\":\"" + JsonEscape(request_id) + "\"}\n";
-  WriteCommand(agent_id, cmd);
+  JsonObject payload;
+  payload["type"] = "cancel";
+  payload["request_id"] = request_id;
+  WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(payload))) + "\n");
 }
 
 void WorkspaceProviderBridgeManager::RequestModelList(const std::string& agent_id) {
-  WriteCommand(agent_id, "{\"type\":\"model_list\"}\n");
+  JsonObject payload;
+  payload["type"] = "model_list";
+  WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(payload))) + "\n");
 }
 
 void WorkspaceProviderBridgeManager::RequestAuthCheck(const std::string& agent_id) {
-  WriteCommand(agent_id, "{\"type\":\"auth_check\"}\n");
+  JsonObject payload;
+  payload["type"] = "auth_check";
+  WriteCommand(agent_id, util::SerializeJson(JsonValue(std::move(payload))) + "\n");
 }
 
 std::optional<WorkspaceProviderBridgeManager::ChatUpdate>
@@ -377,24 +301,35 @@ void WorkspaceProviderBridgeManager::ReaderLoop(const std::string& agent_id, Bri
 
 void WorkspaceProviderBridgeManager::HandleMessage(const std::string& agent_id,
                                                    const std::string& line) {
-  const auto type = JsonGetString(line, "type");
-  if (!type.has_value()) {
+  const auto parsed = util::ParseJson(line);
+  if (!parsed.has_value() || !parsed->IsObject()) {
+    return;
+  }
+  const std::string type = (*parsed)["type"].AsString();
+  if (type.empty()) {
     return;
   }
 
-  if (*type == "initialized" || *type == "capabilities") {
+  if (type == "initialized" || type == "capabilities") {
     ProviderCapabilities caps;
-    const std::string caps_obj = JsonGetObject(line, "capabilities");
-    if (!caps_obj.empty()) {
-      caps.chat             = JsonGetBool(caps_obj, "chat").value_or(false);
-      caps.streaming        = JsonGetBool(caps_obj, "streaming").value_or(false);
-      caps.tool_call        = JsonGetBool(caps_obj, "tool_call").value_or(false);
-      caps.system_prompt    = JsonGetBool(caps_obj, "system_prompt").value_or(false);
-      caps.model_enumeration= JsonGetBool(caps_obj, "model_enumeration").value_or(false);
-      caps.structured_output= JsonGetBool(caps_obj, "structured_output").value_or(false);
-      caps.image_attachment = JsonGetBool(caps_obj, "image_attachment").value_or(false);
+    if ((*parsed)["capabilities"].IsObject()) {
+      const JsonValue& caps_obj = (*parsed)["capabilities"];
+      caps.chat = caps_obj["chat"].AsBool(false);
+      caps.streaming = caps_obj["streaming"].AsBool(false);
+      caps.tool_call = caps_obj["tool_call"].AsBool(false);
+      caps.system_prompt = caps_obj["system_prompt"].AsBool(false);
+      caps.model_enumeration = caps_obj["model_enumeration"].AsBool(false);
+      caps.structured_output = caps_obj["structured_output"].AsBool(false);
+      caps.image_attachment = caps_obj["image_attachment"].AsBool(false);
     }
-    auto models = JsonGetStringArray(line, "models");
+    std::vector<std::string> models;
+    if ((*parsed)["models"].IsArray()) {
+      for (const JsonValue& model : (*parsed)["models"].AsArray()) {
+        if (model.IsString()) {
+          models.push_back(model.AsString());
+        }
+      }
+    }
     std::lock_guard lock(mutex_);
     auto it = bridges_.find(agent_id);
     if (it != bridges_.end()) {
@@ -411,13 +346,13 @@ void WorkspaceProviderBridgeManager::HandleMessage(const std::string& agent_id,
     return;
   }
 
-  if (*type == "auth_status") {
-    const auto status_str = JsonGetString(line, "status");
+  if (type == "auth_status") {
+    const std::string status_str = (*parsed)["status"].AsString();
     ProviderAuthStatus auth = ProviderAuthStatus::Unknown;
-    if (status_str) {
-      if (*status_str == "valid")   auth = ProviderAuthStatus::KeyValid;
-      else if (*status_str == "invalid") auth = ProviderAuthStatus::KeyInvalid;
-      else if (*status_str == "missing") auth = ProviderAuthStatus::KeyMissing;
+    if (!status_str.empty()) {
+      if (status_str == "valid")   auth = ProviderAuthStatus::KeyValid;
+      else if (status_str == "invalid") auth = ProviderAuthStatus::KeyInvalid;
+      else if (status_str == "missing") auth = ProviderAuthStatus::KeyMissing;
       else auth = ProviderAuthStatus::KeyPresent;
     }
     std::lock_guard lock(mutex_);
@@ -428,8 +363,15 @@ void WorkspaceProviderBridgeManager::HandleMessage(const std::string& agent_id,
     return;
   }
 
-  if (*type == "model_list") {
-    auto models = JsonGetStringArray(line, "models");
+  if (type == "model_list") {
+    std::vector<std::string> models;
+    if ((*parsed)["models"].IsArray()) {
+      for (const JsonValue& model : (*parsed)["models"].AsArray()) {
+        if (model.IsString()) {
+          models.push_back(model.AsString());
+        }
+      }
+    }
     std::lock_guard lock(mutex_);
     auto it = bridges_.find(agent_id);
     if (it != bridges_.end()) {
@@ -438,35 +380,54 @@ void WorkspaceProviderBridgeManager::HandleMessage(const std::string& agent_id,
     return;
   }
 
-  if (*type == "chunk") {
-    const auto request_id = JsonGetString(line, "request_id");
-    const auto content    = JsonGetString(line, "content");
-    if (request_id && content) {
+  if (type == "chunk") {
+    const std::string request_id = (*parsed)["request_id"].AsString();
+    const std::string content = (*parsed)["content"].AsString();
+    if (!request_id.empty()) {
       ChatUpdate update;
-      update.agent_id    = agent_id;
-      update.request_id  = *request_id;
-      update.chunk       = *content;
-      update.finished    = false;
-      update.succeeded   = false;
+      update.kind = ChatUpdate::Kind::Chunk;
+      update.agent_id = agent_id;
+      update.request_id = request_id;
+      update.chunk = content;
       PublishChatUpdate(std::move(update));
     }
     return;
   }
 
-  if (*type == "done") {
-    const auto request_id = JsonGetString(line, "request_id");
-    if (!request_id) return;
-    ChatUpdate update;
-    update.agent_id   = agent_id;
-    update.request_id = *request_id;
-    // Non-streaming bridges may carry the full reply in "content".
-    const auto content = JsonGetString(line, "content");
-    if (content) {
-      update.chunk = *content;
+  if (type == "tool_call") {
+    const std::string request_id = (*parsed)["request_id"].AsString();
+    const std::string tool_call_id = (*parsed)["tool_call_id"].AsString();
+    const std::string tool_id = (*parsed)["tool_id"].AsString();
+    if (request_id.empty() || tool_call_id.empty() || tool_id.empty()) {
+      return;
     }
-    update.finished    = true;
-    update.succeeded   = JsonGetBool(line, "success").value_or(false);
-    update.status_text = JsonGetString(line, "error").value_or("");
+    ChatUpdate update;
+    update.kind = ChatUpdate::Kind::ToolCall;
+    update.agent_id = agent_id;
+    update.request_id = request_id;
+    update.tool_call_id = tool_call_id;
+    update.tool_id = tool_id;
+    update.display_name = (*parsed)["display_name"].AsString();
+    update.arguments_json = (*parsed)["arguments_json"].AsString();
+    update.arguments_summary = (*parsed)["arguments_summary"].AsString();
+    update.capability_scope = (*parsed)["capability_scope"].AsString();
+    PublishChatUpdate(std::move(update));
+    return;
+  }
+
+  if (type == "done") {
+    const std::string request_id = (*parsed)["request_id"].AsString();
+    if (request_id.empty()) return;
+    ChatUpdate update;
+    update.kind = ChatUpdate::Kind::Done;
+    update.agent_id = agent_id;
+    update.request_id = request_id;
+    update.chunk = (*parsed)["content"].AsString();
+    update.terminal_status = (*parsed)["status"].AsString();
+    if (update.terminal_status.empty()) {
+      update.terminal_status = (*parsed)["success"].AsBool(false) ? "succeeded" : "failed";
+    }
+    update.status_text = (*parsed)["error"].AsString();
     PublishChatUpdate(std::move(update));
     return;
   }

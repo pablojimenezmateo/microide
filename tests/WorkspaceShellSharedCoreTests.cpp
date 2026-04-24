@@ -527,7 +527,7 @@ void TestWorkspaceSharedPersistenceSerializers() {
   project_session.tabs = {compare_tab, merge_tab, editor_tab};
   project_session.chat.active_conversation_id = "conv-1";
   project_session.chat.conversations.push_back(PersistedConversationState{
-      .schema_version = 4,
+      .schema_version = 5,
       .id = "conv-1",
       .title = "Chat",
       .provider_id = "openai.chat",
@@ -551,6 +551,23 @@ void TestWorkspaceSharedPersistenceSerializers() {
                   .status = "succeeded",
                   .request_duration_ms = 345,
                   .error = {},
+                  .tool_events =
+                      {
+                          PersistedMessageState::PersistedToolEventState{
+                              .call_id = "tool-1",
+                              .tool_id = "phase5.echo",
+                              .display_name = "Echo",
+                              .arguments_summary = "{\"ping\":1}",
+                              .status = "completed",
+                              .permission_decision = "session",
+                              .capability_scope = "phase5.echo",
+                              .started_at = "2026-04-24T10:00:00Z",
+                              .finished_at = "2026-04-24T10:00:01Z",
+                              .duration_ms = 12,
+                              .error = {},
+                              .output_summary = "{\"pong\":1}",
+                          },
+                      },
               },
           },
   });
@@ -579,14 +596,20 @@ void TestWorkspaceSharedPersistenceSerializers() {
   Expect(parsed_project_session.chat.active_conversation_id == "conv-1" &&
              parsed_project_session.chat.conversations.size() == 1,
          "project-session serializer should preserve chat session identity");
-  Expect(parsed_project_session.chat.conversations.front().schema_version == 4 &&
+  Expect(parsed_project_session.chat.conversations.front().schema_version == 5 &&
              parsed_project_session.chat.conversations.front().system_prompt == "be concise" &&
              parsed_project_session.chat.conversations.front().last_request_duration_ms == 345,
          "project-session serializer should preserve conversation schema and timing fields");
   Expect(parsed_project_session.chat.conversations.front().messages.size() == 1 &&
              parsed_project_session.chat.conversations.front().messages.front().request_duration_ms ==
-                 345,
-         "project-session serializer should preserve per-message request durations");
+                 345 &&
+             parsed_project_session.chat.conversations.front().messages.front().tool_events.size() ==
+                 1 &&
+             parsed_project_session.chat.conversations.front()
+                     .messages.front()
+                     .tool_events.front()
+                     .permission_decision == "session",
+         "project-session serializer should preserve per-message durations and tool events");
 
   PersistedWorkspaceSessionState workspace_session{
       .project_roots = {"/tmp/project-a", "/tmp/project b"},

@@ -49,6 +49,7 @@ struct PromptSurfaceState {
     DeletePath,
     DiscardGitChanges,
     OpenExternalUrl,
+    ApproveChatTool,
   };
 
   Kind kind = Kind::None;
@@ -56,6 +57,12 @@ struct PromptSurfaceState {
   std::filesystem::path path;
   util::SingleLineTextState input;
   std::string detail;
+  std::string bridge_agent_id;
+  std::string bridge_request_id;
+  std::string tool_call_id;
+  std::string tool_id;
+  std::string capability_scope;
+  int button_count = 2;
   int selected_button = 0;
 };
 

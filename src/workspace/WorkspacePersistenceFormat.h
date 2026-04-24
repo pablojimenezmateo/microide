@@ -82,6 +82,21 @@ struct PersistedProjectConfigState {
 };
 
 struct PersistedMessageState {
+  struct PersistedToolEventState {
+    std::string call_id;
+    std::string tool_id;
+    std::string display_name;
+    std::string arguments_summary;
+    std::string status;
+    std::string permission_decision;
+    std::string capability_scope;
+    std::string started_at;
+    std::string finished_at;
+    std::int64_t duration_ms = 0;
+    std::string error;
+    std::string output_summary;
+  };
+
   std::string id;
   std::string role;  // "user", "assistant", "system"
   std::string content;
@@ -91,6 +106,7 @@ struct PersistedMessageState {
   std::string status;  // serialized RequestStatus
   std::int64_t request_duration_ms = 0;
   std::string error;
+  std::vector<PersistedToolEventState> tool_events;
 };
 
 struct PersistedConversationState {

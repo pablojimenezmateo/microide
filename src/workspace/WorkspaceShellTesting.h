@@ -183,6 +183,10 @@ struct WorkspaceShell::TestAccess {
   }
 
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
+  static void ConfirmPromptSurface(WorkspaceShell& shell, int selected_button) {
+    shell.context_.prompts.surface.selected_button = selected_button;
+    shell.ConfirmPromptSurface();
+  }
   static bool SplitActiveEditor(WorkspaceShell& shell, bool vertical = true) {
     return shell.SplitActiveEditor(vertical ? WorkspaceShell::EditorSplitOrientation::Vertical
                                             : WorkspaceShell::EditorSplitOrientation::Horizontal);
@@ -471,6 +475,9 @@ struct WorkspaceShell::TestAccess {
                                                       std::string_view provider_id) {
     return shell.provider_bridge_manager_.GetCapabilities(std::string(provider_id));
   }
+  static void ConsumeProviderBridgeUpdates(WorkspaceShell& shell) {
+    shell.ConsumeProviderBridgeUpdates();
+  }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
   static void ConsumePluginAsyncProcessCallbacks(WorkspaceShell& shell) {
     shell.ConsumePluginAsyncProcessCallbacks();
@@ -503,16 +510,27 @@ struct WorkspaceShell::TestAccess {
     return shell.plugin_runtime_.Host().PendingAsyncProcessCount() == 0;
   }
   static bool WaitForProviderBridgeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
+    const auto any_in_flight = [&]() {
+      const auto project_busy = [](const WorkspaceShell::ProjectWorkspaceState& project) {
+        return project.panel.chat.request_in_flight || project.inline_completion.request_in_flight;
+      };
+      if (project_busy(shell.context_.current_project_state)) {
+        return true;
+      }
+      return std::any_of(shell.context_.project_catalog.entries.begin(),
+                         shell.context_.project_catalog.entries.end(),
+                         [&](const auto& entry) {
+                           return entry != nullptr && project_busy(*entry);
+                         });
+    };
     const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-    while ((shell.context_.current_project_state.panel.chat.request_in_flight ||
-            shell.context_.current_project_state.inline_completion.request_in_flight) &&
-           SDL_GetTicks() <= deadline) {
+    while (any_in_flight() && SDL_GetTicks() <= deadline) {
       shell.ConsumeProviderBridgeUpdates();
+      shell.HandleScheduledWake();
       SDL_Delay(5);
     }
     shell.ConsumeProviderBridgeUpdates();
-    return !shell.context_.current_project_state.panel.chat.request_in_flight &&
-           !shell.context_.current_project_state.inline_completion.request_in_flight;
+    return !any_in_flight();
   }
   static void ConsumeTaskRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeTaskRuntimeUpdates(); }
   static bool WaitForTaskRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
@@ -1183,6 +1201,12 @@ struct WorkspaceShell::TestAccess {
   }
   static std::string PromptSurfaceMessage(const WorkspaceShell& shell) {
     return shell.PromptSurfaceMessage();
+  }
+  static std::string PromptSurfaceDetail(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceDetail();
+  }
+  static int PromptSurfaceButtonCount(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.button_count;
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.open_tabs;
