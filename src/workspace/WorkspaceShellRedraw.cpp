@@ -592,17 +592,56 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = plugin_delay_ms;
     }
   }
+  if (const auto project_delay = project_file_watcher_.NextPollDelay(); project_delay.has_value()) {
+    const Uint32 project_delay_ms =
+        static_cast<Uint32>(std::max<std::int64_t>(0, project_delay->count()));
+    if (!next_delay.has_value() || project_delay_ms < *next_delay) {
+      next_delay = project_delay_ms;
+    }
+  }
   if (plugin_runtime_.PendingAsyncProcessCount() > 0) {
     constexpr Uint32 kPluginAsyncPollDelayMs = 10;
     if (!next_delay.has_value() || kPluginAsyncPollDelayMs < *next_delay) {
       next_delay = kPluginAsyncPollDelayMs;
     }
   }
+  const auto update_delay_from_project = [&](const ProjectWorkspaceState& project) {
+    if (!project.panel.chat.pending_tool_approval.has_value() ||
+        project.panel.chat.pending_tool_approval->expires_at_ticks == 0) {
+      return;
+    }
+    const Uint64 now = SDL_GetTicks();
+    const Uint64 expires_at = project.panel.chat.pending_tool_approval->expires_at_ticks;
+    const Uint32 delay = expires_at <= now ? 1 : static_cast<Uint32>(expires_at - now);
+    if (!next_delay.has_value() || delay < *next_delay) {
+      next_delay = delay;
+    }
+  };
+  update_delay_from_project(context_.current_project_state);
+  for (const auto& entry : context_.project_catalog.entries) {
+    if (entry != nullptr) {
+      update_delay_from_project(*entry);
+    }
+  }
   return next_delay;
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
+  ExpirePendingToolApprovals();
   if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
+  if (const auto project_delay = project_file_watcher_.NextPollDelay();
+      project_delay.has_value() && project_delay->count() == 0 &&
+      project_file_watcher_.Poll()) {
+    context_.current_project_state.directory_tree.Refresh();
+    ReloadCleanOpenBuffersFromDisk();
     return EventResult{
         .handled = true,
         .redraw = RenderInvalidation{

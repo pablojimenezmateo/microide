@@ -55,7 +55,9 @@ using microide::workspace::ParseWorkspaceSessionText;
 using microide::workspace::PathEqualsOrWithin;
 using microide::workspace::PersistedEditorTabState;
 using microide::workspace::PersistedEditorViewState;
+using microide::workspace::PersistedMessageState;
 using microide::workspace::PersistedProjectConfigState;
+using microide::workspace::PersistedConversationState;
 using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedSplitNodeState;
 using microide::workspace::PersistedUserConfigState;
@@ -308,9 +310,10 @@ void TestWorkspaceSidebarRegistry() {
 
   microide::plugin::PluginHost plugin_host;
   const auto views = SidebarViews(plugin_host);
-  Expect(views.size() == 5, "sidebar registry should expose five built-in views");
+  Expect(views.size() == 6, "sidebar registry should expose six built-in views");
   Expect(views[0].id == "tree" && views[0].label == "Project" &&
-             views[1].id == "search" && views[3].id == "git" && views[4].id == "tests",
+             views[1].id == "search" && views[2].id == "chat" &&
+             views[4].id == "git" && views[5].id == "tests",
          "sidebar registry should preserve built-in view ordering");
 
   const auto problems_view = FindSidebarView("problems", plugin_host);
@@ -319,8 +322,9 @@ void TestWorkspaceSidebarRegistry() {
          "sidebar registry should resolve the problems view against the host");
 
   const auto view_ids = SidebarViewIds(plugin_host);
-  Expect(view_ids.size() == 5 && view_ids[0] == "git" && view_ids[1] == "problems" &&
-             view_ids[3] == "tests" && view_ids[4] == "tree",
+  // Alphabetical order: chat, git, problems, search, tests, tree
+  Expect(view_ids.size() == 6 && view_ids[0] == "chat" && view_ids[1] == "git" &&
+             view_ids[2] == "problems" && view_ids[4] == "tests" && view_ids[5] == "tree",
          "sidebar registry should preserve built-in view completion ids");
 
   const SidebarViewRequest search_request =
@@ -521,6 +525,52 @@ void TestWorkspaceSharedPersistenceSerializers() {
   project_session.bottom_panel_height = 208.0f;
   project_session.active_tab_index = 2;
   project_session.tabs = {compare_tab, merge_tab, editor_tab};
+  project_session.chat.active_conversation_id = "conv-1";
+  project_session.chat.conversations.push_back(PersistedConversationState{
+      .schema_version = 5,
+      .id = "conv-1",
+      .title = "Chat",
+      .provider_id = "openai.chat",
+      .model_id = "gpt-4.1-mini",
+      .status = "succeeded",
+      .tool_mode = "ask",
+      .draft = "draft text",
+      .system_prompt = "be concise",
+      .created_at = "2026-04-24T10:00:00Z",
+      .updated_at = "2026-04-24T10:01:00Z",
+      .last_request_duration_ms = 345,
+      .messages =
+          {
+              PersistedMessageState{
+                  .id = "msg-1",
+                  .role = "assistant",
+                  .content = "reply",
+                  .timestamp = "2026-04-24T10:01:00Z",
+                  .provider_id = "openai.chat",
+                  .model = "gpt-4.1-mini",
+                  .status = "succeeded",
+                  .request_duration_ms = 345,
+                  .error = {},
+                  .tool_events =
+                      {
+                          PersistedMessageState::PersistedToolEventState{
+                              .call_id = "tool-1",
+                              .tool_id = "phase5.echo",
+                              .display_name = "Echo",
+                              .arguments_summary = "{\"ping\":1}",
+                              .status = "completed",
+                              .permission_decision = "session",
+                              .capability_scope = "phase5.echo",
+                              .started_at = "2026-04-24T10:00:00Z",
+                              .finished_at = "2026-04-24T10:00:01Z",
+                              .duration_ms = 12,
+                              .error = {},
+                              .output_summary = "{\"pong\":1}",
+                          },
+                      },
+              },
+          },
+  });
   PersistedProjectSessionState parsed_project_session;
   Expect(ParseProjectSessionText(SerializeProjectSession(project_session), &parsed_project_session),
          "project-session serializer should round-trip");
@@ -543,6 +593,23 @@ void TestWorkspaceSharedPersistenceSerializers() {
   Expect(parsed_project_session.tabs[2].views.size() == 1 &&
              parsed_project_session.tabs[2].split_nodes.size() == 1,
          "project-session serializer should preserve editor views and split nodes");
+  Expect(parsed_project_session.chat.active_conversation_id == "conv-1" &&
+             parsed_project_session.chat.conversations.size() == 1,
+         "project-session serializer should preserve chat session identity");
+  Expect(parsed_project_session.chat.conversations.front().schema_version == 5 &&
+             parsed_project_session.chat.conversations.front().system_prompt == "be concise" &&
+             parsed_project_session.chat.conversations.front().last_request_duration_ms == 345,
+         "project-session serializer should preserve conversation schema and timing fields");
+  Expect(parsed_project_session.chat.conversations.front().messages.size() == 1 &&
+             parsed_project_session.chat.conversations.front().messages.front().request_duration_ms ==
+                 345 &&
+             parsed_project_session.chat.conversations.front().messages.front().tool_events.size() ==
+                 1 &&
+             parsed_project_session.chat.conversations.front()
+                     .messages.front()
+                     .tool_events.front()
+                     .permission_decision == "session",
+         "project-session serializer should preserve per-message durations and tool events");
 
   PersistedWorkspaceSessionState workspace_session{
       .project_roots = {"/tmp/project-a", "/tmp/project b"},
@@ -558,6 +625,38 @@ void TestWorkspaceSharedPersistenceSerializers() {
          "workspace-session serializer should preserve quoted project roots");
   Expect(parsed_workspace_session.active_project_index == 1,
          "workspace-session serializer should preserve the active project index");
+}
+
+void TestWorkspaceSharedProjectSessionV3ChatMigration() {
+  const std::string legacy_session =
+      "version 3\n"
+      "sidebar-visible 1\n"
+      "sidebar-width 288\n"
+      "bottom-panel-height 184\n"
+      "active-tab 0\n"
+      "chat-active-conversation conv-1\n"
+      "conv-begin conv-1\n"
+      "conv-title Chat\n"
+      "conv-provider openai.chat\n"
+      "conv-model gpt-4.1-mini\n"
+      "conv-status succeeded\n"
+      "conv-tool-mode ask\n"
+      "conv-draft draft text\n"
+      "msg-begin msg-1\n"
+      "msg-role assistant\n"
+      "msg-status succeeded\n"
+      "msg-content reply\n"
+      "conv-end\n";
+
+  PersistedProjectSessionState parsed;
+  Expect(ParseProjectSessionText(legacy_session, &parsed),
+         "project-session parser should accept version 3 chat payloads");
+  Expect(parsed.chat.conversations.size() == 1 &&
+             parsed.chat.conversations.front().schema_version == 1,
+         "version 3 chat payloads should migrate to the default conversation schema");
+  Expect(parsed.chat.conversations.front().system_prompt.empty() &&
+             parsed.chat.conversations.front().last_request_duration_ms == 0,
+         "version 3 chat payloads should default missing phase-1 fields deterministically");
 }
 
 void TestWorkspaceReadmeCommandDocsStayInSync() {
@@ -617,6 +716,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ChromeTextModel", TestWorkspaceSharedChromeTextModel);
   AddTest(tests, "WorkspaceShared/PersistenceSerializers",
           TestWorkspaceSharedPersistenceSerializers);
+  AddTest(tests, "WorkspaceShared/ProjectSessionV3ChatMigration",
+          TestWorkspaceSharedProjectSessionV3ChatMigration);
   AddTest(tests, "Workspace/ReadmeCommandDocsStayInSync",
           TestWorkspaceReadmeCommandDocsStayInSync);
 }

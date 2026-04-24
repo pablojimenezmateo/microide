@@ -430,19 +430,25 @@ Open work:
   - `PluginHost` gains three new Lua tables: `ctx.ai_providers` (add),
     `ctx.external_agents` (add), `ctx.mcp_tools` (add); conversations and inline completions
     are host-managed
-  - `workspace/WorkspaceAiRuntime.*` now owns request IDs, cancellation, background execution,
-    and shell wake delivery for external-agent requests
-  - the live shell now supports sidebar chat, active conversation tracking, ghost-text inline
-    completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
-    commands
-  - first-pass external-agent execution is wired through stdio subprocesses, and MCP tool
-    invocation flows through host-owned permission-checked command surfaces and output channels
+  - `workspace/WorkspaceProviderBridge.*` now owns long-lived stdio provider bridges, auth
+    checks, capability negotiation, model enumeration, and shell wake delivery for chat and inline
+    completion requests
+  - the live shell now supports a host-owned chat pane shell with conversation rail, header
+    provider or model or tool controls, multiline draft composer with per-conversation retention,
+    project-tab chat status summaries, markdown transcript rendering with safe local-link opening
+    and remote-link confirmation, ghost-text inline completion with accept or dismiss flow, and
+    built-in `chat`, `inline-complete`, and `mcp` commands
+  - first-pass external-agent execution is wired through long-lived stdio subprocesses, and MCP
+    tool invocation now flows through host-owned permission checks, per-project chat approval
+    prompts, session-scoped remembered approvals, persisted transcript tool events, and output
+    channels
+  - repo-owned `openai` and `anthropic` plugins now use the native `microide_provider_bridge`
+    binary for direct API-key-backed chat and host-mediated tool calls instead of shell wrappers or
+    vendor CLIs
   - dedicated end-to-end coverage now lives in `tests/Phase5Tests.cpp`
 
 Open work:
 
-- keep provider and model selection simple until the request runtime and shell-owned conversation
-  flow need more depth
 - broaden the external-agent runtime beyond stdio only when a real HTTP, WebSocket, or ACP-backed
   integration requires it
 - add richer streamed updates, tool-permission prompts, and broader `WorkspaceAiContext`

@@ -68,7 +68,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (context_.prompts.surface_visible) {
     const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
-    const auto buttons = ComputePromptSurfaceButtonRects(dialog);
+    const auto buttons =
+        ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
     for (std::size_t i = 0; i < buttons.size(); ++i) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         context_.prompts.surface.selected_button = static_cast<int>(i);

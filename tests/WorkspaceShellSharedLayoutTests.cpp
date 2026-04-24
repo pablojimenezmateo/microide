@@ -203,17 +203,17 @@ void TestWorkspaceSharedPromptGeometry() {
          "dirty prompt button rects should align to the shared footer button layout");
 
   const SDL_FRect prompt_surface = ComputePromptSurfaceRect(full);
-  Expect(prompt_surface.x == 140.0f && prompt_surface.y == 206.0f &&
-             prompt_surface.w == 520.0f && prompt_surface.h == 188.0f,
+  Expect(prompt_surface.x == 140.0f && prompt_surface.y == 192.0f &&
+             prompt_surface.w == 520.0f && prompt_surface.h == 216.0f,
          "prompt surface rect should stay centered while preserving the shared surface size");
 
   const auto prompt_buttons = ComputePromptSurfaceButtonRects(prompt_surface);
   Expect(prompt_buttons[0].x == 418.0f && prompt_buttons[1].x == 536.0f &&
-             prompt_buttons[0].y == 350.0f,
+             prompt_buttons[0].y == 364.0f,
          "prompt surface button rects should align to the shared footer button layout");
 
   const SDL_FRect input_rect = ComputePromptSurfaceInputRect(prompt_surface);
-  Expect(input_rect.x == 156.0f && input_rect.y == 304.0f && input_rect.w == 488.0f &&
+  Expect(input_rect.x == 156.0f && input_rect.y == 290.0f && input_rect.w == 488.0f &&
              input_rect.h == 24.0f,
          "prompt surface input rect should align to the shared text-input slot");
 

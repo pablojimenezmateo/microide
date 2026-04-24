@@ -36,6 +36,30 @@ bool ParseFloatToken(std::string_view text, float* value) {
   }
 }
 
+bool ParseIntToken(std::string_view text, int* value) {
+  if (value == nullptr) {
+    return false;
+  }
+  try {
+    *value = std::stoi(std::string(text));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool ParseInt64Token(std::string_view text, std::int64_t* value) {
+  if (value == nullptr) {
+    return false;
+  }
+  try {
+    *value = std::stoll(std::string(text));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 }  // namespace
 
 bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state) {
@@ -201,7 +225,11 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
   bool version_ok = false;
   int version = 0;
   state->tabs.clear();
+  state->chat = PersistedChatState{};
   std::optional<PersistedEditorTabState> current_tab;
+  std::optional<PersistedConversationState> current_conv;
+  std::optional<PersistedMessageState> current_msg;
+  std::optional<PersistedMessageState::PersistedToolEventState> current_tool;
   std::istringstream stream{std::string(text)};
   std::string line;
   while (std::getline(stream, line)) {
@@ -213,7 +241,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     const std::vector<ParsedCommandToken>& tokens = parsed.tokens;
     const std::string& command = tokens.front().text;
     if (command == "version") {
-      version_ok = tokens.size() == 2 && (tokens[1].text == "1" || tokens[1].text == "2");
+      version_ok = tokens.size() == 2 &&
+                   (tokens[1].text == "1" || tokens[1].text == "2" || tokens[1].text == "3" ||
+                    tokens[1].text == "4" || tokens[1].text == "5");
       version = version_ok ? std::stoi(tokens[1].text) : 0;
       continue;
     }
@@ -234,6 +264,131 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     }
     if (command == "active-tab" && tokens.size() == 2) {
       ParseSizeToken(tokens[1].text, &state->active_tab_index);
+      continue;
+    }
+    if (version >= 3 && command == "chat-active-conversation" && tokens.size() == 2) {
+      state->chat.active_conversation_id = tokens[1].text;
+      continue;
+    }
+    if (version >= 3 && command == "conv-begin" && tokens.size() == 2) {
+      if (current_tool.has_value() && current_msg.has_value()) {
+        current_msg->tool_events.push_back(std::move(*current_tool));
+        current_tool.reset();
+      }
+      if (current_msg.has_value() && current_conv.has_value()) {
+        current_conv->messages.push_back(std::move(*current_msg));
+        current_msg.reset();
+      }
+      if (current_conv.has_value()) {
+        state->chat.conversations.push_back(std::move(*current_conv));
+      }
+      current_conv = PersistedConversationState{};
+      current_conv->id = tokens[1].text;
+      continue;
+    }
+    if (version >= 3 && command == "conv-end") {
+      if (current_tool.has_value() && current_msg.has_value()) {
+        current_msg->tool_events.push_back(std::move(*current_tool));
+        current_tool.reset();
+      }
+      if (current_msg.has_value() && current_conv.has_value()) {
+        current_conv->messages.push_back(std::move(*current_msg));
+        current_msg.reset();
+      }
+      if (current_conv.has_value()) {
+        state->chat.conversations.push_back(std::move(*current_conv));
+        current_conv.reset();
+      }
+      continue;
+    }
+    if (version >= 3 && current_conv.has_value()) {
+      if (command == "conv-schema" && tokens.size() == 2) {
+        ParseIntToken(tokens[1].text, &current_conv->schema_version);
+      } else if (command == "conv-title" && tokens.size() == 2) {
+        current_conv->title = tokens[1].text;
+      } else if (command == "conv-provider" && tokens.size() == 2) {
+        current_conv->provider_id = tokens[1].text;
+      } else if (command == "conv-model" && tokens.size() == 2) {
+        current_conv->model_id = tokens[1].text;
+      } else if (command == "conv-status" && tokens.size() == 2) {
+        current_conv->status = tokens[1].text;
+      } else if (command == "conv-tool-mode" && tokens.size() == 2) {
+        current_conv->tool_mode = tokens[1].text;
+      } else if (command == "conv-created" && tokens.size() == 2) {
+        current_conv->created_at = tokens[1].text;
+      } else if (command == "conv-updated" && tokens.size() == 2) {
+        current_conv->updated_at = tokens[1].text;
+      } else if (command == "conv-draft" && tokens.size() == 2) {
+        current_conv->draft = tokens[1].text;
+      } else if (command == "conv-system-prompt" && tokens.size() == 2) {
+        current_conv->system_prompt = tokens[1].text;
+      } else if (command == "conv-last-request-duration-ms" && tokens.size() == 2) {
+        ParseInt64Token(tokens[1].text, &current_conv->last_request_duration_ms);
+      } else if (command == "msg-begin" && tokens.size() == 2) {
+        if (current_tool.has_value() && current_msg.has_value()) {
+          current_msg->tool_events.push_back(std::move(*current_tool));
+          current_tool.reset();
+        }
+        if (current_msg.has_value()) {
+          current_conv->messages.push_back(std::move(*current_msg));
+        }
+        current_msg = PersistedMessageState{};
+        current_msg->id = tokens[1].text;
+      } else if (version >= 5 && command == "tool-begin" && tokens.size() == 2 &&
+                 current_msg.has_value()) {
+        if (current_tool.has_value()) {
+          current_msg->tool_events.push_back(std::move(*current_tool));
+        }
+        current_tool = PersistedMessageState::PersistedToolEventState{};
+        current_tool->call_id = tokens[1].text;
+      } else if (version >= 5 && command == "tool-end" && current_msg.has_value()) {
+        if (current_tool.has_value()) {
+          current_msg->tool_events.push_back(std::move(*current_tool));
+          current_tool.reset();
+        }
+      } else if (version >= 5 && current_tool.has_value()) {
+        if (command == "tool-id" && tokens.size() == 2) {
+          current_tool->tool_id = tokens[1].text;
+        } else if (command == "tool-name" && tokens.size() == 2) {
+          current_tool->display_name = tokens[1].text;
+        } else if (command == "tool-args" && tokens.size() == 2) {
+          current_tool->arguments_summary = tokens[1].text;
+        } else if (command == "tool-status" && tokens.size() == 2) {
+          current_tool->status = tokens[1].text;
+        } else if (command == "tool-permission" && tokens.size() == 2) {
+          current_tool->permission_decision = tokens[1].text;
+        } else if (command == "tool-scope" && tokens.size() == 2) {
+          current_tool->capability_scope = tokens[1].text;
+        } else if (command == "tool-started" && tokens.size() == 2) {
+          current_tool->started_at = tokens[1].text;
+        } else if (command == "tool-finished" && tokens.size() == 2) {
+          current_tool->finished_at = tokens[1].text;
+        } else if (command == "tool-duration-ms" && tokens.size() == 2) {
+          ParseInt64Token(tokens[1].text, &current_tool->duration_ms);
+        } else if (command == "tool-error" && tokens.size() == 2) {
+          current_tool->error = tokens[1].text;
+        } else if (command == "tool-output" && tokens.size() == 2) {
+          current_tool->output_summary = tokens[1].text;
+        }
+      } else if (current_msg.has_value()) {
+        if (command == "msg-role" && tokens.size() == 2) {
+          current_msg->role = tokens[1].text;
+        } else if (command == "msg-status" && tokens.size() == 2) {
+          current_msg->status = tokens[1].text;
+        } else if (command == "msg-timestamp" && tokens.size() == 2) {
+          current_msg->timestamp = tokens[1].text;
+        } else if (command == "msg-provider" && tokens.size() == 2) {
+          current_msg->provider_id = tokens[1].text;
+        } else if (command == "msg-model" && tokens.size() == 2) {
+          current_msg->model = tokens[1].text;
+        } else if (command == "msg-error" && tokens.size() == 2) {
+          current_msg->error = tokens[1].text;
+        } else if (command == "msg-request-duration-ms" && tokens.size() == 2) {
+          ParseInt64Token(tokens[1].text, &current_msg->request_duration_ms);
+        } else if (command == "msg-content" && tokens.size() == 2) {
+          current_msg->content = tokens[1].text;
+        }
+      }
       continue;
     }
     if (command == "tab-begin") {
@@ -394,13 +549,25 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       }
     }
   }
+  // Flush any open conversation/message at end of stream.
+  if (version >= 3) {
+    if (current_tool.has_value() && current_msg.has_value()) {
+      current_msg->tool_events.push_back(std::move(*current_tool));
+    }
+    if (current_msg.has_value() && current_conv.has_value()) {
+      current_conv->messages.push_back(std::move(*current_msg));
+    }
+    if (current_conv.has_value()) {
+      state->chat.conversations.push_back(std::move(*current_conv));
+    }
+  }
 
   return version_ok;
 }
 
 std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   std::ostringstream stream;
-  stream << "version 2\n";
+  stream << "version 5\n";
   stream << "sidebar-visible " << (state.sidebar_visible ? 1 : 0) << '\n';
   stream << "sidebar-width " << state.sidebar_width << '\n';
   stream << "bottom-panel-height " << state.bottom_panel_height << '\n';
@@ -464,6 +631,112 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   }
 
   stream << "active-tab " << state.active_tab_index << '\n';
+
+  // Chat conversations.
+  if (!state.chat.active_conversation_id.empty()) {
+    stream << "chat-active-conversation "
+           << QuoteCommandArg(state.chat.active_conversation_id) << '\n';
+  }
+  for (const auto& conv : state.chat.conversations) {
+    stream << "conv-begin " << QuoteCommandArg(conv.id) << '\n';
+    stream << "conv-schema " << conv.schema_version << '\n';
+    if (!conv.title.empty()) {
+      stream << "conv-title " << QuoteCommandArg(conv.title) << '\n';
+    }
+    if (!conv.provider_id.empty()) {
+      stream << "conv-provider " << QuoteCommandArg(conv.provider_id) << '\n';
+    }
+    if (!conv.model_id.empty()) {
+      stream << "conv-model " << QuoteCommandArg(conv.model_id) << '\n';
+    }
+    if (!conv.status.empty()) {
+      stream << "conv-status " << QuoteCommandArg(conv.status) << '\n';
+    }
+    if (!conv.tool_mode.empty()) {
+      stream << "conv-tool-mode " << QuoteCommandArg(conv.tool_mode) << '\n';
+    }
+    if (!conv.created_at.empty()) {
+      stream << "conv-created " << QuoteCommandArg(conv.created_at) << '\n';
+    }
+    if (!conv.updated_at.empty()) {
+      stream << "conv-updated " << QuoteCommandArg(conv.updated_at) << '\n';
+    }
+    if (!conv.draft.empty()) {
+      stream << "conv-draft " << QuoteCommandArg(conv.draft) << '\n';
+    }
+    if (!conv.system_prompt.empty()) {
+      stream << "conv-system-prompt " << QuoteCommandArg(conv.system_prompt) << '\n';
+    }
+    if (conv.last_request_duration_ms != 0) {
+      stream << "conv-last-request-duration-ms " << conv.last_request_duration_ms << '\n';
+    }
+    for (const auto& msg : conv.messages) {
+      stream << "msg-begin " << QuoteCommandArg(msg.id) << '\n';
+      if (!msg.role.empty()) {
+        stream << "msg-role " << QuoteCommandArg(msg.role) << '\n';
+      }
+      if (!msg.status.empty()) {
+        stream << "msg-status " << QuoteCommandArg(msg.status) << '\n';
+      }
+      if (!msg.timestamp.empty()) {
+        stream << "msg-timestamp " << QuoteCommandArg(msg.timestamp) << '\n';
+      }
+      if (!msg.provider_id.empty()) {
+        stream << "msg-provider " << QuoteCommandArg(msg.provider_id) << '\n';
+      }
+      if (!msg.model.empty()) {
+        stream << "msg-model " << QuoteCommandArg(msg.model) << '\n';
+      }
+      if (!msg.error.empty()) {
+        stream << "msg-error " << QuoteCommandArg(msg.error) << '\n';
+      }
+      if (msg.request_duration_ms != 0) {
+        stream << "msg-request-duration-ms " << msg.request_duration_ms << '\n';
+      }
+      if (!msg.content.empty()) {
+        stream << "msg-content " << QuoteCommandArg(msg.content) << '\n';
+      }
+      for (const auto& tool : msg.tool_events) {
+        stream << "tool-begin " << QuoteCommandArg(tool.call_id) << '\n';
+        if (!tool.tool_id.empty()) {
+          stream << "tool-id " << QuoteCommandArg(tool.tool_id) << '\n';
+        }
+        if (!tool.display_name.empty()) {
+          stream << "tool-name " << QuoteCommandArg(tool.display_name) << '\n';
+        }
+        if (!tool.arguments_summary.empty()) {
+          stream << "tool-args " << QuoteCommandArg(tool.arguments_summary) << '\n';
+        }
+        if (!tool.status.empty()) {
+          stream << "tool-status " << QuoteCommandArg(tool.status) << '\n';
+        }
+        if (!tool.permission_decision.empty()) {
+          stream << "tool-permission " << QuoteCommandArg(tool.permission_decision) << '\n';
+        }
+        if (!tool.capability_scope.empty()) {
+          stream << "tool-scope " << QuoteCommandArg(tool.capability_scope) << '\n';
+        }
+        if (!tool.started_at.empty()) {
+          stream << "tool-started " << QuoteCommandArg(tool.started_at) << '\n';
+        }
+        if (!tool.finished_at.empty()) {
+          stream << "tool-finished " << QuoteCommandArg(tool.finished_at) << '\n';
+        }
+        if (tool.duration_ms != 0) {
+          stream << "tool-duration-ms " << tool.duration_ms << '\n';
+        }
+        if (!tool.error.empty()) {
+          stream << "tool-error " << QuoteCommandArg(tool.error) << '\n';
+        }
+        if (!tool.output_summary.empty()) {
+          stream << "tool-output " << QuoteCommandArg(tool.output_summary) << '\n';
+        }
+        stream << "tool-end\n";
+      }
+    }
+    stream << "conv-end\n";
+  }
+
   return stream.str();
 }
 

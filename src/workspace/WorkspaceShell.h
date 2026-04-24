@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "compare/CompareModel.h"
@@ -54,7 +55,7 @@
 #include "workspace/WorkspaceExternalAgent.h"
 #include "workspace/WorkspaceMcpTool.h"
 #include "workspace/WorkspaceAiContext.h"
-#include "workspace/WorkspaceAiRuntime.h"
+#include "workspace/WorkspaceProviderBridge.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
@@ -191,19 +192,6 @@ class WorkspaceShell {
     bool separator = false;
   };
 
-  struct ChatSidebarLine {
-    enum class Kind {
-      Header,
-      Body,
-      Spacer,
-      Placeholder,
-    };
-
-    Kind kind = Kind::Body;
-    MessageRole role = MessageRole::Assistant;
-    std::string text;
-  };
-
   WorkspaceActionContext MakeActionContext();
 
 #ifdef MICROIDE_TESTING
@@ -234,6 +222,7 @@ class WorkspaceShell {
   using PanelState = workspace::PanelState;
   using OutputPanelState = workspace::OutputPanelState;
   using ChatPanelState = workspace::ChatPanelState;
+  using ChatPaneFocusRegion = workspace::ChatPaneFocusRegion;
   using ProjectWorkspaceState = workspace::ProjectWorkspaceState;
   using ProjectCatalogState = workspace::ProjectCatalogState;
   using WorkspaceContext = workspace::WorkspaceContext;
@@ -284,6 +273,7 @@ class WorkspaceShell {
     float text_x = 0.0f;
     float text_y = 0.0f;
     float cursor_x = 0.0f;
+    float cursor_y = 0.0f;
     SDL_Color foreground{};
     SDL_Color background{};
     std::string displayed_text;
@@ -355,12 +345,22 @@ class WorkspaceShell {
   };
 
   struct VisibleStripTab {
+    enum class ChatStatus {
+      None,
+      Running,
+      Failed,
+    };
+
     std::size_t index = 0;
     SDL_FRect rect{};
     SDL_FRect close_rect{};
     bool active = false;
     std::string display_title;
     std::string tooltip_label;
+    std::string badge_text;
+    SDL_Color badge_color{};
+    bool show_badge = false;
+    ChatStatus chat_status = ChatStatus::None;
   };
 
   struct VisibleMenuBarItem {
@@ -406,7 +406,143 @@ class WorkspaceShell {
     std::string tooltip_label;
   };
 
+  struct ChatSidebarLayout {
+    SDL_FRect rail_rect{};
+    SDL_FRect rail_list_rect{};
+    SDL_FRect rail_new_rect{};
+    SDL_FRect content_rect{};
+    SDL_FRect header_rect{};
+    SDL_FRect header_title_rect{};
+    SDL_FRect header_primary_action_rect{};
+    SDL_FRect header_secondary_action_rect{};
+    SDL_FRect provider_rect{};
+    SDL_FRect model_rect{};
+    SDL_FRect tool_mode_rect{};
+    SDL_FRect auth_rect{};
+    SDL_FRect transcript_rect{};
+    SDL_FRect composer_rect{};
+  };
+
+  struct ChatHeaderAction {
+    enum class Kind {
+      None,
+      NewConversation,
+      DeleteConversation,
+      Cancel,
+      Retry,
+      Provider,
+      Model,
+      ToolMode,
+    };
+
+    Kind kind = Kind::None;
+    SDL_FRect rect{};
+    std::string label;
+    bool enabled = false;
+  };
+
+  struct ProjectChatSummary {
+    enum class State {
+      Idle,
+      Running,
+      Failed,
+    };
+
+    State state = State::Idle;
+    std::string tooltip;
+  };
+
  private:
+  struct ChatLinkTarget {
+    enum class Kind {
+      LocalFile,
+      RemoteUrl,
+    };
+
+    Kind kind = Kind::RemoteUrl;
+    std::filesystem::path path;
+    std::string url;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+
+  enum class ChatTextStyle {
+    Normal,
+    Muted,
+    Emphasis,
+    Strong,
+    InlineCode,
+    Link,
+  };
+
+  struct ChatInlineFragment {
+    std::string text;
+    ChatTextStyle style = ChatTextStyle::Normal;
+    std::optional<ChatLinkTarget> link;
+  };
+
+  struct ChatMarkdownBlock {
+    enum class Kind {
+      Paragraph,
+      Heading,
+      Quote,
+      ListItem,
+      CodeBlock,
+    };
+
+    Kind kind = Kind::Paragraph;
+    std::size_t level = 0;
+    bool ordered_list = false;
+    std::vector<ChatInlineFragment> fragments;
+    std::vector<std::string> code_lines;
+  };
+
+  struct ChatMarkdownDocument {
+    std::uint64_t content_hash = 0;
+    std::vector<ChatMarkdownBlock> blocks;
+  };
+
+  struct ChatTranscriptSegment {
+    std::string text;
+    ChatTextStyle style = ChatTextStyle::Normal;
+    std::optional<ChatLinkTarget> link;
+  };
+
+  struct ChatTranscriptRow {
+    enum class Kind {
+      Meta,
+      Body,
+      Code,
+      Tool,
+      Error,
+      Placeholder,
+      Spacer,
+    };
+
+    enum class Tone {
+      Normal,
+      Heading,
+      Quote,
+      List,
+    };
+
+    Kind kind = Kind::Body;
+    Tone tone = Tone::Normal;
+    MessageRole role = MessageRole::Assistant;
+    std::string prefix;
+    std::vector<ChatTranscriptSegment> segments;
+  };
+
+  struct ChatTranscriptHitRegion {
+    SDL_FRect rect{};
+    ChatLinkTarget target;
+  };
+
+  struct ChatTranscriptLayout {
+    std::vector<ChatTranscriptRow> rows;
+    std::vector<ChatTranscriptHitRegion> hit_regions;
+  };
+
   struct EditorSplitSlot {
     TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
     std::size_t index = 0;
@@ -613,7 +749,8 @@ class WorkspaceShell {
   void ConfirmPromptSurface(DirtyPathResolution resolution = DirtyPathResolution::RequirePrompt);
   std::string PromptSurfaceTitle() const;
   std::string PromptSurfaceMessage() const;
-  std::array<std::string, 2> PromptSurfaceActionLabels() const;
+  std::string PromptSurfaceDetail() const;
+  std::vector<std::string> PromptSurfaceActionLabels() const;
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
@@ -835,6 +972,7 @@ class WorkspaceShell {
                                                    std::size_t line_count) const;
   ScrollableListLayout ComputeChatSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
+  ChatSidebarLayout ComputeChatSidebarLayout(const SDL_FRect& sidebar_rect) const;
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
   ScrollableListLayout ComputeProblemsSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -845,7 +983,35 @@ class WorkspaceShell {
                                                       std::size_t line_count) const;
   SDL_FRect ChatSidebarComposerRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect ChatSidebarStatusRect(const SDL_FRect& sidebar_rect) const;
-  std::vector<ChatSidebarLine> BuildChatSidebarLines(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarTranscriptRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarConversationRailRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarConversationNewRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect ChatSidebarConversationRowRect(const SDL_FRect& sidebar_rect,
+                                           std::size_t index) const;
+  std::vector<ChatHeaderAction> BuildChatHeaderActions(const SDL_FRect& sidebar_rect) const;
+  std::size_t ChatTranscriptLineCount(const SDL_FRect& sidebar_rect) const;
+  bool HasChatTranscriptLinkAtPoint(const SDL_FRect& sidebar_rect, float x, float y) const;
+  bool ActivateChatTranscriptLinkAtPoint(const SDL_FRect& sidebar_rect, float x, float y);
+  std::vector<std::string> ChatTranscriptDebugLines(const SDL_FRect& sidebar_rect) const;
+  std::optional<SDL_FRect> FindChatTranscriptLinkRect(const SDL_FRect& sidebar_rect,
+                                                      std::string_view match) const;
+  Conversation* ActiveConversation();
+  const Conversation* ActiveConversation() const;
+  bool ActivateChatConversation(std::string_view conversation_id);
+  void SyncActiveConversationDraft();
+  void LoadChatComposerDraft();
+  bool CreateChatConversation();
+  bool DeleteActiveChatConversation();
+  bool CancelActiveChatRequest();
+  bool RetryActiveChatRequest(std::string* error_message = nullptr);
+  std::vector<const AiProviderSpec*> ChatProviders() const;
+  std::vector<std::string> ChatModelsForConversation(const Conversation& conversation) const;
+  void CycleActiveConversationProvider(int delta = 1);
+  void CycleActiveConversationModel(int delta = 1);
+  void CycleActiveConversationToolMode(int delta = 1);
+  std::string ChatComposerText() const;
+  std::string ChatAuthBannerText(const Conversation* conversation) const;
+  ProjectChatSummary SummarizeProjectChatState(std::size_t project_index) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
@@ -1028,7 +1194,17 @@ class WorkspaceShell {
                          std::string_view session_id,
                          std::string* error_message = nullptr);
   bool StartChatRequest(std::string message, std::string* error_message = nullptr);
-  void ConsumeAiRuntimeUpdates();
+  void ConsumeProviderBridgeUpdates();
+  void ExpirePendingToolApprovals();
+  bool ResolveChatToolApprovalPrompt(bool allow, bool remember_for_session);
+  void ShowPendingToolApprovalPrompt(ProjectWorkspaceState& project);
+  bool SetProviderApiKey(std::string_view provider_id,
+                         std::string_view api_key,
+                         std::string* error_message = nullptr);
+  bool ClearProviderApiKey(std::string_view provider_id, std::string* error_message = nullptr);
+  ProviderAuthStatus GetProviderAuthStatus(std::string_view provider_id) const;
+  std::string ProviderApiKeyStorageKey(const AiProviderSpec& provider) const;
+  std::optional<std::string> ResolveProviderApiKey(const AiProviderSpec& provider) const;
   void ConsumeLspCallbacks();
   bool ConsumePluginAsyncProcessCallbacks();
   bool RequestInlineCompletion(std::string* error_message = nullptr);
@@ -1102,6 +1278,7 @@ class WorkspaceShell {
   std::string SelectedTerminalText() const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url) const;
+  void OpenExternalUrlPrompt(std::string url);
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
@@ -1199,6 +1376,7 @@ class WorkspaceShell {
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;
+  std::string ProjectTabTooltipLabel(std::size_t index) const;
   std::string TruncateLabel(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
@@ -1270,6 +1448,9 @@ class WorkspaceShell {
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
   void UpdateMouseCursor(float x, float y);
+  ChatTranscriptLayout BuildChatTranscriptLayout(const SDL_FRect& sidebar_rect) const;
+  const ChatMarkdownDocument& ParsedChatMarkdown(std::string_view text) const;
+  ChatMarkdownDocument ParseChatMarkdown(std::string_view text) const;
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
@@ -1292,6 +1473,7 @@ class WorkspaceShell {
   mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
+  platform::FileTreeWatcher project_file_watcher_;
   WorkspacePluginRuntime plugin_runtime_;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
@@ -1313,11 +1495,10 @@ class WorkspaceShell {
   ReviewCommentsRegistry review_comments_registry_;
   AiProviderRegistry ai_provider_registry_;
   InlineCompletionRegistry inline_completion_registry_;
-  ConversationRegistry conversation_registry_;
   ExternalAgentRegistry external_agent_registry_;
   McpToolRegistry mcp_tool_registry_;
   AiContextManager ai_context_manager_;
-  WorkspaceAiRuntime ai_runtime_;
+  WorkspaceProviderBridgeManager provider_bridge_manager_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
@@ -1332,6 +1513,7 @@ class WorkspaceShell {
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
   std::function<bool(std::string_view)> external_url_opener_;
+  mutable std::unordered_map<std::uint64_t, ChatMarkdownDocument> chat_markdown_cache_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
   bool quit_requested_ = false;

@@ -20,10 +20,16 @@ void WorkspaceShell::RenderPromptSurface(
   const SDL_FRect header = DrawTitledCardFrame(renderer, theme_, dialog, 32.0f, CardStyle::Overlay);
   const SDL_FRect message_rect =
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 36.0f);
+  const SDL_FRect detail_rect =
+      MakeRect(dialog.x + 16.0f, dialog.y + 72.0f, dialog.w - 32.0f, 40.0f);
   DrawVCenteredTextOn(text_renderer_, renderer, header, 16.0f, theme_.chrome_text,
                       theme_.chrome_background, PromptSurfaceTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_muted,
              theme_.overlay_background, TruncateLabel(PromptSurfaceMessage(), message_rect.w));
+  if (const std::string detail = PromptSurfaceDetail(); !detail.empty()) {
+    DrawTextOn(text_renderer_, renderer, detail_rect.x, detail_rect.y, theme_.text_secondary,
+               theme_.overlay_background, TruncateLabel(detail, detail_rect.w));
+  }
 
   if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
     const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
@@ -39,7 +45,8 @@ void WorkspaceShell::RenderPromptSurface(
                            theme_.surface_background, prompt_text);
   }
 
-  const auto buttons = ComputePromptSurfaceButtonRects(dialog);
+  const auto buttons =
+      ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
   const auto labels = PromptSurfaceActionLabels();
   for (std::size_t i = 0; i < buttons.size(); ++i) {
     DrawButtonCentered(

@@ -80,6 +80,14 @@ class KeyInputCoordinator {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> restore_previous_sidebar;
+    std::function<bool(std::string_view)> activate_chat_conversation;
+    std::function<bool()> create_chat_conversation;
+    std::function<bool()> delete_active_chat_conversation;
+    std::function<bool()> cancel_active_chat_request;
+    std::function<bool(std::string*)> retry_active_chat_request;
+    std::function<void(int)> cycle_active_chat_provider;
+    std::function<void(int)> cycle_active_chat_model;
+    std::function<void(int)> cycle_active_chat_tool_mode;
     std::function<void(int)> move_git_sidebar_selection;
     std::function<void()> reveal_selected_git_sidebar_line;
     std::function<bool(std::size_t)> open_git_sidebar_entry;

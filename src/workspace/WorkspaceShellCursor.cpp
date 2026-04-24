@@ -195,7 +195,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   if (context_.prompts.surface_visible) {
     const SDL_FRect dialog = ComputePromptSurfaceRect(*window_rect);
-    for (const SDL_FRect& button : ComputePromptSurfaceButtonRects(dialog)) {
+    for (const SDL_FRect& button :
+         ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count)) {
       if (Contains(button, x, y)) {
         return CursorKind::Pointer;
       }
@@ -365,19 +366,38 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (sidebar_mode == SidebarMode::Chat) {
+      if (Contains(ChatSidebarConversationNewRect(layout.sidebar), x, y)) {
+        return CursorKind::Pointer;
+      }
+      const auto& conversations = context_.current_project_state.conversations.conversations();
+      for (std::size_t i = 0; i < conversations.size(); ++i) {
+        const SDL_FRect row_rect = ChatSidebarConversationRowRect(layout.sidebar, i);
+        if (Contains(row_rect, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      for (const ChatHeaderAction& action : BuildChatHeaderActions(layout.sidebar)) {
+        if (Contains(action.rect, x, y) && action.enabled) {
+          return CursorKind::Pointer;
+        }
+      }
       if (Contains(ChatSidebarComposerRect(layout.sidebar), x, y)) {
         return CursorKind::Text;
       }
-      const auto lines = BuildChatSidebarLines(layout.sidebar);
-      const auto list_layout = ComputeChatSidebarListLayout(layout.sidebar, lines.size());
+      const std::size_t line_count = ChatTranscriptLineCount(layout.sidebar);
+      const auto list_layout = ComputeChatSidebarListLayout(layout.sidebar, line_count);
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
       if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(lines.size())) {
+          *line_index >= static_cast<int>(line_count)) {
         return CursorKind::Default;
       }
       const SDL_FRect row_rect =
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      return Contains(row_rect, x, y) ? CursorKind::Default : CursorKind::Default;
+      if (!Contains(row_rect, x, y)) {
+        return CursorKind::Default;
+      }
+      return HasChatTranscriptLinkAtPoint(layout.sidebar, x, y) ? CursorKind::Pointer
+                                                                : CursorKind::Default;
     }
     if (sidebar_mode == SidebarMode::Git) {
       if (Contains(GitSidebarStageAllButtonRect(layout.sidebar), x, y) &&

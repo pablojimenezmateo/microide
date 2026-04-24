@@ -241,7 +241,8 @@ SDL_FRect BottomPanelCommandPromptRect(const WorkspaceLayout& layout);
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full);
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
-std::array<SDL_FRect, 2> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog);
+std::vector<SDL_FRect> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog,
+                                                       int button_count = 2);
 SDL_FRect ComputePromptSurfaceInputRect(const SDL_FRect& dialog);
 TextGridInteractionLayout ComputeTextGridInteractionLayout(
     const SDL_FRect& rect,

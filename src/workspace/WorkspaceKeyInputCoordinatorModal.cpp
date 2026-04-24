@@ -129,6 +129,11 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
 
   switch (event.key) {
     case SDLK_ESCAPE:
+      if (prompts_.surface.action == PromptSurfaceState::Action::ApproveChatTool) {
+        prompts_.surface.selected_button = std::max(0, prompts_.surface.button_count - 1);
+        operations_.confirm_prompt_surface();
+        return true;
+      }
       operations_.dismiss_prompt_surface(true);
       return true;
     case SDLK_LEFT:
@@ -136,7 +141,9 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_RIGHT:
     case SDLK_TAB:
-      prompts_.surface.selected_button = std::min(1, prompts_.surface.selected_button + 1);
+      prompts_.surface.selected_button =
+          std::min(std::max(0, prompts_.surface.button_count - 1),
+                   prompts_.surface.selected_button + 1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:

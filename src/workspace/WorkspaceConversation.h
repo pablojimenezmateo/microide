@@ -1,37 +1,86 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace microide::workspace {
 
-// Chat message.
+static constexpr int kConversationSchemaVersion = 1;
+
 enum class MessageRole {
   User,
   Assistant,
   System,
 };
 
+// Lifecycle state of a single chat request.
+enum class RequestStatus {
+  Idle,
+  Queued,
+  Running,
+  Streaming,
+  Succeeded,
+  Failed,
+  Cancelled,
+};
+
+bool IsTerminalRequestStatus(RequestStatus status);
+
+enum class ToolMode {
+  NoTools,
+  Ask,
+  Auto,
+};
+
+struct ToolEvent {
+  std::string call_id;
+  std::string tool_id;
+  std::string display_name;
+  std::string arguments_summary;
+  std::string status;
+  std::string permission_decision;
+  std::string capability_scope;
+  std::string started_at;
+  std::string finished_at;
+  std::int64_t duration_ms = 0;
+  std::string error;
+  std::string output_summary;
+};
+
 struct Message {
   std::string id;
-  MessageRole role;
+  MessageRole role = MessageRole::User;
   std::string content;
   std::string render_line;  // cached "Role: collapsed-content" for panel rendering
   std::string timestamp;
-  std::string model;  // which model/provider generated this (for assistant messages)
+  std::string provider_id;
+  std::string model;
+  RequestStatus status = RequestStatus::Idle;
+  std::int64_t request_duration_ms = 0;
+  std::string error;
+  std::vector<ToolEvent> tool_events;
+  std::string stream_id;
 };
 
 // Conversation thread: a chat session with history.
 struct Conversation {
+  int schema_version = kConversationSchemaVersion;
   std::string id;
   std::string title;
   std::vector<Message> messages;
   std::string created_at;
   std::string updated_at;
-  std::string provider_id;  // default AI provider for this conversation
+  std::string provider_id;
+  std::string model_id;
+  RequestStatus status = RequestStatus::Idle;
+  ToolMode tool_mode = ToolMode::Ask;
+  std::string draft;
+  std::string system_prompt;
+  std::int64_t last_request_duration_ms = 0;
 };
 
-// Conversation registry: manages chat threads and history.
+// Conversation registry: manages chat threads and history, scoped to one project.
 class ConversationRegistry {
  public:
   ConversationRegistry();
@@ -47,8 +96,11 @@ class ConversationRegistry {
   // Add message to conversation.
   void AddMessage(const std::string& conversation_id, const Message& message);
 
-  // Get all conversations (for sidebar list).
-  std::vector<Conversation> GetAllConversations() const;
+  // Get all conversations (for display or persistence).
+  const std::vector<Conversation>& conversations() const { return conversations_; }
+
+  // Replace all conversations (used during session restore).
+  void SetConversations(std::vector<Conversation> conversations);
 
   // Delete conversation.
   void DeleteConversation(const std::string& id);

@@ -196,6 +196,37 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
   context_.prompts.surface.action = action;
   context_.prompts.surface.path = path.lexically_normal();
   util::SetSingleLineText(&context_.prompts.surface.input, std::move(input));
+  context_.prompts.surface.detail.clear();
+  context_.prompts.surface.bridge_agent_id.clear();
+  context_.prompts.surface.bridge_request_id.clear();
+  context_.prompts.surface.tool_call_id.clear();
+  context_.prompts.surface.tool_id.clear();
+  context_.prompts.surface.capability_scope.clear();
+  context_.prompts.surface.button_count = 2;
+  context_.prompts.surface.selected_button = 0;
+  context_.current_project_state.surface.focus = FocusTarget::Overlay;
+  RequestPromptRedraw();
+}
+
+void WorkspaceShell::OpenExternalUrlPrompt(std::string url) {
+  if (url.empty()) {
+    return;
+  }
+
+  RequestPromptRedraw();
+  context_.prompts.surface_visible = true;
+  context_.prompts.surface_previous_focus = context_.current_project_state.surface.focus;
+  context_.prompts.surface.kind = PromptSurfaceState::Kind::Confirm;
+  context_.prompts.surface.action = PromptSurfaceState::Action::OpenExternalUrl;
+  context_.prompts.surface.path.clear();
+  util::SetSingleLineText(&context_.prompts.surface.input, {});
+  context_.prompts.surface.detail = std::move(url);
+  context_.prompts.surface.bridge_agent_id.clear();
+  context_.prompts.surface.bridge_request_id.clear();
+  context_.prompts.surface.tool_call_id.clear();
+  context_.prompts.surface.tool_id.clear();
+  context_.prompts.surface.capability_scope.clear();
+  context_.prompts.surface.button_count = 2;
   context_.prompts.surface.selected_button = 0;
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
   RequestPromptRedraw();
@@ -223,6 +254,10 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Delete";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard All Changes";
+    case PromptSurfaceState::Action::OpenExternalUrl:
+      return "Open External Link";
+    case PromptSurfaceState::Action::ApproveChatTool:
+      return "Approve Tool Call";
   }
   return "Prompt";
 }
@@ -243,11 +278,29 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Move " + label + " to trash?";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
+    case PromptSurfaceState::Action::OpenExternalUrl:
+      return "Open " + context_.prompts.surface.detail + " in your browser?";
+    case PromptSurfaceState::Action::ApproveChatTool: {
+      const std::string tool_name = context_.prompts.surface.tool_id.empty()
+                                        ? std::string("this tool")
+                                        : context_.prompts.surface.tool_id;
+      return "Allow " + tool_name + " to run for this chat request?";
+    }
   }
   return {};
 }
 
-std::array<std::string, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
+std::string WorkspaceShell::PromptSurfaceDetail() const {
+  switch (context_.prompts.surface.action) {
+    case PromptSurfaceState::Action::OpenExternalUrl:
+    case PromptSurfaceState::Action::ApproveChatTool:
+      return context_.prompts.surface.detail;
+    default:
+      return {};
+  }
+}
+
+std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
   switch (context_.prompts.surface.action) {
     case PromptSurfaceState::Action::CreateFile:
       return {"Create File", "Cancel"};
@@ -259,6 +312,10 @@ std::array<std::string, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Delete", "Cancel"};
     case PromptSurfaceState::Action::DiscardGitChanges:
       return {"Discard All", "Cancel"};
+    case PromptSurfaceState::Action::OpenExternalUrl:
+      return {"Open Link", "Cancel"};
+    case PromptSurfaceState::Action::ApproveChatTool:
+      return {"Allow Once", "Allow Session", "Deny"};
   }
   return {"OK", "Cancel"};
 }
@@ -295,6 +352,25 @@ void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::OpenExternalUrl) {
+    const std::string url = context_.prompts.surface.detail;
+    const bool opened = !url.empty() && OpenExternalUrl(url);
+    DismissPromptSurface(!opened);
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::ApproveChatTool) {
+    const int selected_button = context_.prompts.surface.selected_button;
+    if (selected_button == 0) {
+      ResolveChatToolApprovalPrompt(true, false);
+    } else if (selected_button == 1) {
+      ResolveChatToolApprovalPrompt(true, true);
+    } else {
+      ResolveChatToolApprovalPrompt(false, false);
+    }
+    return;
+  }
   MakePathMutationCoordinator().ConfirmPromptSurface(resolution);
 }
 

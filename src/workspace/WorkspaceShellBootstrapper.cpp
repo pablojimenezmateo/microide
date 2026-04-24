@@ -81,10 +81,10 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell](Uint32 type) { return shell->task_runtime_.HandlesEvent(type); },
           .consume_task_runtime_updates =
               [shell]() { shell->ConsumeTaskRuntimeUpdates(); },
-          .ai_runtime_handles_event =
-              [shell](Uint32 type) { return shell->ai_runtime_.HandlesEvent(type); },
-          .consume_ai_runtime_updates =
-              [shell]() { shell->ConsumeAiRuntimeUpdates(); },
+          .provider_bridge_handles_event =
+              [shell](Uint32 type) { return shell->provider_bridge_manager_.HandlesEvent(type); },
+          .consume_provider_bridge_updates =
+              [shell]() { shell->ConsumeProviderBridgeUpdates(); },
           .request_focused_editor_redraw =
               [shell]() { shell->RequestFocusedEditorRedraw(); },
           .consume_lsp_callbacks =

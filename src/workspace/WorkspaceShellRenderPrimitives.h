@@ -56,6 +56,8 @@ struct StripTabPalette {
 
 struct StripTabStyle {
   float text_left_padding = 8.0f;
+  float badge_size = 0.0f;
+  float badge_gap = 0.0f;
   float close_right_reserve = 40.0f;
   StripAccentEdge accent_edge = StripAccentEdge::Top;
 };
@@ -471,6 +473,9 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                          const render::Theme& theme,
                          const SDL_FRect& rect,
                          std::string_view label,
+                         std::string_view badge_text,
+                         SDL_Color badge_color,
+                         bool show_badge,
                          bool active,
                          const StripTabStyle& style,
                          const StripTabPalette& palette) {
@@ -483,10 +488,31 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
             : SDL_FRect{rect.x, rect.y + rect.h - 2.0f, rect.w, 2.0f};
     FillRect(renderer, accent, theme.accent);
   }
-  DrawVCenteredTextOn(text_renderer, renderer, rect, style.text_left_padding,
-                      active ? palette.active_text : palette.inactive_text, background,
-                      text_renderer.TruncateToWidth(
-                          label, std::max(8.0f, rect.w - style.close_right_reserve)));
+  float text_left_padding = style.text_left_padding;
+  if (show_badge && style.badge_size > 0.0f && !badge_text.empty()) {
+    const float badge_y =
+        rect.y + std::floor(std::max(0.0f, rect.h - style.badge_size) * 0.5f);
+    const SDL_FRect badge_rect{rect.x + style.text_left_padding, badge_y, style.badge_size,
+                               style.badge_size};
+    FillRect(renderer, badge_rect, badge_color);
+    OutlineRect(renderer, badge_rect, active ? palette.active_fill : palette.inactive_fill);
+    const SDL_Color badge_text_color =
+        render::RelativeLuminance(badge_color) > 0.45f ? theme.chrome_background
+                                                       : theme.text_primary;
+    const float badge_text_width = text_renderer.MeasureWidth(badge_text);
+    const float badge_text_x =
+        badge_rect.x + std::floor(std::max(0.0f, badge_rect.w - badge_text_width) * 0.5f);
+    const float badge_text_y =
+        badge_rect.y + std::floor(std::max(0.0f, badge_rect.h - text_renderer.LineHeight()) * 0.5f);
+    text_renderer.DrawStringOn(renderer, badge_text_x, badge_text_y, badge_text_color,
+                               badge_color, badge_text);
+    text_left_padding += style.badge_size + style.badge_gap;
+  }
+  DrawVCenteredTextOn(
+      text_renderer, renderer, rect, text_left_padding,
+      active ? palette.active_text : palette.inactive_text, background,
+      text_renderer.TruncateToWidth(
+          label, std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding))));
 }
 
 inline void DrawMenuRow(const render::TextRenderer& text_renderer,

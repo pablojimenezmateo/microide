@@ -9,12 +9,15 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "editor/TextViewport.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
 #include "util/SingleLineText.h"
+#include "workspace/WorkspaceConversation.h"
+#include "workspace/WorkspaceAiContext.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTabState.h"
@@ -159,13 +162,61 @@ struct OutputPanelState {
   int scroll_row = 0;
 };
 
+enum class ChatPaneFocusRegion {
+  Rail,
+  Header,
+  Transcript,
+  Composer,
+};
+
 struct ChatPanelState {
+  struct RequestSnapshot {
+    std::string provider_id;
+    std::string model_id;
+    ToolMode tool_mode = ToolMode::Ask;
+    ContextPolicy context_policy;
+    std::vector<ContextItem> context_items;
+  };
+
+  struct PendingToolApproval {
+    std::string conversation_id;
+    std::string assistant_message_id;
+    std::string bridge_agent_id;
+    std::string bridge_request_id;
+    std::string tool_call_id;
+    std::string tool_id;
+    std::string display_name;
+    std::string arguments_json;
+    std::string arguments_summary;
+    std::string capability_scope;
+    Uint64 requested_ticks = 0;
+    Uint64 expires_at_ticks = 0;
+  };
+
+  struct RememberedToolApproval {
+    std::string capability_scope;
+    std::string tool_id;
+    std::string display_name;
+    Uint64 granted_at_ticks = 0;
+  };
+
   std::string conversation_id;
+  std::string request_conversation_id;
   std::string pending_assistant_message_id;
-  util::SingleLineTextState composer;
+  editor::TextViewport composer;
+  ChatPaneFocusRegion focus_region = ChatPaneFocusRegion::Composer;
+  std::size_t header_focus_index = 0;
   int scroll_row = 0;
   bool request_in_flight = false;
+  Uint64 request_started_ticks = 0;
   std::string status_text;
+  std::string pending_bridge_agent_id;
+  std::string pending_bridge_request_id;
+  RequestSnapshot active_request;
+  std::optional<PendingToolApproval> pending_tool_approval;
+  std::vector<RememberedToolApproval> remembered_tool_approvals;
+  // Restore warning displayed after session restore detected interrupted requests.
+  bool has_restore_warning = false;
 };
 
 struct InlineCompletionState {
@@ -177,6 +228,8 @@ struct InlineCompletionState {
   std::string provider_id;
   std::string model_id;
   std::string error;
+  std::string pending_bridge_agent_id;
+  std::string pending_bridge_request_id;
 };
 
 struct DebugSessionState {
@@ -220,6 +273,8 @@ struct ProjectWorkspaceState {
   EditorPreferences editor_preferences;
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
+  // Chat conversations persisted per-project.
+  ConversationRegistry conversations;
 };
 
 struct ProjectCatalogState {

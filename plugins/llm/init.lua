@@ -124,20 +124,6 @@ local function read_bool(ctx, key, fallback)
   return v == "1" or v == "true" or v == "yes" or v == "on"
 end
 
-local function shell_quote(value)
-  local quoted = tostring(value or "")
-  quoted = quoted:gsub("'", "'\\''")
-  return "'" .. quoted .. "'"
-end
-
-local function join_shell_command(argv)
-  local parts = {}
-  for i = 1, #argv do
-    parts[#parts + 1] = shell_quote(argv[i])
-  end
-  return table.concat(parts, " ")
-end
-
 local CODEX_WRAPPER_SCRIPT = [=[
 requested="$1"
 shift
@@ -188,8 +174,44 @@ local function make_codex_process_args(codex_binary, args)
   return command
 end
 
-local function make_codex_endpoint(codex_binary, model)
-  return join_shell_command(make_codex_process_args(codex_binary, {
+local CODEX_BRIDGE_SCRIPT = [=[
+import json,subprocess,sys
+base_argv=sys.argv[1:]
+if not base_argv:
+    print(json.dumps({"type":"initialized","capabilities":{"chat":False}}), flush=True)
+    sys.exit(0)
+for raw in sys.stdin:
+    msg=json.loads(raw)
+    msg_type=msg.get("type","")
+    if msg_type=="initialize":
+        print(json.dumps({"type":"initialized","capabilities":{"chat":True,"streaming":False}}), flush=True)
+    elif msg_type=="auth_check":
+        status="valid" if msg.get("api_key","") else "missing"
+        print(json.dumps({"type":"auth_status","status":status}), flush=True)
+    elif msg_type=="model_list":
+        print(json.dumps({"type":"model_list","models":[]}), flush=True)
+    elif msg_type=="chat":
+        prompt=""
+        for entry in msg.get("messages", []):
+            if entry.get("role")=="user":
+                prompt=entry.get("content","")
+        result=subprocess.run(base_argv,input=prompt,text=True,capture_output=True)
+        content=result.stdout
+        error="" if result.returncode==0 else (result.stderr.strip() or ("codex exited with code %d" % result.returncode))
+        print(json.dumps({
+            "type":"done",
+            "request_id":msg.get("request_id",""),
+            "success":result.returncode==0,
+            "content":content,
+            "error":error,
+        }), flush=True)
+    elif msg_type=="shutdown":
+        break
+]=]
+
+local function make_codex_bridge_command(codex_binary, model)
+  local command = {"python3", "-c", CODEX_BRIDGE_SCRIPT}
+  local codex_args = make_codex_process_args(codex_binary, {
     "exec",
     "--skip-git-repo-check",
     "--ephemeral",
@@ -197,15 +219,11 @@ local function make_codex_endpoint(codex_binary, model)
     "--sandbox", "read-only",
     "-m", model,
     "-",
-  }))
-end
-
-local function resolve_agent_endpoint(ctx, key, default_endpoint)
-  local override = read_string(ctx, key, "")
-  if override ~= "" then
-    return override
+  })
+  for i = 1, #codex_args do
+    command[#command + 1] = codex_args[i]
   end
-  return default_endpoint
+  return command
 end
 
 return ide.plugin({
@@ -244,23 +262,6 @@ return ide.plugin({
       label = "Enable Inline Completion",
       description = "Register the Codex inline completion agent.",
     })
-    ctx.settings.declare({
-      id = "chat_command",
-      type = "string",
-      default = "",
-      scope = "user",
-      label = "Chat Command Override",
-      description = "Optional stdio command used instead of the built-in Codex chat endpoint.",
-    })
-    ctx.settings.declare({
-      id = "inline_command",
-      type = "string",
-      default = "",
-      scope = "user",
-      label = "Inline Command Override",
-      description = "Optional stdio command used instead of the built-in Codex inline endpoint.",
-    })
-
     -- llm-login: OAuth 2.0 device authorization grant (RFC 8628) against auth.openai.com.
     -- Reuses ~/.codex/auth.json so credentials are shared with the Codex CLI.
     ctx.commands.add("llm-login", function(cmd_ctx, args)
@@ -368,17 +369,14 @@ return ide.plugin({
     local codex_binary = read_string(ctx, "codex.binary", "codex")
     local chat_enabled = read_bool(ctx, "chat_enabled", true)
     local inline_enabled = read_bool(ctx, "inline_enabled", true)
-    local chat_endpoint =
-      resolve_agent_endpoint(ctx, "chat_command", make_codex_endpoint(codex_binary, model))
-    local inline_endpoint =
-      resolve_agent_endpoint(ctx, "inline_command", make_codex_endpoint(codex_binary, model))
+    local bridge_command = make_codex_bridge_command(codex_binary, model)
 
     if chat_enabled then
       ctx.external_agents.add({
         id = "chat",
         label = "Codex Chat",
         protocol = "stdio",
-        endpoint = chat_endpoint,
+        command = bridge_command,
         capabilities = {"chat"},
       })
     end
@@ -388,7 +386,7 @@ return ide.plugin({
         id = "inline",
         label = "Codex Inline",
         protocol = "stdio",
-        endpoint = inline_endpoint,
+        command = bridge_command,
         capabilities = {"inline-completion"},
       })
     end

@@ -154,10 +154,6 @@ class LspClient {
   // Shutdown and close connection (blocks until complete).
   void Shutdown();
 
-  // Begin shutdown on a background thread; returns immediately.
-  // The client must not be used after this call.
-  void ShutdownAsync();
-
  private:
   struct Impl;
   Impl* impl_;

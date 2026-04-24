@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -37,6 +38,51 @@ std::filesystem::path GlobalPluginDirectory() {
       platform::ResolveAppDirectory(platform::UserDirectoryKind::Config, "microide");
   return config_root.empty() ? std::filesystem::path{} : config_root / "plugins";
 }
+
+bool ShouldSkipPluginDirectoryName(std::string_view name) {
+  return name.ends_with(".bak") || name.find(".bak-") != std::string_view::npos;
+}
+
+#ifndef MICROIDE_TESTING
+std::filesystem::path RepoPluginDirectory() {
+  const auto repo_plugins_from_root = [](const std::filesystem::path& start) {
+    if (start.empty()) {
+      return std::filesystem::path{};
+    }
+    std::error_code error;
+    std::filesystem::path current = std::filesystem::weakly_canonical(start, error);
+    if (error) {
+      current = start.lexically_normal();
+    }
+    while (!current.empty()) {
+      const std::filesystem::path plugins_dir = current / "plugins";
+      if (platform::ReadPathType(plugins_dir) == platform::PathType::Directory &&
+          platform::ReadPathType(plugins_dir / "README.md") == platform::PathType::RegularFile) {
+        return plugins_dir.lexically_normal();
+      }
+      const std::filesystem::path parent = current.parent_path();
+      if (parent == current) {
+        break;
+      }
+      current = parent;
+    }
+    return std::filesystem::path{};
+  };
+
+  if (const char* raw_base_path = SDL_GetBasePath();
+      raw_base_path != nullptr && raw_base_path[0] != '\0') {
+    if (const std::filesystem::path plugins_dir =
+            repo_plugins_from_root(std::filesystem::path(raw_base_path));
+        !plugins_dir.empty()) {
+      return plugins_dir;
+    }
+  }
+
+  std::error_code error;
+  const std::filesystem::path cwd = std::filesystem::current_path(error);
+  return error ? std::filesystem::path{} : repo_plugins_from_root(cwd);
+}
+#endif
 
 bool IsValidIdentifier(std::string_view value) {
   if (value.empty()) {
@@ -395,6 +441,7 @@ struct PluginHost::Impl {
 
   std::vector<std::pair<std::filesystem::path, bool>> DiscoverPluginRoots() const {
     std::vector<std::pair<std::filesystem::path, bool>> plugin_roots;
+    std::set<std::string> seen_directory_names;
     const auto append = [&](const std::filesystem::path& plugins_dir, bool project_local) {
       if (plugins_dir.empty()) {
         return;
@@ -408,8 +455,14 @@ struct PluginHost::Impl {
         if (entry.type != platform::PathType::Directory) {
           continue;
         }
+        const std::string directory_name = entry.path.filename().string();
+        if (ShouldSkipPluginDirectoryName(directory_name) ||
+            seen_directory_names.contains(directory_name)) {
+          continue;
+        }
         const std::filesystem::path init_path = entry.path / "init.lua";
         if (platform::ReadPathType(init_path) == platform::PathType::RegularFile) {
+          seen_directory_names.insert(directory_name);
           entries.push_back(entry.path.lexically_normal());
         }
       }
@@ -421,6 +474,9 @@ struct PluginHost::Impl {
     };
 
     append(GlobalPluginDirectory(), false);
+#ifndef MICROIDE_TESTING
+    append(RepoPluginDirectory(), false);
+#endif
     if (!current_project_root.empty()) {
       append(current_project_root / ".microide" / "plugins", true);
     }
@@ -1909,10 +1965,34 @@ struct PluginHost::Impl {
     auto id_opt = read_string("id");
     auto label_opt = read_string("label");
     auto protocol_opt = read_string("protocol");
-    auto endpoint_opt = read_string("endpoint");
-    if (!id_opt || !label_opt || !protocol_opt || !endpoint_opt) {
+    auto read_string_array = [&](const char* field) -> std::optional<std::vector<std::string>> {
+      lua_getfield(state, 1, field);
+      if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::vector<std::string> values;
+      for (lua_Integer i = 1;; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (!lua_isstring(state, -1)) {
+          lua_pop(state, 2);
+          return std::nullopt;
+        }
+        values.emplace_back(lua_tostring(state, -1));
+        lua_pop(state, 1);
+      }
+      lua_pop(state, 1);
+      return values;
+    };
+
+    auto command_opt = read_string_array("command");
+    if (!id_opt || !label_opt || !protocol_opt || !command_opt || command_opt->empty()) {
       return luaL_error(state,
-                        "external agent requires id, label, protocol, and endpoint");
+                        "external agent requires id, label, protocol, and non-empty command");
     }
 
     lua_getfield(state, 1, "capabilities");
@@ -1932,14 +2012,14 @@ struct PluginHost::Impl {
     }
     lua_pop(state, 1);
 
-    host->external_agents.push_back(PluginHost::ContributedExternalAgent{
-        .id = plugin->id + "." + *id_opt,
-        .label = std::move(*label_opt),
-        .protocol = std::move(*protocol_opt),
-        .endpoint = std::move(*endpoint_opt),
-        .capabilities = std::move(capabilities),
-        .plugin_id = plugin->id,
-    });
+    PluginHost::ContributedExternalAgent contributed;
+    contributed.id = plugin->id + "." + *id_opt;
+    contributed.label = std::move(*label_opt);
+    contributed.protocol = std::move(*protocol_opt);
+    contributed.command = std::move(*command_opt);
+    contributed.capabilities = std::move(capabilities);
+    contributed.plugin_id = plugin->id;
+    host->external_agents.push_back(std::move(contributed));
     return 0;
   }
 

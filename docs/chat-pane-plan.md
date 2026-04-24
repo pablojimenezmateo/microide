@@ -607,6 +607,8 @@ This work should extend the existing host-owned AI seams instead of creating a c
 
 ### Phase 5: Runtime and tool policy plumbing
 
+Shipped in the current tree:
+
 - thread pane-level tool mode through chat request execution
 - add host-side tool-call approval flow with timeout and session-scoped remembered approvals
 - record tool activity in conversation state

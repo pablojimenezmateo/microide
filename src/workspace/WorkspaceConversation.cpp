@@ -65,6 +65,11 @@ std::string BuildRenderLine(MessageRole role, std::string_view content) {
 }
 }  // namespace
 
+bool IsTerminalRequestStatus(RequestStatus status) {
+  return status == RequestStatus::Succeeded || status == RequestStatus::Failed ||
+         status == RequestStatus::Cancelled || status == RequestStatus::Idle;
+}
+
 ConversationRegistry::ConversationRegistry() = default;
 ConversationRegistry::~ConversationRegistry() = default;
 
@@ -109,8 +114,8 @@ void ConversationRegistry::AddMessage(const std::string& conversation_id,
   }
 }
 
-std::vector<Conversation> ConversationRegistry::GetAllConversations() const {
-  return conversations_;
+void ConversationRegistry::SetConversations(std::vector<Conversation> conversations) {
+  conversations_ = std::move(conversations);
 }
 
 void ConversationRegistry::DeleteConversation(const std::string& id) {

@@ -62,6 +62,9 @@ void DirectoryTree::RefreshGitStatuses() {
   }
   util::StartupTrace::Scope trace_scope("DirectoryTree::RefreshGitStatuses");
   git_statuses_ = CollectGitStatuses(root_);
+  for (auto& entry : entries_) {
+    entry.git_status = EntryGitStatus(entry.path);
+  }
 }
 
 void DirectoryTree::MoveSelection(int delta) {

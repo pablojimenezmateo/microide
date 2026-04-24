@@ -49,6 +49,7 @@ class AiContextManager {
 
   // Get collected context (respects policy limits).
   std::vector<ContextItem> GetContext() const;
+  const ContextPolicy& policy() const { return policy_; }
 
   // Get current context size in bytes.
   std::int64_t GetContextSize() const;

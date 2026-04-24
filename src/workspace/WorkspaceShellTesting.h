@@ -183,6 +183,10 @@ struct WorkspaceShell::TestAccess {
   }
 
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
+  static void ConfirmPromptSurface(WorkspaceShell& shell, int selected_button) {
+    shell.context_.prompts.surface.selected_button = selected_button;
+    shell.ConfirmPromptSurface();
+  }
   static bool SplitActiveEditor(WorkspaceShell& shell, bool vertical = true) {
     return shell.SplitActiveEditor(vertical ? WorkspaceShell::EditorSplitOrientation::Vertical
                                             : WorkspaceShell::EditorSplitOrientation::Horizontal);
@@ -361,8 +365,24 @@ struct WorkspaceShell::TestAccess {
   static WorkspaceShell::PanelContentKind PanelContent(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.content;
   }
-  static const std::string& ChatComposerInput(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.panel.chat.composer.text;
+  static std::string ChatComposerInput(const WorkspaceShell& shell) {
+    return shell.ChatComposerText();
+  }
+  static std::vector<std::string> ChatTranscriptRows(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ChatTranscriptDebugLines(layout.sidebar);
+  }
+  static std::optional<SDL_FPoint> ChatTranscriptLinkPoint(WorkspaceShell& shell,
+                                                           std::string_view match) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto rect = shell.FindChatTranscriptLinkRect(layout.sidebar, match);
+    if (!rect.has_value()) {
+      return std::nullopt;
+    }
+    return SDL_FPoint{
+        .x = rect->x + rect->w * 0.5f,
+        .y = rect->y + rect->h * 0.5f,
+    };
   }
   static WorkspaceShell::OverlayMode ActiveOverlayMode(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode;
@@ -389,16 +409,75 @@ struct WorkspaceShell::TestAccess {
     shell.DismissInlineCompletion();
   }
   static std::vector<Message> ActiveConversationMessages(const WorkspaceShell& shell) {
-    const auto* conversation = shell.conversation_registry_.GetConversation(
+    const auto* conversation = shell.context_.current_project_state.conversations.GetConversation(
         shell.context_.current_project_state.panel.chat.conversation_id);
     return conversation != nullptr ? conversation->messages : std::vector<Message>{};
   }
   static std::string ActiveConversationProviderId(const WorkspaceShell& shell) {
-    const auto* conversation = shell.conversation_registry_.GetConversation(
+    const auto* conversation = shell.context_.current_project_state.conversations.GetConversation(
         shell.context_.current_project_state.panel.chat.conversation_id);
     return conversation != nullptr ? conversation->provider_id : std::string{};
   }
-  static void ConsumeAiRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeAiRuntimeUpdates(); }
+  static bool ActivateChatConversation(WorkspaceShell& shell, std::string_view conversation_id) {
+    return shell.ActivateChatConversation(conversation_id);
+  }
+  static bool CreateChatConversation(WorkspaceShell& shell) {
+    return shell.CreateChatConversation();
+  }
+  static bool DeleteActiveChatConversation(WorkspaceShell& shell) {
+    return shell.DeleteActiveChatConversation();
+  }
+  static std::string ActiveConversationId(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.chat.conversation_id;
+  }
+  static bool CancelActiveChatRequest(WorkspaceShell& shell) {
+    return shell.CancelActiveChatRequest();
+  }
+  static bool RetryActiveChatRequest(WorkspaceShell& shell, std::string* error_message = nullptr) {
+    return shell.RetryActiveChatRequest(error_message);
+  }
+  static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell& shell) {
+    return shell.context_.current_project_state;
+  }
+  static WorkspaceShell::ProjectWorkspaceState& ProjectState(WorkspaceShell& shell,
+                                                             std::size_t index) {
+    return *shell.context_.project_catalog.entries.at(index);
+  }
+  static const std::vector<AiProviderSpec>& AiProviders(const WorkspaceShell& shell) {
+    return shell.ai_provider_registry_.Specs();
+  }
+  static bool SetProviderApiKey(WorkspaceShell& shell,
+                                std::string_view provider_id,
+                                std::string_view api_key,
+                                std::string* error_message = nullptr) {
+    return shell.SetProviderApiKey(provider_id, api_key, error_message);
+  }
+  static bool ClearProviderApiKey(WorkspaceShell& shell,
+                                  std::string_view provider_id,
+                                  std::string* error_message = nullptr) {
+    return shell.ClearProviderApiKey(provider_id, error_message);
+  }
+  static ProviderAuthStatus GetProviderAuthStatus(const WorkspaceShell& shell,
+                                                  std::string_view provider_id) {
+    return shell.GetProviderAuthStatus(provider_id);
+  }
+  static void RequestProviderAuthCheck(WorkspaceShell& shell, std::string_view provider_id) {
+    shell.provider_bridge_manager_.RequestAuthCheck(std::string(provider_id));
+  }
+  static void RequestProviderModelList(WorkspaceShell& shell, std::string_view provider_id) {
+    shell.provider_bridge_manager_.RequestModelList(std::string(provider_id));
+  }
+  static std::vector<std::string> ProviderModels(const WorkspaceShell& shell,
+                                                 std::string_view provider_id) {
+    return shell.provider_bridge_manager_.GetModels(std::string(provider_id));
+  }
+  static ProviderCapabilities GetProviderCapabilities(const WorkspaceShell& shell,
+                                                      std::string_view provider_id) {
+    return shell.provider_bridge_manager_.GetCapabilities(std::string(provider_id));
+  }
+  static void ConsumeProviderBridgeUpdates(WorkspaceShell& shell) {
+    shell.ConsumeProviderBridgeUpdates();
+  }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
   static void ConsumePluginAsyncProcessCallbacks(WorkspaceShell& shell) {
     shell.ConsumePluginAsyncProcessCallbacks();
@@ -430,14 +509,28 @@ struct WorkspaceShell::TestAccess {
     shell.ConsumePluginAsyncProcessCallbacks();
     return shell.plugin_runtime_.Host().PendingAsyncProcessCount() == 0;
   }
-  static bool WaitForAiRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
+  static bool WaitForProviderBridgeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
+    const auto any_in_flight = [&]() {
+      const auto project_busy = [](const WorkspaceShell::ProjectWorkspaceState& project) {
+        return project.panel.chat.request_in_flight || project.inline_completion.request_in_flight;
+      };
+      if (project_busy(shell.context_.current_project_state)) {
+        return true;
+      }
+      return std::any_of(shell.context_.project_catalog.entries.begin(),
+                         shell.context_.project_catalog.entries.end(),
+                         [&](const auto& entry) {
+                           return entry != nullptr && project_busy(*entry);
+                         });
+    };
     const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-    while (shell.ai_runtime_.active_request_id() != 0 && SDL_GetTicks() <= deadline) {
-      shell.ConsumeAiRuntimeUpdates();
+    while (any_in_flight() && SDL_GetTicks() <= deadline) {
+      shell.ConsumeProviderBridgeUpdates();
+      shell.HandleScheduledWake();
       SDL_Delay(5);
     }
-    shell.ConsumeAiRuntimeUpdates();
-    return shell.ai_runtime_.active_request_id() == 0;
+    shell.ConsumeProviderBridgeUpdates();
+    return !any_in_flight();
   }
   static void ConsumeTaskRuntimeUpdates(WorkspaceShell& shell) { shell.ConsumeTaskRuntimeUpdates(); }
   static bool WaitForTaskRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
@@ -759,6 +852,40 @@ struct WorkspaceShell::TestAccess {
       }
     }
     return {};
+  }
+  static std::string ProjectTabTooltipLabel(WorkspaceShell& shell, std::size_t index) {
+    return shell.ProjectTabTooltipLabel(index);
+  }
+  static WorkspaceShell::VisibleStripTab::ChatStatus ProjectTabChatStatus(WorkspaceShell& shell,
+                                                                          std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.chat_status;
+      }
+    }
+    return WorkspaceShell::VisibleStripTab::ChatStatus::None;
+  }
+  static std::string ProjectTabBadgeText(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.badge_text;
+      }
+    }
+    return {};
+  }
+  static bool ProjectTabShowsBadge(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.show_badge;
+      }
+    }
+    return false;
   }
   static SDL_FRect EditorTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
@@ -1094,6 +1221,12 @@ struct WorkspaceShell::TestAccess {
   }
   static std::string PromptSurfaceMessage(const WorkspaceShell& shell) {
     return shell.PromptSurfaceMessage();
+  }
+  static std::string PromptSurfaceDetail(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceDetail();
+  }
+  static int PromptSurfaceButtonCount(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.button_count;
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.open_tabs;

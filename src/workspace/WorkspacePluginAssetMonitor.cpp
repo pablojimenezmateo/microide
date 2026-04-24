@@ -2,7 +2,10 @@
 
 #include <vector>
 
+#include <SDL3/SDL.h>
+
 #include "platform/AppDirectories.h"
+#include "platform/Filesystem.h"
 
 namespace microide::workspace {
 
@@ -13,6 +16,47 @@ std::filesystem::path GlobalPluginDirectory() {
       platform::ResolveAppDirectory(platform::UserDirectoryKind::Config, "microide");
   return app_directory.empty() ? std::filesystem::path{} : app_directory / "plugins";
 }
+
+#ifndef MICROIDE_TESTING
+std::filesystem::path RepoPluginDirectory() {
+  const auto repo_plugins_from_root = [](const std::filesystem::path& start) {
+    if (start.empty()) {
+      return std::filesystem::path{};
+    }
+    std::error_code error;
+    std::filesystem::path current = std::filesystem::weakly_canonical(start, error);
+    if (error) {
+      current = start.lexically_normal();
+    }
+    while (!current.empty()) {
+      const std::filesystem::path plugins_dir = current / "plugins";
+      if (platform::ReadPathType(plugins_dir) == platform::PathType::Directory &&
+          platform::ReadPathType(plugins_dir / "README.md") == platform::PathType::RegularFile) {
+        return plugins_dir.lexically_normal();
+      }
+      const std::filesystem::path parent = current.parent_path();
+      if (parent == current) {
+        break;
+      }
+      current = parent;
+    }
+    return std::filesystem::path{};
+  };
+
+  if (const char* raw_base_path = SDL_GetBasePath();
+      raw_base_path != nullptr && raw_base_path[0] != '\0') {
+    if (const std::filesystem::path plugins_dir =
+            repo_plugins_from_root(std::filesystem::path(raw_base_path));
+        !plugins_dir.empty()) {
+      return plugins_dir;
+    }
+  }
+
+  std::error_code error;
+  const std::filesystem::path cwd = std::filesystem::current_path(error);
+  return error ? std::filesystem::path{} : repo_plugins_from_root(cwd);
+}
+#endif
 
 }  // namespace
 
@@ -46,6 +90,11 @@ bool WorkspacePluginAssetMonitor::ConsumeWakeEvent(Uint32 type) {
 void WorkspacePluginAssetMonitor::SetProjectRoot(const std::filesystem::path& project_root) {
   std::vector<std::filesystem::path> roots;
   roots.push_back(GlobalPluginDirectory());
+#ifndef MICROIDE_TESTING
+  if (const std::filesystem::path repo_plugins = RepoPluginDirectory(); !repo_plugins.empty()) {
+    roots.push_back(std::move(repo_plugins));
+  }
+#endif
   if (!project_root.empty()) {
     roots.push_back(project_root.lexically_normal() / ".microide" / "plugins");
   }

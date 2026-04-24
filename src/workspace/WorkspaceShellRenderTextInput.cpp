@@ -209,21 +209,31 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Chat
               ? ChatSidebarComposerRect(layout.sidebar)
               : BottomPanelCommandPromptRect(layout);
+      auto& composer =
+          const_cast<editor::TextViewport&>(context_.current_project_state.panel.chat.composer);
+      const std::size_t visible_lines = std::max<std::size_t>(
+          1, static_cast<std::size_t>(std::floor(std::max(1.0f, prompt_rect.h - 8.0f) / line_height)));
+      const std::size_t visible_columns = std::max<std::size_t>(
+          1, static_cast<std::size_t>(std::floor(std::max(1.0f, prompt_rect.w - 12.0f) / char_width)));
+      composer.SetViewportSize(visible_lines, visible_columns);
+      const editor::LayoutLine layout_line = composer.VisibleLineLayout(composer.cursor_line());
       const float text_x = prompt_rect.x + 6.0f;
       const float text_y = prompt_rect.y + 4.0f;
-      const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);
-      auto vm = ComputeSingleLineViewMetrics(
-          context_.current_project_state.panel.chat.composer, "> ", available_width);
+      const float cursor_x = text_x + static_cast<float>(layout_line.caret_column) * char_width;
+      const float cursor_y =
+          text_y + static_cast<float>(composer.cursor_line() - composer.scroll_line()) * line_height;
       return TextInputVisual{
           .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
+          .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f),
+                           std::max(1.0f, prompt_rect.h - 8.0f)),
           .text_x = text_x,
           .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
+          .cursor_x = cursor_x,
+          .cursor_y = cursor_y,
           .foreground = theme_.text_primary,
           .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
+          .displayed_text = {},
+          .selection_bytes = std::nullopt,
       };
     }
     case TextInputSurface::PromptInput: {
@@ -467,7 +477,7 @@ void WorkspaceShell::RenderActiveTextInputCaret(
   }
 
   DrawFilledRect(renderer,
-                 MakeRect(visual->cursor_x, visual->text_y - 1.0f, 1.5f,
+                 MakeRect(visual->cursor_x, (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f, 1.5f,
                           text_renderer_.LineHeight()),
                  theme_.cursor);
 }
@@ -507,24 +517,31 @@ void WorkspaceShell::RenderTextComposition(
 
   if (!selected.empty()) {
     DrawFilledRect(renderer,
-                   MakeRect(visual->cursor_x + prefix_width, visual->text_y - 1.0f, selected_width,
+                   MakeRect(visual->cursor_x + prefix_width,
+                            (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f,
+                            selected_width,
                             text_renderer_.LineHeight()),
                    theme_.selection_fill);
   }
 
   float segment_x = visual->cursor_x;
   if (!prefix.empty()) {
-    text_renderer_.DrawStringOn(renderer, segment_x, visual->text_y, theme_.accent,
+    text_renderer_.DrawStringOn(renderer, segment_x,
+                                visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
+                                theme_.accent,
                                 visual->background, prefix);
     segment_x += prefix_width;
   }
   if (!selected.empty()) {
-    text_renderer_.DrawStringOn(renderer, segment_x, visual->text_y, theme_.text_primary,
-                                theme_.selection_fill, selected);
+    text_renderer_.DrawStringOn(
+        renderer, segment_x, visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
+        theme_.text_primary, theme_.selection_fill, selected);
     segment_x += selected_width;
   }
   if (!suffix.empty()) {
-    text_renderer_.DrawStringOn(renderer, segment_x, visual->text_y, theme_.accent,
+    text_renderer_.DrawStringOn(renderer, segment_x,
+                                visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
+                                theme_.accent,
                                 visual->background, suffix);
   }
 

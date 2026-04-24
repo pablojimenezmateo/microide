@@ -70,7 +70,8 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
 
   if (context_.current_project_state.surface.focus == FocusTarget::Sidebar &&
       context_.current_project_state.sidebar.visible &&
-      ActiveSidebarMode() == SidebarMode::Chat) {
+      ActiveSidebarMode() == SidebarMode::Chat &&
+      context_.current_project_state.panel.chat.focus_region == ChatPaneFocusRegion::Composer) {
     return TextInputSurface::ChatComposer;
   }
 
