@@ -36,6 +36,30 @@ bool ParseFloatToken(std::string_view text, float* value) {
   }
 }
 
+bool ParseIntToken(std::string_view text, int* value) {
+  if (value == nullptr) {
+    return false;
+  }
+  try {
+    *value = std::stoi(std::string(text));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool ParseInt64Token(std::string_view text, std::int64_t* value) {
+  if (value == nullptr) {
+    return false;
+  }
+  try {
+    *value = std::stoll(std::string(text));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 }  // namespace
 
 bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state) {
@@ -217,7 +241,8 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     const std::string& command = tokens.front().text;
     if (command == "version") {
       version_ok = tokens.size() == 2 &&
-                   (tokens[1].text == "1" || tokens[1].text == "2" || tokens[1].text == "3");
+                   (tokens[1].text == "1" || tokens[1].text == "2" || tokens[1].text == "3" ||
+                    tokens[1].text == "4");
       version = version_ok ? std::stoi(tokens[1].text) : 0;
       continue;
     }
@@ -238,6 +263,83 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     }
     if (command == "active-tab" && tokens.size() == 2) {
       ParseSizeToken(tokens[1].text, &state->active_tab_index);
+      continue;
+    }
+    if (version >= 3 && command == "chat-active-conversation" && tokens.size() == 2) {
+      state->chat.active_conversation_id = tokens[1].text;
+      continue;
+    }
+    if (version >= 3 && command == "conv-begin" && tokens.size() == 2) {
+      if (current_msg.has_value() && current_conv.has_value()) {
+        current_conv->messages.push_back(std::move(*current_msg));
+        current_msg.reset();
+      }
+      if (current_conv.has_value()) {
+        state->chat.conversations.push_back(std::move(*current_conv));
+      }
+      current_conv = PersistedConversationState{};
+      current_conv->id = tokens[1].text;
+      continue;
+    }
+    if (version >= 3 && command == "conv-end") {
+      if (current_msg.has_value() && current_conv.has_value()) {
+        current_conv->messages.push_back(std::move(*current_msg));
+        current_msg.reset();
+      }
+      if (current_conv.has_value()) {
+        state->chat.conversations.push_back(std::move(*current_conv));
+        current_conv.reset();
+      }
+      continue;
+    }
+    if (version >= 3 && current_conv.has_value()) {
+      if (command == "conv-schema" && tokens.size() == 2) {
+        ParseIntToken(tokens[1].text, &current_conv->schema_version);
+      } else if (command == "conv-title" && tokens.size() == 2) {
+        current_conv->title = tokens[1].text;
+      } else if (command == "conv-provider" && tokens.size() == 2) {
+        current_conv->provider_id = tokens[1].text;
+      } else if (command == "conv-model" && tokens.size() == 2) {
+        current_conv->model_id = tokens[1].text;
+      } else if (command == "conv-status" && tokens.size() == 2) {
+        current_conv->status = tokens[1].text;
+      } else if (command == "conv-tool-mode" && tokens.size() == 2) {
+        current_conv->tool_mode = tokens[1].text;
+      } else if (command == "conv-created" && tokens.size() == 2) {
+        current_conv->created_at = tokens[1].text;
+      } else if (command == "conv-updated" && tokens.size() == 2) {
+        current_conv->updated_at = tokens[1].text;
+      } else if (command == "conv-draft" && tokens.size() == 2) {
+        current_conv->draft = tokens[1].text;
+      } else if (command == "conv-system-prompt" && tokens.size() == 2) {
+        current_conv->system_prompt = tokens[1].text;
+      } else if (command == "conv-last-request-duration-ms" && tokens.size() == 2) {
+        ParseInt64Token(tokens[1].text, &current_conv->last_request_duration_ms);
+      } else if (command == "msg-begin" && tokens.size() == 2) {
+        if (current_msg.has_value()) {
+          current_conv->messages.push_back(std::move(*current_msg));
+        }
+        current_msg = PersistedMessageState{};
+        current_msg->id = tokens[1].text;
+      } else if (current_msg.has_value()) {
+        if (command == "msg-role" && tokens.size() == 2) {
+          current_msg->role = tokens[1].text;
+        } else if (command == "msg-status" && tokens.size() == 2) {
+          current_msg->status = tokens[1].text;
+        } else if (command == "msg-timestamp" && tokens.size() == 2) {
+          current_msg->timestamp = tokens[1].text;
+        } else if (command == "msg-provider" && tokens.size() == 2) {
+          current_msg->provider_id = tokens[1].text;
+        } else if (command == "msg-model" && tokens.size() == 2) {
+          current_msg->model = tokens[1].text;
+        } else if (command == "msg-error" && tokens.size() == 2) {
+          current_msg->error = tokens[1].text;
+        } else if (command == "msg-request-duration-ms" && tokens.size() == 2) {
+          ParseInt64Token(tokens[1].text, &current_msg->request_duration_ms);
+        } else if (command == "msg-content" && tokens.size() == 2) {
+          current_msg->content = tokens[1].text;
+        }
+      }
       continue;
     }
     if (command == "tab-begin") {
@@ -397,76 +499,6 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
         current_tab->split_nodes.push_back(std::move(node_state));
       }
     }
-    // Chat conversation persistence (version 3+).
-    if (version >= 3 && command == "chat-active-conversation" && tokens.size() == 2) {
-      state->chat.active_conversation_id = tokens[1].text;
-      continue;
-    }
-    if (version >= 3 && command == "conv-begin" && tokens.size() == 2) {
-      if (current_msg.has_value() && current_conv.has_value()) {
-        current_conv->messages.push_back(std::move(*current_msg));
-        current_msg.reset();
-      }
-      if (current_conv.has_value()) {
-        state->chat.conversations.push_back(std::move(*current_conv));
-      }
-      current_conv = PersistedConversationState{};
-      current_conv->id = tokens[1].text;
-      continue;
-    }
-    if (version >= 3 && command == "conv-end") {
-      if (current_msg.has_value() && current_conv.has_value()) {
-        current_conv->messages.push_back(std::move(*current_msg));
-        current_msg.reset();
-      }
-      if (current_conv.has_value()) {
-        state->chat.conversations.push_back(std::move(*current_conv));
-        current_conv.reset();
-      }
-      continue;
-    }
-    if (version >= 3 && current_conv.has_value()) {
-      if (command == "conv-title" && tokens.size() == 2) {
-        current_conv->title = tokens[1].text;
-      } else if (command == "conv-provider" && tokens.size() == 2) {
-        current_conv->provider_id = tokens[1].text;
-      } else if (command == "conv-model" && tokens.size() == 2) {
-        current_conv->model_id = tokens[1].text;
-      } else if (command == "conv-status" && tokens.size() == 2) {
-        current_conv->status = tokens[1].text;
-      } else if (command == "conv-tool-mode" && tokens.size() == 2) {
-        current_conv->tool_mode = tokens[1].text;
-      } else if (command == "conv-created" && tokens.size() == 2) {
-        current_conv->created_at = tokens[1].text;
-      } else if (command == "conv-updated" && tokens.size() == 2) {
-        current_conv->updated_at = tokens[1].text;
-      } else if (command == "conv-draft" && tokens.size() == 2) {
-        current_conv->draft = tokens[1].text;
-      } else if (command == "msg-begin" && tokens.size() == 2) {
-        if (current_msg.has_value()) {
-          current_conv->messages.push_back(std::move(*current_msg));
-        }
-        current_msg = PersistedMessageState{};
-        current_msg->id = tokens[1].text;
-      } else if (current_msg.has_value()) {
-        if (command == "msg-role" && tokens.size() == 2) {
-          current_msg->role = tokens[1].text;
-        } else if (command == "msg-status" && tokens.size() == 2) {
-          current_msg->status = tokens[1].text;
-        } else if (command == "msg-timestamp" && tokens.size() == 2) {
-          current_msg->timestamp = tokens[1].text;
-        } else if (command == "msg-provider" && tokens.size() == 2) {
-          current_msg->provider_id = tokens[1].text;
-        } else if (command == "msg-model" && tokens.size() == 2) {
-          current_msg->model = tokens[1].text;
-        } else if (command == "msg-error" && tokens.size() == 2) {
-          current_msg->error = tokens[1].text;
-        } else if (command == "msg-content" && tokens.size() == 2) {
-          current_msg->content = tokens[1].text;
-        }
-      }
-      continue;
-    }
   }
   // Flush any open conversation/message at end of stream.
   if (version >= 3) {
@@ -483,7 +515,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
 
 std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   std::ostringstream stream;
-  stream << "version 3\n";
+  stream << "version 4\n";
   stream << "sidebar-visible " << (state.sidebar_visible ? 1 : 0) << '\n';
   stream << "sidebar-width " << state.sidebar_width << '\n';
   stream << "bottom-panel-height " << state.bottom_panel_height << '\n';
@@ -555,6 +587,7 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   }
   for (const auto& conv : state.chat.conversations) {
     stream << "conv-begin " << QuoteCommandArg(conv.id) << '\n';
+    stream << "conv-schema " << conv.schema_version << '\n';
     if (!conv.title.empty()) {
       stream << "conv-title " << QuoteCommandArg(conv.title) << '\n';
     }
@@ -579,6 +612,12 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
     if (!conv.draft.empty()) {
       stream << "conv-draft " << QuoteCommandArg(conv.draft) << '\n';
     }
+    if (!conv.system_prompt.empty()) {
+      stream << "conv-system-prompt " << QuoteCommandArg(conv.system_prompt) << '\n';
+    }
+    if (conv.last_request_duration_ms != 0) {
+      stream << "conv-last-request-duration-ms " << conv.last_request_duration_ms << '\n';
+    }
     for (const auto& msg : conv.messages) {
       stream << "msg-begin " << QuoteCommandArg(msg.id) << '\n';
       if (!msg.role.empty()) {
@@ -598,6 +637,9 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
       }
       if (!msg.error.empty()) {
         stream << "msg-error " << QuoteCommandArg(msg.error) << '\n';
+      }
+      if (msg.request_duration_ms != 0) {
+        stream << "msg-request-duration-ms " << msg.request_duration_ms << '\n';
       }
       if (!msg.content.empty()) {
         stream << "msg-content " << QuoteCommandArg(msg.content) << '\n';

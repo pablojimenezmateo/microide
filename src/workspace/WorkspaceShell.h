@@ -54,7 +54,7 @@
 #include "workspace/WorkspaceExternalAgent.h"
 #include "workspace/WorkspaceMcpTool.h"
 #include "workspace/WorkspaceAiContext.h"
-#include "workspace/WorkspaceAiRuntime.h"
+#include "workspace/WorkspaceProviderBridge.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
@@ -1028,7 +1028,12 @@ class WorkspaceShell {
                          std::string_view session_id,
                          std::string* error_message = nullptr);
   bool StartChatRequest(std::string message, std::string* error_message = nullptr);
-  void ConsumeAiRuntimeUpdates();
+  void ConsumeProviderBridgeUpdates();
+  bool SetProviderApiKey(std::string_view provider_id,
+                         std::string_view api_key,
+                         std::string* error_message = nullptr);
+  bool ClearProviderApiKey(std::string_view provider_id, std::string* error_message = nullptr);
+  ProviderAuthStatus GetProviderAuthStatus(std::string_view provider_id) const;
   void ConsumeLspCallbacks();
   bool ConsumePluginAsyncProcessCallbacks();
   bool RequestInlineCompletion(std::string* error_message = nullptr);
@@ -1316,7 +1321,7 @@ class WorkspaceShell {
   ExternalAgentRegistry external_agent_registry_;
   McpToolRegistry mcp_tool_registry_;
   AiContextManager ai_context_manager_;
-  WorkspaceAiRuntime ai_runtime_;
+  WorkspaceProviderBridgeManager provider_bridge_manager_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

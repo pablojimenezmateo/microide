@@ -10,7 +10,7 @@ struct ExternalAgentSpec {
   std::string id;
   std::string label;
   std::string protocol;  // "acp", "stdio", "http", "websocket"
-  std::string endpoint;  // URL, command, or other protocol-specific address
+  std::vector<std::string> command;
   std::vector<std::string> capabilities;  // "inline-completion", "chat", "explain", etc.
   std::string plugin_id;
 };

@@ -430,13 +430,17 @@ Open work:
   - `PluginHost` gains three new Lua tables: `ctx.ai_providers` (add),
     `ctx.external_agents` (add), `ctx.mcp_tools` (add); conversations and inline completions
     are host-managed
-  - `workspace/WorkspaceAiRuntime.*` now owns request IDs, cancellation, background execution,
-    and shell wake delivery for external-agent requests
+  - `workspace/WorkspaceProviderBridge.*` now owns long-lived stdio provider bridges, auth
+    checks, capability negotiation, model enumeration, and shell wake delivery for chat and inline
+    completion requests
   - the live shell now supports sidebar chat, active conversation tracking, ghost-text inline
     completion with accept or dismiss flow, and built-in `chat`, `inline-complete`, and `mcp`
     commands
-  - first-pass external-agent execution is wired through stdio subprocesses, and MCP tool
-    invocation flows through host-owned permission-checked command surfaces and output channels
+  - first-pass external-agent execution is wired through long-lived stdio subprocesses, and MCP
+    tool invocation flows through host-owned permission-checked command surfaces and output
+    channels
+  - repo-owned `openai` and `anthropic` plugins now use the native `microide_provider_bridge`
+    binary for direct API-key-backed chat instead of shell wrappers or vendor CLIs
   - dedicated end-to-end coverage now lives in `tests/Phase5Tests.cpp`
 
 Open work:

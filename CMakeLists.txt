@@ -65,6 +65,7 @@ if(NOT PkgConfig_FOUND)
 endif()
 
 pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
+pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 
 set(MICROIDE_LUA_TARGET "")
 
@@ -218,7 +219,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLayout.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspaceTaskRuntime.cpp
-  src/workspace/WorkspaceAiRuntime.cpp
   src/workspace/WorkspacePersistenceFormat.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
@@ -271,6 +271,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceInlineCompletion.cpp
   src/workspace/WorkspaceConversation.cpp
   src/workspace/WorkspaceExternalAgent.cpp
+  src/workspace/WorkspaceProviderBridge.cpp
   src/workspace/WorkspaceMcpTool.cpp
   src/workspace/WorkspaceAiContext.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
@@ -336,6 +337,7 @@ add_executable(microide_tests
   tests/FilesystemTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
+  tests/WorkspaceLspClientTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
   tests/ProjectSearchServiceTests.cpp
@@ -400,6 +402,29 @@ elseif(MSVC)
 endif()
 
 add_test(NAME microide_tests COMMAND microide_tests)
+
+add_executable(microide_provider_bridge
+  src/app/ProviderBridgeMain.cpp
+  src/provider/CloudProviderBridge.cpp
+  src/util/JsonValue.cpp
+)
+
+target_include_directories(microide_provider_bridge PRIVATE src)
+target_link_libraries(microide_provider_bridge PRIVATE PkgConfig::CURL)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_provider_bridge PRIVATE -Wall -Wextra -Wpedantic)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_provider_bridge PRIVATE -Werror)
+  endif()
+elseif(MSVC)
+  target_compile_options(microide_provider_bridge PRIVATE /W4)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_provider_bridge PRIVATE /WX)
+  endif()
+endif()
+
+add_dependencies(microide_tests microide_provider_bridge)
 
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>

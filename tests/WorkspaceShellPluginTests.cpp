@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "platform/AsyncSubprocess.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceShellTesting.h"
 
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -15,6 +17,7 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
+using microide::workspace::ProviderAuthStatus;
 
 void WritePluginInit(const std::filesystem::path& root,
                      std::string_view directory_name,
@@ -35,6 +38,149 @@ std::filesystem::path RepoPluginsRoot() {
 
 void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
+}
+
+std::filesystem::path RepoRoot() {
+  return TestRoot().parent_path();
+}
+
+std::filesystem::path BuiltProviderBridgeBinary() {
+  return (RepoRoot() / "build" / "microide" / "microide_provider_bridge").lexically_normal();
+}
+
+std::optional<std::string> ReadAsyncLine(microide::platform::AsyncSubprocess& process,
+                                         int timeout_ms = 2000) {
+  std::string buffer;
+  const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+  while (SDL_GetTicks() <= deadline) {
+    const auto chunk = process.Read(4096, 50);
+    if (!chunk.has_value()) {
+      return std::nullopt;
+    }
+    if (chunk->empty()) {
+      continue;
+    }
+    buffer += *chunk;
+    const std::size_t newline = buffer.find('\n');
+    if (newline != std::string::npos) {
+      return buffer.substr(0, newline);
+    }
+  }
+  return std::nullopt;
+}
+
+struct FakeProviderServer {
+  microide::platform::AsyncSubprocess process;
+  std::string base_url;
+};
+
+FakeProviderServer StartFakeProviderServer(const std::filesystem::path& root,
+                                          std::string_view provider) {
+  const std::filesystem::path script_path = root / ("fake_" + std::string(provider) + "_api.py");
+  WriteFile(
+      script_path,
+      std::string(R"py(#!/usr/bin/env python3
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+provider = sys.argv[1]
+expected_key = "secret-" + provider
+model = "gpt-4.1-mini" if provider == "openai" else "claude-sonnet-4-6"
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorized(self):
+        if provider == "openai":
+            return self.headers.get("Authorization") == "Bearer " + expected_key
+        return (self.headers.get("x-api-key") == expected_key and
+                self.headers.get("anthropic-version") == "2023-06-01")
+
+    def do_GET(self):
+        if self.path != "/v1/models":
+            self._send(404, {"error": {"message": "not found"}})
+            return
+        if not self._authorized():
+            self._send(401, {"error": {"message": "invalid api key"}})
+            return
+        self._send(200, {"data": [{"id": model, "type": "model"}]})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        payload = json.loads(self.rfile.read(length) or b"{}")
+        if not self._authorized():
+            self._send(401, {"error": {"message": "invalid api key"}})
+            return
+        if provider == "openai" and self.path == "/v1/chat/completions":
+            self._send(200, {
+                "choices": [{
+                    "message": {
+                        "content": "openai reply"
+                    }
+                }]
+            })
+            return
+        if provider == "anthropic" and self.path == "/v1/messages":
+            self._send(200, {
+                "content": [{
+                    "type": "text",
+                    "text": "anthropic reply"
+                }]
+            })
+            return
+        self._send(404, {"error": {"message": "not found"}})
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+print(server.server_port, flush=True)
+server.serve_forever()
+)py"));
+
+  FakeProviderServer server;
+  server.process.Start({"python3", script_path.string(), std::string(provider)}, root.string());
+  const auto port_text = ReadAsyncLine(server.process);
+  Expect(port_text.has_value(), "fake provider server should publish its port");
+  server.base_url = "http://127.0.0.1:" + (port_text.has_value() ? *port_text : "0");
+  return server;
+}
+
+bool WaitForProviderAuthStatus(WorkspaceShell& shell,
+                               std::string_view provider_id,
+                               ProviderAuthStatus expected,
+                               int timeout_ms = 2000) {
+  const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+  while (SDL_GetTicks() <= deadline) {
+    if (WorkspaceShellTestAccess::GetProviderAuthStatus(shell, provider_id) == expected) {
+      return true;
+    }
+    SDL_Delay(5);
+  }
+  return WorkspaceShellTestAccess::GetProviderAuthStatus(shell, provider_id) == expected;
+}
+
+bool WaitForProviderModels(WorkspaceShell& shell,
+                           std::string_view provider_id,
+                           std::string_view expected_model,
+                           int timeout_ms = 2000) {
+  const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
+  while (SDL_GetTicks() <= deadline) {
+    const auto models = WorkspaceShellTestAccess::ProviderModels(shell, provider_id);
+    if (std::find(models.begin(), models.end(), expected_model) != models.end()) {
+      return true;
+    }
+    SDL_Delay(5);
+  }
+  const auto models = WorkspaceShellTestAccess::ProviderModels(shell, provider_id);
+  return std::find(models.begin(), models.end(), expected_model) != models.end();
 }
 
 void WriteFakeEslint(const std::filesystem::path& project_root) {
@@ -1625,13 +1771,15 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
          ("repo llm plugin should enable the built-in chat command: " +
           DescribePluginState(shell))
              .c_str());
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
          "repo llm chat command should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
          "chat command should surface the host-owned chat sidebar");
-  Expect(messages.size() == 2 && messages.front().content == "explain this file" &&
-             messages.back().content == "LLM example reply",
+  Expect(messages.size() == 2, "repo llm plugin should record one user message and one reply");
+  Expect(!messages.empty() && messages.front().content == "explain this file",
+         "repo llm plugin should preserve the submitted chat content");
+  Expect(messages.size() >= 2 && messages.back().content == "LLM example reply",
          "repo llm plugin should register a default chat agent response");
   Expect(WorkspaceShellTestAccess::ActiveConversationProviderId(shell) == "llm.chat",
          ("repo llm chat conversations should record the repo plugin provider id; got " +
@@ -1642,7 +1790,7 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
          "repo llm plugin should enable the built-in inline completion command");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
          "repo llm inline completion should complete");
   Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
              WorkspaceShellTestAccess::InlineCompletion(shell).text == "llm_inline_suggestion",
@@ -1661,6 +1809,152 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
          "repo llm plugin should default chat and inline completion through codex exec");
   Expect(codex_invocations.find(codex_script.string()) == std::string::npos,
          "repo llm plugin should resolve the default codex binary through common install paths");
+}
+
+void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "provider bridge\n");
+  CopyRepoPlugin(plugins_root, "openai");
+
+  FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
+  const std::filesystem::path bridge_binary = BuiltProviderBridgeBinary();
+  Expect(std::filesystem::is_regular_file(bridge_binary),
+         "openai plugin test requires the native provider bridge binary");
+
+  WriteFile(config_home / "microide" / "config",
+            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
+                .settings =
+                    {
+                        {"openai.binary", bridge_binary.string()},
+                        {"openai.base_url", server.base_url},
+                        {"openai.model", "gpt-4.1-mini"},
+                    },
+                .disabled_keybinding_ids = {},
+            }));
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(shell.Initialize({}),
+         "openai plugin test should restore user config before opening a project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "openai plugin fixture should open the project");
+  Expect(WorkspaceShellTestAccess::AiProviders(shell).size() == 1 &&
+             WorkspaceShellTestAccess::AiProviders(shell).front().id == "openai.chat",
+         "openai plugin should register one host-owned AI provider");
+
+  std::string error_message;
+  Expect(WorkspaceShellTestAccess::SetProviderApiKey(shell, "openai.chat", "secret-openai",
+                                                     &error_message),
+         ("openai plugin should store API keys in the host secret store: " + error_message).c_str());
+  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") ==
+             ProviderAuthStatus::KeyPresent,
+         "setting the API key should make the provider readable before validation");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain provider bridge"),
+         "openai plugin should drive the built-in chat command");
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+         "openai plugin chat should complete");
+  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
+  Expect(messages.size() == 2 && messages.back().content == "openai reply",
+         "openai plugin should route chat requests through the native bridge");
+
+  WorkspaceShellTestAccess::RequestProviderAuthCheck(shell, "openai.chat");
+  Expect(WaitForProviderAuthStatus(shell, "openai.chat", ProviderAuthStatus::KeyValid),
+         "openai plugin auth checks should validate keys through the native bridge");
+  WorkspaceShellTestAccess::RequestProviderModelList(shell, "openai.chat");
+  Expect(WaitForProviderModels(shell, "openai.chat", "gpt-4.1-mini"),
+         "openai plugin should enumerate models through the native bridge");
+  const auto capabilities = WorkspaceShellTestAccess::GetProviderCapabilities(shell, "openai.chat");
+  Expect(capabilities.chat && capabilities.system_prompt && capabilities.model_enumeration,
+         "openai plugin bridge should negotiate provider capabilities");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "openai plugin should support reload without losing host-owned chat state");
+  Expect(WorkspaceShellTestAccess::ActiveConversationMessages(shell).size() == 2,
+         "plugin reload should preserve the conversation transcript");
+  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") !=
+             ProviderAuthStatus::KeyMissing,
+         "plugin reload should preserve the host-owned stored credential");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain reload"),
+         "openai plugin should still answer after reload");
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+         "openai plugin chat after reload should complete");
+
+  Expect(WorkspaceShellTestAccess::ClearProviderApiKey(shell, "openai.chat", &error_message),
+         ("openai plugin should clear stored API keys: " + error_message).c_str());
+  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") ==
+             ProviderAuthStatus::KeyMissing,
+         "clearing the API key should return the provider to the missing-key state");
+
+  server.process.Shutdown();
+}
+
+void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "provider bridge\n");
+  CopyRepoPlugin(plugins_root, "anthropic");
+
+  FakeProviderServer server = StartFakeProviderServer(project_root, "anthropic");
+  const std::filesystem::path bridge_binary = BuiltProviderBridgeBinary();
+  Expect(std::filesystem::is_regular_file(bridge_binary),
+         "anthropic plugin test requires the native provider bridge binary");
+
+  WriteFile(config_home / "microide" / "config",
+            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
+                .settings =
+                    {
+                        {"anthropic.binary", bridge_binary.string()},
+                        {"anthropic.base_url", server.base_url},
+                        {"anthropic.model", "claude-sonnet-4-6"},
+                    },
+                .disabled_keybinding_ids = {},
+            }));
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(shell.Initialize({}),
+         "anthropic plugin test should restore user config before opening a project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "anthropic plugin fixture should open the project");
+  Expect(WorkspaceShellTestAccess::AiProviders(shell).size() == 1 &&
+             WorkspaceShellTestAccess::AiProviders(shell).front().id == "anthropic.chat",
+         "anthropic plugin should register one host-owned AI provider");
+
+  std::string error_message;
+  Expect(WorkspaceShellTestAccess::SetProviderApiKey(
+             shell, "anthropic.chat", "secret-anthropic", &error_message),
+         ("anthropic plugin should store API keys in the host secret store: " + error_message)
+             .c_str());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain anthropic bridge"),
+         "anthropic plugin should drive the built-in chat command");
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+         "anthropic plugin chat should complete");
+  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
+  Expect(messages.size() == 2 && messages.back().content == "anthropic reply",
+         "anthropic plugin should route chat requests through the native bridge");
+
+  WorkspaceShellTestAccess::RequestProviderAuthCheck(shell, "anthropic.chat");
+  Expect(WaitForProviderAuthStatus(shell, "anthropic.chat", ProviderAuthStatus::KeyValid),
+         "anthropic plugin auth checks should validate keys through the native bridge");
+  WorkspaceShellTestAccess::RequestProviderModelList(shell, "anthropic.chat");
+  Expect(WaitForProviderModels(shell, "anthropic.chat", "claude-sonnet-4-6"),
+         "anthropic plugin should enumerate models through the native bridge");
+
+  server.process.Shutdown();
 }
 
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
@@ -1919,6 +2213,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics);
   AddTest(tests, "WorkspaceShell/RepoLlmPluginDrivesChatAndInlineCompletion",
           TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion);
+  AddTest(tests, "WorkspaceShell/RepoOpenAiPluginUsesNativeBridge",
+          TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge);
+  AddTest(tests, "WorkspaceShell/RepoAnthropicPluginUsesNativeBridge",
+          TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

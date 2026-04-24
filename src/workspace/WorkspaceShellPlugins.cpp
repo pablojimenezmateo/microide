@@ -248,21 +248,21 @@ void WorkspaceShell::RebuildPhase5Registries() {
 
   const auto& host = plugin_runtime_.Host();
   for (const auto& provider : host.ContributedAiProviders()) {
-    ai_provider_registry_.Register(AiProviderSpec{
-        .id = provider.id,
-        .label = provider.label,
-        .type = provider.type,
-        .api_key_name = provider.id + ".api_key",
-        .models = provider.models,
-        .plugin_id = provider.plugin_id,
-    });
+    AiProviderSpec spec;
+    spec.id = provider.id;
+    spec.label = provider.label;
+    spec.type = provider.type;
+    spec.api_key_name = provider.id + ".api_key";
+    spec.models = provider.models;
+    spec.plugin_id = provider.plugin_id;
+    ai_provider_registry_.Register(spec);
   }
   for (const auto& agent : host.ContributedExternalAgents()) {
     external_agent_registry_.RegisterAgent(ExternalAgentSpec{
         .id = agent.id,
         .label = agent.label,
         .protocol = agent.protocol,
-        .endpoint = agent.endpoint,
+        .command = agent.command,
         .capabilities = agent.capabilities,
         .plugin_id = agent.plugin_id,
     });

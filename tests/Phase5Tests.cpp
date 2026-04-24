@@ -186,12 +186,47 @@ void TestPhase5AiCommandsDriveChatAndInlineCompletion() {
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path bridge_path = project_root / "fake_bridge.py";
   const std::filesystem::path source = project_root / "README.md";
   WriteFile(source, "value = ");
+  WriteFile(
+      bridge_path,
+      R"py(#!/usr/bin/env python3
+import json
+import sys
+
+def write_message(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(body + b"\n")
+    sys.stdout.buffer.flush()
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("type") == "initialize":
+        write_message({
+            "type": "initialized",
+            "capabilities": {"chat": True, "streaming": False},
+        })
+    elif msg.get("type") == "chat":
+        prompt = ""
+        for entry in msg.get("messages", []):
+            if entry.get("role") == "user":
+                prompt = entry.get("content", "")
+        content = "inline_tail" if "Complete the code at line " in prompt else "assistant reply"
+        write_message({
+            "type": "done",
+            "request_id": msg.get("request_id", ""),
+            "success": True,
+            "content": content,
+            "error": "",
+        })
+    elif msg.get("type") == "shutdown":
+        break
+)py");
 
   WritePluginInit(
       plugins_root, "phase5-ai",
-      R"lua(local ide = require("microide")
+      std::string(R"lua(local ide = require("microide")
 return ide.plugin({
   id = "phase5-ai",
   setup = function(ctx)
@@ -199,19 +234,23 @@ return ide.plugin({
       id = "chat",
       label = "Chat Agent",
       protocol = "stdio",
-      endpoint = "sh -lc \"printf 'assistant reply'\"",
+      command = { "python3", ")lua") +
+          bridge_path.generic_string() +
+          std::string(R"lua(" },
       capabilities = { "chat" }
     })
     ctx.external_agents.add({
       id = "inline",
       label = "Inline Agent",
       protocol = "stdio",
-      endpoint = "sh -lc \"printf 'inline_tail'\"",
+      command = { "python3", ")lua") +
+          bridge_path.generic_string() +
+          std::string(R"lua(" },
       capabilities = { "inline-completion" }
     })
   end
 })
-)lua");
+)lua"));
 
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
@@ -222,24 +261,28 @@ return ide.plugin({
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat hello from tests"),
          "chat command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "chat runtime should complete");
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+         "chat bridge request should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
          "chat command should surface the chat sidebar");
-  Expect(messages.size() == 2 && messages.front().role == MessageRole::User &&
-             messages.front().content == "hello from tests" &&
-             messages.back().role == MessageRole::Assistant &&
-             messages.back().content == "assistant reply",
-         "chat command should record both the user message and the assistant reply");
+  Expect(messages.size() == 2, "chat command should record exactly two messages");
+  Expect(!messages.empty() && messages.front().role == MessageRole::User,
+         "chat command should record the user message first");
+  Expect(!messages.empty() && messages.front().content == "hello from tests",
+         "chat command should preserve the submitted user content");
+  Expect(messages.size() >= 2 && messages.back().role == MessageRole::Assistant,
+         "chat command should append an assistant message");
+  Expect(messages.size() >= 2 && messages.back().content == "assistant reply",
+         "chat command should record the assistant reply content");
   Expect(WorkspaceShellTestAccess::ActiveConversationProviderId(shell) == "phase5-ai.chat",
          "chat conversations should record the selected external agent");
 
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
          "inline-complete command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "inline completion runtime should complete");
+  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+         "inline completion bridge request should complete");
   Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
              WorkspaceShellTestAccess::InlineCompletion(shell).text == "inline_tail",
          "inline-complete should populate visible ghost text");

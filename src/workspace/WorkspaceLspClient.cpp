@@ -570,9 +570,8 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
   // Launch initialization on a background thread to avoid blocking the main thread.
   // The reader thread will be started by the initialization thread after initialization completes.
   impl_->stop_init.store(false);
-  impl_->init_thread = std::thread([this]() {
-    impl_->DoInitializeBlocking();
-  });
+  Impl* const init_impl = impl_;
+  impl_->init_thread = std::thread([init_impl]() { init_impl->DoInitializeBlocking(); });
   return true;
 }
 
@@ -962,15 +961,6 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
 
 void LspClient::Shutdown() {
   impl_->DoShutdown();
-}
-
-void LspClient::ShutdownAsync() {
-  Impl* old_impl = impl_;
-  impl_ = new Impl{};
-  std::thread([old_impl]() {
-    old_impl->DoShutdown();
-    delete old_impl;
-  }).detach();
 }
 
 }  // namespace microide::workspace

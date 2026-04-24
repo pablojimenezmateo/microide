@@ -166,7 +166,10 @@ struct ChatPanelState {
   util::SingleLineTextState composer;
   int scroll_row = 0;
   bool request_in_flight = false;
+  Uint64 request_started_ticks = 0;
   std::string status_text;
+  std::string pending_bridge_agent_id;
+  std::string pending_bridge_request_id;
   // Restore warning displayed after session restore detected interrupted requests.
   bool has_restore_warning = false;
 };
@@ -180,6 +183,8 @@ struct InlineCompletionState {
   std::string provider_id;
   std::string model_id;
   std::string error;
+  std::string pending_bridge_agent_id;
+  std::string pending_bridge_request_id;
 };
 
 struct DebugSessionState {

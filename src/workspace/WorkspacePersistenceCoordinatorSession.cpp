@@ -73,6 +73,7 @@ std::vector<Conversation> RestoreConversations(const PersistedChatState& chat,
   result.reserve(chat.conversations.size());
   for (const auto& pc : chat.conversations) {
     Conversation conv;
+    conv.schema_version = pc.schema_version;
     conv.id = pc.id;
     conv.title = pc.title;
     conv.provider_id = pc.provider_id;
@@ -127,6 +128,7 @@ PersistedChatState BuildPersistedChatState(const ConversationRegistry& registry,
   chat.active_conversation_id = active_conversation_id;
   for (const auto& conv : registry.conversations()) {
     PersistedConversationState pc;
+    pc.schema_version = conv.schema_version;
     pc.id = conv.id;
     pc.title = conv.title;
     pc.provider_id = conv.provider_id;

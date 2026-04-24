@@ -23,7 +23,7 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
 
   operations_.initialize_project_search_runtime();
   operations_.initialize_task_runtime();
-  operations_.initialize_ai_runtime();
+  operations_.initialize_provider_bridge_manager();
   operations_.register_wake_events();
 
   {
@@ -65,7 +65,7 @@ void LifecycleCoordinator::Shutdown() {
   operations_.save_workspace_session();
   operations_.shutdown_project_search_runtime();
   operations_.shutdown_task_runtime();
-  operations_.shutdown_ai_runtime();
+  operations_.shutdown_provider_bridge_manager();
   // Terminal session teardown and cursor cleanup are intentionally skipped here:
   // the process exits via quick_exit() immediately after, so the OS reclaims
   // all child processes and resources without per-terminal blocking waits.
@@ -167,7 +167,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .reset_startup_state = [this]() { ResetLifecycleStartupState(); },
           .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
           .initialize_task_runtime = [this]() { task_runtime_.Initialize(); },
-          .initialize_ai_runtime = [this]() { ai_runtime_.Initialize(); },
+          .initialize_provider_bridge_manager = [this]() { provider_bridge_manager_.Initialize(); },
           .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
           .restore_user_config = [this]() { MakePersistenceCoordinator().RestoreUserConfig(); },
           .refresh_available_colorscheme_names =
@@ -199,7 +199,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .shutdown_task_runtime = [this]() { task_runtime_.Shutdown(); },
-          .shutdown_ai_runtime = [this]() { ai_runtime_.Shutdown(); },
+          .shutdown_provider_bridge_manager = [this]() { provider_bridge_manager_.Shutdown(); },
           .clear_terminal_tabs =
               [this]() { context_.current_project_state.terminal_tabs.clear(); },
           .destroy_cursors = [this]() { DestroyLifecycleCursors(); },

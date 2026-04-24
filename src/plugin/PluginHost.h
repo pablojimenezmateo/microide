@@ -244,7 +244,7 @@ class PluginHost {
     std::string id;
     std::string label;
     std::string protocol;  // "acp", "stdio", "http"
-    std::string endpoint;
+    std::vector<std::string> command;
     std::vector<std::string> capabilities;
     std::string plugin_id;
   };

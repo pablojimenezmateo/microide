@@ -94,6 +94,7 @@ struct PersistedMessageState {
 };
 
 struct PersistedConversationState {
+  int schema_version = 1;
   std::string id;
   std::string title;
   std::string provider_id;

@@ -1909,10 +1909,34 @@ struct PluginHost::Impl {
     auto id_opt = read_string("id");
     auto label_opt = read_string("label");
     auto protocol_opt = read_string("protocol");
-    auto endpoint_opt = read_string("endpoint");
-    if (!id_opt || !label_opt || !protocol_opt || !endpoint_opt) {
+    auto read_string_array = [&](const char* field) -> std::optional<std::vector<std::string>> {
+      lua_getfield(state, 1, field);
+      if (!lua_istable(state, -1)) {
+        lua_pop(state, 1);
+        return std::nullopt;
+      }
+      std::vector<std::string> values;
+      for (lua_Integer i = 1;; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (!lua_isstring(state, -1)) {
+          lua_pop(state, 2);
+          return std::nullopt;
+        }
+        values.emplace_back(lua_tostring(state, -1));
+        lua_pop(state, 1);
+      }
+      lua_pop(state, 1);
+      return values;
+    };
+
+    auto command_opt = read_string_array("command");
+    if (!id_opt || !label_opt || !protocol_opt || !command_opt || command_opt->empty()) {
       return luaL_error(state,
-                        "external agent requires id, label, protocol, and endpoint");
+                        "external agent requires id, label, protocol, and non-empty command");
     }
 
     lua_getfield(state, 1, "capabilities");
@@ -1932,14 +1956,14 @@ struct PluginHost::Impl {
     }
     lua_pop(state, 1);
 
-    host->external_agents.push_back(PluginHost::ContributedExternalAgent{
-        .id = plugin->id + "." + *id_opt,
-        .label = std::move(*label_opt),
-        .protocol = std::move(*protocol_opt),
-        .endpoint = std::move(*endpoint_opt),
-        .capabilities = std::move(capabilities),
-        .plugin_id = plugin->id,
-    });
+    PluginHost::ContributedExternalAgent contributed;
+    contributed.id = plugin->id + "." + *id_opt;
+    contributed.label = std::move(*label_opt);
+    contributed.protocol = std::move(*protocol_opt);
+    contributed.command = std::move(*command_opt);
+    contributed.capabilities = std::move(capabilities);
+    contributed.plugin_id = plugin->id;
+    host->external_agents.push_back(std::move(contributed));
     return 0;
   }
 
