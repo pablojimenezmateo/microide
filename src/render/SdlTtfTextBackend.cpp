@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "platform/RuntimePaths.h"
 #include "util/StartupTrace.h"
 
 namespace microide::render {
@@ -20,14 +21,6 @@ namespace {
 constexpr float kFontPointSize = 13.0f;
 constexpr std::size_t kMaxCacheEntries = 2048;
 constexpr float kMinPresentationScale = 0.1f;
-std::filesystem::path BasePath() {
-  const char* raw_base_path = SDL_GetBasePath();
-  if (raw_base_path == nullptr || raw_base_path[0] == '\0') {
-    return {};
-  }
-  return std::filesystem::path(raw_base_path);
-}
-
 }  // namespace
 
 std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* renderer) {
@@ -252,24 +245,10 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
       "/usr/share/fonts/opentype/urw-base35/NimbusMonoPS-Regular.otf",
   };
 
-  const std::filesystem::path bundled_font = std::filesystem::path("assets/fonts/JetBrainsMono-Regular.ttf");
-  if (std::filesystem::exists(bundled_font)) {
+  const std::filesystem::path bundled_font =
+      platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf");
+  if (!bundled_font.empty() && std::filesystem::exists(bundled_font)) {
     return bundled_font;
-  }
-
-  const std::filesystem::path base_path = BasePath();
-  if (!base_path.empty()) {
-    const std::vector<std::filesystem::path> relative_candidates = {
-        base_path / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
-        base_path / ".." / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
-        base_path / ".." / ".." / "assets" / "fonts" / "JetBrainsMono-Regular.ttf",
-    };
-
-    for (const auto& candidate : relative_candidates) {
-      if (std::filesystem::exists(candidate)) {
-        return candidate.lexically_normal();
-      }
-    }
   }
 
   for (const char* candidate : kSystemCandidates) {
@@ -321,12 +300,7 @@ std::vector<std::filesystem::path> SdlTtfTextBackend::LocateFallbackFontFiles(
     candidates.push_back(resolved);
   };
 
-  const std::filesystem::path base_path = BasePath();
-  if (!base_path.empty()) {
-    add_candidate(base_path / "assets" / "fonts" / "JetBrainsMono-Regular.ttf");
-    add_candidate(base_path / ".." / "assets" / "fonts" / "JetBrainsMono-Regular.ttf");
-    add_candidate(base_path / ".." / ".." / "assets" / "fonts" / "JetBrainsMono-Regular.ttf");
-  }
+  add_candidate(platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf"));
 
   for (const char* candidate : kFallbackCandidates) {
     add_candidate(candidate);

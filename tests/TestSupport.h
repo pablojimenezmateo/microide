@@ -1,9 +1,12 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "platform/HostPlatform.h"
 
 namespace microide::tests {
 
@@ -51,6 +54,15 @@ class ScopedEnvVar {
   std::string name_;
   bool had_previous_ = false;
   std::string previous_value_;
+};
+
+class ScopedHostPlatformOverride {
+ public:
+  explicit ScopedHostPlatformOverride(platform::HostPlatform platform);
+  ~ScopedHostPlatformOverride();
+
+ private:
+  std::optional<platform::HostPlatform> previous_;
 };
 
 }  // namespace microide::tests

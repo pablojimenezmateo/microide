@@ -59,13 +59,37 @@ if(MICROIDE_ENABLE_SDL3_TTF)
   endif()
 endif()
 
-if(NOT PkgConfig_FOUND)
-  message(FATAL_ERROR
-    "pkg-config is required to locate libpcre2-8 for runtime syntax highlighting.")
+set(MICROIDE_PCRE2_TARGET "")
+find_package(PCRE2 QUIET COMPONENTS 8BIT)
+if(TARGET PCRE2::8BIT)
+  set(MICROIDE_PCRE2_TARGET PCRE2::8BIT)
+elseif(PkgConfig_FOUND)
+  pkg_check_modules(PCRE2 QUIET IMPORTED_TARGET libpcre2-8)
+  if(TARGET PkgConfig::PCRE2)
+    set(MICROIDE_PCRE2_TARGET PkgConfig::PCRE2)
+  endif()
 endif()
 
-pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
-pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
+if(MICROIDE_PCRE2_TARGET STREQUAL "")
+  message(FATAL_ERROR
+    "PCRE2 was not found. Install PCRE2 development files and rerun CMake.")
+endif()
+
+set(MICROIDE_CURL_TARGET "")
+find_package(CURL QUIET)
+if(TARGET CURL::libcurl)
+  set(MICROIDE_CURL_TARGET CURL::libcurl)
+elseif(PkgConfig_FOUND)
+  pkg_check_modules(CURL_PKG QUIET IMPORTED_TARGET libcurl)
+  if(TARGET PkgConfig::CURL_PKG)
+    set(MICROIDE_CURL_TARGET PkgConfig::CURL_PKG)
+  endif()
+endif()
+
+if(MICROIDE_CURL_TARGET STREQUAL "")
+  message(FATAL_ERROR
+    "libcurl was not found. Install libcurl development files and rerun CMake.")
+endif()
 
 set(MICROIDE_LUA_TARGET "")
 
@@ -119,7 +143,11 @@ set(MICROIDE_CORE_SOURCES
   src/platform/AsyncSubprocess.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
+  src/platform/HostIntegration.cpp
+  src/platform/HostPlatform.cpp
+  src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
+  src/platform/Trash.cpp
   src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp
   src/project/FileOperationService.cpp
@@ -290,11 +318,27 @@ add_executable(microide
   ${MICROIDE_CORE_SOURCES}
 )
 
+if(APPLE)
+  set_target_properties(microide PROPERTIES
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_BUNDLE_NAME "microide"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.microide.app"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+  )
+elseif(WIN32)
+  set_target_properties(microide PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+  set(MICROIDE_RUNTIME_ASSET_DIR "$<TARGET_FILE_DIR:microide>/assets")
+  if(APPLE)
+    set(MICROIDE_RUNTIME_ASSET_DIR "$<TARGET_BUNDLE_DIR:microide>/Contents/Resources/assets")
+  endif()
   add_custom_command(TARGET microide POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:microide>/assets")
+            "${MICROIDE_RUNTIME_ASSET_DIR}")
 endif()
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -304,7 +348,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide PRIVATE src)
-target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -344,6 +388,7 @@ add_executable(microide_tests
   tests/MergeModelTests.cpp
   tests/ProjectSearchServiceTests.cpp
   tests/RegexUtilTests.cpp
+  tests/RuntimePathsTests.cpp
   tests/TaskExecutorTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TestMain.cpp
@@ -381,7 +426,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide_tests PRIVATE src)
-target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -412,7 +457,7 @@ add_executable(microide_provider_bridge
 )
 
 target_include_directories(microide_provider_bridge PRIVATE src)
-target_link_libraries(microide_provider_bridge PRIVATE PkgConfig::CURL)
+target_link_libraries(microide_provider_bridge PRIVATE ${MICROIDE_CURL_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_provider_bridge PRIVATE -Wall -Wextra -Wpedantic)
@@ -457,7 +502,7 @@ add_executable(microide_diff_bench
 )
 
 target_include_directories(microide_diff_bench PRIVATE src)
-target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic)
@@ -480,7 +525,7 @@ add_executable(microide_search_bench
 )
 
 target_include_directories(microide_search_bench PRIVATE src)
-target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} PkgConfig::PCRE2)
+target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic)

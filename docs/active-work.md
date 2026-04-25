@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-23.
+Reviewed on 2026-04-25.
 
 This is the single source of truth for:
 
@@ -44,6 +44,9 @@ These are implemented and should not be treated as open migration work:
 - single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command/chat input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
 - editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
 - filesystem tree with `.gitignore` handling, git markers, refresh, and trash-backed create/rename/delete flows
+- host-owned app-directory, trash or recycle-bin, open-URL, reveal-path, and bundled-asset
+  services for Linux, macOS, and Windows policy, with runtime assets copied into desktop-build
+  and macOS-bundle layouts
 - file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project for literal mode, capped-result feedback, and a standalone benchmark tool
 - git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
 - PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
@@ -229,6 +232,23 @@ Current state:
 - `WorkspaceShell` still acts as the app-facing facade, but the shell-breakdown plan is now
   implemented: event routing, wake routing, action enablement, render composition, and test hooks
   all live behind explicit seams instead of direct shell-owned monoliths
+
+### 2. Cross-Platform Host Support
+
+Current state:
+
+- app-directory policy, trash or recycle-bin behavior, external URL handling, and runtime asset
+  discovery now route through dedicated `src/platform/*` services instead of Linux-first callers
+- CMake now supports macOS bundle output, Windows desktop output, and non-`pkg-config` package
+  discovery for PCRE2 and libcurl
+- local bring-up and CI coverage now exist for Linux, macOS, and Windows host-facing build or test
+  paths
+
+Remaining work:
+
+- split terminal lifecycle and subprocess management into explicit backends with Windows support
+- add native macOS and Windows watcher backends so supported hosts do not rely on polling by
+  default
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,

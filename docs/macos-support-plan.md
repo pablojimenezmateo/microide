@@ -1,6 +1,6 @@
 # macOS Support Plan
 
-Reviewed on 2026-04-23.
+Reviewed on 2026-04-25.
 
 This document outlines what `microide` needs to support macOS as a first-class host.
 It is a host-platform plan, not a compatibility promise.
@@ -30,7 +30,10 @@ The codebase is already partly portable:
 
 - the product is built around SDL3 and CMake
 - rendering is host-owned and mostly platform-agnostic
-- trash support already includes a macOS path in `src/project/FileOperationService.cpp`
+- app directories now resolve to macOS-correct `Application Support` and `Caches` roots through
+  `src/platform/AppDirectories.*`
+- trash, URL open, reveal-path, and runtime asset discovery now live in dedicated
+  `src/platform/Trash.*`, `src/platform/HostIntegration.*`, and `src/platform/RuntimePaths.*`
 - the project picker already goes through `SDL_ShowOpenFolderDialog`, which may work on macOS
   without a separate Cocoa implementation for the first pass
 
@@ -42,8 +45,6 @@ But several important services are still Linux-first or only loosely portable:
   `fork`/`execvp` implementations instead of a deliberate platform process layer
 - `src/platform/FileWatcher.cpp` has Linux `inotify` wakeups and falls back to snapshot polling on
   non-Linux hosts
-- `src/platform/AppDirectories.cpp` still uses Linux-style XDG defaults for non-Windows hosts,
-  which is wrong for macOS application support directories
 - there is no macOS-specific packaging, bundle metadata, signing, notarization, or launch
   validation path in the build
 - secret storage is not yet tied to native OS credential storage, which is not a hard blocker for

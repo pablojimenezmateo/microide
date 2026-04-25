@@ -1,11 +1,8 @@
 #include "project/FileOperationService.h"
 
-#include "platform/AppDirectories.h"
+#include "platform/Trash.h"
 
-#include <chrono>
 #include <fstream>
-#include <iomanip>
-#include <sstream>
 #include <system_error>
 
 namespace microide::project {
@@ -42,29 +39,6 @@ bool IsReservedPathComponent(const std::filesystem::path& path) {
     }
   }
   return false;
-}
-
-std::filesystem::path UniquePathInDirectory(const std::filesystem::path& directory,
-                                            const std::string& base_name) {
-  const std::filesystem::path desired = directory / base_name;
-  std::error_code error;
-  if (!std::filesystem::exists(desired, error)) {
-    return desired;
-  }
-
-  const std::filesystem::path base_path(base_name);
-  const std::string stem = base_path.stem().string();
-  const std::string extension = base_path.extension().string();
-  const std::string fallback_stem = stem.empty() ? base_name : stem;
-  for (int attempt = 2; attempt < 10000; ++attempt) {
-    const std::string candidate_name =
-        fallback_stem + " " + std::to_string(attempt) + extension;
-    const std::filesystem::path candidate = directory / candidate_name;
-    if (!std::filesystem::exists(candidate, error)) {
-      return candidate;
-    }
-  }
-  return desired;
 }
 
 bool CopyPath(const std::filesystem::path& source, const std::filesystem::path& destination) {
@@ -146,92 +120,6 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
   }
   return true;
 }
-
-std::filesystem::path UserHomeDirectory() {
-  return platform::ResolveUserHomeDirectory();
-}
-
-std::string FormatDeletionTimestamp() {
-  const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  std::tm local_time{};
-#if defined(_WIN32)
-  localtime_s(&local_time, &now);
-#else
-  localtime_r(&now, &local_time);
-#endif
-  std::ostringstream stream;
-  stream << std::put_time(&local_time, "%Y-%m-%dT%H:%M:%S");
-  return stream.str();
-}
-
-FileOperationResult TrashPathLinux(const std::filesystem::path& source) {
-  const std::filesystem::path home = UserHomeDirectory();
-  if (home.empty()) {
-    return Failure("Could not resolve the home directory for trash");
-  }
-
-  const std::filesystem::path data_home =
-      platform::ResolveUserDirectory(platform::UserDirectoryKind::Data);
-  const std::filesystem::path trash_root = data_home / "Trash";
-  const std::filesystem::path trash_files = trash_root / "files";
-  const std::filesystem::path trash_info = trash_root / "info";
-
-  std::error_code error;
-  std::filesystem::create_directories(trash_files, error);
-  if (error) {
-    return Failure("Failed to prepare the trash directory");
-  }
-  std::filesystem::create_directories(trash_info, error);
-  if (error) {
-    return Failure("Failed to prepare trash metadata");
-  }
-
-  const std::string base_name = source.filename().string().empty() ? "item" : source.filename().string();
-  const std::filesystem::path trashed_path = UniquePathInDirectory(trash_files, base_name);
-  const std::string trashed_name = trashed_path.filename().string();
-  const std::filesystem::path info_path = trash_info / (trashed_name + ".trashinfo");
-
-  std::ofstream info_stream(info_path, std::ios::binary | std::ios::trunc);
-  if (!info_stream) {
-    return Failure("Failed to write trash metadata");
-  }
-  info_stream << "[Trash Info]\n";
-  info_stream << "Path=" << source.generic_string() << "\n";
-  info_stream << "DeletionDate=" << FormatDeletionTimestamp() << "\n";
-  if (!info_stream.good()) {
-    return Failure("Failed to write trash metadata");
-  }
-
-  if (!MovePath(source, trashed_path)) {
-    std::filesystem::remove(info_path, error);
-    return Failure("Failed to move the path to trash");
-  }
-
-  return Success(trashed_path);
-}
-
-#if defined(__APPLE__)
-FileOperationResult TrashPathMac(const std::filesystem::path& source) {
-  const std::filesystem::path home = UserHomeDirectory();
-  if (home.empty()) {
-    return Failure("Could not resolve the home directory for trash");
-  }
-
-  const std::filesystem::path trash_root = home / ".Trash";
-  std::error_code error;
-  std::filesystem::create_directories(trash_root, error);
-  if (error) {
-    return Failure("Failed to prepare the trash directory");
-  }
-
-  const std::string base_name = source.filename().string().empty() ? "item" : source.filename().string();
-  const std::filesystem::path trashed_path = UniquePathInDirectory(trash_root, base_name);
-  if (!MovePath(source, trashed_path)) {
-    return Failure("Failed to move the path to trash");
-  }
-  return Success(trashed_path);
-}
-#endif
 
 }  // namespace
 
@@ -324,23 +212,12 @@ FileOperationResult FileOperationService::RenamePath(const std::filesystem::path
 }
 
 FileOperationResult FileOperationService::TrashPath(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = NormalizeAbsolutePath(path);
-  if (normalized_path.empty()) {
-    return Failure("No path was provided");
-  }
-
-  std::error_code error;
-  if (!std::filesystem::exists(normalized_path, error)) {
-    return Failure("The path does not exist");
-  }
-
-#if defined(__APPLE__)
-  return TrashPathMac(normalized_path);
-#elif defined(__linux__)
-  return TrashPathLinux(normalized_path);
-#else
-  return Failure("Trash is not implemented on this platform yet");
-#endif
+  const platform::TrashOperationResult result = platform::MovePathToTrash(path);
+  return FileOperationResult{
+      .ok = result.ok,
+      .resulting_path = result.resulting_path,
+      .error_message = result.error_message,
+  };
 }
 
 }  // namespace microide::project

@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "platform/HostIntegration.h"
+
 #include <cctype>
 #include <cmath>
 #include <string_view>
@@ -247,7 +249,7 @@ bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {
   if (external_url_opener_) {
     return external_url_opener_(url);
   }
-  return SDL_OpenURL(std::string(url).c_str());
+  return platform::OpenUrl(url).ok;
 }
 
 void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,

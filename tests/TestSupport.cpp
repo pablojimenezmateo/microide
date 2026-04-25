@@ -153,4 +153,13 @@ void ScopedEnvVar::Set(const std::string& value) {
 #endif
 }
 
+ScopedHostPlatformOverride::ScopedHostPlatformOverride(platform::HostPlatform platform)
+    : previous_(microide::platform::CurrentHostPlatform()) {
+  microide::platform::SetHostPlatformOverrideForTesting(platform);
+}
+
+ScopedHostPlatformOverride::~ScopedHostPlatformOverride() {
+  microide::platform::SetHostPlatformOverrideForTesting(previous_);
+}
+
 }  // namespace microide::tests

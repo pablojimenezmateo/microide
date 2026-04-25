@@ -1,6 +1,6 @@
 # MicroIDE Product Guide
 
-Reviewed on 2026-04-24.
+Reviewed on 2026-04-25.
 
 This file captures the durable product direction for the current C++/SDL3 codebase.
 Keep it shorter than `docs/active-work.md`.
@@ -48,6 +48,8 @@ The current SDL shell already includes:
 - shared UTF-8 and line-ending utilities across editor, renderer, terminal, and workspace text
   helpers, so text decoding, serialization, and boundary handling follow one host contract
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
+- host-owned platform services for app directories, trash or recycle-bin behavior, external URL or
+  reveal-path actions, and bundled runtime asset discovery across Linux, macOS, and Windows
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
 - literal-by-default project search with regex, case-mode, hidden-file controls, and capped-result feedback
@@ -116,6 +118,8 @@ should stay in scope.
 The codebase is organized by responsibility:
 
 - `src/app`: SDL bootstrap, app lifetime, event loop, and startup tracing
+- `src/platform`: app directories, runtime asset paths, host integration, file watching, and
+  subprocess-facing OS seams
 - `src/workspace`: shell facade, workspace state models, actions, menus, prompts, persistence,
   and UI routing
 - `src/project`: file indexing, ignore handling, project search, git services, and file operations
@@ -162,8 +166,12 @@ whether the backend is external or built in.
 - `openspec/specs/diff-merge-editor/spec.md`: durable behavioral contract for compare and merge tabs
 - `openspec/specs/ai-workflows/spec.md`: durable contract for chat, inline completion, MCP tools, and provider bridges
 - `openspec/specs/performance-budgets/spec.md`: durable latency, CPU, and measurement policy
+- `openspec/specs/host-platform-support/spec.md`: durable supported-host contract for Linux,
+  macOS, and Windows host services
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
+- `docs/host-platform-audit.md`: current host-service seam map and the remaining POSIX-only gaps
+- `docs/host-platform-bringup.md`: local build, launch, and focused validation flow for supported hosts
 - `docs/plugin-runtime-research.md`: plugin architecture notes and external references
 - `docs/known-tech-debt.md`: concrete open debt that still matters after recent refactors
 - `docs/macos-support-plan.md`: host-platform plan for bringing `microide` to macOS

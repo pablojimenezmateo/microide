@@ -1,5 +1,7 @@
 #include "platform/AppDirectories.h"
 
+#include "platform/HostPlatform.h"
+
 #include <cstdlib>
 #include <string>
 
@@ -16,76 +18,105 @@ std::filesystem::path EnvPath(const char* name) {
 }  // namespace
 
 std::filesystem::path ResolveUserHomeDirectory() {
-  if (const std::filesystem::path home = EnvPath("HOME"); !home.empty()) {
-    return home;
+  switch (CurrentHostPlatform()) {
+    case HostPlatform::Windows:
+      if (const std::filesystem::path profile = EnvPath("USERPROFILE"); !profile.empty()) {
+        return profile;
+      }
+      if (const std::filesystem::path home = EnvPath("HOME"); !home.empty()) {
+        return home;
+      }
+      if (const char* drive = std::getenv("HOMEDRIVE"),
+          *path = std::getenv("HOMEPATH");
+          drive != nullptr && drive[0] != '\0' && path != nullptr && path[0] != '\0') {
+        return std::filesystem::path(std::string(drive) + std::string(path));
+      }
+      return {};
+    case HostPlatform::MacOS:
+    case HostPlatform::Linux:
+      if (const std::filesystem::path home = EnvPath("HOME"); !home.empty()) {
+        return home;
+      }
+      return {};
   }
-#if defined(_WIN32)
-  if (const std::filesystem::path profile = EnvPath("USERPROFILE"); !profile.empty()) {
-    return profile;
-  }
-  const char* drive = std::getenv("HOMEDRIVE");
-  const char* path = std::getenv("HOMEPATH");
-  if (drive != nullptr && drive[0] != '\0' && path != nullptr && path[0] != '\0') {
-    return std::filesystem::path(std::string(drive) + std::string(path));
-  }
-#endif
   return {};
 }
 
 std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
-  switch (kind) {
-    case UserDirectoryKind::Config:
-      if (const std::filesystem::path config = EnvPath("XDG_CONFIG_HOME"); !config.empty()) {
-        return config;
+  switch (CurrentHostPlatform()) {
+    case HostPlatform::Windows: {
+      switch (kind) {
+        case UserDirectoryKind::Config:
+          if (const std::filesystem::path config = EnvPath("APPDATA"); !config.empty()) {
+            return config;
+          }
+          break;
+        case UserDirectoryKind::State:
+        case UserDirectoryKind::Data:
+        case UserDirectoryKind::Cache:
+          if (const std::filesystem::path local = EnvPath("LOCALAPPDATA"); !local.empty()) {
+            return local;
+          }
+          break;
       }
-#if defined(_WIN32)
-      if (const std::filesystem::path config = EnvPath("APPDATA"); !config.empty()) {
-        return config;
-      }
-#endif
       if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
-        return home / ".config";
+        if (kind == UserDirectoryKind::Config) {
+          return home / "AppData" / "Roaming";
+        }
+        return home / "AppData" / "Local";
       }
       return {};
-    case UserDirectoryKind::State:
-      if (const std::filesystem::path state = EnvPath("XDG_STATE_HOME"); !state.empty()) {
-        return state;
+    }
+    case HostPlatform::MacOS: {
+      const std::filesystem::path home = ResolveUserHomeDirectory();
+      if (home.empty()) {
+        return {};
       }
-#if defined(_WIN32)
-      if (const std::filesystem::path state = EnvPath("LOCALAPPDATA"); !state.empty()) {
-        return state / "State";
-      }
-#endif
-      if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
-        return home / ".local" / "state";
-      }
-      return {};
-    case UserDirectoryKind::Data:
-      if (const std::filesystem::path data = EnvPath("XDG_DATA_HOME"); !data.empty()) {
-        return data;
-      }
-#if defined(_WIN32)
-      if (const std::filesystem::path data = EnvPath("LOCALAPPDATA"); !data.empty()) {
-        return data / "Data";
-      }
-#endif
-      if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
-        return home / ".local" / "share";
+      switch (kind) {
+        case UserDirectoryKind::Config:
+        case UserDirectoryKind::State:
+        case UserDirectoryKind::Data:
+          return home / "Library" / "Application Support";
+        case UserDirectoryKind::Cache:
+          return home / "Library" / "Caches";
       }
       return {};
-    case UserDirectoryKind::Cache:
-      if (const std::filesystem::path cache = EnvPath("XDG_CACHE_HOME"); !cache.empty()) {
-        return cache;
+    }
+    case HostPlatform::Linux:
+      switch (kind) {
+        case UserDirectoryKind::Config:
+          if (const std::filesystem::path config = EnvPath("XDG_CONFIG_HOME"); !config.empty()) {
+            return config;
+          }
+          if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
+            return home / ".config";
+          }
+          return {};
+        case UserDirectoryKind::State:
+          if (const std::filesystem::path state = EnvPath("XDG_STATE_HOME"); !state.empty()) {
+            return state;
+          }
+          if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
+            return home / ".local" / "state";
+          }
+          return {};
+        case UserDirectoryKind::Data:
+          if (const std::filesystem::path data = EnvPath("XDG_DATA_HOME"); !data.empty()) {
+            return data;
+          }
+          if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
+            return home / ".local" / "share";
+          }
+          return {};
+        case UserDirectoryKind::Cache:
+          if (const std::filesystem::path cache = EnvPath("XDG_CACHE_HOME"); !cache.empty()) {
+            return cache;
+          }
+          if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
+            return home / ".cache";
+          }
+          return {};
       }
-#if defined(_WIN32)
-      if (const std::filesystem::path cache = EnvPath("LOCALAPPDATA"); !cache.empty()) {
-        return cache / "Cache";
-      }
-#endif
-      if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
-        return home / ".cache";
-      }
-      return {};
   }
 
   return {};
@@ -99,7 +130,23 @@ std::filesystem::path ResolveAppDirectory(UserDirectoryKind kind, std::string_vi
   if (app_name.empty()) {
     return root;
   }
-  return root / std::string(app_name);
+
+  const std::filesystem::path app_root = root / std::string(app_name);
+  if (CurrentHostPlatform() != HostPlatform::Windows) {
+    return app_root;
+  }
+
+  switch (kind) {
+    case UserDirectoryKind::Config:
+      return app_root;
+    case UserDirectoryKind::State:
+      return app_root / "State";
+    case UserDirectoryKind::Data:
+      return app_root / "Data";
+    case UserDirectoryKind::Cache:
+      return app_root / "Cache";
+  }
+  return app_root;
 }
 
 }  // namespace microide::platform

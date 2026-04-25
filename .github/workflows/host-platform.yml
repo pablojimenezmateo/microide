@@ -1,0 +1,60 @@
+name: host-platform
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            shell: bash
+            deps: |
+              sudo apt-get update
+              sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev libpcre2-dev libcurl4-openssl-dev
+          - os: macos-15
+            shell: bash
+            deps: |
+              brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl
+          - os: windows-2022
+            shell: msys2 {0}
+            deps: |
+              pacman -S --needed --noconfirm \
+                mingw-w64-ucrt-x86_64-cmake \
+                mingw-w64-ucrt-x86_64-ninja \
+                mingw-w64-ucrt-x86_64-gcc \
+                mingw-w64-ucrt-x86_64-SDL3 \
+                mingw-w64-ucrt-x86_64-SDL3_ttf \
+                mingw-w64-ucrt-x86_64-pcre2 \
+                mingw-w64-ucrt-x86_64-curl \
+                pkgconf
+
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: matrix.os == 'windows-2022'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+
+      - name: Install Dependencies
+        run: ${{ matrix.deps }}
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
+
+      - name: Build
+        run: cmake --build build --target microide microide_tests microide_provider_bridge
+
+      - name: Host-Facing Regression Slice
+        run: ./build/microide/microide_tests AppDirectories RuntimePaths FileOperationService Subprocess TerminalSession FileWatcher

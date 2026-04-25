@@ -20,6 +20,7 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
 void RegisterRegexUtilTests(std::vector<TestCase>& tests);
+void RegisterRuntimePathsTests(std::vector<TestCase>& tests);
 void RegisterStringUtilTests(std::vector<TestCase>& tests);
 void RegisterSubprocessTests(std::vector<TestCase>& tests);
 void RegisterTaskExecutorTests(std::vector<TestCase>& tests);
@@ -64,6 +65,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterGitBlameServiceTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);
   microide::tests::RegisterRegexUtilTests(tests);
+  microide::tests::RegisterRuntimePathsTests(tests);
   microide::tests::RegisterStringUtilTests(tests);
   microide::tests::RegisterSubprocessTests(tests);
   microide::tests::RegisterTaskExecutorTests(tests);

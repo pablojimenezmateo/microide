@@ -1,5 +1,7 @@
 #include "render/Theme.h"
 
+#include "platform/RuntimePaths.h"
+
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -166,14 +168,6 @@ std::vector<std::string> SplitWhitespace(std::string_view text) {
     parts.emplace_back(text.substr(start, index - start));
   }
   return parts;
-}
-
-std::filesystem::path BasePath() {
-  const char* raw_base_path = SDL_GetBasePath();
-  if (raw_base_path == nullptr || raw_base_path[0] == '\0') {
-    return {};
-  }
-  return std::filesystem::path(raw_base_path).lexically_normal();
 }
 
 SDL_Color BasicAnsiColor(int index, bool bright) {
@@ -689,14 +683,10 @@ Theme MakeDefaultTheme() {
 }
 
 std::filesystem::path FindThemeDirectory() {
-  const std::filesystem::path base_path = BasePath();
   const std::vector<std::filesystem::path> candidates = {
+      platform::ResolveBundledAssetPath("themes"),
       std::filesystem::path("assets") / "themes",
       std::filesystem::path("microide") / "assets" / "themes",
-      base_path / "assets" / "themes",
-      base_path / ".." / "assets" / "themes",
-      base_path / ".." / ".." / "assets" / "themes",
-      base_path / ".." / ".." / "microide" / "assets" / "themes",
   };
 
   for (const auto& candidate : candidates) {
