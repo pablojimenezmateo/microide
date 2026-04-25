@@ -1,3 +1,5 @@
+## MODIFIED Requirements
+
 ### Requirement: Startup Budget
 
 MicroIDE SHALL complete cold startup (binary launch to interactive shell with the last-session project restored) within a documented budget on a reference Linux host, measured through `docs/startup-tracing.md`. Changes that affect startup paths or schedule startup-triggered background work SHALL record startup trace output and startup-to-idle evidence in the change record.
@@ -10,18 +12,6 @@ MicroIDE SHALL complete cold startup (binary launch to interactive shell with th
 - **WHEN** the previous session held open editor tabs, compare tabs, merge tabs, and terminals
 - **THEN** cold startup SHALL restore each of those surfaces to its recorded state as part of the budgeted startup path, not as a deferred post-startup task
 
-### Requirement: Typing And Scrolling Frame Budget
-
-Editor typing, editor scrolling, compare scrolling, merge scrolling, and terminal scrolling SHALL fit within a single-digit millisecond frame budget on the reference host. Changes that modify the text layout, syntax state, retained-scene redraw policy, or viewport scroll math SHALL include `MICROIDE_TRACE_REDRAW` before-and-after output.
-
-#### Scenario: Typing into a large open file
-- **WHEN** the editor has a file loaded that triggers the large-file code path and the user holds a printable key
-- **THEN** each insertion SHALL render within the frame budget, SHALL NOT produce a full-surface repaint per keystroke, and SHALL NOT regress measurable typing latency compared to the prior release
-
-#### Scenario: Scrolling a merge tab
-- **WHEN** a three-way merge tab is scrolled with the mouse wheel or `PageDown`
-- **THEN** each repaint SHALL fit within the frame budget and SHALL reuse the shared row-decoration cache rather than rebuilding decorations per frame
-
 ### Requirement: Idle CPU Budget
 
 When MicroIDE is loaded with a project but has no active user input, no running terminal output, and no in-flight background work, the application SHALL consume near-zero CPU and SHALL NOT produce unnecessary SDL wake events, including immediately after startup-triggered watcher or refresh activity has settled.
@@ -33,18 +23,6 @@ When MicroIDE is loaded with a project but has no active user input, no running 
 #### Scenario: Startup-triggered watcher activity
 - **WHEN** project file watching, plugin asset watching, or other startup-triggered background refresh work is armed
 - **THEN** each service SHALL either block on a native wake source or wait for a real poll deadline, and SHALL NOT keep the application in a zero-delay wake loop when no user-visible work is pending
-
-### Requirement: Background Work Isolation
-
-Git, search, blame, LSP, DAP, formatter, AI, and plugin background work SHALL NOT starve one another and SHALL NOT stall the render or input hot paths. Cancellation SHALL flow across project switch, tab close, and shutdown.
-
-#### Scenario: Long-running AI request during git refresh
-- **WHEN** the user triggers a git refresh while a chat response is streaming and a project search is running
-- **THEN** all three SHALL progress concurrently, and MicroIDE SHALL continue to accept editor input at the frame budget
-
-#### Scenario: Project switch cancels in-flight work
-- **WHEN** the user switches projects while LSP requests, blame requests, search, and AI responses are in flight
-- **THEN** each in-flight request SHALL be cancelled or ignored on completion, and the new project SHALL start with a clean set of background tasks
 
 ### Requirement: Measured-Before-Merged Policy
 

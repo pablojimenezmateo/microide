@@ -15,6 +15,7 @@ class WorkspaceEventDispatcher {
     Uint32 project_open_dialog_event_type = 0;
     Uint32 git_blame_event_type = 0;
     Uint32 terminal_event_type = 0;
+    Uint32 project_file_event_type = 0;
     Uint32 lsp_event_type = 0;
     Uint32 plugin_async_process_event_type = 0;
   };
@@ -29,6 +30,8 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_pending_project_open_dialog_result;
     std::function<bool(bool)> reload_plugins_if_assets_changed;
     std::function<bool(Uint32)> plugin_runtime_consume_wake_event;
+    std::function<bool(Uint32)> project_file_monitor_consume_wake_event;
+    std::function<bool(bool)> reload_project_if_files_changed;
     std::function<bool(Uint32)> project_search_handles_event;
     std::function<void()> consume_project_search_updates;
     std::function<bool(Uint32)> task_runtime_handles_event;

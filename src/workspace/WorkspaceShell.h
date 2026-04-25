@@ -63,6 +63,7 @@
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePluginRuntime.h"
+#include "workspace/WorkspaceProjectFileMonitor.h"
 #include "workspace/WorkspaceProjectDialogState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
@@ -691,6 +692,7 @@ class WorkspaceShell {
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject(bool reload_syntax_definitions = true);
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
+  bool ReloadProjectIfFilesChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers(bool open_lsp_documents = true);
@@ -1473,7 +1475,7 @@ class WorkspaceShell {
   mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
-  platform::FileTreeWatcher project_file_watcher_;
+  WorkspaceProjectFileMonitor project_file_monitor_;
   WorkspacePluginRuntime plugin_runtime_;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
@@ -1501,6 +1503,7 @@ class WorkspaceShell {
   WorkspaceProviderBridgeManager provider_bridge_manager_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
+  Uint32 project_file_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
   Uint32 lsp_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;

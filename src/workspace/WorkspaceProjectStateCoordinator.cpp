@@ -86,6 +86,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
+  project_file_monitor_.Reset();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
   lsp_manager_.ShutdownAll();
@@ -216,6 +217,8 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
   auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
+  project_file_monitor_.SetProjectRoot(state.root);
+  project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
   lsp_manager_.ShutdownAll();
@@ -271,8 +274,8 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
   RefreshProblemsSidebar();
 
-  project_file_watcher_.SetRoots({context_.current_project_state.root});
-  project_file_watcher_.SetPollInterval(std::chrono::milliseconds(2000));
+  project_file_monitor_.SetProjectRoot(context_.current_project_state.root);
+  project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
 
   if (ActiveSidebarMode() == SidebarMode::Search &&
       !context_.current_project_state.overlay.workflow.project_search.query.text.empty()) {

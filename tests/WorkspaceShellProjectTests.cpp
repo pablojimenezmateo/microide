@@ -1309,6 +1309,32 @@ void TestWorkspaceShellEditorTabWheelScrollsStrip() {
          "mouse wheel over the editor strip should update the editor strip scroll index");
 }
 
+void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
+  static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
+  Expect(initialized, "SDL video initialization should succeed for watcher event tests");
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project watcher fixture should open the project");
+  const auto idle_delay_before = WorkspaceShellTestAccess::NextAnimationDelayMs(shell);
+  Expect(!idle_delay_before.has_value() || *idle_delay_before > 0,
+         "idle project watchers should not schedule a zero-delay wake when no change is pending");
+
+  WriteFile(root / "watched.txt", "changed\n");
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+         "project watcher reload should detect filesystem changes");
+  Expect(!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+         "project watcher reload should not continuously rearm after consuming a change");
+  const auto idle_delay_after = WorkspaceShellTestAccess::NextAnimationDelayMs(shell);
+  Expect(!idle_delay_after.has_value() || *idle_delay_after > 0,
+         "project watcher reload should settle without a zero-delay wake after refresh");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -1400,6 +1426,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabWheelScrollsStrip);
   AddTest(tests, "WorkspaceShell/EditorTabWheelScrollsStrip",
           TestWorkspaceShellEditorTabWheelScrollsStrip);
+  AddTest(tests, "WorkspaceShell/ProjectWatcherReloadDoesNotContinuouslyRearm",
+          TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm);
 }
 
 }  // namespace microide::tests

@@ -55,6 +55,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .project_open_dialog_event_type = shell->project_open_dialog_event_type_,
           .git_blame_event_type = shell->git_blame_event_type_,
           .terminal_event_type = shell->terminal_event_type_,
+          .project_file_event_type = shell->project_file_event_type_,
           .lsp_event_type = shell->lsp_event_type_,
           .plugin_async_process_event_type = shell->plugin_async_process_event_type_,
       },
@@ -73,6 +74,10 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               },
           .plugin_runtime_consume_wake_event =
               [shell](Uint32 type) { return shell->plugin_runtime_.ConsumeWakeEvent(type); },
+          .project_file_monitor_consume_wake_event =
+              [shell](Uint32 type) { return shell->project_file_monitor_.ConsumeWakeEvent(type); },
+          .reload_project_if_files_changed =
+              [shell](bool force_check) { return shell->ReloadProjectIfFilesChanged(force_check); },
           .project_search_handles_event =
               [shell](Uint32 type) { return shell->project_search_runtime_.HandlesEvent(type); },
           .consume_project_search_updates =

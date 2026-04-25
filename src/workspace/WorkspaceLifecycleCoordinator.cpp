@@ -113,6 +113,13 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     terminal_event_type_ = 0;
   }
 
+  project_file_event_type_ = SDL_RegisterEvents(1);
+  project_file_monitor_.SetWakeEventType(
+      project_file_event_type_ != static_cast<Uint32>(-1) ? project_file_event_type_ : 0);
+  if (project_file_event_type_ == static_cast<Uint32>(-1)) {
+    project_file_event_type_ = 0;
+  }
+
   project_open_dialog_event_type_ = SDL_RegisterEvents(1);
   if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
     project_open_dialog_event_type_ = 0;

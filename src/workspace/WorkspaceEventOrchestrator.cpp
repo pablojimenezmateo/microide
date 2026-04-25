@@ -53,6 +53,19 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     }
     return finish(true);
   }
+  if (runtime_.project_file_event_type != 0 && event.type == runtime_.project_file_event_type) {
+    const bool consumed = operations_.project_file_monitor_consume_wake_event(event.type);
+    if (consumed && operations_.reload_project_if_files_changed(true)) {
+      return EventResult{
+          .handled = true,
+          .redraw = RenderInvalidation{
+              .full = true,
+              .rects = {},
+          },
+      };
+    }
+    return finish(consumed);
+  }
   if (operations_.project_search_handles_event(event.type)) {
     operations_.consume_project_search_updates();
     return finish(true);

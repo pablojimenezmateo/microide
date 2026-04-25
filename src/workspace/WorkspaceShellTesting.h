@@ -355,6 +355,18 @@ struct WorkspaceShell::TestAccess {
                                          std::chrono::milliseconds poll_interval) {
     shell.plugin_runtime_.SetPollInterval(poll_interval);
   }
+  static void RegisterLifecycleWakeEvents(WorkspaceShell& shell) {
+    shell.RegisterLifecycleWakeEvents();
+  }
+  static Uint32 ProjectFileEventType(const WorkspaceShell& shell) {
+    return shell.project_file_event_type_;
+  }
+  static std::optional<Uint32> NextAnimationDelayMs(const WorkspaceShell& shell) {
+    return shell.NextAnimationDelayMs();
+  }
+  static bool ReloadProjectIfFilesChanged(WorkspaceShell& shell, bool force_check) {
+    return shell.ReloadProjectIfFilesChanged(force_check);
+  }
   static WorkspaceShell::EventResult HandleScheduledWake(WorkspaceShell& shell) {
     return shell.HandleScheduledWake();
   }

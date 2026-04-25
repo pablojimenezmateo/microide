@@ -235,7 +235,13 @@ std::optional<std::chrono::milliseconds> FileTreeWatcher::NextPollDelay() const 
   if (roots_.empty()) {
     return std::nullopt;
   }
-  if (pending_change_ || poll_interval_ == std::chrono::milliseconds::zero()) {
+  if (pending_change_) {
+    if (wake_callback_ && !polling_required_) {
+      return std::nullopt;
+    }
+    return std::chrono::milliseconds::zero();
+  }
+  if (poll_interval_ == std::chrono::milliseconds::zero()) {
     return std::chrono::milliseconds::zero();
   }
   if (!polling_required_) {

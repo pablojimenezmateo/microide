@@ -93,6 +93,36 @@ void TestFileWatcherWakeCallbackSignalsNestedChanges() {
   Expect(watcher.Poll(),
          "file watcher wake notifications should correspond to detectable tree changes");
 }
+
+void TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "plugins";
+  std::filesystem::create_directories(root);
+
+  FileTreeWatcher watcher(std::chrono::milliseconds(500));
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool notified = false;
+  watcher.SetWakeCallback([&]() {
+    {
+      std::lock_guard lock(mutex);
+      notified = true;
+    }
+    condition.notify_one();
+  });
+  watcher.SetRoots({root});
+
+  WriteFile(root / "reloadable" / "init.lua", "return 1\n");
+
+  std::unique_lock lock(mutex);
+  const bool woke = condition.wait_for(lock, std::chrono::seconds(2), [&]() { return notified; });
+  Expect(woke, "native file watcher should signal a wake for nested changes");
+  lock.unlock();
+
+  Expect(!watcher.NextPollDelay().has_value(),
+         "native wake-backed watchers should stay blocked instead of arming a zero-delay poll");
+  Expect(watcher.Poll(), "polling after the wake should still consume the detected change");
+}
 #endif
 
 }  // namespace
@@ -107,6 +137,8 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
 #if defined(__linux__)
   AddTest(tests, "FileWatcher/WakeCallbackSignalsNestedChanges",
           TestFileWatcherWakeCallbackSignalsNestedChanges);
+  AddTest(tests, "FileWatcher/NativeWakeDoesNotForceZeroDelayPoll",
+          TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll);
 #endif
 }
 

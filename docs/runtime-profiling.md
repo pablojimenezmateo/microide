@@ -109,3 +109,6 @@ This is the profiler to use when the app feels slower during live resize, especi
 5. If `Application::Render(partial)` is slow while inner render scopes stay cheap, look at the
    dirty-rect and clip-count metrics first. That usually indicates partial redraw fragmentation,
    not a single slow renderer.
+6. If the app goes hot immediately after project open, inspect watcher wake policy before tuning
+   render code. A native file watcher or similar wake-driven service should wake through SDL events
+   and keep `NextPollDelay()` unset; a `0 ms` timeout after a native wake is a polling regression.
