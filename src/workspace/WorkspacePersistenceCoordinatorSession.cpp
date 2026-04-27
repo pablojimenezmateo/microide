@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
 #include "util/TextFileIO.h"
@@ -199,11 +200,15 @@ std::filesystem::path PersistenceCoordinator::SessionStatePath() const {
 
 bool PersistenceCoordinator::RestoreSessionState() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreSessionState");
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::RestoreSessionState");
   const std::filesystem::path session_path = SessionStatePath();
   if (session_path.empty()) {
     return false;
   }
-  const auto text = util::ReadTextFile(session_path);
+  const auto text = [&]() -> std::optional<std::string> {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ReadSessionFile");
+    return util::ReadTextFile(session_path);
+  }();
   if (!text.has_value()) {
     return false;
   }
@@ -213,20 +218,28 @@ bool PersistenceCoordinator::RestoreSessionState() {
   persisted_session.sidebar_width = CurrentProjectState().sidebar.width;
   persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
   persisted_session.active_tab_index = CurrentProjectState().active_tab_index;
-  if (!ParseProjectSessionText(*text, &persisted_session)) {
-    return false;
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ParseSessionFile");
+    if (!ParseProjectSessionText(*text, &persisted_session)) {
+      return false;
+    }
   }
 
   auto& state = CurrentProjectState();
-  state.open_tabs.clear();
-  state.active_tab_index = 0;
-  state.overlay.visible = false;
-  state.panel.command_mode = false;
-  state.overlay.workflow.compare_picker.matches.clear();
-  state.overlay.workflow.compare_picker.commits.clear();
-  state.overlay.workflow.compare_picker.selected_index = 0;
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ResetState");
+    state.open_tabs.clear();
+    state.active_tab_index = 0;
+    state.overlay.visible = false;
+    state.panel.command_mode = false;
+    state.overlay.workflow.compare_picker.matches.clear();
+    state.overlay.workflow.compare_picker.commits.clear();
+    state.overlay.workflow.compare_picker.selected_index = 0;
+  }
 
-  for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
+    for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
     if (persisted_tab.kind == "compare") {
       std::filesystem::path compare_path = persisted_tab.compare_path;
       if (compare_path.is_relative()) {
@@ -466,13 +479,18 @@ bool PersistenceCoordinator::RestoreSessionState() {
         .merge = std::nullopt,
     });
   }
+  }
 
-  state.sidebar.visible = persisted_session.sidebar_visible;
-  state.sidebar.width = persisted_session.sidebar_width;
-  state.panel.height = persisted_session.bottom_panel_height;
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RestoreLayoutState");
+    state.sidebar.visible = persisted_session.sidebar_visible;
+    state.sidebar.width = persisted_session.sidebar_width;
+    state.panel.height = persisted_session.bottom_panel_height;
+  }
 
   // Restore conversations; convert any non-terminal states to failed.
   if (!persisted_session.chat.conversations.empty()) {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RestoreConversations");
     bool any_interrupted = false;
     std::vector<Conversation> restored =
         RestoreConversations(persisted_session.chat, &any_interrupted);
@@ -498,10 +516,13 @@ bool PersistenceCoordinator::RestoreSessionState() {
     return true;
   }
 
-  const std::size_t active_index =
-      std::min(persisted_session.active_tab_index, state.open_tabs.size() - 1);
-  state.active_tab_index = active_index;
-  state.surface.focus = state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::FinalizeState");
+    const std::size_t active_index =
+        std::min(persisted_session.active_tab_index, state.open_tabs.size() - 1);
+    state.active_tab_index = active_index;
+    state.surface.focus = state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+  }
   return true;
 }
 

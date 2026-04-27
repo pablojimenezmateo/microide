@@ -391,6 +391,22 @@ void TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden() {
          "opening a project should still prepare a background terminal tab");
 }
 
+void TestWorkspaceShellProjectOpenDefersProjectWatcherArming() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "project\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "watcher deferral fixture should open the project");
+
+  const auto next_delay = WorkspaceShellTestAccess::ProjectFileMonitorNextPollDelay(shell);
+  Expect(next_delay.has_value(),
+         "cold project open should leave the project watcher with deferred arming work");
+  Expect(*next_delay == std::chrono::milliseconds(1),
+         "cold project open should rearm the project watcher lazily on the next poll tick");
+}
+
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1401,6 +1417,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchClearsTransientInteractionState);
   AddTest(tests, "WorkspaceShell/ProjectOpenKeepsAutoTerminalHidden",
           TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden);
+  AddTest(tests, "WorkspaceShell/ProjectOpenDefersProjectWatcherArming",
+          TestWorkspaceShellProjectOpenDefersProjectWatcherArming);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
           TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
   AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",

@@ -1455,6 +1455,10 @@ struct WorkspaceShell::TestAccess {
   static WorkspaceShell::RenderInvalidation ConsumePendingRenderInvalidation(WorkspaceShell& shell) {
     return shell.ConsumePendingRenderInvalidation();
   }
+  static std::optional<std::chrono::milliseconds> ProjectFileMonitorNextPollDelay(
+      const WorkspaceShell& shell) {
+    return shell.project_file_monitor_.NextPollDelay();
+  }
   static void MoveMergeSelection(WorkspaceShell& shell, int delta) { shell.MoveMergeSelection(delta); }
   static void MoveCompareSelection(WorkspaceShell& shell, int delta) { shell.MoveCompareSelection(delta); }
   static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }

@@ -5,6 +5,7 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -293,49 +294,70 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitio
                                                     bool replay_plugin_buffer_opens,
                                                     bool open_lsp_documents) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   bool clean_reload;
   {
     util::StartupTrace::Scope plugin_scope("PluginRuntime::Reload");
+    util::PerformanceTrace::Scope perf_plugin_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::PluginRuntimeReload");
     clean_reload = plugin_runtime_.Reload(context_.current_project_state.root, reload_syntax_definitions);
   }
   {
     util::StartupTrace::Scope registry_scope("RebuildRegistries");
+    util::PerformanceTrace::Scope perf_registry_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::RebuildRegistries");
     RebuildPhase3Registries();
     RebuildPhase4Registries();
     RebuildPhase5Registries();
   }
   {
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
+    util::PerformanceTrace::Scope perf_syntax_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::InvalidateSyntaxCaches");
     if (reload_syntax_definitions && plugin_runtime_.syntax_definitions_changed()) {
       InvalidateRuntimeSyntaxStateCaches();
     }
   }
   {
     util::StartupTrace::Scope sidebar_selection_scope("NormalizeSidebarViewSelection");
+    util::PerformanceTrace::Scope perf_sidebar_selection_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::NormalizeSidebarViewSelection");
     NormalizeSidebarViewSelection();
   }
   {
     util::StartupTrace::Scope plugin_sidebar_scope("RefreshPluginSidebar");
+    util::PerformanceTrace::Scope perf_plugin_sidebar_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::RefreshPluginSidebar");
     RefreshPluginSidebar();
   }
   if (ActiveSidebarMode() == SidebarMode::Git) {
     util::StartupTrace::Scope git_sidebar_scope("RefreshGitSidebar");
+    util::PerformanceTrace::Scope perf_git_sidebar_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::RefreshGitSidebar");
     RefreshGitSidebar();
   }
   {
     util::StartupTrace::Scope problems_sidebar_scope("RefreshProblemsSidebar");
+    util::PerformanceTrace::Scope perf_problems_sidebar_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::RefreshProblemsSidebar");
     RefreshProblemsSidebar();
   }
   {
     util::StartupTrace::Scope open_buffers_scope("NotifyPluginsAboutOpenBuffers");
+    util::PerformanceTrace::Scope perf_open_buffers_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::NotifyPluginsAboutOpenBuffers");
     NotifyPluginsAboutOpenBuffers(replay_plugin_buffer_opens, open_lsp_documents);
   }
   {
     util::StartupTrace::Scope chrome_redraw_scope("RequestChromeRedraw");
+    util::PerformanceTrace::Scope perf_chrome_redraw_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::RequestChromeRedraw");
     RequestChromeRedraw();
   }
   {
     util::StartupTrace::Scope editor_redraw_scope("RequestEditorSurfaceRedraw");
+    util::PerformanceTrace::Scope perf_editor_redraw_scope(
+        "WorkspaceShell::ReloadPluginsForCurrentProject::RequestEditorSurfaceRedraw");
     RequestEditorSurfaceRedraw();
   }
   return clean_reload;

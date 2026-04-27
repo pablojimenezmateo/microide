@@ -111,31 +111,69 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   (void) log_feedback;
   auto persistence = MakePersistenceCoordinator();
   util::StartupTrace::Scope trace_scope("WorkspaceShell::InitializeCurrentProject");
-  ResetProjectScopedState(false);
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::InitializeCurrentProject");
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::ResetProjectScopedState");
+    ResetProjectScopedState(false);
+  }
   {
     util::StartupTrace::Scope set_root_scope("WorkspaceShell::SetProjectRoot");
+    util::PerformanceTrace::Scope perf_set_root_scope(
+        "WorkspaceShell::InitializeCurrentProject::SetProjectRoot");
+    project_file_monitor_.SetDeferredArming(true);
     if (!SetProjectRoot(project_root)) {
+      project_file_monitor_.SetDeferredArming(false);
       return false;
     }
+    project_file_monitor_.SetDeferredArming(false);
   }
 
   context_.current_project_state.project_base_color = DefaultProjectBaseColor(context_.current_project_state.root);
 
-  persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
-  ApplyEditorPreferences(context_.current_project_state.text_viewport);
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::ApplyColorscheme");
+    persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::ApplyEditorPreferences");
+    ApplyEditorPreferences(context_.current_project_state.text_viewport);
+  }
   if (restore_persistence) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::RestoreConfigState");
     persistence.RestoreConfigState();
   }
 
-  if (restore_persistence && persistence.RestoreSessionState()) {
+  bool restored_session = false;
+  if (restore_persistence) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::RestoreSessionState");
+    restored_session = persistence.RestoreSessionState();
+  }
+  if (restore_persistence && restored_session) {
     if (context_.current_project_state.terminal_tabs.empty()) {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
       OpenTerminal({}, false, false);
     }
-    ApplyEditorPreferencesToAllTabs();
+    {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::InitializeCurrentProject::ApplyEditorPreferencesToAllTabs");
+      ApplyEditorPreferencesToAllTabs();
+    }
     if (activate_restored_tab) {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::InitializeCurrentProject::ActivateCurrentTabAfterStateLoad");
       ActivateCurrentTabAfterStateLoad();
     }
-    ReloadPluginsForCurrentProject(false, false, true);
+    {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
+      ReloadPluginsForCurrentProject(false, false, true);
+    }
     return true;
   }
 
@@ -161,9 +199,15 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       });
       context_.current_project_state.active_tab_index = 0;
       if (context_.current_project_state.terminal_tabs.empty()) {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
         OpenTerminal({}, false, false);
       }
-      ReloadPluginsForCurrentProject();
+      {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
+        ReloadPluginsForCurrentProject();
+      }
       return true;
     }
   }
@@ -174,17 +218,29 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       "Use the sidebar to open files.\n");
   ApplyEditorPreferences(context_.current_project_state.text_viewport);
   if (context_.current_project_state.terminal_tabs.empty()) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
     OpenTerminal({}, false, false);
   }
-  ReloadPluginsForCurrentProject(true, false, true);
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
+    ReloadPluginsForCurrentProject(true, false, true);
+  }
   return true;
 }
 
 bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
                                           bool activate_restored_tab) {
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::ActivateProjectState");
   if (!state.initialized) {
-    if (!InitializeCurrentProject(
-            state.root, state.restore_persistence_on_activate, false, activate_restored_tab)) {
+    bool initialized = false;
+    {
+      util::PerformanceTrace::Scope scope("WorkspaceShell::ActivateProjectState::InitializeCurrentProject");
+      initialized = InitializeCurrentProject(
+          state.root, state.restore_persistence_on_activate, false, activate_restored_tab);
+    }
+    if (!initialized) {
       return false;
     }
     state.initialized = true;
@@ -192,11 +248,19 @@ bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
     return true;
   }
 
-  LoadProjectState(state);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::ActivateProjectState::LoadProjectState");
+    LoadProjectState(state);
+  }
   if (activate_restored_tab) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::ActivateProjectState::ActivateCurrentTabAfterStateLoad");
     ActivateCurrentTabAfterStateLoad();
   }
-  ReloadPluginsForCurrentProject(true, false, true);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::ActivateProjectState::ReloadPluginsForCurrentProject");
+    ReloadPluginsForCurrentProject(true, false, true);
+  }
   return true;
 }
 
