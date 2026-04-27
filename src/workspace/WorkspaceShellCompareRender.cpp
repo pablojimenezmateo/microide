@@ -18,6 +18,9 @@ namespace microide::workspace {
 
 namespace {
 
+constexpr float kDiffRowTint = 0.16f;
+constexpr float kDiffRowTintSelected = 0.24f;
+
 SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
   const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
   const auto blend = [&](Uint8 base_component, Uint8 tint_component) {
@@ -329,9 +332,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
       switch (compare_row.kind) {
         case compare::CompareRowKind::Deleted:
-          return BlendColor(base, theme_.diff_deleted, selected ? 0.42f : 0.28f);
+          return BlendColor(base, theme_.diff_deleted,
+                            selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Modified:
-          return BlendColor(base, theme_.diff_modified, selected ? 0.42f : 0.28f);
+          return BlendColor(base, theme_.diff_modified,
+                            selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Added:
         case compare::CompareRowKind::Unchanged:
         default:
@@ -342,9 +347,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
       const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
       switch (compare_row.kind) {
         case compare::CompareRowKind::Added:
-          return BlendColor(base, theme_.diff_added, selected ? 0.42f : 0.28f);
+          return BlendColor(base, theme_.diff_added,
+                            selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Modified:
-          return BlendColor(base, theme_.diff_modified, selected ? 0.42f : 0.28f);
+          return BlendColor(base, theme_.diff_modified,
+                            selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Deleted:
         case compare::CompareRowKind::Unchanged:
         default:

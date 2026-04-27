@@ -18,6 +18,9 @@ namespace microide::workspace {
 
 namespace {
 
+constexpr float kMergeDiffRowTint = 0.14f;
+constexpr float kMergeDiffRowTintSelected = 0.22f;
+
 SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
   const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
   const auto blend = [&](Uint8 base_component, Uint8 tint_component) {
@@ -354,7 +357,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           incoming_conflict != nullptr
               ? BlendColor(selected_incoming ? theme_.row_highlight : theme_.editor_background,
                            incoming_conflict->valid ? theme_.diff_added : theme_.diff_deleted,
-                           selected_incoming ? 0.42f : 0.24f)
+                           selected_incoming ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
               : (selected_incoming ? theme_.row_highlight : theme_.editor_background);
       const SDL_Color number_color =
           selected_incoming ? theme_.current_line_number : theme_.line_number;
@@ -383,7 +386,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           current_conflict != nullptr
               ? BlendColor(selected_current ? theme_.row_highlight : theme_.editor_background,
                            current_conflict->valid ? theme_.diff_modified : theme_.diff_deleted,
-                           selected_current ? 0.42f : 0.24f)
+                           selected_current ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
               : (selected_current ? theme_.row_highlight : theme_.editor_background);
       const SDL_Color number_color =
           selected_current ? theme_.current_line_number : theme_.line_number;
