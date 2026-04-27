@@ -25,6 +25,7 @@ class FileTreeWatcher {
 
   void SetPollInterval(std::chrono::milliseconds poll_interval);
   void SetWakeCallback(WakeCallback callback);
+  void SetDeferInitialSnapshot(bool defer);
   void SetEntryFilter(TreeTraversalFilter filter);
   void SetRoots(std::vector<std::filesystem::path> roots);
   void Clear();
@@ -48,6 +49,8 @@ class FileTreeWatcher {
   TreeTraversalFilter entry_filter_;
   WakeCallback wake_callback_;
   std::unique_ptr<NativeBackend> native_backend_;
+  bool defer_initial_snapshot_ = false;
+  bool snapshot_valid_ = false;
   bool pending_change_ = false;
   bool polling_required_ = true;
   std::chrono::steady_clock::time_point next_poll_at_ = std::chrono::steady_clock::time_point::min();

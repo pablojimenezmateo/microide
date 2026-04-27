@@ -482,6 +482,11 @@ void FileTreeWatcher::SetWakeCallback(WakeCallback callback) {
   wake_callback_ = std::move(callback);
 }
 
+void FileTreeWatcher::SetDeferInitialSnapshot(bool defer) {
+  std::scoped_lock lock(mutex_);
+  defer_initial_snapshot_ = defer;
+}
+
 void FileTreeWatcher::SetEntryFilter(TreeTraversalFilter filter) {
   std::scoped_lock lock(mutex_);
   entry_filter_ = std::move(filter);
@@ -498,18 +503,36 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
   std::sort(normalized_roots.begin(), normalized_roots.end());
   normalized_roots.erase(std::unique(normalized_roots.begin(), normalized_roots.end()),
                          normalized_roots.end());
+
   TreeTraversalFilter filter;
+  bool capture_snapshot = true;
   {
     std::scoped_lock lock(mutex_);
     filter = entry_filter_;
+    roots_ = normalized_roots;
+    pending_change_ = false;
+    RefreshNativeBackendLocked();
+    capture_snapshot =
+        !defer_initial_snapshot_ || polling_required_ || !static_cast<bool>(wake_callback_);
+    if (!capture_snapshot) {
+      snapshot_.clear();
+      snapshot_valid_ = false;
+      ResetNextPollAt();
+      return;
+    }
   }
-  const std::vector<TreeSnapshotEntry> snapshot = CaptureTreeSnapshot(normalized_roots, filter);
+
+  const std::vector<TreeSnapshotEntry> snapshot =
+      capture_snapshot ? CaptureTreeSnapshot(normalized_roots, filter)
+                       : std::vector<TreeSnapshotEntry>{};
 
   std::scoped_lock lock(mutex_);
-  roots_ = std::move(normalized_roots);
+  if (roots_ != normalized_roots) {
+    return;
+  }
   snapshot_ = snapshot;
+  snapshot_valid_ = true;
   pending_change_ = false;
-  RefreshNativeBackendLocked();
   ResetNextPollAt();
 }
 
@@ -517,6 +540,7 @@ void FileTreeWatcher::Clear() {
   std::scoped_lock lock(mutex_);
   roots_.clear();
   snapshot_.clear();
+  snapshot_valid_ = false;
   pending_change_ = false;
   polling_required_ = true;
   native_backend_.reset();
@@ -552,6 +576,9 @@ bool FileTreeWatcher::Poll() {
   std::vector<std::filesystem::path> roots;
   std::vector<TreeSnapshotEntry> previous_snapshot;
   TreeTraversalFilter filter;
+  bool snapshot_valid = false;
+  bool polling_required = true;
+  bool pending_change = false;
   {
     std::scoped_lock lock(mutex_);
     if (roots_.empty()) {
@@ -560,7 +587,24 @@ bool FileTreeWatcher::Poll() {
     roots = roots_;
     previous_snapshot = snapshot_;
     filter = entry_filter_;
+    snapshot_valid = snapshot_valid_;
+    polling_required = polling_required_;
+    pending_change = pending_change_;
     pending_change_ = false;
+  }
+
+  if (!snapshot_valid && !polling_required) {
+    if (!pending_change) {
+      return false;
+    }
+
+    std::scoped_lock lock(mutex_);
+    if (roots != roots_) {
+      return true;
+    }
+    RefreshNativeBackendLocked();
+    ResetNextPollAt();
+    return true;
   }
 
   const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots, filter);
@@ -571,6 +615,7 @@ bool FileTreeWatcher::Poll() {
     return changed;
   }
   snapshot_ = current_snapshot;
+  snapshot_valid_ = true;
   RefreshNativeBackendLocked();
   ResetNextPollAt();
   return changed;

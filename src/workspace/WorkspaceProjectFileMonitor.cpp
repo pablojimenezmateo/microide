@@ -62,6 +62,10 @@ WorkspaceProjectFileMonitor::WorkspaceProjectFileMonitor() = default;
 
 WorkspaceProjectFileMonitor::~WorkspaceProjectFileMonitor() = default;
 
+void WorkspaceProjectFileMonitor::SetDeferredArming(bool deferred) {
+  deferred_arming_ = deferred;
+}
+
 void WorkspaceProjectFileMonitor::SetPollInterval(std::chrono::milliseconds poll_interval) {
   watcher_.SetPollInterval(poll_interval);
 }
@@ -91,7 +95,9 @@ bool WorkspaceProjectFileMonitor::ConsumeWakeEvent(Uint32 type) {
 
 void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& project_root) {
   if (project_root.empty()) {
+    pending_project_root_.clear();
     traversal_filter_.reset();
+    watcher_.SetDeferInitialSnapshot(false);
     watcher_.SetEntryFilter({});
     watcher_.Clear();
     std::scoped_lock lock(wake_mutex_);
@@ -99,16 +105,29 @@ void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& pr
     return;
   }
 
-  traversal_filter_ =
-      std::make_unique<ProjectTraversalFilter>(project_root.lexically_normal());
-  watcher_.SetEntryFilter([this](const std::filesystem::path& path, platform::PathType type) {
-    return traversal_filter_ == nullptr || traversal_filter_->Includes(path, type);
-  });
-  watcher_.SetRoots({project_root.lexically_normal()});
+  if (!deferred_arming_) {
+    traversal_filter_ =
+        std::make_unique<ProjectTraversalFilter>(project_root.lexically_normal());
+    watcher_.SetDeferInitialSnapshot(false);
+    watcher_.SetEntryFilter([this](const std::filesystem::path& path, platform::PathType type) {
+      return traversal_filter_ == nullptr || traversal_filter_->Includes(path, type);
+    });
+    watcher_.SetRoots({project_root.lexically_normal()});
+    pending_project_root_.clear();
+    return;
+  }
+
+  pending_project_root_ = project_root.lexically_normal();
+  traversal_filter_.reset();
+  watcher_.SetDeferInitialSnapshot(true);
+  watcher_.SetEntryFilter({});
+  watcher_.Clear();
 }
 
 void WorkspaceProjectFileMonitor::Reset() {
+  pending_project_root_.clear();
   traversal_filter_.reset();
+  watcher_.SetDeferInitialSnapshot(false);
   watcher_.SetEntryFilter({});
   watcher_.Clear();
   std::scoped_lock lock(wake_mutex_);
@@ -116,17 +135,42 @@ void WorkspaceProjectFileMonitor::Reset() {
 }
 
 std::optional<std::chrono::milliseconds> WorkspaceProjectFileMonitor::NextPollDelay() const {
+  if (!pending_project_root_.empty()) {
+    return std::chrono::milliseconds(1);
+  }
   return watcher_.NextPollDelay();
 }
 
 bool WorkspaceProjectFileMonitor::PollForChanges() {
+  if (EnsureWatching()) {
+    return false;
+  }
   const std::optional<std::chrono::milliseconds> next_delay = watcher_.NextPollDelay();
   return next_delay.has_value() && *next_delay == std::chrono::milliseconds::zero() &&
          watcher_.Poll();
 }
 
 bool WorkspaceProjectFileMonitor::ConsumePendingChanges() {
+  if (EnsureWatching()) {
+    return false;
+  }
   return watcher_.Poll();
+}
+
+bool WorkspaceProjectFileMonitor::EnsureWatching() {
+  if (pending_project_root_.empty()) {
+    return false;
+  }
+
+  traversal_filter_ =
+      std::make_unique<ProjectTraversalFilter>(pending_project_root_);
+  watcher_.SetDeferInitialSnapshot(true);
+  watcher_.SetEntryFilter([this](const std::filesystem::path& path, platform::PathType type) {
+    return traversal_filter_ == nullptr || traversal_filter_->Includes(path, type);
+  });
+  watcher_.SetRoots({pending_project_root_});
+  pending_project_root_.clear();
+  return true;
 }
 
 bool WorkspaceProjectFileMonitor::ReserveWakeEvent(Uint32* event_type) const {

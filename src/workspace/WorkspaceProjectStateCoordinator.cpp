@@ -274,7 +274,10 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
   RefreshProblemsSidebar();
 
-  project_file_monitor_.SetProjectRoot(context_.current_project_state.root);
+  {
+    util::StartupTrace::Scope monitor_scope("WorkspaceProjectFileMonitor::SetProjectRoot");
+    project_file_monitor_.SetProjectRoot(context_.current_project_state.root);
+  }
   project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
 
   if (ActiveSidebarMode() == SidebarMode::Search &&

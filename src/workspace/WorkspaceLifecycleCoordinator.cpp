@@ -20,6 +20,7 @@ LifecycleCoordinator::LifecycleCoordinator(WorkspaceContext& context,
 bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::Initialize");
   operations_.reset_startup_state();
+  operations_.set_project_watcher_deferred_arming(true);
 
   operations_.initialize_project_search_runtime();
   operations_.initialize_task_runtime();
@@ -43,17 +44,21 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   {
     util::StartupTrace::Scope restore_workspace_scope("WorkspaceShell::RestoreWorkspaceSession");
     if (operations_.restore_workspace_session()) {
+      operations_.set_project_watcher_deferred_arming(false);
       return true;
     }
   }
 
   if (project_root.empty()) {
+    operations_.set_project_watcher_deferred_arming(false);
     operations_.reload_plugins_for_current_project();
     return true;
   }
 
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
-  return operations_.open_project_tab(project_root, true, true);
+  const bool opened = operations_.open_project_tab(project_root, true, true);
+  operations_.set_project_watcher_deferred_arming(false);
+  return opened;
 }
 
 void LifecycleCoordinator::Shutdown() {
@@ -182,6 +187,8 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .reset_project_scoped_state = [this](bool show_welcome) {
             ResetProjectScopedState(show_welcome);
           },
+          .set_project_watcher_deferred_arming =
+              [this](bool deferred) { project_file_monitor_.SetDeferredArming(deferred); },
           .restore_workspace_session =
               [this]() { return MakePersistenceCoordinator().RestoreWorkspaceSession(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
