@@ -602,8 +602,50 @@ std::string TextViewport::SelectedText() const {
   return text;
 }
 
+std::string TextViewport::CurrentLineTextForClipboard() const {
+  if (document_->lines.empty()) {
+    return {};
+  }
+
+  std::string text = document_->lines[cursor_line_];
+  text.push_back('\n');
+  return text;
+}
+
 bool TextViewport::DeleteSelectedText() {
   return DeleteSelection();
+}
+
+bool TextViewport::DeleteCurrentLine() {
+  if (document_->lines.empty()) {
+    return false;
+  }
+
+  if (document_->lines.size() == 1) {
+    return ApplyRangeEdit(SelectionRange{
+                              .start = TextPosition{0, 0},
+                              .end = TextPosition{0, document_->lines[0].size()},
+                          },
+                          "", true);
+  }
+
+  if (cursor_line_ + 1 < document_->lines.size()) {
+    return ApplyRangeEdit(SelectionRange{
+                              .start = TextPosition{cursor_line_, 0},
+                              .end = TextPosition{cursor_line_ + 1, 0},
+                          },
+                          "", true);
+  }
+
+  const std::size_t previous_line = cursor_line_ - 1;
+  return ApplyRangeEdit(SelectionRange{
+                            .start = TextPosition{
+                                previous_line,
+                                document_->lines[previous_line].size(),
+                            },
+                            .end = TextPosition{cursor_line_, document_->lines[cursor_line_].size()},
+                        },
+                        "", true);
 }
 
 void TextViewport::ClearSelection() {

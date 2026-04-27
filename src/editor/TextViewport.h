@@ -118,7 +118,9 @@ class TextViewport {
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   std::string SelectedText() const;
+  std::string CurrentLineTextForClipboard() const;
   bool DeleteSelectedText();
+  bool DeleteCurrentLine();
   void ClearSelection();
   void SelectAll();
   void SelectWordAtCursor();

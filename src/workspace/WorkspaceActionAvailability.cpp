@@ -105,7 +105,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::CopySelectionWithContext:
       return active_viewport != nullptr && active_viewport->has_selection();
     case ActionId::CopySelection:
-      return (active_viewport != nullptr && active_viewport->has_selection()) ||
+      return active_viewport != nullptr ||
              active_single_line_selection ||
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
               operations_.terminal_has_selection());

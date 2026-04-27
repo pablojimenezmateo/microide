@@ -212,17 +212,7 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
 
   const std::size_t start_line = changed_span->old_start;
   if (before_lines.size() != after_lines.size()) {
-    if (ActiveTabIsCompare()) {
-      RequestCompareRightLineToBottomRedraw(start_line);
-      return;
-    }
-
-    if (ActiveTabIsMerge()) {
-      RequestMergeResultLineToBottomRedraw(start_line);
-      return;
-    }
-
-    RequestEditorLineToBottomRedraw(start_line);
+    RequestFocusedEditorRedraw();
     return;
   }
 

@@ -969,6 +969,48 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines() != original_lines,
          "Ctrl+X should modify the active editor buffer");
 
+  WorkspaceShell copy_line_shell;
+  WorkspaceShell cut_line_shell;
+  const std::filesystem::path line_source = root / "line-copy.cpp";
+  WriteFile(line_source, "alpha\nbeta\ngamma");
+
+  configure_shell(copy_line_shell);
+  WorkspaceShellTestAccess::OpenFile(copy_line_shell, line_source);
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(copy_line_shell);
+  WorkspaceShellTestAccess::ActiveEditor(copy_line_shell).MoveCursorTo(1, 2);
+  clipboard_text.clear();
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      copy_line_shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(copy_line_shell,
+                                                          [](std::string_view) { return true; });
+  const auto copy_line = handle_shortcut(copy_line_shell, SDLK_C);
+  Expect(copy_line.handled, "Ctrl+C without a selection should still be handled by the editor");
+  Expect(clipboard_text == "beta\n",
+         "Ctrl+C without a selection should copy the full active line");
+
+  configure_shell(cut_line_shell);
+  WorkspaceShellTestAccess::OpenFile(cut_line_shell, line_source);
+  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(cut_line_shell);
+  WorkspaceShellTestAccess::ActiveEditor(cut_line_shell).MoveCursorTo(1, 2);
+  clipboard_text.clear();
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      cut_line_shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(cut_line_shell,
+                                                          [](std::string_view) { return true; });
+  const auto cut_line = handle_shortcut(cut_line_shell, SDLK_X);
+  Expect(cut_line.handled, "Ctrl+X without a selection should still be handled by the editor");
+  Expect(clipboard_text == "beta\n",
+         "Ctrl+X without a selection should copy the full active line");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(cut_line_shell).lines() ==
+             std::vector<std::string>({"alpha", "gamma"}),
+         "Ctrl+X without a selection should remove the full active line");
+
   WorkspaceShell undo_shell;
   configure_shell(undo_shell);
 
@@ -1259,6 +1301,87 @@ void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
          "newline insertion should split the current line in the active editor");
 }
 
+void TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#else
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::string content;
+  for (int line = 1; line <= 48; ++line) {
+    content += "line " + std::to_string(line) + "\n";
+  }
+  WriteFile(source, content);
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 220;
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(retained_shell);
+  const std::size_t visible_rows = std::max<std::size_t>(1, metrics.visible_rows);
+  const std::size_t target_scroll = 12;
+  const std::size_t target_line = target_scroll + visible_rows - 1;
+  WorkspaceShellTestAccess::ActiveEditor(retained_shell).SetScrollLine(target_scroll);
+  WorkspaceShellTestAccess::ActiveEditor(retained_shell).MoveCursorTo(
+      target_line,
+      WorkspaceShellTestAccess::ActiveEditor(retained_shell).lines()[target_line].size());
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  WorkspaceShell reference_shell;
+  configure_shell(reference_shell);
+  SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  WorkspaceShellTestAccess::ActiveEditor(reference_shell).SetScrollLine(target_scroll);
+  WorkspaceShellTestAccess::ActiveEditor(reference_shell).MoveCursorTo(
+      target_line,
+      WorkspaceShellTestAccess::ActiveEditor(reference_shell).lines()[target_line].size());
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_KEY_DOWN;
+  event.key.key = SDLK_RETURN;
+  const auto retained_result = retained_shell.HandleEvent(event);
+  const auto reference_result = reference_shell.HandleEvent(event);
+  Expect(retained_result.handled && reference_result.handled,
+         "bottom-edge newline fixture should insert a newline into both editor shells");
+  Expect(!retained_result.redraw.full && !retained_result.redraw.rects.empty(),
+         "bottom-edge newline insertion should still use partial redraw invalidation");
+
+  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+                             retained_result.redraw);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Surface* retained_pixels = SDL_RenderReadPixels(retained_canvas.renderer(), nullptr);
+  SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+  const std::size_t pixel_differences =
+      CountPixelDifferences(retained_pixels, reference_pixels);
+
+  if (retained_pixels != nullptr) {
+    SDL_DestroySurface(retained_pixels);
+  }
+  if (reference_pixels != nullptr) {
+    SDL_DestroySurface(reference_pixels);
+  }
+
+  Expect(pixel_differences == 0,
+         "retained redraw after a bottom-edge newline should match a full redraw");
+#endif
+}
+
 void TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender() {
   EnsureDummySdlVideo();
 
@@ -1499,6 +1622,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsEditorPartialRedraw",
           TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw);
+  AddTest(tests, "WorkspaceShell/BottomEdgeNewlineRetainedRedrawMatchesFullRender",
+          TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/SidebarResizeRequestsFullRedrawAndMatchesFullRender",
           TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender);
   AddTest(tests, "WorkspaceShell/BottomPanelResizeRequestsFullRedrawAndSettleFrames",

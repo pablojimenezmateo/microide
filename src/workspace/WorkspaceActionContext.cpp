@@ -635,7 +635,10 @@ std::string WorkspaceActionContext::CopySelectionText() const {
     return operations_.selected_text_at_active_single_line_text_surface();
   }
   if (const auto* viewport = operations_.active_navigable_viewport(); viewport != nullptr) {
-    return viewport->SelectedText();
+    if (viewport->has_selection()) {
+      return viewport->SelectedText();
+    }
+    return viewport->CurrentLineTextForClipboard();
   }
   return {};
 }
@@ -655,13 +658,19 @@ void WorkspaceActionContext::CutSelection() {
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
-    const std::string text = viewport->SelectedText();
+    const bool has_selection = viewport->has_selection();
+    const std::string text =
+        has_selection ? viewport->SelectedText() : viewport->CurrentLineTextForClipboard();
     if (!text.empty() && operations_.write_clipboard_text(text)) {
       operations_.write_primary_selection_text(text);
       const std::vector<std::string> before_lines = viewport->lines();
       const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
       const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
-      viewport->DeleteSelectedText();
+      if (has_selection) {
+        viewport->DeleteSelectedText();
+      } else {
+        viewport->DeleteCurrentLine();
+      }
       if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
         operations_.refresh_compare_tab_derived_state(*compare_tab);
