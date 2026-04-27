@@ -244,11 +244,6 @@ Current state:
 - local bring-up and CI coverage now exist for Linux, macOS, and Windows host-facing build or test
   paths
 
-Remaining work:
-
-- split terminal lifecycle and subprocess management into explicit backends with Windows support
-- add native macOS and Windows watcher backends so supported hosts do not rely on polling by
-  default
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,

@@ -7,8 +7,8 @@
 ## 2. Add macOS And Windows Backends
 
 - [x] 2.1 Implement macOS-correct and Windows-correct app directory resolution, host integration actions, and recycle-bin or trash behavior behind the new platform services.
-- [ ] 2.2 Split terminal session lifecycle from terminal rendering and add macOS and Windows backend support for terminal and subprocess launch, resize, shutdown, and error handling.
-- [ ] 2.3 Add native or host-appropriate file-watcher backends for macOS and Windows, keeping polling only as an explicit fallback path rather than the supported-host default.
+- [x] 2.2 Split terminal session lifecycle from terminal rendering and add macOS and Windows backend support for terminal and subprocess launch, resize, shutdown, and error handling.
+- [x] 2.3 Add native or host-appropriate file-watcher backends for macOS and Windows, keeping polling only as an explicit fallback path rather than the supported-host default.
 
 ## 3. Package, Validate, And Document Supported Hosts
 

@@ -9,21 +9,30 @@
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
+#elif defined(__APPLE__)
+#include <fcntl.h>
+#include <sys/event.h>
+#include <unistd.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 namespace microide::platform {
 
 namespace {
 
-#if defined(__linux__)
-
+#if defined(__linux__) || defined(__APPLE__)
 void CloseIfValid(int fd) {
   if (fd >= 0) {
     close(fd);
   }
 }
+#endif
 
-std::vector<std::filesystem::path> CollectWatchPaths(
+std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     const std::vector<std::filesystem::path>& roots,
     bool* polling_required) {
   std::vector<std::filesystem::path> watch_paths;
@@ -67,10 +76,62 @@ std::vector<std::filesystem::path> CollectWatchPaths(
   return watch_paths;
 }
 
-constexpr std::uint32_t kWatchMask = IN_ATTRIB | IN_CLOSE_WRITE | IN_CREATE | IN_DELETE |
-                                     IN_DELETE_SELF | IN_MOVE_SELF | IN_MOVED_FROM |
-                                     IN_MOVED_TO;
+#if defined(_WIN32)
 
+std::vector<std::filesystem::path> CollectWindowsWatchRoots(
+    const std::vector<std::filesystem::path>& roots,
+    bool* polling_required) {
+  std::vector<std::filesystem::path> watch_roots;
+  bool requires_polling = false;
+
+  for (const auto& root : roots) {
+    if (root.empty()) {
+      continue;
+    }
+
+    const PathType root_type = ReadPathType(root);
+    if (root_type == PathType::Missing || root_type == PathType::Other) {
+      requires_polling = true;
+      continue;
+    }
+
+    if (root_type == PathType::Directory) {
+      watch_roots.push_back(root);
+      continue;
+    }
+
+    const std::filesystem::path parent = root.parent_path();
+    if (parent.empty() || ReadPathType(parent) != PathType::Directory) {
+      requires_polling = true;
+      continue;
+    }
+    watch_roots.push_back(parent.lexically_normal());
+  }
+
+  std::sort(watch_roots.begin(), watch_roots.end());
+  watch_roots.erase(std::unique(watch_roots.begin(), watch_roots.end()), watch_roots.end());
+  if (polling_required != nullptr) {
+    *polling_required = requires_polling;
+  }
+  return watch_roots;
+}
+
+#endif
+
+#if defined(__linux__)
+constexpr std::uint32_t kLinuxWatchMask = IN_ATTRIB | IN_CLOSE_WRITE | IN_CREATE | IN_DELETE |
+                                          IN_DELETE_SELF | IN_MOVE_SELF | IN_MOVED_FROM |
+                                          IN_MOVED_TO;
+#elif defined(__APPLE__)
+constexpr std::uint32_t kMacWatchMask = NOTE_ATTRIB | NOTE_DELETE | NOTE_EXTEND | NOTE_LINK |
+                                        NOTE_RENAME | NOTE_REVOKE | NOTE_WRITE;
+#elif defined(_WIN32)
+constexpr DWORD kWindowsWatchFilter = FILE_NOTIFY_CHANGE_DIR_NAME |
+                                      FILE_NOTIFY_CHANGE_FILE_NAME |
+                                      FILE_NOTIFY_CHANGE_LAST_WRITE |
+                                      FILE_NOTIFY_CHANGE_ATTRIBUTES |
+                                      FILE_NOTIFY_CHANGE_SIZE |
+                                      FILE_NOTIFY_CHANGE_CREATION;
 #endif
 
 }  // namespace
@@ -107,7 +168,7 @@ struct FileTreeWatcher::NativeBackend {
     }
 
     for (const auto& path : watch_paths) {
-      if (inotify_add_watch(inotify_fd_, path.c_str(), kWatchMask) < 0) {
+      if (inotify_add_watch(inotify_fd_, path.c_str(), kLinuxWatchMask) < 0) {
         return false;
       }
     }
@@ -178,6 +239,202 @@ struct FileTreeWatcher::NativeBackend {
   std::function<void()> on_change_;
   int inotify_fd_ = -1;
   int control_pipe_[2] = {-1, -1};
+  std::thread worker_;
+};
+
+#elif defined(__APPLE__)
+
+struct FileTreeWatcher::NativeBackend {
+  explicit NativeBackend(std::function<void()> on_change)
+      : on_change_(std::move(on_change)) {}
+
+  ~NativeBackend() {
+    RequestStop();
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+    for (int fd : watch_fds_) {
+      CloseIfValid(fd);
+    }
+    CloseIfValid(control_pipe_[0]);
+    CloseIfValid(control_pipe_[1]);
+    CloseIfValid(kqueue_fd_);
+  }
+
+  NativeBackend(const NativeBackend&) = delete;
+  NativeBackend& operator=(const NativeBackend&) = delete;
+
+  bool Start(const std::vector<std::filesystem::path>& watch_paths) {
+    kqueue_fd_ = kqueue();
+    if (kqueue_fd_ < 0) {
+      return false;
+    }
+    if (pipe(control_pipe_) != 0) {
+      return false;
+    }
+
+    struct kevent control_event{};
+    EV_SET(&control_event, control_pipe_[0], EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, nullptr);
+    if (kevent(kqueue_fd_, &control_event, 1, nullptr, 0, nullptr) != 0) {
+      return false;
+    }
+
+    for (const auto& path : watch_paths) {
+      const int fd = open(path.c_str(), O_EVTONLY);
+      if (fd < 0) {
+        return false;
+      }
+      watch_fds_.push_back(fd);
+
+      struct kevent change_event{};
+      EV_SET(&change_event, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, kMacWatchMask, 0, nullptr);
+      if (kevent(kqueue_fd_, &change_event, 1, nullptr, 0, nullptr) != 0) {
+        return false;
+      }
+    }
+
+    worker_ = std::thread([this]() { WorkerMain(); });
+    return true;
+  }
+
+  void RequestStop() {
+    if (control_pipe_[1] < 0) {
+      return;
+    }
+    const std::array<char, 1> byte{{0}};
+    while (write(control_pipe_[1], byte.data(), byte.size()) < 0) {
+      if (errno != EINTR) {
+        break;
+      }
+    }
+  }
+
+ private:
+  void WorkerMain() {
+    std::array<struct kevent, 8> events{};
+    while (true) {
+      const int event_count = kevent(kqueue_fd_, nullptr, 0, events.data(),
+                                     static_cast<int>(events.size()), nullptr);
+      if (event_count < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        return;
+      }
+
+      bool changed = false;
+      for (int index = 0; index < event_count; ++index) {
+        const auto& event = events[static_cast<std::size_t>(index)];
+        if (event.filter == EVFILT_READ &&
+            static_cast<int>(event.ident) == control_pipe_[0]) {
+          return;
+        }
+        if (event.filter == EVFILT_VNODE) {
+          changed = true;
+        }
+      }
+
+      if (changed && on_change_) {
+        on_change_();
+      }
+    }
+  }
+
+  std::function<void()> on_change_;
+  int kqueue_fd_ = -1;
+  int control_pipe_[2] = {-1, -1};
+  std::vector<int> watch_fds_;
+  std::thread worker_;
+};
+
+#elif defined(_WIN32)
+
+struct FileTreeWatcher::NativeBackend {
+  explicit NativeBackend(std::function<void()> on_change)
+      : on_change_(std::move(on_change)) {}
+
+  ~NativeBackend() {
+    RequestStop();
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+    for (HANDLE handle : notification_handles_) {
+      if (handle != nullptr && handle != INVALID_HANDLE_VALUE) {
+        FindCloseChangeNotification(handle);
+      }
+    }
+    if (stop_event_ != nullptr) {
+      CloseHandle(stop_event_);
+    }
+  }
+
+  NativeBackend(const NativeBackend&) = delete;
+  NativeBackend& operator=(const NativeBackend&) = delete;
+
+  bool Start(const std::vector<std::filesystem::path>& watch_roots) {
+    if (watch_roots.size() + 1 > MAXIMUM_WAIT_OBJECTS) {
+      return false;
+    }
+
+    stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (stop_event_ == nullptr) {
+      return false;
+    }
+
+    for (const auto& root : watch_roots) {
+      const HANDLE notification = FindFirstChangeNotificationW(
+          root.wstring().c_str(), TRUE, kWindowsWatchFilter);
+      if (notification == INVALID_HANDLE_VALUE) {
+        return false;
+      }
+      notification_handles_.push_back(notification);
+    }
+
+    worker_ = std::thread([this]() { WorkerMain(); });
+    return true;
+  }
+
+  void RequestStop() {
+    if (stop_event_ != nullptr) {
+      SetEvent(stop_event_);
+    }
+  }
+
+ private:
+  void WorkerMain() {
+    std::vector<HANDLE> wait_handles;
+    wait_handles.reserve(notification_handles_.size() + 1);
+    wait_handles.push_back(stop_event_);
+    wait_handles.insert(wait_handles.end(), notification_handles_.begin(),
+                        notification_handles_.end());
+
+    while (true) {
+      const DWORD wait_result =
+          WaitForMultipleObjects(static_cast<DWORD>(wait_handles.size()),
+                                 wait_handles.data(), FALSE, INFINITE);
+      if (wait_result == WAIT_OBJECT_0) {
+        return;
+      }
+      if (wait_result == WAIT_FAILED || wait_result == WAIT_TIMEOUT) {
+        return;
+      }
+
+      const std::size_t index = static_cast<std::size_t>(wait_result - WAIT_OBJECT_0 - 1);
+      if (index >= notification_handles_.size()) {
+        return;
+      }
+      if (!FindNextChangeNotification(notification_handles_[index])) {
+        return;
+      }
+      if (on_change_) {
+        on_change_();
+      }
+    }
+  }
+
+  std::function<void()> on_change_;
+  HANDLE stop_event_ = nullptr;
+  std::vector<HANDLE> notification_handles_;
   std::thread worker_;
 };
 
@@ -282,24 +539,44 @@ bool FileTreeWatcher::Poll() {
 }
 
 void FileTreeWatcher::RefreshNativeBackendLocked() {
-#if defined(__linux__)
-  bool requires_polling = false;
-  const std::vector<std::filesystem::path> watch_paths = CollectWatchPaths(roots_, &requires_polling);
   native_backend_.reset();
   polling_required_ = true;
+
+#if defined(__linux__) || defined(__APPLE__)
+  bool requires_polling = false;
+  const std::vector<std::filesystem::path> watch_paths =
+      CollectRecursiveWatchPaths(roots_, &requires_polling);
   if (watch_paths.empty()) {
+    polling_required_ = requires_polling || !roots_.empty();
     return;
   }
 
   auto backend = std::make_unique<NativeBackend>([this]() { NotifyWake(); });
   if (!backend->Start(watch_paths)) {
+    polling_required_ = true;
+    return;
+  }
+
+  native_backend_ = std::move(backend);
+  polling_required_ = requires_polling;
+#elif defined(_WIN32)
+  bool requires_polling = false;
+  const std::vector<std::filesystem::path> watch_roots =
+      CollectWindowsWatchRoots(roots_, &requires_polling);
+  if (watch_roots.empty()) {
+    polling_required_ = requires_polling || !roots_.empty();
+    return;
+  }
+
+  auto backend = std::make_unique<NativeBackend>([this]() { NotifyWake(); });
+  if (!backend->Start(watch_roots)) {
+    polling_required_ = true;
     return;
   }
 
   native_backend_ = std::move(backend);
   polling_required_ = requires_polling;
 #else
-  native_backend_.reset();
   polling_required_ = true;
 #endif
 }

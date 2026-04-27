@@ -1,5 +1,6 @@
 #include "terminal/TerminalSession.h"
 
+#include "platform/TerminalBackend.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
@@ -10,16 +11,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-
-#if defined(__APPLE__)
-#include <util.h>
-#elif defined(__unix__)
-#include <pty.h>
-#endif
+#include <thread>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <signal.h>
-#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -29,11 +24,76 @@ namespace microide::terminal {
 namespace {
 
 constexpr std::size_t kMaxScrollbackLines = 2000;
+
 #if defined(__unix__) || defined(__APPLE__)
 constexpr auto kTerminalHangupGrace = std::chrono::milliseconds(75);
 constexpr auto kTerminalTerminateGrace = std::chrono::milliseconds(150);
 constexpr auto kTerminalKillGrace = std::chrono::milliseconds(100);
 constexpr auto kTerminalWaitPollInterval = std::chrono::milliseconds(10);
+
+bool SendSignalToTerminalProcessGroup(int child_pid, int signal_number) {
+  if (child_pid <= 0) {
+    return true;
+  }
+  if (kill(-child_pid, signal_number) == 0) {
+    return true;
+  }
+  if (kill(child_pid, signal_number) == 0) {
+    return true;
+  }
+  return errno == ESRCH;
+}
+
+bool ReapTerminalChildNoHang(int child_pid) {
+  if (child_pid <= 0) {
+    return true;
+  }
+
+  int status = 0;
+  while (true) {
+    const pid_t result = waitpid(child_pid, &status, WNOHANG);
+    if (result == child_pid) {
+      return true;
+    }
+    if (result == 0) {
+      return false;
+    }
+    if (result < 0 && errno == EINTR) {
+      continue;
+    }
+    return result < 0 && errno == ECHILD;
+  }
+}
+
+bool WaitForTerminalChildExit(int child_pid, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (ReapTerminalChildNoHang(child_pid)) {
+      return true;
+    }
+    std::this_thread::sleep_for(kTerminalWaitPollInterval);
+  }
+  return ReapTerminalChildNoHang(child_pid);
+}
+
+void RequestTerminalChildShutdown(int child_pid) {
+  if (child_pid <= 0 || ReapTerminalChildNoHang(child_pid)) {
+    return;
+  }
+
+  SendSignalToTerminalProcessGroup(child_pid, SIGHUP);
+  if (WaitForTerminalChildExit(child_pid, kTerminalHangupGrace)) {
+    return;
+  }
+
+  SendSignalToTerminalProcessGroup(child_pid, SIGTERM);
+  if (WaitForTerminalChildExit(child_pid, kTerminalTerminateGrace)) {
+    return;
+  }
+
+  SendSignalToTerminalProcessGroup(child_pid, SIGKILL);
+  WaitForTerminalChildExit(child_pid, kTerminalKillGrace);
+}
 #endif
 
 SDL_Color MakeColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xff) {
@@ -154,72 +214,6 @@ std::optional<std::string> DecodeBase64(std::string_view text) {
   return decoded;
 }
 
-#if defined(__unix__) || defined(__APPLE__)
-bool SendSignalToTerminalProcessGroup(int child_pid, int signal_number) {
-  if (child_pid <= 0) {
-    return true;
-  }
-  if (kill(-child_pid, signal_number) == 0) {
-    return true;
-  }
-  if (kill(child_pid, signal_number) == 0) {
-    return true;
-  }
-  return errno == ESRCH;
-}
-
-bool ReapTerminalChildNoHang(int child_pid) {
-  if (child_pid <= 0) {
-    return true;
-  }
-
-  int status = 0;
-  while (true) {
-    const pid_t result = waitpid(child_pid, &status, WNOHANG);
-    if (result == child_pid) {
-      return true;
-    }
-    if (result == 0) {
-      return false;
-    }
-    if (result < 0 && errno == EINTR) {
-      continue;
-    }
-    return result < 0 && errno == ECHILD;
-  }
-}
-
-bool WaitForTerminalChildExit(int child_pid, std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (ReapTerminalChildNoHang(child_pid)) {
-      return true;
-    }
-    std::this_thread::sleep_for(kTerminalWaitPollInterval);
-  }
-  return ReapTerminalChildNoHang(child_pid);
-}
-
-void RequestTerminalChildShutdown(int child_pid) {
-  if (child_pid <= 0 || ReapTerminalChildNoHang(child_pid)) {
-    return;
-  }
-
-  SendSignalToTerminalProcessGroup(child_pid, SIGHUP);
-  if (WaitForTerminalChildExit(child_pid, kTerminalHangupGrace)) {
-    return;
-  }
-
-  SendSignalToTerminalProcessGroup(child_pid, SIGTERM);
-  if (WaitForTerminalChildExit(child_pid, kTerminalTerminateGrace)) {
-    return;
-  }
-
-  SendSignalToTerminalProcessGroup(child_pid, SIGKILL);
-  WaitForTerminalChildExit(child_pid, kTerminalKillGrace);
-}
-#endif
-
 std::string DefaultShellPath() {
   if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
     return shell;
@@ -339,20 +333,19 @@ void TerminalSession::SetWakeEventType(Uint32 event_type) {
 
 bool TerminalSession::Start(const std::filesystem::path& working_directory, std::string_view command) {
   Stop();
-
-#if !defined(__unix__) && !defined(__APPLE__)
   {
     std::scoped_lock lock(mutex_);
     working_directory_ = working_directory;
-    default_launch_label_ = command.empty() ? "terminal unavailable" : std::string(command);
+    default_launch_label_ = command.empty() ? ShellProgramName(DefaultShellPath()) : std::string(command);
     launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
+    current_style_ = TerminalStyle{};
+    escape_sequence_buffer_.clear();
+    pending_utf8_sequence_.clear();
+    child_pid_ = -1;
     running_ = false;
     stop_requested_ = false;
     wake_event_pending_ = false;
-    current_style_ = TerminalStyle{};
-    escape_sequence_buffer_.clear();
-    pending_utf8_sequence_.clear();
     escape_mode_ = EscapeMode::None;
     osc_escape_pending_ = false;
     pending_clipboard_text_.reset();
@@ -377,165 +370,86 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
     saved_cursor_column_ = 0;
     snapshot_generation_ = 1;
     ResetScrollRegionLocked();
-    AppendOutputLocked("terminal support is only available on POSIX hosts.");
-  }
-  PushWakeEvent();
-  return false;
-#else
-  int master_fd = -1;
-  int slave_fd = -1;
-  winsize window_size{};
-  window_size.ws_row = 24;
-  window_size.ws_col = 80;
-  if (openpty(&master_fd, &slave_fd, nullptr, nullptr, &window_size) != 0) {
-    return false;
   }
 
-  const std::string shell_path = DefaultShellPath();
-  const std::string shell_name = ShellProgramName(shell_path);
-  const std::string command_string(command);
-
-  const pid_t child_pid = fork();
-  if (child_pid < 0) {
-    close(master_fd);
-    close(slave_fd);
-    return false;
-  }
-
-  if (child_pid == 0) {
-    setsid();
-    ioctl(slave_fd, TIOCSCTTY, 0);
-    dup2(slave_fd, STDIN_FILENO);
-    dup2(slave_fd, STDOUT_FILENO);
-    dup2(slave_fd, STDERR_FILENO);
-    close(master_fd);
-    if (slave_fd > STDERR_FILENO) {
-      close(slave_fd);
-    }
-
-    chdir(working_directory.c_str());
-    setenv("TERM", "xterm-256color", 1);
-    if (command_string.empty()) {
-      execl(shell_path.c_str(), shell_name.c_str(), "-i", nullptr);
-    } else {
-      execl(shell_path.c_str(), shell_name.c_str(), "-lc", command_string.c_str(), nullptr);
-    }
-    _exit(127);
-  }
-
-  close(slave_fd);
+  auto backend = platform::CreateTerminalBackend();
+  auto callbacks = platform::TerminalBackendCallbacks{
+      .on_output =
+          [this](std::string_view output) {
+            {
+              std::scoped_lock lock(mutex_);
+              AppendOutputLocked(output);
+            }
+            PushWakeEvent();
+          },
+      .on_exit =
+          [this]() {
+            {
+              std::scoped_lock lock(mutex_);
+              const bool emit_exit_marker = !stop_requested_;
+              running_ = false;
+              child_pid_ = -1;
+              if (emit_exit_marker) {
+                if (lines_.empty()) {
+                  lines_.push_back(TerminalLine{});
+                }
+                if (!lines_.back().cells.empty()) {
+                  lines_.push_back(TerminalLine{});
+                }
+                cursor_row_ = lines_.size() - 1;
+                cursor_column_ = lines_.back().cells.size();
+                AppendOutputLocked("[process exited]");
+                lines_.push_back(TerminalLine{});
+                TrimScrollbackLocked();
+                AdvanceSnapshotGenerationLocked();
+              }
+            }
+            PushWakeEvent();
+          },
+  };
+  const auto result = backend->Start(platform::TerminalStartRequest{
+                                         .working_directory = working_directory,
+                                         .command = std::string(command),
+                                         .rows = rows_,
+                                         .columns = columns_,
+                                     },
+                                     std::move(callbacks));
 
   {
     std::scoped_lock lock(mutex_);
-    working_directory_ = working_directory;
-    default_launch_label_ = command_string.empty() ? shell_name : command_string;
+    backend_ = std::move(backend);
+    default_launch_label_ = result.launch_label.empty() ? default_launch_label_ : result.launch_label;
     launch_label_ = default_launch_label_;
-    lines_ = {TerminalLine{}};
-    current_style_ = TerminalStyle{};
-    escape_sequence_buffer_.clear();
-    pending_utf8_sequence_.clear();
-    master_fd_ = master_fd;
-    child_pid_ = child_pid;
-    running_ = true;
-    stop_requested_ = false;
-    wake_event_pending_ = false;
-    escape_mode_ = EscapeMode::None;
-    osc_escape_pending_ = false;
-    pending_clipboard_text_.reset();
-    use_alternate_screen_ = false;
-    mouse_tracking_normal_ = false;
-    mouse_tracking_drag_ = false;
-    mouse_tracking_any_ = false;
-    mouse_sgr_ext_mode_ = false;
-    application_cursor_keys_mode_ = false;
-    origin_mode_ = false;
-    auto_wrap_mode_ = true;
-    bracketed_paste_mode_ = false;
-    focus_event_mode_ = false;
-    cursor_visible_ = true;
-    primary_screen_ = ScreenState{};
-    alternate_screen_ = ScreenState{};
-    rows_ = 24;
-    columns_ = 80;
-    cursor_row_ = 0;
-    cursor_column_ = 0;
-    saved_cursor_row_ = 0;
-    saved_cursor_column_ = 0;
-    snapshot_generation_ = 1;
-    ResetScrollRegionLocked();
+    child_pid_ = result.child_process_id;
+    running_ = result.running;
+    if (!result.initial_output.empty()) {
+      AppendOutputLocked(result.initial_output);
+    }
   }
-
-  reader_thread_ = std::thread(&TerminalSession::ReaderMain, this, master_fd, child_pid);
   PushWakeEvent();
-  return true;
-#endif
+  return result.started;
 }
 
 void TerminalSession::Stop() {
-#if defined(__unix__) || defined(__APPLE__)
-  int master_fd = -1;
+  std::unique_ptr<platform::TerminalBackend> backend;
   int child_pid = -1;
   {
     std::scoped_lock lock(mutex_);
     stop_requested_ = true;
-    master_fd = master_fd_;
+    backend = std::move(backend_);
     child_pid = child_pid_;
-    master_fd_ = -1;
   }
-
-  if (master_fd >= 0) {
-    close(master_fd);
-  }
-  RequestTerminalChildShutdown(child_pid);
-
-  if (reader_thread_.joinable()) {
-    reader_thread_.join();
-  }
-
-  {
-    std::scoped_lock lock(mutex_);
-    running_ = false;
-    child_pid_ = -1;
-    master_fd_ = -1;
-    stop_requested_ = false;
-    current_style_ = TerminalStyle{};
-    escape_sequence_buffer_.clear();
-    pending_utf8_sequence_.clear();
-    default_launch_label_.clear();
-    launch_label_.clear();
-    escape_mode_ = EscapeMode::None;
-    osc_escape_pending_ = false;
-    pending_clipboard_text_.reset();
-    use_alternate_screen_ = false;
-    mouse_tracking_normal_ = false;
-    mouse_tracking_drag_ = false;
-    mouse_tracking_any_ = false;
-    mouse_sgr_ext_mode_ = false;
-    application_cursor_keys_mode_ = false;
-    origin_mode_ = false;
-    auto_wrap_mode_ = true;
-    bracketed_paste_mode_ = false;
-    focus_event_mode_ = false;
-    cursor_visible_ = true;
-    primary_screen_ = ScreenState{};
-    alternate_screen_ = ScreenState{};
-    cursor_row_ = 0;
-    cursor_column_ = 0;
-    saved_cursor_row_ = 0;
-    saved_cursor_column_ = 0;
-    ResetScrollRegionLocked();
-    if (lines_.empty()) {
-      lines_.push_back(TerminalLine{});
-    }
-    AdvanceSnapshotGenerationLocked();
-  }
-#else
-  if (reader_thread_.joinable()) {
-    reader_thread_.join();
+  if (backend) {
+    backend->Stop();
+#if defined(__unix__) || defined(__APPLE__)
+  } else if (child_pid > 0) {
+    RequestTerminalChildShutdown(child_pid);
+#endif
   }
 
   std::scoped_lock lock(mutex_);
   running_ = false;
+  child_pid_ = -1;
   stop_requested_ = false;
   current_style_ = TerminalStyle{};
   escape_sequence_buffer_.clear();
@@ -567,7 +481,6 @@ void TerminalSession::Stop() {
     lines_.push_back(TerminalLine{});
   }
   AdvanceSnapshotGenerationLocked();
-#endif
 }
 
 void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
@@ -611,63 +524,43 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
     AdvanceSnapshotGenerationLocked();
   }
 
-#if defined(__unix__) || defined(__APPLE__)
-  int master_fd = -1;
+  platform::TerminalBackend* backend = nullptr;
   {
     std::scoped_lock lock(mutex_);
-    master_fd = master_fd_;
+    backend = backend_.get();
   }
-  if (master_fd < 0) {
-    return;
+  if (backend != nullptr) {
+    backend->Resize(clamped_rows, clamped_columns);
   }
-
-  winsize window_size{};
-  window_size.ws_row = static_cast<unsigned short>(std::min<std::size_t>(clamped_rows, 65535));
-  window_size.ws_col = static_cast<unsigned short>(std::min<std::size_t>(clamped_columns, 65535));
-  ioctl(master_fd, TIOCSWINSZ, &window_size);
-#else
-  (void)rows;
-  (void)columns;
-#endif
 }
 
 void TerminalSession::SendBytes(std::string_view bytes) {
-#if defined(__unix__) || defined(__APPLE__)
   if (bytes.empty()) {
     return;
   }
-
-  int master_fd = -1;
+#ifdef MICROIDE_TESTING
   {
     std::scoped_lock lock(mutex_);
-    master_fd = master_fd_;
+    if (!backend_ || !backend_->running()) {
+      test_sent_bytes_.append(bytes);
+      return;
+    }
   }
+#endif
+  platform::TerminalBackend* backend = nullptr;
+  {
+    std::scoped_lock lock(mutex_);
+    backend = backend_.get();
+  }
+  if (!backend) {
 #ifdef MICROIDE_TESTING
-  if (master_fd < 0) {
     std::scoped_lock lock(mutex_);
     test_sent_bytes_.append(bytes);
     return;
-  }
 #endif
-  if (master_fd < 0) {
     return;
   }
-
-  std::size_t offset = 0;
-  while (offset < bytes.size()) {
-    const ssize_t written =
-        write(master_fd, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      break;
-    }
-    offset += static_cast<std::size_t>(written);
-  }
-#else
-  (void)bytes;
-#endif
+  backend->Write(bytes);
 }
 
 void TerminalSession::SendKey(Key key) {
@@ -873,57 +766,6 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
   }
   SendBytes(bytes);
   return true;
-}
-
-void TerminalSession::ReaderMain(int master_fd, int child_pid) {
-#if defined(__unix__) || defined(__APPLE__)
-  std::array<char, 4096> buffer{};
-  while (true) {
-    const ssize_t count = read(master_fd, buffer.data(), buffer.size());
-    if (count > 0) {
-      {
-        std::scoped_lock lock(mutex_);
-        AppendOutputLocked(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-      }
-      PushWakeEvent();
-      continue;
-    }
-    if (count < 0 && errno == EINTR) {
-      continue;
-    }
-    break;
-  }
-
-  int status = 0;
-  while (waitpid(child_pid, &status, 0) < 0 && errno == EINTR) {
-  }
-
-  bool emit_exit_marker = false;
-  {
-    std::scoped_lock lock(mutex_);
-    emit_exit_marker = !stop_requested_;
-    running_ = false;
-    child_pid_ = -1;
-      if (emit_exit_marker) {
-        if (lines_.empty()) {
-          lines_.push_back(TerminalLine{});
-        }
-        if (!lines_.back().cells.empty()) {
-          lines_.push_back(TerminalLine{});
-        }
-        cursor_row_ = lines_.size() - 1;
-        cursor_column_ = lines_.back().cells.size();
-        AppendOutputLocked("[process exited]");
-        lines_.push_back(TerminalLine{});
-        TrimScrollbackLocked();
-        AdvanceSnapshotGenerationLocked();
-      }
-    }
-  PushWakeEvent();
-#else
-  (void)master_fd;
-  (void)child_pid;
-#endif
 }
 
 void TerminalSession::AppendOutputLocked(std::string_view data) {
@@ -1529,32 +1371,16 @@ void TerminalSession::SendBytesLocked(std::string_view bytes) {
   }
 
 #ifdef MICROIDE_TESTING
-  if (master_fd_ < 0) {
+  if (!backend_ || !backend_->running()) {
     test_sent_bytes_.append(bytes);
     return;
   }
 #endif
 
-#if defined(__unix__) || defined(__APPLE__)
-  if (master_fd_ < 0) {
+  if (!backend_) {
     return;
   }
-
-  std::size_t offset = 0;
-  while (offset < bytes.size()) {
-    const ssize_t written =
-        write(master_fd_, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      break;
-    }
-    offset += static_cast<std::size_t>(written);
-  }
-#else
-  (void)bytes;
-#endif
+  backend_->Write(bytes);
 }
 
 std::string TerminalSession::FormatKeyBytesLocked(Key key) const {
@@ -1613,7 +1439,7 @@ bool TerminalSession::EncodeMouseEventLocked(MouseButton button,
                                              SDL_Keymod modifiers,
                                              std::string& out_bytes) const {
   out_bytes.clear();
-  if (master_fd_ < 0) {
+  if (!backend_ || !backend_->running()) {
     return false;
   }
 

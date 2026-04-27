@@ -147,6 +147,7 @@ set(MICROIDE_CORE_SOURCES
   src/platform/HostPlatform.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
+  src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp
   src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp
@@ -484,6 +485,7 @@ add_executable(microide_diff_bench
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
   src/compare/CompareModel.cpp
+  src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/Filesystem.cpp
   src/project/GitCompareService.cpp

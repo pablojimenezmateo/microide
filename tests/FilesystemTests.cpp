@@ -66,7 +66,7 @@ void TestFileWatcherDetectsCreationOfMissingRoots() {
   Expect(watcher.Poll(), "file watcher should detect when a previously missing root appears");
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 void TestFileWatcherWakeCallbackSignalsNestedChanges() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "plugins";
@@ -134,7 +134,7 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestFileWatcherDetectsNestedCreatesUpdatesAndDeletes);
   AddTest(tests, "FileWatcher/DetectsCreationOfMissingRoots",
           TestFileWatcherDetectsCreationOfMissingRoots);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   AddTest(tests, "FileWatcher/WakeCallbackSignalsNestedChanges",
           TestFileWatcherWakeCallbackSignalsNestedChanges);
   AddTest(tests, "FileWatcher/NativeWakeDoesNotForceZeroDelayPoll",

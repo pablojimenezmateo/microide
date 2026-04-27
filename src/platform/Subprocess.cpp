@@ -9,6 +9,13 @@
 #include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <array>
+#include <thread>
 #endif
 
 namespace microide::platform {
@@ -180,6 +187,180 @@ void ApplyEnvironmentOverrides(const std::vector<SubprocessEnvironmentOverride>&
   }
 }
 
+#elif defined(_WIN32)
+
+class WinHandle {
+ public:
+  WinHandle() = default;
+  explicit WinHandle(HANDLE handle) : handle_(handle) {}
+  ~WinHandle() { Reset(); }
+
+  WinHandle(const WinHandle&) = delete;
+  WinHandle& operator=(const WinHandle&) = delete;
+
+  WinHandle(WinHandle&& other) noexcept : handle_(other.Release()) {}
+  WinHandle& operator=(WinHandle&& other) noexcept {
+    if (this != &other) {
+      Reset(other.Release());
+    }
+    return *this;
+  }
+
+  HANDLE Get() const { return handle_; }
+  bool IsValid() const { return handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE; }
+  HANDLE Release() {
+    HANDLE handle = handle_;
+    handle_ = nullptr;
+    return handle;
+  }
+  void Reset(HANDLE handle = nullptr) {
+    if (IsValid()) {
+      CloseHandle(handle_);
+    }
+    handle_ = handle;
+  }
+
+ private:
+  HANDLE handle_ = nullptr;
+};
+
+std::wstring ToWide(std::string_view text) {
+  if (text.empty()) {
+    return {};
+  }
+  const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                       nullptr, 0);
+  if (size <= 0) {
+    return {};
+  }
+  std::wstring wide(static_cast<std::size_t>(size), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), size);
+  return wide;
+}
+
+std::wstring QuoteWindowsArgument(std::string_view arg) {
+  if (arg.empty()) {
+    return L"\"\"";
+  }
+
+  bool needs_quotes = false;
+  for (char c : arg) {
+    if (c == ' ' || c == '\t' || c == '"') {
+      needs_quotes = true;
+      break;
+    }
+  }
+  if (!needs_quotes) {
+    return ToWide(arg);
+  }
+
+  std::wstring quoted = L"\"";
+  std::size_t backslashes = 0;
+  for (char c : arg) {
+    if (c == '\\') {
+      ++backslashes;
+      continue;
+    }
+    if (c == '"') {
+      quoted.append(backslashes * 2 + 1, L'\\');
+      quoted.push_back(L'"');
+      backslashes = 0;
+      continue;
+    }
+    if (backslashes > 0) {
+      quoted.append(backslashes, L'\\');
+      backslashes = 0;
+    }
+    quoted.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
+  }
+  if (backslashes > 0) {
+    quoted.append(backslashes * 2, L'\\');
+  }
+  quoted.push_back(L'"');
+  return quoted;
+}
+
+std::wstring BuildCommandLine(const std::vector<std::string>& argv) {
+  std::wstring command_line;
+  bool first = true;
+  for (const auto& arg : argv) {
+    if (!first) {
+      command_line.push_back(L' ');
+    }
+    first = false;
+    command_line += QuoteWindowsArgument(arg);
+  }
+  return command_line;
+}
+
+std::wstring BuildEnvironmentBlock(
+    const std::vector<SubprocessEnvironmentOverride>& overrides) {
+  std::vector<std::wstring> entries;
+  if (LPWCH raw_environment = GetEnvironmentStringsW(); raw_environment != nullptr) {
+    for (LPCWCH current = raw_environment; *current != L'\0';
+         current += std::wcslen(current) + 1) {
+      entries.emplace_back(current);
+    }
+    FreeEnvironmentStringsW(raw_environment);
+  }
+
+  auto matches_name = [](std::wstring_view entry, std::wstring_view name) {
+    const std::size_t separator = entry.find(L'=');
+    return separator != std::wstring_view::npos &&
+           entry.substr(0, separator) == name;
+  };
+
+  for (const auto& override_entry : overrides) {
+    if (override_entry.name.empty()) {
+      continue;
+    }
+    const std::wstring wide_name = ToWide(override_entry.name);
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                 [&](const std::wstring& entry) {
+                                   return matches_name(entry, wide_name);
+                                 }),
+                  entries.end());
+    if (override_entry.value.has_value()) {
+      entries.push_back(wide_name + L"=" + ToWide(*override_entry.value));
+    }
+  }
+
+  std::sort(entries.begin(), entries.end());
+  std::wstring block;
+  for (const auto& entry : entries) {
+    block.append(entry);
+    block.push_back(L'\0');
+  }
+  block.push_back(L'\0');
+  return block;
+}
+
+void DrainPipeToString(HANDLE handle, std::string* output) {
+  if (handle == nullptr || handle == INVALID_HANDLE_VALUE || output == nullptr) {
+    return;
+  }
+  std::array<char, 4096> buffer{};
+  DWORD bytes_read = 0;
+  while (ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, nullptr) &&
+         bytes_read > 0) {
+    output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
+  }
+}
+
+void WriteAllToHandle(HANDLE handle, const std::string& text) {
+  const char* data = text.data();
+  std::size_t remaining = text.size();
+  while (remaining > 0) {
+    DWORD written = 0;
+    if (!WriteFile(handle, data, static_cast<DWORD>(remaining), &written, nullptr) ||
+        written == 0) {
+      break;
+    }
+    data += written;
+    remaining -= written;
+  }
+}
+
 #endif
 
 }  // namespace
@@ -190,10 +371,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     return result;
   }
 
-#if !(defined(__unix__) || defined(__APPLE__))
-  result.stderr_text = "Subprocess execution is not implemented on this platform";
-  return result;
-#else
+#if defined(__unix__) || defined(__APPLE__)
   std::array<UniqueFd, 2> stdout_pipe;
   std::array<UniqueFd, 2> stderr_pipe;
   std::array<UniqueFd, 2> stdin_pipe;
@@ -273,6 +451,121 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   } else if (WIFSIGNALED(status)) {
     result.exit_code = 128 + WTERMSIG(status);
   }
+  return result;
+#elif defined(_WIN32)
+  SECURITY_ATTRIBUTES attributes{
+      .nLength = sizeof(SECURITY_ATTRIBUTES),
+      .lpSecurityDescriptor = nullptr,
+      .bInheritHandle = TRUE,
+  };
+
+  WinHandle stdout_read;
+  WinHandle stdout_write;
+  WinHandle stderr_read;
+  WinHandle stderr_write;
+  WinHandle stdin_read;
+  WinHandle stdin_write;
+
+  auto open_pipe = [&](bool enabled, WinHandle& read_end, WinHandle& write_end) {
+    if (!enabled) {
+      return true;
+    }
+    HANDLE raw_read = nullptr;
+    HANDLE raw_write = nullptr;
+    if (!CreatePipe(&raw_read, &raw_write, &attributes, 0)) {
+      return false;
+    }
+    read_end.Reset(raw_read);
+    write_end.Reset(raw_write);
+    return true;
+  };
+
+  const bool needs_stdin = !options.stdin_text.empty();
+  if (!open_pipe(options.capture_stdout, stdout_read, stdout_write) ||
+      !open_pipe(options.capture_stderr, stderr_read, stderr_write) ||
+      !open_pipe(needs_stdin, stdin_read, stdin_write)) {
+    return result;
+  }
+
+  if (stdout_read.IsValid()) {
+    SetHandleInformation(stdout_read.Get(), HANDLE_FLAG_INHERIT, 0);
+  }
+  if (stderr_read.IsValid()) {
+    SetHandleInformation(stderr_read.Get(), HANDLE_FLAG_INHERIT, 0);
+  }
+  if (stdin_write.IsValid()) {
+    SetHandleInformation(stdin_write.Get(), HANDLE_FLAG_INHERIT, 0);
+  }
+
+  WinHandle nul_handle;
+  if (!options.capture_stderr && options.silence_stderr) {
+    nul_handle.Reset(CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+  }
+
+  STARTUPINFOW startup_info{};
+  startup_info.cb = sizeof(startup_info);
+  startup_info.dwFlags = STARTF_USESTDHANDLES;
+  startup_info.hStdInput = needs_stdin ? stdin_read.Get() : GetStdHandle(STD_INPUT_HANDLE);
+  startup_info.hStdOutput =
+      options.capture_stdout ? stdout_write.Get() : GetStdHandle(STD_OUTPUT_HANDLE);
+  startup_info.hStdError = options.capture_stderr
+                               ? stderr_write.Get()
+                               : (options.silence_stderr && nul_handle.IsValid()
+                                      ? nul_handle.Get()
+                                      : GetStdHandle(STD_ERROR_HANDLE));
+
+  PROCESS_INFORMATION process_info{};
+  std::wstring command_line = BuildCommandLine(argv);
+  std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
+  mutable_command.push_back(L'\0');
+  std::wstring cwd = options.cwd.empty() ? std::wstring{} : options.cwd.wstring();
+  std::wstring environment_block = BuildEnvironmentBlock(options.environment_overrides);
+  if (!CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE, 0,
+                      environment_block.data(),
+                      cwd.empty() ? nullptr : cwd.c_str(), &startup_info, &process_info)) {
+    result.exit_code = -1;
+    result.stderr_text = "CreateProcessW failed";
+    return result;
+  }
+
+  stdout_write.Reset();
+  stderr_write.Reset();
+  stdin_read.Reset();
+
+  std::thread stdout_thread;
+  std::thread stderr_thread;
+  if (options.capture_stdout && stdout_read.IsValid()) {
+    stdout_thread = std::thread([&]() { DrainPipeToString(stdout_read.Get(), &result.stdout_text); });
+  }
+  if (options.capture_stderr && stderr_read.IsValid()) {
+    stderr_thread = std::thread([&]() { DrainPipeToString(stderr_read.Get(), &result.stderr_text); });
+  }
+  if (needs_stdin && stdin_write.IsValid()) {
+    WriteAllToHandle(stdin_write.Get(), options.stdin_text);
+    stdin_write.Reset();
+  }
+
+  WaitForSingleObject(process_info.hProcess, INFINITE);
+  DWORD exit_code = 0;
+  if (GetExitCodeProcess(process_info.hProcess, &exit_code)) {
+    result.exit_code = static_cast<int>(exit_code);
+  }
+
+  if (stdout_thread.joinable()) {
+    stdout_thread.join();
+  }
+  if (stderr_thread.joinable()) {
+    stderr_thread.join();
+  }
+
+  stdout_read.Reset();
+  stderr_read.Reset();
+  CloseHandle(process_info.hThread);
+  CloseHandle(process_info.hProcess);
+  return result;
+#else
+  result.stderr_text = "Subprocess execution is not implemented on this platform";
   return result;
 #endif
 }

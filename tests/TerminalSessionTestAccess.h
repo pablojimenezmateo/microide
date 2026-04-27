@@ -24,7 +24,7 @@ struct TerminalSessionTestAccess {
     session.escape_sequence_buffer_.clear();
     session.pending_utf8_sequence_.clear();
     session.wake_event_type_ = 0;
-    session.master_fd_ = -1;
+    session.backend_.reset();
     session.child_pid_ = -1;
     session.running_ = false;
     session.stop_requested_ = false;

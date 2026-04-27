@@ -2,8 +2,11 @@
 
 #include <SDL3/SDL.h>
 
+#include "platform/TerminalBackend.h"
+
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -154,7 +157,6 @@ class TerminalSession {
     Any,
   };
 
-  void ReaderMain(int master_fd, int child_pid);
   void AppendOutputLocked(std::string_view data);
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandleOscSequenceLocked(std::string_view sequence);
@@ -197,17 +199,16 @@ class TerminalSession {
   void PushWakeEvent() const;
 
   mutable std::mutex mutex_;
-  std::thread reader_thread_;
   std::vector<TerminalLine> lines_ = {TerminalLine{}};
   ScreenState primary_screen_;
   ScreenState alternate_screen_;
+  std::unique_ptr<platform::TerminalBackend> backend_;
   std::filesystem::path working_directory_;
   std::string default_launch_label_;
   std::string launch_label_;
   TerminalStyle current_style_;
   std::string escape_sequence_buffer_;
   Uint32 wake_event_type_ = 0;
-  int master_fd_ = -1;
   int child_pid_ = -1;
   bool running_ = false;
   bool stop_requested_ = false;

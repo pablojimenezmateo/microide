@@ -48,13 +48,13 @@ cmake --build build --target microide microide_tests microide_provider_bridge
 
 ## Focused Validation
 
-Run the host-facing regression slice after changes to directories, trash, host actions, or runtime
-asset discovery:
+Run the host-facing regression slice after changes to directories, trash, host actions, runtime
+asset discovery, terminal backends, subprocess launch, or file watching:
 
 ```bash
 ./build/microide/microide_tests \
   AppDirectories RuntimePaths FileOperationService Subprocess TerminalSession FileWatcher
 ```
 
-The remaining supported-host gaps are terminal/process backend splitting and native macOS/Windows
-watcher backends.
+This slice now covers the host-owned directory, runtime asset, trash, subprocess, terminal, and
+watcher seams that define supported-host bring-up.
