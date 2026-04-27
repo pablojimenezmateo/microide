@@ -32,8 +32,23 @@ void CloseIfValid(int fd) {
 }
 #endif
 
+PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
+  switch (status.type()) {
+    case std::filesystem::file_type::none:
+    case std::filesystem::file_type::not_found:
+      return PathType::Missing;
+    case std::filesystem::file_type::regular:
+      return PathType::RegularFile;
+    case std::filesystem::file_type::directory:
+      return PathType::Directory;
+    default:
+      return PathType::Other;
+  }
+}
+
 std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     const std::vector<std::filesystem::path>& roots,
+    const TreeTraversalFilter& filter,
     bool* polling_required) {
   std::vector<std::filesystem::path> watch_paths;
   bool requires_polling = false;
@@ -59,8 +74,19 @@ std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
          !error && it != end; it.increment(error)) {
       std::error_code status_error;
-      if (it->is_directory(status_error) && !status_error) {
-        watch_paths.push_back(it->path().lexically_normal());
+      const PathType type = PathTypeFromStatus(it->status(status_error));
+      if (status_error) {
+        continue;
+      }
+      const std::filesystem::path path = it->path().lexically_normal();
+      if (filter && !filter(path, type)) {
+        if (type == PathType::Directory) {
+          it.disable_recursion_pending();
+        }
+        continue;
+      }
+      if (type == PathType::Directory) {
+        watch_paths.push_back(path);
       }
     }
     if (error) {
@@ -456,6 +482,11 @@ void FileTreeWatcher::SetWakeCallback(WakeCallback callback) {
   wake_callback_ = std::move(callback);
 }
 
+void FileTreeWatcher::SetEntryFilter(TreeTraversalFilter filter) {
+  std::scoped_lock lock(mutex_);
+  entry_filter_ = std::move(filter);
+}
+
 void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
   std::vector<std::filesystem::path> normalized_roots;
   normalized_roots.reserve(roots.size());
@@ -467,7 +498,12 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
   std::sort(normalized_roots.begin(), normalized_roots.end());
   normalized_roots.erase(std::unique(normalized_roots.begin(), normalized_roots.end()),
                          normalized_roots.end());
-  const std::vector<TreeSnapshotEntry> snapshot = CaptureTreeSnapshot(normalized_roots);
+  TreeTraversalFilter filter;
+  {
+    std::scoped_lock lock(mutex_);
+    filter = entry_filter_;
+  }
+  const std::vector<TreeSnapshotEntry> snapshot = CaptureTreeSnapshot(normalized_roots, filter);
 
   std::scoped_lock lock(mutex_);
   roots_ = std::move(normalized_roots);
@@ -515,6 +551,7 @@ std::optional<std::chrono::milliseconds> FileTreeWatcher::NextPollDelay() const 
 bool FileTreeWatcher::Poll() {
   std::vector<std::filesystem::path> roots;
   std::vector<TreeSnapshotEntry> previous_snapshot;
+  TreeTraversalFilter filter;
   {
     std::scoped_lock lock(mutex_);
     if (roots_.empty()) {
@@ -522,10 +559,11 @@ bool FileTreeWatcher::Poll() {
     }
     roots = roots_;
     previous_snapshot = snapshot_;
+    filter = entry_filter_;
     pending_change_ = false;
   }
 
-  const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots);
+  const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots, filter);
   const bool changed = current_snapshot != previous_snapshot;
 
   std::scoped_lock lock(mutex_);
@@ -545,7 +583,7 @@ void FileTreeWatcher::RefreshNativeBackendLocked() {
 #if defined(__linux__) || defined(__APPLE__)
   bool requires_polling = false;
   const std::vector<std::filesystem::path> watch_paths =
-      CollectRecursiveWatchPaths(roots_, &requires_polling);
+      CollectRecursiveWatchPaths(roots_, entry_filter_, &requires_polling);
   if (watch_paths.empty()) {
     polling_required_ = requires_polling || !roots_.empty();
     return;

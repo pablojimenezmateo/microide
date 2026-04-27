@@ -1335,6 +1335,27 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
          "project watcher reload should settle without a zero-delay wake after refresh");
 }
 
+void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / ".gitignore", "node_modules/\n");
+  WriteFile(root / "README.md", "root\n");
+  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 1;\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "ignored-directory watcher fixture should open the project");
+
+  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 2;\n");
+  Expect(!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+         "project watcher should ignore gitignored directory changes");
+
+  WriteFile(root / "watched.txt", "changed\n");
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+         "project watcher should still detect visible project changes");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -1346,6 +1367,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/ProjectOpenDefersGitSidebarRefreshUntilShown",
           TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
+  AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitignoredDirectories",
+          TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
   AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",

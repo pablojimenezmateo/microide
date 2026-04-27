@@ -58,7 +58,8 @@ std::vector<DirectoryEntry> ListDirectory(const std::filesystem::path& directory
   return entries;
 }
 
-std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesystem::path>& roots) {
+std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesystem::path>& roots,
+                                                   const TreeTraversalFilter& filter) {
   std::vector<TreeSnapshotEntry> snapshot;
   std::vector<std::filesystem::path> normalized_roots;
   normalized_roots.reserve(roots.size());
@@ -112,7 +113,17 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
          !error && it != end; it.increment(error)) {
       const std::filesystem::path path = it->path().lexically_normal();
       std::error_code status_error;
-      append_entry(path, PathTypeFromStatus(it->status(status_error)));
+      const PathType type = PathTypeFromStatus(it->status(status_error));
+      if (status_error) {
+        continue;
+      }
+      if (filter && !filter(path, type)) {
+        if (type == PathType::Directory) {
+          it.disable_recursion_pending();
+        }
+        continue;
+      }
+      append_entry(path, type);
     }
   }
 

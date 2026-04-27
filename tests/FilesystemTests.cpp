@@ -66,6 +66,42 @@ void TestFileWatcherDetectsCreationOfMissingRoots() {
   Expect(watcher.Poll(), "file watcher should detect when a previously missing root appears");
 }
 
+void TestFileWatcherEntryFilterSkipsIgnoredDirectories() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root / "node_modules" / "pkg");
+  std::filesystem::create_directories(root / "src");
+  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 1;\n");
+  WriteFile(root / "src" / "main.ts", "export const main = 1;\n");
+
+  FileTreeWatcher watcher(std::chrono::milliseconds::zero());
+  watcher.SetEntryFilter([&root](const std::filesystem::path& path, PathType) {
+    if (path == root) {
+      return true;
+    }
+
+    const std::filesystem::path relative = path.lexically_relative(root);
+    if (relative.empty()) {
+      return true;
+    }
+
+    for (const auto& component : relative) {
+      if (component == "node_modules") {
+        return false;
+      }
+    }
+    return true;
+  });
+  watcher.SetRoots({root});
+  Expect(!watcher.Poll(), "filtered watcher roots should start clean");
+
+  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 2;\n");
+  Expect(!watcher.Poll(), "entry filters should suppress changes under ignored directories");
+
+  WriteFile(root / "src" / "main.ts", "export const main = 2;\n");
+  Expect(watcher.Poll(), "entry filters should still allow visible project changes");
+}
+
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 void TestFileWatcherWakeCallbackSignalsNestedChanges() {
   TemporaryDirectory temp_dir;
@@ -134,6 +170,8 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestFileWatcherDetectsNestedCreatesUpdatesAndDeletes);
   AddTest(tests, "FileWatcher/DetectsCreationOfMissingRoots",
           TestFileWatcherDetectsCreationOfMissingRoots);
+  AddTest(tests, "FileWatcher/EntryFilterSkipsIgnoredDirectories",
+          TestFileWatcherEntryFilterSkipsIgnoredDirectories);
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   AddTest(tests, "FileWatcher/WakeCallbackSignalsNestedChanges",
           TestFileWatcherWakeCallbackSignalsNestedChanges);

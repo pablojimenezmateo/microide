@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <vector>
 
 namespace microide::platform {
@@ -28,8 +29,12 @@ struct TreeSnapshotEntry {
   bool operator==(const TreeSnapshotEntry&) const = default;
 };
 
+using TreeTraversalFilter = std::function<bool(const std::filesystem::path&, PathType)>;
+
 PathType ReadPathType(const std::filesystem::path& path);
 std::vector<DirectoryEntry> ListDirectory(const std::filesystem::path& directory);
-std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesystem::path>& roots);
+std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(
+    const std::vector<std::filesystem::path>& roots,
+    const TreeTraversalFilter& filter = {});
 
 }  // namespace microide::platform
