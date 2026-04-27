@@ -367,7 +367,7 @@ void TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering() {
     Expect(SDL_RenderFillRect(reference_canvas.renderer(), &cell_rect),
            "terminal renderer regression test should paint legacy cell backgrounds");
     if (prompt[column] != ' ') {
-      reference_renderer.DrawString(reference_canvas.renderer(), cell_x, text_y, theme.text_muted,
+      reference_renderer.DrawString(reference_canvas.renderer(), cell_x, text_y, theme.text_primary,
                                     std::string_view(prompt.data() + column, 1));
     }
   }

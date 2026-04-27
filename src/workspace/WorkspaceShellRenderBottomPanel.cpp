@@ -60,7 +60,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   };
 
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {
-    SDL_Color foreground = style.foreground.value_or(theme_.text_muted);
+    SDL_Color foreground = style.foreground.value_or(theme_.text_primary);
     SDL_Color background = style.background.value_or(theme_.surface_background);
     if (style.inverse) {
       std::swap(foreground, background);
