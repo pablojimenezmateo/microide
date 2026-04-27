@@ -9,6 +9,8 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   if (context_.current_project_state.root.empty()) {
     return;
   }
+  const bool panel_already_showing_terminal =
+      context_.current_project_state.panel.content == PanelContentKind::Terminal;
   const std::filesystem::path working_directory = context_.current_project_state.root;
   auto terminal_tab = std::make_unique<TerminalTabState>();
   if (terminal_event_type_ != 0) {
@@ -19,8 +21,10 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   }
 
   context_.current_project_state.terminal_tabs.push_back(std::move(terminal_tab));
-  context_.current_project_state.panel.content = PanelContentKind::Terminal;
   context_.current_project_state.active_terminal_tab_index = context_.current_project_state.terminal_tabs.size() - 1;
+  if (focus_terminal || panel_already_showing_terminal) {
+    context_.current_project_state.panel.content = PanelContentKind::Terminal;
+  }
   if (focus_terminal) {
     context_.current_project_state.surface.focus = FocusTarget::Panel;
   }

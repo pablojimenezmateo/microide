@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <memory>
 
+#include "util/PerformanceTrace.h"
+
 namespace microide::workspace {
 
 ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations)
@@ -11,6 +13,7 @@ ProjectCatalogCoordinator::ProjectCatalogCoordinator(WorkspaceContext& context, 
 bool ProjectCatalogCoordinator::Open(const std::filesystem::path& normalized_root,
                                      bool restore_persistence,
                                      bool log_feedback) {
+  util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::Open");
   const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
 
   auto project_state = std::make_unique<ProjectWorkspaceState>();
@@ -30,6 +33,7 @@ bool ProjectCatalogCoordinator::Open(const std::filesystem::path& normalized_roo
 }
 
 bool ProjectCatalogCoordinator::Switch(std::size_t index, bool activate_restored_tab) {
+  util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::Switch");
   const ActivationCheckpoint checkpoint = CaptureActivationCheckpoint();
   if (!Activate(index, activate_restored_tab)) {
     RestoreActivationCheckpoint(checkpoint);
@@ -41,6 +45,7 @@ bool ProjectCatalogCoordinator::Switch(std::size_t index, bool activate_restored
 }
 
 void ProjectCatalogCoordinator::Close(std::size_t index, bool activate_restored_tab) {
+  util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::Close");
   if (index >= context_.project_catalog.entries.size()) {
     return;
   }
@@ -89,14 +94,27 @@ bool ProjectCatalogCoordinator::RestoreAfterRemoval(std::size_t preferred_index,
 }
 
 void ProjectCatalogCoordinator::PersistActiveEntry() {
+  util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::PersistActiveEntry");
   if (!context_.HasActiveProjectCatalogEntry()) {
     return;
   }
-  operations_.save_config_state();
-  operations_.save_session_state();
-  operations_.store_current_project_state(
-      *context_.project_catalog.entries[context_.project_catalog.active_index]);
-  operations_.shutdown_plugin_host();
+  {
+    util::PerformanceTrace::Scope scope("ProjectCatalogCoordinator::SaveConfigState");
+    operations_.save_config_state();
+  }
+  {
+    util::PerformanceTrace::Scope scope("ProjectCatalogCoordinator::SaveSessionState");
+    operations_.save_session_state();
+  }
+  {
+    util::PerformanceTrace::Scope scope("ProjectCatalogCoordinator::StoreCurrentProjectState");
+    operations_.store_current_project_state(
+        *context_.project_catalog.entries[context_.project_catalog.active_index]);
+  }
+  {
+    util::PerformanceTrace::Scope scope("ProjectCatalogCoordinator::ShutdownPluginHost");
+    operations_.shutdown_plugin_host();
+  }
 }
 
 void ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
@@ -114,6 +132,7 @@ void ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
 }
 
 bool ProjectCatalogCoordinator::Activate(std::size_t index, bool activate_restored_tab) {
+  util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::Activate");
   auto* entry = context_.ProjectCatalogEntry(index);
   if (entry == nullptr) {
     return false;

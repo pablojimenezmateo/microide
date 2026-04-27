@@ -38,6 +38,9 @@ class AsyncSubprocess {
   // Returns nullopt on EOF/error.
   std::optional<std::string> ReadExact(std::size_t n, int timeout_ms = 10000);
 
+  // Close the stdin pipe while keeping stdout available for draining.
+  void CloseStdin();
+
   // Send SIGTERM; if the process does not exit within `timeout_ms` ms, send SIGKILL.
   void Shutdown(int timeout_ms = 3000);
 

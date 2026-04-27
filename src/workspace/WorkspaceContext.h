@@ -24,6 +24,9 @@ struct WorkspaceContext {
 
   static void RebindProjectState(ProjectWorkspaceState& state) {
     state.file_finder.SetIndex(&state.file_index);
+    if (state.lsp_manager == nullptr) {
+      state.lsp_manager = std::make_unique<LspManager>();
+    }
   }
 
   void ResetCurrentProjectStateStorage() {

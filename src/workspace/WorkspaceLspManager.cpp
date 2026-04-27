@@ -30,10 +30,41 @@ void LspManager::SetWakeEventType(Uint32 event_type) {
 void LspManager::RegisterServer(const std::string& language_id,
                                  const std::vector<std::string>& command,
                                  const std::string& root_uri, bool eager_start) {
-  servers_[language_id] = ServerEntry{command, root_uri, {}, nullptr};
+  auto it = servers_.find(language_id);
+  if (it != servers_.end()) {
+    ServerEntry& existing = it->second;
+    if (existing.command == command && existing.root_uri == root_uri) {
+      if (eager_start) {
+        (void)GetServer(language_id);
+      }
+      return;
+    }
+    if (existing.client != nullptr) {
+      existing.client->BeginShutdown();
+      retiring_clients_.push_back(std::move(existing.client));
+    }
+    existing = ServerEntry{command, root_uri, {}, nullptr};
+  } else {
+    servers_[language_id] = ServerEntry{command, root_uri, {}, nullptr};
+  }
   if (eager_start) {
     (void)GetServer(language_id);
   }
+}
+
+void LspManager::BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids) {
+  for (auto it = servers_.begin(); it != servers_.end();) {
+    if (language_ids.contains(it->first)) {
+      ++it;
+      continue;
+    }
+    if (it->second.client != nullptr) {
+      it->second.client->BeginShutdown();
+      retiring_clients_.push_back(std::move(it->second.client));
+    }
+    it = servers_.erase(it);
+  }
+  CollectRetiredClients();
 }
 
 LspClient* LspManager::GetServer(const std::string& language_id) {
@@ -84,6 +115,12 @@ void LspManager::DrainCallbacks() {
       entry.client->DrainCallbacks();
     }
   }
+  for (auto& client : retiring_clients_) {
+    if (client != nullptr) {
+      client->DrainCallbacks();
+    }
+  }
+  CollectRetiredClients();
 }
 
 bool LspManager::IsServerRunning(const std::string& language_id) const {
@@ -102,14 +139,40 @@ std::string LspManager::LastServerError(const std::string& language_id) const {
   return it->second.last_error;
 }
 
-void LspManager::ShutdownAll() {
+void LspManager::BeginShutdownAll() {
   for (auto& [_, entry] : servers_) {
     if (entry.client) {
-      entry.client->Shutdown();
-      entry.client = nullptr;
+      entry.client->BeginShutdown();
+      retiring_clients_.push_back(std::move(entry.client));
     }
   }
   servers_.clear();
+  CollectRetiredClients();
+}
+
+void LspManager::ShutdownAll() {
+  BeginShutdownAll();
+  for (auto& client : retiring_clients_) {
+    if (client != nullptr) {
+      client->Shutdown();
+    }
+  }
+  retiring_clients_.clear();
+}
+
+void LspManager::CollectRetiredClients() {
+  auto write_it = retiring_clients_.begin();
+  for (auto read_it = retiring_clients_.begin(); read_it != retiring_clients_.end(); ++read_it) {
+    if (*read_it != nullptr && (*read_it)->IsShutdownComplete()) {
+      (*read_it)->Shutdown();
+      continue;
+    }
+    if (write_it != read_it) {
+      *write_it = std::move(*read_it);
+    }
+    ++write_it;
+  }
+  retiring_clients_.erase(write_it, retiring_clients_.end());
 }
 
 }  // namespace microide::workspace

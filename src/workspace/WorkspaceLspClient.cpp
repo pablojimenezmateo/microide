@@ -1,6 +1,10 @@
 #include "workspace/WorkspaceLspClient.h"
 
+#include <chrono>
 #include <charconv>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -9,6 +13,36 @@
 #include "util/StartupTrace.h"
 
 namespace microide::workspace {
+
+namespace {
+
+bool LspLifecycleTraceEnabled() {
+  static const bool enabled = []() {
+    const char* value = std::getenv("MICROIDE_TRACE_LSP_LIFECYCLE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return enabled;
+}
+
+void TraceLspLifecycle(std::string_view language_id,
+                       int pid,
+                       std::string_view phase,
+                       std::string_view detail = {}) {
+  if (!LspLifecycleTraceEnabled()) {
+    return;
+  }
+  if (detail.empty()) {
+    std::fprintf(stderr, "[lsp] %.*s pid=%d %.*s\n", static_cast<int>(language_id.size()),
+                 language_id.data(), pid, static_cast<int>(phase.size()), phase.data());
+    return;
+  }
+  std::fprintf(stderr, "[lsp] %.*s pid=%d %.*s | %.*s\n",
+               static_cast<int>(language_id.size()), language_id.data(), pid,
+               static_cast<int>(phase.size()), phase.data(), static_cast<int>(detail.size()),
+               detail.data());
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Internal buffer — avoids O(n) prefix-erasure on every line read.
@@ -51,6 +85,13 @@ struct LspClient::Impl {
   std::thread init_thread;
   std::atomic<bool> initializing{false};
   std::atomic<bool> stop_init{false};
+  std::thread shutdown_thread;
+  std::atomic<bool> shutdown_started{false};
+  std::atomic<bool> shutdown_complete{false};
+  std::atomic<bool> shutting_down{false};
+  std::condition_variable shutdown_cv;
+  bool shutdown_response_received = false;
+  int shutdown_request_id = 0;
 
   // Per-request pending callbacks (keyed by request id), guarded by mutex.
   std::unordered_map<int, std::function<void(util::JsonValue)>> pending_requests;
@@ -113,15 +154,24 @@ struct LspClient::Impl {
     return proc.Write(message);
   }
 
-  bool SendMessageImmediate(const util::JsonValue& msg) {
+  bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false) {
+    if (!allow_during_shutdown && shutting_down.load(std::memory_order_acquire)) {
+      return false;
+    }
     const std::string serialized = SerializeMessage(msg);
     std::lock_guard lock(send_mutex);
     return SendSerializedMessageUnlocked(serialized);
   }
 
   bool SendMessageAfterInitialize(const util::JsonValue& msg) {
+    if (shutting_down.load(std::memory_order_acquire)) {
+      return false;
+    }
     const std::string serialized = SerializeMessage(msg);
     std::lock_guard lock(send_mutex);
+    if (shutting_down.load(std::memory_order_acquire)) {
+      return false;
+    }
     if (!initialized.load(std::memory_order_acquire)) {
       deferred_messages.push_back(serialized);
       return true;
@@ -132,6 +182,15 @@ struct LspClient::Impl {
   void ClearDeferredMessages() {
     std::lock_guard lock(send_mutex);
     deferred_messages.clear();
+  }
+
+  void ResetProtocolState() {
+    std::lock_guard lock(mutex);
+    pending_requests.clear();
+    ready_callbacks.clear();
+    document_versions.clear();
+    shutdown_response_received = false;
+    shutdown_request_id = 0;
   }
 
   // -------------------------------------------------------------------------
@@ -268,6 +327,17 @@ struct LspClient::Impl {
 
   // Dispatch one parsed message from the reader thread.
   void DispatchMessage(util::JsonValue msg) {
+    if (shutting_down.load(std::memory_order_acquire)) {
+      if (msg.HasKey("id") && msg["id"].IsInt()) {
+        const int id = msg["id"].AsInt();
+        std::lock_guard lock(mutex);
+        if (id == shutdown_request_id) {
+          shutdown_response_received = true;
+          shutdown_cv.notify_all();
+        }
+      }
+      return;
+    }
     if (msg.HasKey("id") && msg["id"].IsInt()) {
       // Response — find the pending callback.
       const int id = msg["id"].AsInt();
@@ -505,34 +575,108 @@ struct LspClient::Impl {
   }
 
   void DoShutdown() {
+    TraceLspLifecycle(language_id, proc.pid(), "shutdown-begin");
+    shutting_down.store(true, std::memory_order_release);
     stop_init.store(true);
+    if (!initialized.load(std::memory_order_acquire)) {
+      TraceLspLifecycle(language_id, proc.pid(), "preinit-cancel");
+      proc.Shutdown(0);
+      if (init_thread.joinable()) {
+        init_thread.join();
+      }
+      ClearDeferredMessages();
+      stop_reader.store(true, std::memory_order_release);
+      ResetProtocolState();
+      initialized.store(false, std::memory_order_release);
+      initializing.store(false, std::memory_order_release);
+      supports_incremental_sync = false;
+      shutting_down.store(false, std::memory_order_release);
+      shutdown_complete.store(true, std::memory_order_release);
+      PushWakeEvent();
+      return;
+    }
+
     if (init_thread.joinable()) {
       init_thread.join();
     }
     ClearDeferredMessages();
 
-    if (!initialized.load(std::memory_order_acquire)) {
-      proc.Shutdown();
-      return;
+    using namespace util;
+    int shutdown_id = 0;
+    {
+      std::lock_guard lock(mutex);
+      shutdown_response_received = false;
+      shutdown_request_id = next_id++;
+      shutdown_id = shutdown_request_id;
+    }
+    const bool sent_shutdown =
+        SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})), true);
+    TraceLspLifecycle(language_id, proc.pid(), "shutdown-request",
+                      sent_shutdown ? "sent" : "send-failed");
+    if (sent_shutdown) {
+      std::unique_lock lock(mutex);
+      const bool got_shutdown_response =
+          shutdown_cv.wait_for(lock, std::chrono::milliseconds(750), [this]() {
+        return shutdown_response_received;
+      });
+      TraceLspLifecycle(language_id, proc.pid(), "shutdown-response",
+                        got_shutdown_response ? "received" : "timeout");
+    }
+    if (proc.IsRunning()) {
+      (void)SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})), true);
+      TraceLspLifecycle(language_id, proc.pid(), "exit-notification", "sent");
+      proc.CloseStdin();
+      TraceLspLifecycle(language_id, proc.pid(), "stdin", "closed");
     }
 
-    stop_reader.store(true);
+    const auto graceful_shutdown_deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+    while (proc.IsRunning() && std::chrono::steady_clock::now() < graceful_shutdown_deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    TraceLspLifecycle(language_id, proc.pid(), "graceful-wait",
+                      proc.IsRunning() ? "still-running" : "exited");
 
-    using namespace util;
-    const int shutdown_id = [this]() {
-      std::lock_guard lock(mutex);
-      return next_id++;
-    }();
-    SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})));
-    SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})));
-
-    proc.Shutdown(1000);
+    stop_reader.store(true, std::memory_order_release);
+    if (proc.IsRunning()) {
+      TraceLspLifecycle(language_id, proc.pid(), "forced-shutdown");
+      proc.Shutdown(1000);
+    }
 
     if (reader_thread.joinable()) {
       reader_thread.join();
     }
 
+    ResetProtocolState();
     initialized.store(false, std::memory_order_release);
+    initializing.store(false, std::memory_order_release);
+    supports_incremental_sync = false;
+    shutting_down.store(false, std::memory_order_release);
+    shutdown_complete.store(true, std::memory_order_release);
+    const std::optional<int> code = proc.exit_code();
+    if (code.has_value()) {
+      const std::string detail = "exit-code=" + std::to_string(*code);
+      TraceLspLifecycle(language_id, -1, "shutdown-complete", detail);
+    } else {
+      TraceLspLifecycle(language_id, -1, "shutdown-complete");
+    }
+    PushWakeEvent();
+  }
+
+  void BeginShutdown() {
+    bool expected = false;
+    if (!shutdown_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      return;
+    }
+    shutdown_complete.store(false, std::memory_order_release);
+    shutdown_thread = std::thread([this]() { DoShutdown(); });
+  }
+
+  void WaitForShutdown() {
+    BeginShutdown();
+    if (shutdown_thread.joinable()) {
+      shutdown_thread.join();
+    }
   }
 };
 
@@ -566,6 +710,9 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
 
   impl_->root_uri = root_uri;
   impl_->language_id = language_id;
+  impl_->shutdown_started.store(false, std::memory_order_release);
+  impl_->shutdown_complete.store(false, std::memory_order_release);
+  impl_->shutting_down.store(false, std::memory_order_release);
 
   // Launch initialization on a background thread to avoid blocking the main thread.
   // The reader thread will be started by the initialization thread after initialization completes.
@@ -959,8 +1106,21 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
   }
 }
 
+void LspClient::BeginShutdown() {
+  impl_->BeginShutdown();
+}
+
 void LspClient::Shutdown() {
-  impl_->DoShutdown();
+  impl_->WaitForShutdown();
+}
+
+bool LspClient::IsShuttingDown() const {
+  return impl_->shutting_down.load(std::memory_order_acquire);
+}
+
+bool LspClient::IsShutdownComplete() const {
+  return impl_->shutdown_started.load(std::memory_order_acquire) &&
+         impl_->shutdown_complete.load(std::memory_order_acquire);
 }
 
 }  // namespace microide::workspace

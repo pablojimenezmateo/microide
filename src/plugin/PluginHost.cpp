@@ -3853,9 +3853,14 @@ int PluginHost::ConsumeAsyncProcessCallbacks() {
 }
 
 int PluginHost::PendingAsyncProcessCount() const {
-  const int in_flight = impl_->async_process_state->in_flight.load(std::memory_order_acquire);
   std::lock_guard lock(impl_->async_process_state->mutex);
-  return in_flight + static_cast<int>(impl_->async_process_state->pending_callbacks.size());
+  int active_count = 0;
+  for (const auto& request : impl_->async_process_state->active_requests) {
+    if (request != nullptr && !request->cancelled) {
+      ++active_count;
+    }
+  }
+  return active_count + static_cast<int>(impl_->async_process_state->pending_callbacks.size());
 }
 
 void PluginHost::OnBufferOpen(const std::filesystem::path& path) {

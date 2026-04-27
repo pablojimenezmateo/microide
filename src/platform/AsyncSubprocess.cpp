@@ -294,6 +294,13 @@ std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout
   return result;
 }
 
+void AsyncSubprocess::CloseStdin() {
+  if (impl_ == nullptr) {
+    return;
+  }
+  impl_->CloseStdin();
+}
+
 void AsyncSubprocess::Shutdown(int timeout_ms) {
   if (!impl_->running || impl_->pid < 0) {
     impl_->Close();
@@ -574,6 +581,13 @@ std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout
   return result;
 }
 
+void AsyncSubprocess::CloseStdin() {
+  if (impl_ == nullptr) {
+    return;
+  }
+  impl_->CloseStdin();
+}
+
 void AsyncSubprocess::Shutdown(int timeout_ms) {
   if (!impl_->running || impl_->process == nullptr) {
     impl_->Close();
@@ -611,6 +625,7 @@ bool AsyncSubprocess::IsRunning() const { return false; }
 bool AsyncSubprocess::Write(std::string_view) { return false; }
 std::optional<std::string> AsyncSubprocess::Read(std::size_t, int) { return std::nullopt; }
 std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t, int) { return std::nullopt; }
+void AsyncSubprocess::CloseStdin() {}
 void AsyncSubprocess::Shutdown(int) {}
 int AsyncSubprocess::pid() const { return -1; }
 std::optional<int> AsyncSubprocess::exit_code() const {

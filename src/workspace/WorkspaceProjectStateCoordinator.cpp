@@ -5,6 +5,7 @@
 #include <system_error>
 #include <vector>
 
+#include "util/PerformanceTrace.h"
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
@@ -89,7 +90,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   project_file_monitor_.Reset();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
-  lsp_manager_.ShutdownAll();
+  CurrentLspManager().BeginShutdownAll();
 
   ResetCurrentProjectStateStorage();
 
@@ -134,7 +135,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (activate_restored_tab) {
       ActivateCurrentTabAfterStateLoad();
     }
-    ReloadPluginsForCurrentProject(false);
+    ReloadPluginsForCurrentProject(false, false, true);
     return true;
   }
 
@@ -175,7 +176,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (context_.current_project_state.terminal_tabs.empty()) {
     OpenTerminal({}, false, false);
   }
-  ReloadPluginsForCurrentProject();
+  ReloadPluginsForCurrentProject(true, false, true);
   return true;
 }
 
@@ -195,17 +196,15 @@ bool WorkspaceShell::ActivateProjectState(ProjectWorkspaceState& state,
   if (activate_restored_tab) {
     ActivateCurrentTabAfterStateLoad();
   }
-  ReloadPluginsForCurrentProject();
+  ReloadPluginsForCurrentProject(true, false, true);
   return true;
 }
 
 void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::StoreCurrentProjectState");
   SyncActiveEditorTab();
   StopProjectSearch();
   MakeMenuCoordinator().CloseTreeContextMenu();
-  lsp_manager_.ShutdownAll();
-  context_.current_project_state.diagnostics_store.ClearOwner("lsp");
-
   context_.current_project_state.initialized = true;
   context_.current_project_state.restore_persistence_on_activate = false;
   context_.current_project_state.overlay.workflow.project_search.running = false;
@@ -215,26 +214,51 @@ void WorkspaceShell::StoreCurrentProjectState(ProjectWorkspaceState& state) {
 }
 
 void WorkspaceShell::LoadProjectState(ProjectWorkspaceState& state) {
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::LoadProjectState");
   auto persistence = MakePersistenceCoordinator();
-  StopProjectSearch();
-  project_file_monitor_.SetProjectRoot(state.root);
-  project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
-  MakeMenuCoordinator().CloseTreeContextMenu();
-  ClearEditorBlame();
-  lsp_manager_.ShutdownAll();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::StopProjectSearch");
+    StopProjectSearch();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::LoadProjectState::SetProjectFileMonitorRoot");
+    project_file_monitor_.SetDeferredArming(true);
+    project_file_monitor_.SetProjectRoot(state.root);
+    project_file_monitor_.SetDeferredArming(false);
+    project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::CloseTreeContextMenu");
+    MakeMenuCoordinator().CloseTreeContextMenu();
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::ClearEditorBlame");
+    ClearEditorBlame();
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::MoveProjectState");
+    context_.current_project_state = std::move(state);
+    context_.current_project_state.overlay.workflow.project_search.running = false;
+    RebindProjectState(context_.current_project_state);
+    ResetTransientInteractionState();
+  }
 
-  context_.current_project_state = std::move(state);
-  context_.current_project_state.overlay.workflow.project_search.running = false;
-  context_.current_project_state.diagnostics_store.ClearOwner("lsp");
-  RebindProjectState(context_.current_project_state);
-  ResetTransientInteractionState();
-
-  state = ProjectWorkspaceState{};
-  state.root = context_.current_project_state.root;
-  state.initialized = true;
-  state.restore_persistence_on_activate = false;
-  persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
-  ApplyEditorPreferencesToAllTabs();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::ResetStoredState");
+    state = ProjectWorkspaceState{};
+    state.root = context_.current_project_state.root;
+    state.initialized = true;
+    state.restore_persistence_on_activate = false;
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::ApplyColorscheme");
+    persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::LoadProjectState::ApplyEditorPreferencesToAllTabs");
+    ApplyEditorPreferencesToAllTabs();
+  }
   if (context_.current_project_state.text_viewport.is_placeholder()) {
     ApplyEditorPreferences(context_.current_project_state.text_viewport);
   }

@@ -975,6 +975,8 @@ return ide.plugin({
                                                             shutdown_start);
   Expect(shutdown_elapsed < std::chrono::milliseconds(200),
          "shutting down with a pending async callback should not wait for the subprocess");
+  Expect(host.PendingAsyncProcessCount() == 0,
+         "shutdown should stop reporting cancelled async processes as pending work");
 
   std::this_thread::sleep_for(std::chrono::milliseconds(700));
   host.ConsumeAsyncProcessCallbacks();

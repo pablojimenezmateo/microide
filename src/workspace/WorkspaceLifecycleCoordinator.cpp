@@ -132,7 +132,12 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
 
   lsp_event_type_ = SDL_RegisterEvents(1);
   if (lsp_event_type_ != static_cast<Uint32>(-1)) {
-    lsp_manager_.SetWakeEventType(lsp_event_type_);
+    EnsureProjectLspManager(context_.current_project_state).SetWakeEventType(lsp_event_type_);
+    for (const auto& entry : context_.project_catalog.entries) {
+      if (entry != nullptr) {
+        EnsureProjectLspManager(*entry).SetWakeEventType(lsp_event_type_);
+      }
+    }
   } else {
     lsp_event_type_ = 0;
   }

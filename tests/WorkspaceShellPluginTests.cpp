@@ -2170,6 +2170,102 @@ void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
          "restored problems should preserve their location metadata");
 }
 
+void TestWorkspaceShellProjectSwitchCancelsPluginWakePolling() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  WriteFile(project_a / "README.md", "alpha project\n");
+  WriteFile(project_b / "README.md", "beta project\n");
+
+  WritePluginInit(
+      plugins_root, "switch-async",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "switch-async",
+  on_project_open = function(ctx, project)
+    if project.name ~= "project-a" then
+      return
+    end
+    ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
+      ctx.log("async-complete:" .. tostring(result.exit_code))
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "async switch fixture should open the first project");
+  Expect(WorkspaceShellTestAccess::NextAnimationDelayMs(shell) == 10,
+         "the first project should schedule plugin async polling while its callback is pending");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "async switch fixture should open the second project");
+  const auto next_delay = WorkspaceShellTestAccess::NextAnimationDelayMs(shell);
+  Expect(!next_delay.has_value() || *next_delay != 10,
+         "switching projects should stop polling cancelled async callbacks from the prior project");
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(700));
+  WorkspaceShellTestAccess::ConsumePluginAsyncProcessCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::PluginMessages(shell).empty(),
+         "cancelled project-switch async callbacks should not fire after the old project closes");
+}
+
+void TestWorkspaceShellProjectSwitchDoesNotReplayPluginBufferOpenHooks() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  const std::filesystem::path source_a = project_a / "src" / "main.js";
+  WriteFile(project_a / "README.md", "alpha project\n");
+  WriteFile(project_b / "README.md", "beta project\n");
+  WriteFile(source_a, "console.log('alpha');\n");
+
+  WritePluginInit(
+      plugins_root, "buffer-open-log",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "buffer-open-log",
+  on_buffer_open = function(ctx, buffer)
+    ctx.log("open:" .. buffer.relative_path)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "buffer-open replay fixture should open the first project");
+  WorkspaceShellTestAccess::OpenFile(shell, source_a);
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() ==
+                 "buffer-open-log: open:src/main.js",
+         "opening a file should invoke the plugin buffer-open hook once");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "buffer-open replay fixture should open the second project");
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "buffer-open replay fixture should switch back to the first project");
+  Expect(WorkspaceShellTestAccess::PluginMessages(shell).empty(),
+         ("switching back should restore open buffers without replaying plugin buffer-open hooks: " +
+          DescribePluginState(shell))
+             .c_str());
+}
+
 void TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2322,6 +2418,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",
           TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchCancelsPluginWakePolling",
+          TestWorkspaceShellProjectSwitchCancelsPluginWakePolling);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchDoesNotReplayPluginBufferOpenHooks",
+          TestWorkspaceShellProjectSwitchDoesNotReplayPluginBufferOpenHooks);
   AddTest(tests, "WorkspaceShell/PluginSidebarPersistsAcrossProjectSwitches",
           TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches);
 }

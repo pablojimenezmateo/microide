@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <set>
 #include <string_view>
+#include <unordered_set>
 
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -142,8 +143,7 @@ void WorkspaceShell::RebuildPhase3Registries() {
   tool_registry_ = ToolRegistry{};
   test_controller_.Clear();
   dap_manager_.ShutdownAll();
-  lsp_manager_.ShutdownAll();
-  context_.current_project_state.diagnostics_store.ClearOwner("lsp");
+  std::unordered_set<std::string> active_language_servers;
 
   const auto& host = plugin_runtime_.Host();
   for (const auto& formatter : host.ContributedFormatters()) {
@@ -178,9 +178,11 @@ void WorkspaceShell::RebuildPhase3Registries() {
     if (language_server.command.empty()) {
       continue;
     }
-    lsp_manager_.RegisterServer(language_server.language_id, language_server.command,
-                                "file://" + context_.current_project_state.root.generic_string());
+    active_language_servers.insert(language_server.language_id);
+    CurrentLspManager().RegisterServer(language_server.language_id, language_server.command,
+                                       "file://" + context_.current_project_state.root.generic_string());
   }
+  CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
   for (const auto& task : host.ContributedTasks()) {
     task_registry_.Register(TaskSpec{
         .id = task.id,
@@ -287,7 +289,9 @@ void WorkspaceShell::RebuildPhase5Registries() {
   }
 }
 
-bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitions) {
+bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitions,
+                                                    bool replay_plugin_buffer_opens,
+                                                    bool open_lsp_documents) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   bool clean_reload;
   {
@@ -324,7 +328,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(bool reload_syntax_definitio
   }
   {
     util::StartupTrace::Scope open_buffers_scope("NotifyPluginsAboutOpenBuffers");
-    NotifyPluginsAboutOpenBuffers(reload_syntax_definitions);
+    NotifyPluginsAboutOpenBuffers(replay_plugin_buffer_opens, open_lsp_documents);
   }
   {
     util::StartupTrace::Scope chrome_redraw_scope("RequestChromeRedraw");
@@ -391,7 +395,8 @@ std::string WorkspaceShell::PluginRuntimeReloadSummary() const {
   return plugin_runtime_.ReloadSummary();
 }
 
-void WorkspaceShell::NotifyPluginsAboutOpenBuffers(bool open_lsp_documents) {
+void WorkspaceShell::NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens,
+                                                   bool open_lsp_documents) {
   if (!plugin_runtime_.enabled()) {
     return;
   }
@@ -402,7 +407,9 @@ void WorkspaceShell::NotifyPluginsAboutOpenBuffers(bool open_lsp_documents) {
                               if (!opened_paths.insert(path).second) {
                                 return;
                               }
-                              plugin_runtime_.Host().OnBufferOpen(path);
+                              if (replay_plugin_buffer_opens) {
+                                plugin_runtime_.Host().OnBufferOpen(path);
+                              }
                               if (viewport == nullptr || !open_lsp_documents) {
                                 return;
                               }

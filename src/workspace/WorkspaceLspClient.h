@@ -152,7 +152,14 @@ class LspClient {
                            RenameCallback callback);
 
   // Shutdown and close connection (blocks until complete).
+  void BeginShutdown();
   void Shutdown();
+
+  // True while a background shutdown is in progress.
+  bool IsShuttingDown() const;
+
+  // True once shutdown has fully completed.
+  bool IsShutdownComplete() const;
 
  private:
   struct Impl;

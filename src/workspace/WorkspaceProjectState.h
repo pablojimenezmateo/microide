@@ -18,6 +18,7 @@
 #include "util/SingleLineText.h"
 #include "workspace/WorkspaceConversation.h"
 #include "workspace/WorkspaceAiContext.h"
+#include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
 #include "workspace/WorkspaceTabState.h"
@@ -268,6 +269,7 @@ struct ProjectWorkspaceState {
   InlineCompletionState inline_completion;
   DebugSessionState debug_session;
   editor::DiagnosticsStore diagnostics_store;
+  std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   std::string active_colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
   EditorPreferences editor_preferences;

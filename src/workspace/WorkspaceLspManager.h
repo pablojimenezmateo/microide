@@ -5,7 +5,9 @@
 #include <SDL3/SDL.h>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
+#include <vector>
 
 namespace microide::workspace {
 
@@ -24,6 +26,7 @@ class LspManager {
   // If eager_start is true, the server will be started in the background immediately.
   void RegisterServer(const std::string& language_id, const std::vector<std::string>& command,
                       const std::string& root_uri, bool eager_start = true);
+  void BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids);
 
   // Get or start server for language; returns nullptr if not registered or failed to start.
   LspClient* GetServer(const std::string& language_id);
@@ -41,7 +44,10 @@ class LspManager {
   // Call from main thread each frame to dispatch pending LSP callbacks.
   void DrainCallbacks();
 
-  // Stop all servers.
+  // Begin background shutdown for all active servers without blocking the caller.
+  void BeginShutdownAll();
+
+  // Stop all servers and wait for active and retiring processes to exit.
   void ShutdownAll();
 
  private:
@@ -54,6 +60,9 @@ class LspManager {
 
   Uint32 wake_event_type_ = 0;
   std::unordered_map<std::string, ServerEntry> servers_;
+  std::vector<std::unique_ptr<LspClient>> retiring_clients_;
+
+  void CollectRetiredClients();
 };
 
 }  // namespace microide::workspace

@@ -690,12 +690,15 @@ class WorkspaceShell {
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
-  bool ReloadPluginsForCurrentProject(bool reload_syntax_definitions = true);
+  bool ReloadPluginsForCurrentProject(bool reload_syntax_definitions = true,
+                                      bool replay_plugin_buffer_opens = true,
+                                      bool open_lsp_documents = true);
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();
   std::string PluginRuntimeReloadSummary() const;
-  void NotifyPluginsAboutOpenBuffers(bool open_lsp_documents = true);
+  void NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens = true,
+                                     bool open_lsp_documents = true);
   bool PrepareEditorViewportForSave(const std::filesystem::path& path,
                                     editor::TextViewport& viewport,
                                     std::string* error_message = nullptr);
@@ -1234,12 +1237,16 @@ class WorkspaceShell {
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;
   bool HasActiveReferencesProvider() const;
+  LspManager& CurrentLspManager();
+  const LspManager& CurrentLspManager() const;
+  LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
   LspClient* LspClientForViewport(const editor::TextViewport& viewport,
                                   std::string* language_id = nullptr);
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
                              LspClient& client,
                              std::string_view language_id);
-  void PublishLspDiagnostics(std::string uri,
+  void PublishLspDiagnostics(ProjectWorkspaceState& state,
+                             std::string uri,
                              std::vector<LspClient::Diagnostic> diagnostics);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
@@ -1487,7 +1494,6 @@ class WorkspaceShell {
   ToolRegistry tool_registry_;
   ToolDownloader tool_downloader_;
   DapManager dap_manager_;
-  LspManager lsp_manager_;
   TestController test_controller_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;

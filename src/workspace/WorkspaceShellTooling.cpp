@@ -481,7 +481,8 @@ bool WorkspaceShell::HasActiveCompletionProvider() const {
   if (language_id.empty()) {
     return false;
   }
-  return completion_registry_.FindProvider(language_id) != nullptr || lsp_manager_.HasServer(language_id);
+  return completion_registry_.FindProvider(language_id) != nullptr ||
+         CurrentLspManager().HasServer(language_id);
 }
 
 bool WorkspaceShell::HasActiveCodeActionProvider() const {
@@ -493,7 +494,8 @@ bool WorkspaceShell::HasActiveCodeActionProvider() const {
   if (language_id.empty()) {
     return false;
   }
-  return code_action_registry_.FindProvider(language_id) != nullptr || lsp_manager_.HasServer(language_id);
+  return code_action_registry_.FindProvider(language_id) != nullptr ||
+         CurrentLspManager().HasServer(language_id);
 }
 
 bool WorkspaceShell::HasActiveDefinitionProvider() const {
@@ -502,7 +504,7 @@ bool WorkspaceShell::HasActiveDefinitionProvider() const {
     return false;
   }
   const std::string language_id = DetectActiveLanguageId(*viewport);
-  return !language_id.empty() && lsp_manager_.HasServer(language_id);
+  return !language_id.empty() && CurrentLspManager().HasServer(language_id);
 }
 
 bool WorkspaceShell::HasActiveReferencesProvider() const {
@@ -511,12 +513,30 @@ bool WorkspaceShell::HasActiveReferencesProvider() const {
     return false;
   }
   const std::string language_id = DetectActiveLanguageId(*viewport);
-  return !language_id.empty() && lsp_manager_.HasServer(language_id);
+  return !language_id.empty() && CurrentLspManager().HasServer(language_id);
+}
+
+LspManager& WorkspaceShell::EnsureProjectLspManager(ProjectWorkspaceState& state) {
+  if (state.lsp_manager == nullptr) {
+    state.lsp_manager = std::make_unique<LspManager>();
+  }
+  if (lsp_event_type_ != 0) {
+    state.lsp_manager->SetWakeEventType(lsp_event_type_);
+  }
+  return *state.lsp_manager;
+}
+
+LspManager& WorkspaceShell::CurrentLspManager() {
+  return EnsureProjectLspManager(context_.current_project_state);
+}
+
+const LspManager& WorkspaceShell::CurrentLspManager() const {
+  return const_cast<WorkspaceShell*>(this)->CurrentLspManager();
 }
 
 LspClient* WorkspaceShell::LspClientForViewport(const editor::TextViewport& viewport,
                                                 std::string* language_id) {
-  if (!lsp_manager_.HasRegisteredServers()) {
+  if (!CurrentLspManager().HasRegisteredServers()) {
     if (language_id != nullptr) {
       language_id->clear();
     }
@@ -531,13 +551,14 @@ LspClient* WorkspaceShell::LspClientForViewport(const editor::TextViewport& view
     return nullptr;
   }
 
-  LspClient* client = lsp_manager_.GetServer(detected_language);
+  ProjectWorkspaceState* const project = &context_.current_project_state;
+  LspClient* client = CurrentLspManager().GetServer(detected_language);
   if (client == nullptr) {
     return nullptr;
   }
-  client->SetDiagnosticsCallback([this](std::string uri,
+  client->SetDiagnosticsCallback([this, project](std::string uri,
                                         std::vector<LspClient::Diagnostic> diagnostics) {
-    PublishLspDiagnostics(std::move(uri), std::move(diagnostics));
+    PublishLspDiagnostics(*project, std::move(uri), std::move(diagnostics));
   });
   return client;
 }
@@ -555,7 +576,8 @@ void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
   client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
 }
 
-void WorkspaceShell::PublishLspDiagnostics(std::string uri,
+void WorkspaceShell::PublishLspDiagnostics(ProjectWorkspaceState& state,
+                                           std::string uri,
                                            std::vector<LspClient::Diagnostic> diagnostics) {
   const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
   if (!path.has_value()) {
@@ -584,8 +606,7 @@ void WorkspaceShell::PublishLspDiagnostics(std::string uri,
     });
   }
 
-  if (context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(
-          "lsp", *path, std::move(converted))) {
+  if (state.diagnostics_store.ReplaceForOwnerFile("lsp", *path, std::move(converted))) {
     RefreshProblemsSidebar();
     RequestEditorSurfaceRedraw();
   }
@@ -1093,7 +1114,7 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
 
   LspClient* client = LspClientForViewport(*viewport, nullptr);
   if (client == nullptr) {
-    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, provider_error);
+    const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, provider_error);
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
     ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
@@ -1214,7 +1235,7 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
 
   LspClient* client = LspClientForViewport(*viewport, nullptr);
   if (client == nullptr) {
-    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, provider_error);
+    const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, provider_error);
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
     ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
@@ -1301,7 +1322,7 @@ bool WorkspaceShell::GoToLspDefinition(std::string* error_message) {
   std::string language_id;
   LspClient* client = LspClientForViewport(*viewport, &language_id);
   if (client == nullptr) {
-    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, {});
+    const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, {});
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
     ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
@@ -1353,7 +1374,7 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
   std::string language_id;
   LspClient* client = LspClientForViewport(*viewport, &language_id);
   if (client == nullptr) {
-    const std::string failure = LspUnavailableMessage(lsp_manager_, language_id, {});
+    const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, {});
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
     ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
@@ -2533,7 +2554,12 @@ ProviderAuthStatus WorkspaceShell::GetProviderAuthStatus(std::string_view provid
 }
 
 void WorkspaceShell::ConsumeLspCallbacks() {
-  lsp_manager_.DrainCallbacks();
+  EnsureProjectLspManager(context_.current_project_state).DrainCallbacks();
+  for (const auto& entry : context_.project_catalog.entries) {
+    if (entry != nullptr) {
+      EnsureProjectLspManager(*entry).DrainCallbacks();
+    }
+  }
   RequestFullRedraw();
 }
 

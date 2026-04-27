@@ -377,6 +377,20 @@ void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
          "switching back should not restore stale transient selection state");
 }
 
+void TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "project\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "auto-terminal visibility fixture should open the project");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
+         "opening a project should not automatically surface the terminal panel");
+  Expect(WorkspaceShellTestAccess::TerminalLaunchLabels(shell).size() == 1,
+         "opening a project should still prepare a background terminal tab");
+}
+
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1385,6 +1399,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState);
   AddTest(tests, "WorkspaceShell/ProjectSwitchClearsTransientInteractionState",
           TestWorkspaceShellProjectSwitchClearsTransientInteractionState);
+  AddTest(tests, "WorkspaceShell/ProjectOpenKeepsAutoTerminalHidden",
+          TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
           TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
   AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",
