@@ -6,6 +6,7 @@
 #include "util/StartupTrace.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
+#include "workspace/ProjectCatalogService.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -209,11 +210,11 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .persist_active_project =
               [this]() {
                 if (HasActiveProjectCatalogEntry()) {
-                  MakeProjectCatalogCoordinator().PersistActiveEntry();
+                  MakeProjectCatalogService().PersistActiveEntry();
                 }
               },
           .persist_inactive_projects_for_shutdown =
-              [this]() { MakeProjectCatalogCoordinator().PersistInactiveEntriesForShutdown(); },
+              [this]() { MakeProjectCatalogService().PersistInactiveEntriesForShutdown(); },
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },

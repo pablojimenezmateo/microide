@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "workspace/ProjectCatalogService.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
@@ -85,8 +86,8 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
               [this]() { ResetProjectCatalogToWelcomeState(); },
           .restore_project_catalog_after_removal =
               [this](std::size_t preferred_index, bool activate_restored_tab) {
-                return MakeProjectCatalogCoordinator().RestoreAfterRemoval(preferred_index,
-                                                                          activate_restored_tab);
+                return MakeProjectCatalogService().RestoreAfterRemoval(preferred_index,
+                                                                       activate_restored_tab);
               },
           .ensure_active_project_visible = [this]() { EnsureActiveProjectVisible(); },
       });
