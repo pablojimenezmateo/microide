@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "workspace/WorkspacePromptState.h"
 
@@ -18,6 +20,16 @@ class PromptSurfaceService {
 
   PromptSurfaceService(ProjectWorkspaceState& state, PromptState& prompts, Operations operations);
 
+  void ShowDirtyPromptForTab(std::size_t index);
+  void ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
+                              std::vector<std::size_t> dirty_tabs);
+  void ShowDirtyPromptForProject(std::size_t index,
+                                 std::vector<std::size_t> dirty_tabs,
+                                 std::size_t dirty_count);
+  void ShowDirtyPromptForQuit(std::size_t active_tab_index,
+                              std::size_t active_project_index,
+                              std::vector<std::size_t> dirty_tabs,
+                              std::size_t dirty_count);
   void DismissDirtyPrompt(bool restore_focus);
   void DismissPromptSurface(bool restore_focus);
   void OpenPromptSurface(PromptSurfaceState::Action action,

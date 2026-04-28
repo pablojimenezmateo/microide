@@ -14,6 +14,85 @@ PromptSurfaceService::PromptSurfaceService(ProjectWorkspaceState& state,
       prompts_(prompts),
       operations_(std::move(operations)) {}
 
+void PromptSurfaceService::ShowDirtyPromptForTab(std::size_t index) {
+  if (index >= state_.open_tabs.size()) {
+    return;
+  }
+
+  operations_.request_prompt_redraw();
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = state_.surface.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::CloseTab;
+  prompts_.dirty.tab_index = index;
+  prompts_.dirty.target_tabs = {index};
+  prompts_.dirty.dirty_tabs = {index};
+  prompts_.dirty.dirty_count = 1;
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
+  state_.surface.focus = FocusTarget::Overlay;
+  operations_.request_prompt_redraw();
+}
+
+void PromptSurfaceService::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
+                                                  std::vector<std::size_t> dirty_tabs) {
+  if (target_tabs.empty() || dirty_tabs.empty()) {
+    return;
+  }
+
+  operations_.request_prompt_redraw();
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = state_.surface.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::CloseTabs;
+  prompts_.dirty.tab_index = target_tabs.front();
+  prompts_.dirty.target_tabs = std::move(target_tabs);
+  prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
+  prompts_.dirty.dirty_count = prompts_.dirty.dirty_tabs.size();
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
+  state_.surface.focus = FocusTarget::Overlay;
+  operations_.request_prompt_redraw();
+}
+
+void PromptSurfaceService::ShowDirtyPromptForProject(std::size_t index,
+                                                     std::vector<std::size_t> dirty_tabs,
+                                                     std::size_t dirty_count) {
+  if (dirty_tabs.empty()) {
+    return;
+  }
+
+  operations_.request_prompt_redraw();
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = state_.surface.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::CloseProject;
+  prompts_.dirty.tab_index = dirty_tabs.front();
+  prompts_.dirty.project_index = index;
+  prompts_.dirty.target_tabs = dirty_tabs;
+  prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
+  prompts_.dirty.dirty_count = dirty_count;
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
+  state_.surface.focus = FocusTarget::Overlay;
+  operations_.request_prompt_redraw();
+}
+
+void PromptSurfaceService::ShowDirtyPromptForQuit(std::size_t active_tab_index,
+                                                  std::size_t active_project_index,
+                                                  std::vector<std::size_t> dirty_tabs,
+                                                  std::size_t dirty_count) {
+  operations_.request_prompt_redraw();
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = state_.surface.focus;
+  prompts_.dirty.kind = DirtyPromptState::Kind::Quit;
+  prompts_.dirty.tab_index = active_tab_index;
+  prompts_.dirty.project_index = active_project_index;
+  prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
+  prompts_.dirty.dirty_count = dirty_count;
+  prompts_.dirty.path.clear();
+  prompts_.dirty.selected_action = 0;
+  state_.surface.focus = FocusTarget::Overlay;
+  operations_.request_prompt_redraw();
+}
+
 void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {
   operations_.request_prompt_redraw();
   prompts_.dirty_visible = false;

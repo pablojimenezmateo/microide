@@ -18,42 +18,12 @@ PromptSurfaceService WorkspaceShell::MakePromptSurfaceService() {
 }
 
 void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
-  if (index >= context_.current_project_state.open_tabs.size()) {
-    return;
-  }
-
-  RequestPromptRedraw();
-  context_.prompts.dirty_visible = true;
-  context_.prompts.dirty_previous_focus = context_.current_project_state.surface.focus;
-  context_.prompts.dirty.kind = DirtyPromptState::Kind::CloseTab;
-  context_.prompts.dirty.tab_index = index;
-  context_.prompts.dirty.target_tabs = {index};
-  context_.prompts.dirty.dirty_tabs = {index};
-  context_.prompts.dirty.dirty_count = 1;
-  context_.prompts.dirty.path.clear();
-  context_.prompts.dirty.selected_action = 0;
-  context_.current_project_state.surface.focus = FocusTarget::Overlay;
-  RequestPromptRedraw();
+  MakePromptSurfaceService().ShowDirtyPromptForTab(index);
 }
 
 void WorkspaceShell::ShowDirtyPromptForTabs(std::vector<std::size_t> target_tabs,
                                             std::vector<std::size_t> dirty_tabs) {
-  if (target_tabs.empty() || dirty_tabs.empty()) {
-    return;
-  }
-
-  RequestPromptRedraw();
-  context_.prompts.dirty_visible = true;
-  context_.prompts.dirty_previous_focus = context_.current_project_state.surface.focus;
-  context_.prompts.dirty.kind = DirtyPromptState::Kind::CloseTabs;
-  context_.prompts.dirty.tab_index = target_tabs.front();
-  context_.prompts.dirty.target_tabs = std::move(target_tabs);
-  context_.prompts.dirty.dirty_tabs = std::move(dirty_tabs);
-  context_.prompts.dirty.dirty_count = context_.prompts.dirty.dirty_tabs.size();
-  context_.prompts.dirty.path.clear();
-  context_.prompts.dirty.selected_action = 0;
-  context_.current_project_state.surface.focus = FocusTarget::Overlay;
-  RequestPromptRedraw();
+  MakePromptSurfaceService().ShowDirtyPromptForTabs(std::move(target_tabs), std::move(dirty_tabs));
 }
 
 void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
@@ -67,17 +37,7 @@ void WorkspaceShell::ShowDirtyPromptForProject(std::size_t index) {
     return;
   }
 
-  RequestPromptRedraw();
-  context_.prompts.dirty_visible = true;
-  context_.prompts.dirty_previous_focus = context_.current_project_state.surface.focus;
-  context_.prompts.dirty.kind = DirtyPromptState::Kind::CloseProject;
-  context_.prompts.dirty.project_index = index;
-  context_.prompts.dirty.dirty_tabs = dirty_tabs;
-  context_.prompts.dirty.dirty_count = dirty_tabs.size();
-  context_.prompts.dirty.path.clear();
-  context_.prompts.dirty.selected_action = 0;
-  context_.current_project_state.surface.focus = FocusTarget::Overlay;
-  RequestPromptRedraw();
+  MakePromptSurfaceService().ShowDirtyPromptForProject(index, dirty_tabs, dirty_tabs.size());
 }
 
 void WorkspaceShell::ShowDirtyPromptForQuit() {
@@ -89,18 +49,10 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
     dirty_count += DirtyEditorTabIndicesForProject(i).size();
   }
 
-  RequestPromptRedraw();
-  context_.prompts.dirty_visible = true;
-  context_.prompts.dirty_previous_focus = context_.current_project_state.surface.focus;
-  context_.prompts.dirty.kind = DirtyPromptState::Kind::Quit;
-  context_.prompts.dirty.tab_index = context_.current_project_state.active_tab_index;
-  context_.prompts.dirty.project_index = context_.project_catalog.active_index;
-  context_.prompts.dirty.dirty_tabs = DirtyEditorTabIndices();
-  context_.prompts.dirty.dirty_count = dirty_count;
-  context_.prompts.dirty.path.clear();
-  context_.prompts.dirty.selected_action = 0;
-  context_.current_project_state.surface.focus = FocusTarget::Overlay;
-  RequestPromptRedraw();
+  MakePromptSurfaceService().ShowDirtyPromptForQuit(context_.current_project_state.active_tab_index,
+                                                    context_.project_catalog.active_index,
+                                                    DirtyEditorTabIndices(),
+                                                    dirty_count);
 }
 
 void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
