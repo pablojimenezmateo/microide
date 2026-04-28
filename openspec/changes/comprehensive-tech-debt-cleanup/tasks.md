@@ -42,7 +42,7 @@
 ## 7. PromptSurfaceService, SidebarService, ProjectCatalogService
 
 - [ ] 7.1 Add `PromptSurfaceService` owning prompt + dirty-prompt + path-mutation prompt lifecycle. Migrate `WorkspaceCommandPromptCoordinator`, `WorkspaceDirtyPromptCoordinator`, and `WorkspacePathMutationCoordinator*` against it.
-- [ ] 7.2 Add `SidebarService` owning sidebar mode, refresh, and open-or-select. Migrate `WorkspaceSidebarCoordinator*` against it; remove direct shell access from sidebar mouse coordinators.
+- [x] 7.2 Add `SidebarService` owning sidebar mode, refresh, and open-or-select. Migrate `WorkspaceSidebarCoordinator*` against it; remove direct shell access from sidebar mouse coordinators.
 - [ ] 7.3 Add `ProjectCatalogService` owning open projects, switch, close, project-state activation. Migrate `WorkspaceProjectCatalogCoordinator` and `WorkspaceProjectStateCoordinator` against it; route `LoadProjectState`/`StoreCurrentProjectState` through this service.
 - [ ] 7.4 For each of 7.1–7.3, capture `MICROIDE_TRACE_REDRAW` evidence on representative sessions; attach to change record.
 
