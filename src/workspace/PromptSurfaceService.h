@@ -30,6 +30,10 @@ class PromptSurfaceService {
                               std::size_t active_project_index,
                               std::vector<std::size_t> dirty_tabs,
                               std::size_t dirty_count);
+  void ShowDirtyPathPrompt(DirtyPromptState::Kind kind,
+                           std::vector<std::size_t> dirty_tabs,
+                           std::size_t dirty_count,
+                           const std::filesystem::path& path);
   void DismissDirtyPrompt(bool restore_focus);
   void DismissPromptSurface(bool restore_focus);
   void OpenPromptSurface(PromptSurfaceState::Action action,

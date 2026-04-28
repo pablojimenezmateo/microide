@@ -93,6 +93,22 @@ void PromptSurfaceService::ShowDirtyPromptForQuit(std::size_t active_tab_index,
   operations_.request_prompt_redraw();
 }
 
+void PromptSurfaceService::ShowDirtyPathPrompt(DirtyPromptState::Kind kind,
+                                               std::vector<std::size_t> dirty_tabs,
+                                               std::size_t dirty_count,
+                                               const std::filesystem::path& path) {
+  operations_.request_prompt_redraw();
+  prompts_.dirty_visible = true;
+  prompts_.dirty_previous_focus = state_.surface.focus;
+  prompts_.dirty.kind = kind;
+  prompts_.dirty.dirty_tabs = std::move(dirty_tabs);
+  prompts_.dirty.dirty_count = dirty_count;
+  prompts_.dirty.path = path.lexically_normal();
+  prompts_.dirty.selected_action = 0;
+  state_.surface.focus = FocusTarget::Overlay;
+  operations_.request_prompt_redraw();
+}
+
 void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {
   operations_.request_prompt_redraw();
   prompts_.dirty_visible = false;

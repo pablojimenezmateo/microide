@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <vector>
 
+#include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
@@ -132,14 +133,8 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
   }
 
   if (resolution == DirtyPathResolution::RequirePrompt) {
-    context_.prompts.dirty_visible = true;
-    context_.prompts.dirty_previous_focus = state.surface.focus;
-    context_.prompts.dirty.kind = prompt_kind;
-    context_.prompts.dirty.dirty_tabs = DirtyTabIndicesForPath(path);
-    context_.prompts.dirty.dirty_count = dirty_targets.size();
-    context_.prompts.dirty.path = path.lexically_normal();
-    context_.prompts.dirty.selected_action = 0;
-    state.surface.focus = FocusTarget::Overlay;
+    prompt_surfaces_.ShowDirtyPathPrompt(prompt_kind, DirtyTabIndicesForPath(path),
+                                         dirty_targets.size(), path);
     return false;
   }
 
