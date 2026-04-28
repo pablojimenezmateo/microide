@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "workspace/EditorTabService.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -34,90 +36,11 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {
-  if (index >= context_.current_project_state.open_tabs.size()) {
-    return;
-  }
-
-  if (context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() && context_.current_project_state.active_tab_index != index) {
-    SyncActiveEditorTab();
-  }
-
-  context_.current_project_state.active_tab_index = index;
-  auto& tab = context_.current_project_state.open_tabs[index];
-  if (tab.kind == TabEntry::Kind::Editor) {
-    if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
-      if (!EnsureEditorTabLoaded(tab)) {
-        return;
-      }
-      NormalizeEditorSplitTree(*tab.editor_state);
-      editor::TextViewport* active_view =
-          FindEditorView(*tab.editor_state, tab.editor_state->active_leaf_id);
-      if (active_view == nullptr && !tab.editor_state->views.empty()) {
-        tab.editor_state->active_leaf_id = tab.editor_state->views.front().leaf_id;
-        active_view = &tab.editor_state->views.front().viewport;
-      }
-      if (active_view != nullptr) {
-        context_.current_project_state.text_viewport = *active_view;
-        ApplyEditorPreferences(context_.current_project_state.text_viewport);
-      }
-    } else {
-      editor::TextViewport loaded_view;
-      if (!loaded_view.OpenFile(tab.path)) {
-        return;
-      }
-      ApplyEditorPreferences(loaded_view);
-      context_.current_project_state.text_viewport = loaded_view;
-      tab.editor_state = MakeEditorTabState(loaded_view);
-    }
-  }
-  SyncActiveEditorTabMetadata();
-  if (tab.kind == TabEntry::Kind::Compare) {
-    RevealActiveCompareSelection();
-  } else if (tab.kind == TabEntry::Kind::Merge) {
-    RevealActiveMergeSelection();
-  } else if (tab.kind == TabEntry::Kind::Editor && !context_.current_project_state.text_viewport.path().empty()) {
-    context_.current_project_state.directory_tree.SelectPath(context_.current_project_state.text_viewport.path().lexically_normal());
-    RevealSelectedTreeSidebarLine();
-  }
-  EnsureActiveTabVisible();
-  context_.current_project_state.surface.focus = FocusTarget::Editor;
-  ResetCaretBlink();
-  RequestActiveTabRedraw(tab.kind == TabEntry::Kind::Editor && !context_.current_project_state.text_viewport.path().empty());
+  MakeEditorTabService().Activate(index);
 }
 
 void WorkspaceShell::SyncActiveEditorTab() {
-  if (context_.current_project_state.active_tab_index >= context_.current_project_state.open_tabs.size()) {
-    return;
-  }
-
-  auto& tab = context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index];
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-    return;
-  }
-
-  if (tab.editor_state->views.empty()) {
-    tab.editor_state = MakeEditorTabState(context_.current_project_state.text_viewport);
-    return;
-  }
-
-  NormalizeEditorSplitTree(*tab.editor_state);
-  if (auto* active_view = FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
-      active_view != nullptr) {
-    if (active_view->needs_restore) {
-      tab.path = EditorViewPath(*active_view);
-      tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
-      return;
-    }
-    active_view->restored_path = active_view->viewport.path().lexically_normal();
-    active_view->restored_cursor_line = active_view->viewport.cursor_line();
-    active_view->restored_cursor_column = active_view->viewport.cursor_column();
-    active_view->restored_scroll_line = active_view->viewport.scroll_line();
-    active_view->restored_horizontal_scroll = active_view->viewport.horizontal_scroll();
-    active_view->needs_restore = false;
-  }
-  if (context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() && &tab == &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index]) {
-    SyncActiveEditorTabMetadata();
-  }
+  MakeEditorTabService().SyncActiveEditorTab();
 }
 
 bool WorkspaceShell::ActiveTabIsEditor() const {
@@ -281,14 +204,7 @@ bool WorkspaceShell::EnsureEditorTabLoaded(TabEntry& tab) {
 }
 
 bool WorkspaceShell::ActivateCurrentTabAfterStateLoad() {
-  if (context_.current_project_state.open_tabs.empty()) {
-    return true;
-  }
-
-  const std::size_t active_index = std::min(context_.current_project_state.active_tab_index, context_.current_project_state.open_tabs.size() - 1);
-  context_.current_project_state.active_tab_index = context_.current_project_state.open_tabs.size();
-  ActivateTab(active_index);
-  return context_.current_project_state.active_tab_index == active_index;
+  return MakeEditorTabService().ActivateCurrentTabAfterStateLoad();
 }
 
 bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewport) {
@@ -463,91 +379,7 @@ void WorkspaceShell::CloseAllTabs() {
 }
 
 void WorkspaceShell::CloseTab(std::size_t index) {
-  if (index >= context_.current_project_state.open_tabs.size()) {
-    return;
-  }
-  const bool closing_active = index == context_.current_project_state.active_tab_index;
-  const TabEntry& closing_tab = context_.current_project_state.open_tabs[index];
-
-  if (context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() && index != context_.current_project_state.active_tab_index) {
-    SyncActiveEditorTab();
-  }
-
-  if (closing_tab.kind == TabEntry::Kind::Editor && closing_tab.editor_state.has_value()) {
-    for (const auto& view : closing_tab.editor_state->views) {
-      const std::filesystem::path path = EditorViewPath(view);
-      if (!path.empty() && CountOpenBufferViews(path) == 1) {
-        NotifyLspBufferClose(path);
-      }
-    }
-  } else if (closing_tab.kind == TabEntry::Kind::Compare && closing_tab.compare.has_value()) {
-    const auto& compare_tab = *closing_tab.compare;
-    if (compare_tab.right_editable && !compare_tab.right_viewport.path().empty() &&
-        CountOpenBufferViews(compare_tab.right_viewport.path()) == 1) {
-      NotifyLspBufferClose(compare_tab.right_viewport.path());
-    }
-  } else if (closing_tab.kind == TabEntry::Kind::Merge && closing_tab.merge.has_value()) {
-    const auto& merge_tab = *closing_tab.merge;
-    if (!merge_tab.result_viewport.path().empty() &&
-        CountOpenBufferViews(merge_tab.result_viewport.path()) == 1) {
-      NotifyLspBufferClose(merge_tab.result_viewport.path());
-    }
-  }
-
-  context_.current_project_state.open_tabs.erase(context_.current_project_state.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
-
-  if (context_.current_project_state.open_tabs.empty()) {
-    context_.current_project_state.active_tab_index = 0;
-    context_.current_project_state.tab_scroll_index = 0;
-    context_.current_project_state.text_viewport.SetPlaceholderText(
-        "microide\n\n"
-        "Project loaded.\n"
-        "Use the sidebar to open files.\n");
-    context_.current_project_state.surface.focus = FocusTarget::Editor;
-    RequestActiveTabRedraw(false);
-    return;
-  }
-
-  if (index < context_.current_project_state.active_tab_index) {
-    --context_.current_project_state.active_tab_index;
-  } else if (index == context_.current_project_state.active_tab_index) {
-    context_.current_project_state.active_tab_index = std::min(index, context_.current_project_state.open_tabs.size() - 1);
-    auto& tab = context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-        !tab.editor_state->views.empty()) {
-      if (!EnsureEditorTabLoaded(tab)) {
-      } else {
-        NormalizeEditorSplitTree(*tab.editor_state);
-        if (auto* active_view = FindEditorView(*tab.editor_state, tab.editor_state->active_leaf_id);
-            active_view != nullptr) {
-          context_.current_project_state.text_viewport = *active_view;
-          ApplyEditorPreferences(context_.current_project_state.text_viewport);
-        }
-      }
-    } else if (tab.kind == TabEntry::Kind::Editor) {
-      editor::TextViewport loaded_view;
-      if (!loaded_view.OpenFile(tab.path)) {
-      } else {
-        ApplyEditorPreferences(loaded_view);
-        context_.current_project_state.text_viewport = loaded_view;
-        tab.editor_state = MakeEditorTabState(loaded_view);
-      }
-    }
-    if (!tab.path.empty()) {
-      context_.current_project_state.directory_tree.SelectPath(tab.path);
-      RevealSelectedTreeSidebarLine();
-    }
-    context_.current_project_state.surface.focus = FocusTarget::Editor;
-  }
-
-  context_.current_project_state.tab_scroll_index =
-      std::clamp(context_.current_project_state.tab_scroll_index, 0, std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1));
-  EnsureActiveTabVisible();
-  if (closing_active) {
-    RequestActiveTabRedraw(!context_.current_project_state.text_viewport.path().empty());
-  } else {
-    RequestTabStripRedraw();
-  }
+  MakeEditorTabService().Close(index);
 }
 
 }  // namespace microide::workspace

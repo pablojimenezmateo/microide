@@ -27,6 +27,18 @@ std::vector<std::size_t> EditorTabService::DirtyIndicesForProject(std::size_t pr
   return coordinator_.DirtyIndicesForProject(project_index);
 }
 
+void EditorTabService::Activate(std::size_t index) {
+  coordinator_.Activate(index);
+}
+
+void EditorTabService::SyncActiveEditorTab() {
+  coordinator_.SyncActiveEditorTab();
+}
+
+bool EditorTabService::ActivateCurrentTabAfterStateLoad() {
+  return coordinator_.ActivateCurrentTabAfterStateLoad();
+}
+
 void EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
   coordinator_.ReloadCleanEditorTabsForPath(path);
 }
@@ -37,6 +49,21 @@ bool EditorTabService::OpenUntitled() {
 
 bool EditorTabService::OpenFileInNewTab(const std::filesystem::path& path) {
   return coordinator_.OpenFileInNewTab(path);
+}
+
+bool EditorTabService::OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
+                                                   std::string_view content,
+                                                   std::string_view title) {
+  return coordinator_.OpenVirtualDocumentInNewTab(virtual_path, content, title);
+}
+
+void EditorTabService::ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
+                                                 std::string_view content) {
+  coordinator_.ReloadVirtualDocumentTabs(virtual_path, content);
+}
+
+void EditorTabService::Close(std::size_t index) {
+  coordinator_.Close(index);
 }
 
 bool EditorTabService::MoveActiveTo(std::size_t index) {

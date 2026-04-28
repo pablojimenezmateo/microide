@@ -18,14 +18,25 @@ class TabCoordinator {
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_save;
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_open;
+    std::function<void(const std::filesystem::path&)> notify_lsp_buffer_close;
+    std::function<std::size_t(const std::filesystem::path&)> count_open_buffer_views;
     std::function<bool(const std::filesystem::path&, editor::TextViewport&, std::string*)>
         prepare_editor_view_for_save;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<TabEntry::EditorTabState(const editor::TextViewport&)> make_editor_tab_state;
     std::function<std::filesystem::path(const TabEntry::EditorTabState::EditorViewState&)>
         editor_view_path;
+    std::function<bool(TabEntry::EditorTabState::EditorViewState&)> restore_editor_view;
+    std::function<TabEntry::EditorTabState::EditorViewState*(TabEntry::EditorTabState&,
+                                                             std::size_t)>
+        find_editor_view_state;
+    std::function<editor::TextViewport*(TabEntry::EditorTabState&, std::size_t)> find_editor_view;
     std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
+    std::function<void()> sync_active_editor_tab;
     std::function<void()> sync_active_editor_tab_metadata;
+    std::function<void()> reveal_selected_tree_sidebar_line;
+    std::function<void()> reveal_active_compare_selection;
+    std::function<void()> reveal_active_merge_selection;
     std::function<void()> ensure_active_tab_visible;
     std::function<void()> reset_caret_blink;
     std::function<void(bool)> request_active_tab_redraw;
@@ -43,9 +54,18 @@ class TabCoordinator {
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  void Activate(std::size_t index);
+  void SyncActiveEditorTab();
+  bool ActivateCurrentTabAfterStateLoad();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
+  bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
+                                   std::string_view content,
+                                   std::string_view title);
+  void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
+                                 std::string_view content);
+  void Close(std::size_t index);
   bool MoveActiveTo(std::size_t index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
@@ -54,6 +74,8 @@ class TabCoordinator {
   static bool TabStateIsDirty(const TabEntry& tab);
 
  private:
+  bool EnsureEditorTabLoaded(TabEntry& tab);
+
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
   Operations operations_;

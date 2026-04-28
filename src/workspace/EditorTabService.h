@@ -20,9 +20,18 @@ class EditorTabService {
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  void Activate(std::size_t index);
+  void SyncActiveEditorTab();
+  bool ActivateCurrentTabAfterStateLoad();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
+  bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
+                                   std::string_view content,
+                                   std::string_view title);
+  void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
+                                 std::string_view content);
+  void Close(std::size_t index);
   bool MoveActiveTo(std::size_t index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
