@@ -5,6 +5,7 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
+#include "workspace/ProjectCatalogService.h"
 
 namespace microide::workspace {
 
@@ -35,6 +36,10 @@ ProjectCatalogCoordinator WorkspaceShell::MakeProjectCatalogCoordinator() {
           .ensure_active_project_visible = [this]() { EnsureActiveProjectVisible(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
       });
+}
+
+ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
+  return ProjectCatalogService(MakeProjectCatalogCoordinator());
 }
 
 bool WorkspaceShell::HasActiveProjectCatalogEntry() const {
@@ -81,7 +86,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     }
   }
 
-  return MakeProjectCatalogCoordinator().Open(normalized_root, restore_persistence, log_feedback);
+  return MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback);
 }
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
@@ -95,7 +100,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
     return true;
   }
 
-  return MakeProjectCatalogCoordinator().Switch(index);
+  return MakeProjectCatalogService().Switch(index);
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
@@ -127,7 +132,7 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
-  MakeProjectCatalogCoordinator().Close(index);
+  MakeProjectCatalogService().Close(index);
 }
 
 }  // namespace microide::workspace

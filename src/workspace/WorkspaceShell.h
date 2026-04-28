@@ -79,6 +79,7 @@ namespace microide::workspace {
 
 class WorkspaceActionContext;
 class PromptSurfaceService;
+class ProjectCatalogService;
 class ProjectCatalogCoordinator;
 class PersistenceCoordinator;
 class CommandPromptCoordinator;
@@ -659,6 +660,7 @@ class WorkspaceShell {
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
   ProjectCatalogCoordinator MakeProjectCatalogCoordinator();
+  ProjectCatalogService MakeProjectCatalogService();
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
   CommandPromptCoordinator MakeCommandPromptCoordinator();
