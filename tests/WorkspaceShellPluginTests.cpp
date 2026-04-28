@@ -2,7 +2,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "platform/AsyncSubprocess.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceShellTesting.h"
 
 #include <chrono>

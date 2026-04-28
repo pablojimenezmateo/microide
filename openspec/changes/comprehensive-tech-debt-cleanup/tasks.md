@@ -22,8 +22,8 @@
 ## 4. Persistence Cutover
 
 - [x] 4.1 Land a one-shot importer that reads any pre-existing legacy text-format files (`project.state`, `user.config`, `session.workspace`, `chat.conversations`), writes the equivalent structured file via the atomic writer, verifies the new file by re-reading and CRC-checking it, and only then renames the legacy file to `<name>.legacy`.
-- [ ] 4.2 Delete `WorkspacePersistenceFormat.{h,cpp}` legacy reader code and any `WorkspacePersistenceCoordinator*` paths that depend on it; replace with calls into the new `PersistenceService` (introduced in step 5).
-- [ ] 4.3 Capture `MICROIDE_STARTUP_TRACE` before/after on a representative project; confirm load step is no slower than the legacy text-format load.
+- [x] 4.2 Delete `WorkspacePersistenceFormat.{h,cpp}` legacy reader code and any `WorkspacePersistenceCoordinator*` paths that depend on it; replace with calls into the new `PersistenceService` (introduced in step 5).
+- [x] 4.3 Capture `MICROIDE_STARTUP_TRACE` before/after on a representative project; confirm load step is no slower than the legacy text-format load.
 
 ## 5. PersistenceService
 

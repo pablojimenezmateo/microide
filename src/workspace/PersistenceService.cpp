@@ -10,6 +10,7 @@
 #include "persistence/PersistedRecordReader.h"
 #include "persistence/PersistedRecordWriter.h"
 #include "util/TextFileIO.h"
+#include "workspace/WorkspacePersistenceLegacyFormat.h"
 
 namespace microide::workspace {
 namespace {
@@ -62,19 +63,17 @@ bool ImportLegacyTextFile(const std::filesystem::path& source_path,
   return true;
 }
 
-template <typename PersistedState, typename DecodeBinary, typename ParseLegacyText>
-bool LoadStructuredRecordOrLegacyText(const std::filesystem::path& path,
-                                      DecodeBinary decode_binary,
-                                      ParseLegacyText parse_legacy_text,
-                                      PersistedState* out) {
+template <typename PersistedState, typename DecodeBinary>
+bool LoadStructuredRecord(const std::filesystem::path& path,
+                          DecodeBinary decode_binary,
+                          PersistedState* out) {
   if (out == nullptr) {
     return false;
   }
   if (const auto record = persistence::PersistedRecordReader::ReadFile(path); record.has_value()) {
     return decode_binary(record->body, out);
   }
-  const auto text = util::ReadTextFile(path);
-  return text.has_value() && parse_legacy_text(*text, out);
+  return false;
 }
 
 bool ParseLegacyChatConversationText(std::string_view text, PersistedChatState* chat) {
@@ -108,8 +107,8 @@ bool TryImportLegacyConversationRegistry(const std::filesystem::path& legacy_cha
   }
 
   PersistedProjectSessionState merged;
-  if (!LoadStructuredRecordOrLegacyText<PersistedProjectSessionState>(
-          target_session_path, DecodeProjectSessionRecord, ParseProjectSessionText, &merged)) {
+  if (!LoadStructuredRecord<PersistedProjectSessionState>(target_session_path,
+                                                          DecodeProjectSessionRecord, &merged)) {
     merged.sidebar_visible = true;
     merged.sidebar_width = 288.0f;
     merged.bottom_panel_height = 184.0f;
@@ -154,8 +153,7 @@ bool PersistenceService::LoadUserConfig(const std::filesystem::path& target_path
                                                    DecodeUserConfigRecord);
   }
 
-  return LoadStructuredRecordOrLegacyText<PersistedUserConfigState>(
-      target_path, DecodeUserConfigRecord, ParseUserConfigText, state);
+  return LoadStructuredRecord<PersistedUserConfigState>(target_path, DecodeUserConfigRecord, state);
 }
 
 bool PersistenceService::SaveUserConfig(const std::filesystem::path& target_path,
@@ -189,8 +187,8 @@ bool PersistenceService::LoadProjectConfig(const std::filesystem::path& target_p
                                                       DecodeProjectConfigRecord);
   }
 
-  return LoadStructuredRecordOrLegacyText<PersistedProjectConfigState>(
-      target_path, DecodeProjectConfigRecord, ParseProjectConfigText, state);
+  return LoadStructuredRecord<PersistedProjectConfigState>(target_path, DecodeProjectConfigRecord,
+                                                           state);
 }
 
 bool PersistenceService::SaveProjectConfig(const std::filesystem::path& target_path,
@@ -230,8 +228,8 @@ bool PersistenceService::LoadProjectSession(const std::filesystem::path& target_
                                                        DecodeProjectSessionRecord);
   }
 
-  return LoadStructuredRecordOrLegacyText<PersistedProjectSessionState>(
-      target_path, DecodeProjectSessionRecord, ParseProjectSessionText, state);
+  return LoadStructuredRecord<PersistedProjectSessionState>(target_path, DecodeProjectSessionRecord,
+                                                            state);
 }
 
 bool PersistenceService::SaveProjectSession(const std::filesystem::path& target_path,
@@ -265,8 +263,8 @@ bool PersistenceService::LoadWorkspaceSession(const std::filesystem::path& targe
                                                          DecodeWorkspaceSessionRecord);
   }
 
-  return LoadStructuredRecordOrLegacyText<PersistedWorkspaceSessionState>(
-      target_path, DecodeWorkspaceSessionRecord, ParseWorkspaceSessionText, state);
+  return LoadStructuredRecord<PersistedWorkspaceSessionState>(target_path, DecodeWorkspaceSessionRecord,
+                                                              state);
 }
 
 bool PersistenceService::SaveWorkspaceSession(const std::filesystem::path& target_path,

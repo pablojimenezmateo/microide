@@ -1,4 +1,4 @@
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspacePersistenceLegacyFormat.h"
 
 #include <algorithm>
 #include <sstream>

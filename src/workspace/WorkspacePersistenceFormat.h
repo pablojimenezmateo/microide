@@ -145,18 +145,6 @@ struct PersistedWorkspaceSessionState {
   std::size_t active_project_index = 0;
 };
 
-std::string EncodeSessionNodePath(const std::vector<std::size_t>& path);
-std::optional<std::vector<std::size_t>> DecodeSessionNodePath(std::string_view text);
-
-bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state);
-std::string SerializeUserConfig(const PersistedUserConfigState& state);
-bool ParseProjectConfigText(std::string_view text, PersistedProjectConfigState* state);
-std::string SerializeProjectConfig(const PersistedProjectConfigState& state);
-bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState* state);
-std::string SerializeProjectSession(const PersistedProjectSessionState& state);
-bool ParseWorkspaceSessionText(std::string_view text, PersistedWorkspaceSessionState* state);
-std::string SerializeWorkspaceSession(const PersistedWorkspaceSessionState& state);
-
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state,
                             std::vector<std::byte>* out);
 bool DecodeUserConfigRecord(std::span<const std::byte> input,

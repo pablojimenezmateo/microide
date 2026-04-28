@@ -3,7 +3,7 @@
 #include "plugin/PluginHost.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceStatusRegistry.h"

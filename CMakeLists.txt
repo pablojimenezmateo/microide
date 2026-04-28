@@ -255,7 +255,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLayout.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspaceTaskRuntime.cpp
-  src/workspace/WorkspacePersistenceFormat.cpp
+  src/workspace/WorkspacePersistenceLegacyFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/PersistenceService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp

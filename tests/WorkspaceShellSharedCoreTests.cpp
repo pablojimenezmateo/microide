@@ -6,7 +6,7 @@
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"

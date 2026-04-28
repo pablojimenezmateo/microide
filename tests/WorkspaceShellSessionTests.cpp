@@ -2,7 +2,7 @@
 
 #include "platform/AppDirectories.h"
 #include "workspace/WorkspaceShellTesting.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "project/GitCompareService.h"
 
