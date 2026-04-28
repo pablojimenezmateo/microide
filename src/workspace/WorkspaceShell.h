@@ -968,6 +968,7 @@ class WorkspaceShell {
   void RefreshGitSidebar();
   bool RefreshProblemsSidebar();
   bool RefreshTestsSidebar();
+  bool RefreshTestsSidebarState();
   bool RefreshPluginSidebar();
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;

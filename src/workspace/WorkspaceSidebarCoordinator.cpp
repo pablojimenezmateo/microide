@@ -288,7 +288,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputePluginSidebarListLayout(rect, count);
               },
-          .refresh_tests_sidebar_state = [this]() { return RefreshTestsSidebar(); },
+          .refresh_tests_sidebar_state = [this]() { return RefreshTestsSidebarState(); },
           .run_tests = [this](const std::vector<std::string>& test_ids) {
             return RunTests(test_ids, nullptr);
           },
@@ -356,6 +356,10 @@ bool WorkspaceShell::RefreshProblemsSidebar() {
 }
 
 bool WorkspaceShell::RefreshTestsSidebar() {
+  return MakeSidebarService().RefreshTests();
+}
+
+bool WorkspaceShell::RefreshTestsSidebarState() {
   const std::string previous_id =
       context_.current_project_state.sidebar.tests.selected_index <
               context_.current_project_state.sidebar.tests.entries.size()
