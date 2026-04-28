@@ -224,6 +224,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellInput.cpp
   src/workspace/WorkspaceShellInteraction.cpp
   src/workspace/WorkspaceShellMenu.cpp
+  src/workspace/WorkspaceShellCommandPrompt.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellMouseMotion.cpp
   src/workspace/WorkspaceShellOverlay.cpp
