@@ -33,23 +33,15 @@ void WorkspaceShell::SyncActiveEditorTab() {
 }
 
 bool WorkspaceShell::ActiveTabIsEditor() const {
-  return context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() &&
-         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].kind == TabEntry::Kind::Editor &&
-         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].editor_state.has_value();
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().ActiveTabIsEditor();
 }
 
 WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::ActiveEditorTab() {
-  if (!ActiveTabIsEditor()) {
-    return nullptr;
-  }
-  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].editor_state.value();
+  return MakeEditorTabService().ActiveEditorTab();
 }
 
 const WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::ActiveEditorTab() const {
-  if (!ActiveTabIsEditor()) {
-    return nullptr;
-  }
-  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].editor_state.value();
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().ActiveEditorTab();
 }
 
 WorkspaceShell::TabEntry::EditorTabState WorkspaceShell::MakeEditorTabState(
@@ -160,26 +152,11 @@ const editor::TextViewport* WorkspaceShell::FindEditorView(
 }
 
 editor::TextViewport* WorkspaceShell::ActiveEditorViewport() {
-  auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return &context_.current_project_state.welcome_surface.viewport;
-  }
-  if (auto* viewport = FindEditorView(*editor_tab, editor_tab->active_leaf_id); viewport != nullptr) {
-    return viewport;
-  }
-  return &editor_tab->views.front().viewport;
+  return MakeEditorTabService().ActiveEditorViewport();
 }
 
 const editor::TextViewport* WorkspaceShell::ActiveEditorViewport() const {
-  const auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return &context_.current_project_state.welcome_surface.viewport;
-  }
-  if (const auto* viewport = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
-      viewport != nullptr) {
-    return viewport;
-  }
-  return &editor_tab->views.front().viewport;
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().ActiveEditorViewport();
 }
 
 editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() {

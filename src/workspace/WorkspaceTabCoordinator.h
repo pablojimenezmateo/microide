@@ -48,6 +48,11 @@ class TabCoordinator {
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  bool ActiveTabIsEditor() const;
+  TabEntry::EditorTabState* ActiveEditorTab();
+  const TabEntry::EditorTabState* ActiveEditorTab() const;
+  editor::TextViewport* ActiveEditorViewport();
+  const editor::TextViewport* ActiveEditorViewport() const;
   void Activate(std::size_t index);
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
@@ -92,8 +97,6 @@ class TabCoordinator {
   const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
       const TabEntry::EditorTabState& editor_tab,
       std::size_t leaf_id) const;
-  TabEntry::EditorTabState* ActiveEditorTab();
-  const TabEntry::EditorTabState* ActiveEditorTab() const;
   void CollectEditorLeafOrder(const TabEntry::EditorTabState::EditorSplitNode* node,
                               std::vector<std::size_t>& order) const;
   std::vector<std::size_t> EditorLeafOrder(const TabEntry::EditorTabState& editor_tab) const;

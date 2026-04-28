@@ -148,28 +148,6 @@ bool TabCoordinator::RestoreEditorView(TabEntry::EditorTabState::EditorViewState
   return true;
 }
 
-TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
-  if (state_.active_tab_index >= state_.open_tabs.size()) {
-    return nullptr;
-  }
-  auto& tab = state_.open_tabs[state_.active_tab_index];
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-    return nullptr;
-  }
-  return &tab.editor_state.value();
-}
-
-const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
-  if (state_.active_tab_index >= state_.open_tabs.size()) {
-    return nullptr;
-  }
-  const auto& tab = state_.open_tabs[state_.active_tab_index];
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-    return nullptr;
-  }
-  return &tab.editor_state.value();
-}
-
 void TabCoordinator::CollectEditorLeafOrder(
     const TabEntry::EditorTabState::EditorSplitNode* node,
     std::vector<std::size_t>& order) const {
@@ -331,6 +309,53 @@ std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t proj
     }
   }
   return dirty_tabs;
+}
+
+bool TabCoordinator::ActiveTabIsEditor() const {
+  return state_.active_tab_index < state_.open_tabs.size() &&
+         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Editor &&
+         state_.open_tabs[state_.active_tab_index].editor_state.has_value();
+}
+
+TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
+  if (!ActiveTabIsEditor()) {
+    return nullptr;
+  }
+  return &state_.open_tabs[state_.active_tab_index].editor_state.value();
+}
+
+const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
+  if (!ActiveTabIsEditor()) {
+    return nullptr;
+  }
+  return &state_.open_tabs[state_.active_tab_index].editor_state.value();
+}
+
+editor::TextViewport* TabCoordinator::ActiveEditorViewport() {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.empty()) {
+    return &state_.welcome_surface.viewport;
+  }
+  if (auto* viewport = operations_.find_editor_view(*editor_tab, editor_tab->active_leaf_id);
+      viewport != nullptr) {
+    return viewport;
+  }
+  return &editor_tab->views.front().viewport;
+}
+
+const editor::TextViewport* TabCoordinator::ActiveEditorViewport() const {
+  const auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.empty()) {
+    return &state_.welcome_surface.viewport;
+  }
+  const auto it =
+      std::find_if(editor_tab->views.begin(), editor_tab->views.end(), [&](const auto& view) {
+        return view.leaf_id == editor_tab->active_leaf_id;
+      });
+  if (it != editor_tab->views.end()) {
+    return &it->viewport;
+  }
+  return &editor_tab->views.front().viewport;
 }
 
 void TabCoordinator::Activate(std::size_t index) {

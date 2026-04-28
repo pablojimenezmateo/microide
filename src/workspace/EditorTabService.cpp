@@ -27,6 +27,26 @@ std::vector<std::size_t> EditorTabService::DirtyIndicesForProject(std::size_t pr
   return coordinator_.DirtyIndicesForProject(project_index);
 }
 
+bool EditorTabService::ActiveTabIsEditor() const {
+  return coordinator_.ActiveTabIsEditor();
+}
+
+TabEntry::EditorTabState* EditorTabService::ActiveEditorTab() {
+  return coordinator_.ActiveEditorTab();
+}
+
+const TabEntry::EditorTabState* EditorTabService::ActiveEditorTab() const {
+  return coordinator_.ActiveEditorTab();
+}
+
+editor::TextViewport* EditorTabService::ActiveEditorViewport() {
+  return coordinator_.ActiveEditorViewport();
+}
+
+const editor::TextViewport* EditorTabService::ActiveEditorViewport() const {
+  return coordinator_.ActiveEditorViewport();
+}
+
 void EditorTabService::Activate(std::size_t index) {
   coordinator_.Activate(index);
 }

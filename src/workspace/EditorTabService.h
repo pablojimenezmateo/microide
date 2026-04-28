@@ -20,6 +20,11 @@ class EditorTabService {
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  bool ActiveTabIsEditor() const;
+  TabEntry::EditorTabState* ActiveEditorTab();
+  const TabEntry::EditorTabState* ActiveEditorTab() const;
+  editor::TextViewport* ActiveEditorViewport();
+  const editor::TextViewport* ActiveEditorViewport() const;
   void Activate(std::size_t index);
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
