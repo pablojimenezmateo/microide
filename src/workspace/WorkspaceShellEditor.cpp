@@ -6,17 +6,6 @@
 
 namespace microide::workspace {
 
-namespace {
-
-std::string EditorTabLabel(const editor::TextViewport& viewport) {
-  if (!viewport.path().empty()) {
-    return viewport.path().filename().string();
-  }
-  return viewport.is_placeholder() ? "Welcome" : "Untitled";
-}
-
-}  // namespace
-
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
   viewport.SetTabSize(context_.current_project_state.editor_preferences.tab_size);
   viewport.SetIndentWidth(context_.current_project_state.editor_preferences.indent_width);
@@ -92,25 +81,7 @@ WorkspaceShell::MakeEditorLeafNode(std::size_t leaf_id, float size_fraction) {
 }
 
 void WorkspaceShell::SyncActiveEditorTabMetadata() {
-  if (context_.current_project_state.active_tab_index >= context_.current_project_state.open_tabs.size()) {
-    return;
-  }
-
-  auto& tab = context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index];
-  if (tab.kind != TabEntry::Kind::Editor) {
-    return;
-  }
-
-  const editor::TextViewport* viewport = ActiveEditorViewport();
-  const std::filesystem::path active_path =
-      viewport != nullptr ? viewport->path().lexically_normal() : std::filesystem::path{};
-  const bool path_changed = tab.path != active_path;
-  tab.path = active_path;
-  tab.title = viewport != nullptr ? EditorTabLabel(*viewport) : "untitled";
-  if (path_changed && !active_path.empty()) {
-    context_.current_project_state.directory_tree.SelectPath(active_path);
-    RevealSelectedTreeSidebarLine();
-  }
+  MakeEditorTabService().SyncActiveEditorTabMetadata();
 }
 
 WorkspaceShell::TabEntry::EditorTabState::EditorViewState* WorkspaceShell::FindEditorViewState(

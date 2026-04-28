@@ -281,7 +281,7 @@ void TabCoordinator::Activate(std::size_t index) {
       tab.editor_state = operations_.make_editor_tab_state(loaded_view);
     }
   }
-  operations_.sync_active_editor_tab_metadata();
+  SyncActiveEditorTabMetadata();
   if (tab.kind == TabEntry::Kind::Compare) {
     operations_.reveal_active_compare_selection();
   } else if (tab.kind == TabEntry::Kind::Merge) {
@@ -330,7 +330,7 @@ void TabCoordinator::SyncActiveEditorTab() {
   }
   if (state_.active_tab_index < state_.open_tabs.size() &&
       &tab == &state_.open_tabs[state_.active_tab_index]) {
-    operations_.sync_active_editor_tab_metadata();
+    SyncActiveEditorTabMetadata();
   }
 }
 
@@ -343,6 +343,37 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
   state_.active_tab_index = state_.open_tabs.size();
   Activate(active_index);
   return state_.active_tab_index == active_index;
+}
+
+void TabCoordinator::SyncActiveEditorTabMetadata() {
+  if (state_.active_tab_index >= state_.open_tabs.size()) {
+    return;
+  }
+
+  auto& tab = state_.open_tabs[state_.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor) {
+    return;
+  }
+
+  const editor::TextViewport* viewport = nullptr;
+  if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
+    viewport = operations_.find_editor_view(*tab.editor_state, tab.editor_state->active_leaf_id);
+    if (viewport == nullptr) {
+      viewport = &tab.editor_state->views.front().viewport;
+    }
+  } else {
+    viewport = &state_.text_viewport;
+  }
+
+  const std::filesystem::path active_path =
+      viewport != nullptr ? viewport->path().lexically_normal() : std::filesystem::path{};
+  const bool path_changed = tab.path != active_path;
+  tab.path = active_path;
+  tab.title = viewport != nullptr ? EditorTabLabel(*viewport) : "untitled";
+  if (path_changed && !active_path.empty()) {
+    state_.directory_tree.SelectPath(active_path);
+    operations_.reveal_selected_tree_sidebar_line();
+  }
 }
 
 bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
@@ -427,7 +458,7 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
     }
     if (reloaded_any && i == state_.active_tab_index) {
       operations_.normalize_editor_split_tree(*tab.editor_state);
-      operations_.sync_active_editor_tab_metadata();
+      SyncActiveEditorTabMetadata();
       operations_.request_editor_surface_redraw();
     }
   }
@@ -816,7 +847,7 @@ bool TabCoordinator::ReopenActive() {
     state_.text_viewport = reopened_view;
     tab.editor_state = operations_.make_editor_tab_state(reopened_view);
   }
-  operations_.sync_active_editor_tab_metadata();
+  SyncActiveEditorTabMetadata();
   operations_.invalidate_editor_blame_path(reopen_path);
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
@@ -860,7 +891,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .normalize_editor_split_tree =
               [this](TabEntry::EditorTabState& editor_tab) { NormalizeEditorSplitTree(editor_tab); },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
-          .sync_active_editor_tab_metadata = [this]() { SyncActiveEditorTabMetadata(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },

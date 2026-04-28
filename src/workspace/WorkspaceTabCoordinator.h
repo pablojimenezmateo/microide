@@ -29,7 +29,6 @@ class TabCoordinator {
     std::function<editor::TextViewport*(TabEntry::EditorTabState&, std::size_t)> find_editor_view;
     std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
     std::function<void()> sync_active_editor_tab;
-    std::function<void()> sync_active_editor_tab_metadata;
     std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void()> reveal_active_compare_selection;
     std::function<void()> reveal_active_merge_selection;
@@ -53,6 +52,7 @@ class TabCoordinator {
   void Activate(std::size_t index);
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
+  void SyncActiveEditorTabMetadata();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);

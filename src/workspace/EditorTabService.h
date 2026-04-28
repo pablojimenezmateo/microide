@@ -23,6 +23,7 @@ class EditorTabService {
   void Activate(std::size_t index);
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
+  void SyncActiveEditorTabMetadata();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);

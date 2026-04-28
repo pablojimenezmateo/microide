@@ -39,6 +39,10 @@ bool EditorTabService::ActivateCurrentTabAfterStateLoad() {
   return coordinator_.ActivateCurrentTabAfterStateLoad();
 }
 
+void EditorTabService::SyncActiveEditorTabMetadata() {
+  coordinator_.SyncActiveEditorTabMetadata();
+}
+
 void EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
   coordinator_.ReloadCleanEditorTabsForPath(path);
 }
