@@ -1,12 +1,21 @@
 #include "workspace/WorkspaceShell.h"
 
-#include "util/SingleLineText.h"
 #include "workspace/EditorTabService.h"
+#include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
+
+PromptSurfaceService WorkspaceShell::MakePromptSurfaceService() {
+  return PromptSurfaceService(
+      context_.current_project_state,
+      context_.prompts,
+      PromptSurfaceService::Operations{
+          .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
+      });
+}
 
 void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {
   if (index >= context_.current_project_state.open_tabs.size()) {
@@ -95,18 +104,13 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
 }
 
 void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
-  RequestPromptRedraw();
-  context_.prompts.dirty_visible = false;
-  context_.prompts.dirty = DirtyPromptState{};
-  if (restore_focus) {
-    context_.current_project_state.surface.focus = context_.prompts.dirty_previous_focus;
-  }
-  RequestPromptRedraw();
+  MakePromptSurfaceService().DismissDirtyPrompt(restore_focus);
 }
 
 void WorkspaceShell::ConfirmDirtyPrompt() {
   EditorTabService editor_tabs = MakeEditorTabService();
-  MakeDirtyPromptCoordinator(editor_tabs).Confirm();
+  PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+  MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).Confirm();
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
@@ -191,57 +195,15 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
                                        PromptSurfaceState::Kind kind,
                                        const std::filesystem::path& path,
                                        std::string input) {
-  RequestPromptRedraw();
-  context_.prompts.surface_visible = true;
-  context_.prompts.surface_previous_focus = context_.current_project_state.surface.focus;
-  context_.prompts.surface.kind = kind;
-  context_.prompts.surface.action = action;
-  context_.prompts.surface.path = path.lexically_normal();
-  util::SetSingleLineText(&context_.prompts.surface.input, std::move(input));
-  context_.prompts.surface.detail.clear();
-  context_.prompts.surface.bridge_agent_id.clear();
-  context_.prompts.surface.bridge_request_id.clear();
-  context_.prompts.surface.tool_call_id.clear();
-  context_.prompts.surface.tool_id.clear();
-  context_.prompts.surface.capability_scope.clear();
-  context_.prompts.surface.button_count = 2;
-  context_.prompts.surface.selected_button = 0;
-  context_.current_project_state.surface.focus = FocusTarget::Overlay;
-  RequestPromptRedraw();
+  MakePromptSurfaceService().OpenPromptSurface(action, kind, path, std::move(input));
 }
 
 void WorkspaceShell::OpenExternalUrlPrompt(std::string url) {
-  if (url.empty()) {
-    return;
-  }
-
-  RequestPromptRedraw();
-  context_.prompts.surface_visible = true;
-  context_.prompts.surface_previous_focus = context_.current_project_state.surface.focus;
-  context_.prompts.surface.kind = PromptSurfaceState::Kind::Confirm;
-  context_.prompts.surface.action = PromptSurfaceState::Action::OpenExternalUrl;
-  context_.prompts.surface.path.clear();
-  util::SetSingleLineText(&context_.prompts.surface.input, {});
-  context_.prompts.surface.detail = std::move(url);
-  context_.prompts.surface.bridge_agent_id.clear();
-  context_.prompts.surface.bridge_request_id.clear();
-  context_.prompts.surface.tool_call_id.clear();
-  context_.prompts.surface.tool_id.clear();
-  context_.prompts.surface.capability_scope.clear();
-  context_.prompts.surface.button_count = 2;
-  context_.prompts.surface.selected_button = 0;
-  context_.current_project_state.surface.focus = FocusTarget::Overlay;
-  RequestPromptRedraw();
+  MakePromptSurfaceService().OpenExternalUrlPrompt(std::move(url));
 }
 
 void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
-  RequestPromptRedraw();
-  context_.prompts.surface_visible = false;
-  context_.prompts.surface = PromptSurfaceState{};
-  if (restore_focus) {
-    context_.current_project_state.surface.focus = context_.prompts.surface_previous_focus;
-  }
-  RequestPromptRedraw();
+  MakePromptSurfaceService().DismissPromptSurface(restore_focus);
 }
 
 std::string WorkspaceShell::PromptSurfaceTitle() const {
@@ -347,12 +309,15 @@ bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path
                                                std::string* blocking_label) const {
   auto* shell = const_cast<WorkspaceShell*>(this);
   EditorTabService editor_tabs = shell->MakeEditorTabService();
-  return shell->MakePathMutationCoordinator(editor_tabs).HasDirtyEditorTabsForPath(path, blocking_label);
+  PromptSurfaceService prompt_surfaces = shell->MakePromptSurfaceService();
+  return shell->MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+      .HasDirtyEditorTabsForPath(path, blocking_label);
 }
 
 void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
   EditorTabService editor_tabs = MakeEditorTabService();
-  MakePathMutationCoordinator(editor_tabs).CloseOpenTabsForPath(path);
+  PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+  MakePathMutationCoordinator(editor_tabs, prompt_surfaces).CloseOpenTabsForPath(path);
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
@@ -360,7 +325,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       context_.prompts.surface.action == PromptSurfaceState::Action::OpenExternalUrl) {
     const std::string url = context_.prompts.surface.detail;
     const bool opened = !url.empty() && OpenExternalUrl(url);
-    DismissPromptSurface(!opened);
+    MakePromptSurfaceService().DismissPromptSurface(!opened);
     return;
   }
   if (context_.prompts.surface_visible &&
@@ -376,7 +341,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     return;
   }
   EditorTabService editor_tabs = MakeEditorTabService();
-  MakePathMutationCoordinator(editor_tabs).ConfirmPromptSurface(resolution);
+  PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+  MakePathMutationCoordinator(editor_tabs, prompt_surfaces).ConfirmPromptSurface(resolution);
 }
 
 }  // namespace microide::workspace

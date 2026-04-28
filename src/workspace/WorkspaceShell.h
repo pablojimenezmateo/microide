@@ -78,6 +78,7 @@
 namespace microide::workspace {
 
 class WorkspaceActionContext;
+class PromptSurfaceService;
 class ProjectCatalogCoordinator;
 class PersistenceCoordinator;
 class CommandPromptCoordinator;
@@ -660,9 +661,12 @@ class WorkspaceShell {
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
   CommandPromptCoordinator MakeCommandPromptCoordinator();
-  DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs);
+  PromptSurfaceService MakePromptSurfaceService();
+  DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs,
+                                                    PromptSurfaceService& prompt_surfaces);
   CompareInteractionCoordinator MakeCompareInteractionCoordinator();
-  PathMutationCoordinator MakePathMutationCoordinator(EditorTabService& editor_tabs);
+  PathMutationCoordinator MakePathMutationCoordinator(EditorTabService& editor_tabs,
+                                                      PromptSurfaceService& prompt_surfaces);
   DiffTabCoordinator MakeDiffTabCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   SidebarCoordinator MakeSidebarCoordinator();

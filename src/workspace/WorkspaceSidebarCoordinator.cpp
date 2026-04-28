@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "workspace/EditorTabService.h"
+#include "workspace/PromptSurfaceService.h"
 #include "util/SingleLineText.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
@@ -249,7 +250,9 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .has_dirty_editor_tabs_for_path =
               [this](const std::filesystem::path& path, std::string* blocking_label) {
                 EditorTabService editor_tabs = MakeEditorTabService();
-                return MakePathMutationCoordinator(editor_tabs).HasDirtyEditorTabsForPath(path, blocking_label);
+                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                return MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                    .HasDirtyEditorTabsForPath(path, blocking_label);
               },
           .invalidate_editor_blame_path =
               [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
@@ -258,7 +261,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .close_open_tabs_for_path =
               [this](const std::filesystem::path& path) {
                 EditorTabService editor_tabs = MakeEditorTabService();
-                MakePathMutationCoordinator(editor_tabs).CloseOpenTabsForPath(path);
+                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(editor_tabs, prompt_surfaces).CloseOpenTabsForPath(path);
               },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .compute_tree_sidebar_list_layout =

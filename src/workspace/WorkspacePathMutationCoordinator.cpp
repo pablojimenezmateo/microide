@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "project/FileOperationService.h"
+#include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceShell.h"
 
@@ -11,9 +12,11 @@ namespace microide::workspace {
 
 PathMutationCoordinator::PathMutationCoordinator(WorkspaceContext& context,
                                                  EditorTabService& editor_tabs,
+                                                 PromptSurfaceService& prompt_surfaces,
                                                  Operations operations)
     : context_(context),
       editor_tabs_(editor_tabs),
+      prompt_surfaces_(prompt_surfaces),
       operations_(std::move(operations)) {}
 
 ProjectWorkspaceState& PathMutationCoordinator::CurrentProjectState() {
@@ -31,7 +34,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   const PromptSurfaceState state = context_.prompts.surface;
   if (state.selected_button == 1) {
-    operations_.dismiss_prompt_surface(true);
+    prompt_surfaces_.DismissPromptSurface(true);
     return;
   }
 
@@ -73,9 +76,9 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     }
 
     if (context_.prompts.dirty_visible) {
-      operations_.dismiss_dirty_prompt(false);
+      prompt_surfaces_.DismissDirtyPrompt(false);
     }
-    operations_.dismiss_prompt_surface(false);
+    prompt_surfaces_.DismissPromptSurface(false);
     if (state.action == PromptSurfaceState::Action::CreateFile) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
       operations_.open_file(result.resulting_path);
@@ -98,7 +101,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   if (state.action == PromptSurfaceState::Action::DiscardGitChanges) {
     const bool discarded = operations_.discard_all_git_sidebar_entries();
-    operations_.dismiss_prompt_surface(discarded ? false : true);
+    prompt_surfaces_.DismissPromptSurface(discarded ? false : true);
     if (discarded) {
       CurrentProjectState().surface.focus = FocusTarget::Sidebar;
     }
@@ -116,9 +119,9 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   const std::filesystem::path parent = state.path.parent_path();
   if (context_.prompts.dirty_visible) {
-    operations_.dismiss_dirty_prompt(false);
+    prompt_surfaces_.DismissDirtyPrompt(false);
   }
-  operations_.dismiss_prompt_surface(false);
+  prompt_surfaces_.DismissPromptSurface(false);
   CloseOpenTabsForPath(state.path);
   ClearDiagnosticsForPath(state.path);
   operations_.clear_editor_blame();
@@ -126,13 +129,13 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
   CurrentProjectState().surface.focus = FocusTarget::Sidebar;
 }
 
-PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabService& editor_tabs) {
+PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabService& editor_tabs,
+                                                                    PromptSurfaceService& prompt_surfaces) {
   return PathMutationCoordinator(
       context_,
       editor_tabs,
+      prompt_surfaces,
       PathMutationCoordinator::Operations{
-          .dismiss_prompt_surface = [this](bool restore_focus) { DismissPromptSurface(restore_focus); },
-          .dismiss_dirty_prompt = [this](bool restore_focus) { DismissDirtyPrompt(restore_focus); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .clear_editor_blame = [this]() { ClearEditorBlame(); },
           .discard_all_git_sidebar_entries = [this]() { return DiscardAllGitSidebarEntries(); },

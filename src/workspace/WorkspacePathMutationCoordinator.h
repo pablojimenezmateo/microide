@@ -11,11 +11,11 @@
 
 namespace microide::workspace {
 
+class PromptSurfaceService;
+
 class PathMutationCoordinator {
  public:
   struct Operations {
-    std::function<void(bool)> dismiss_prompt_surface;
-    std::function<void(bool)> dismiss_dirty_prompt;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<void()> clear_editor_blame;
     std::function<bool()> discard_all_git_sidebar_entries;
@@ -48,6 +48,7 @@ class PathMutationCoordinator {
 
   PathMutationCoordinator(WorkspaceContext& context,
                           EditorTabService& editor_tabs,
+                          PromptSurfaceService& prompt_surfaces,
                           Operations operations);
 
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
@@ -89,6 +90,7 @@ class PathMutationCoordinator {
 
   WorkspaceContext& context_;
   EditorTabService& editor_tabs_;
+  PromptSurfaceService& prompt_surfaces_;
   Operations operations_;
 };
 

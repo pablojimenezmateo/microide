@@ -12,10 +12,11 @@
 
 namespace microide::workspace {
 
+class PromptSurfaceService;
+
 class DirtyPromptCoordinator {
  public:
   struct Operations {
-    std::function<void(bool)> dismiss_dirty_prompt;
     std::function<void(bool)> confirm_path_prompt;
     std::function<bool(std::size_t, bool)> switch_project;
     std::function<void(std::size_t)> close_project;
@@ -24,6 +25,7 @@ class DirtyPromptCoordinator {
   DirtyPromptCoordinator(WorkspaceContext& context,
                          bool& quit_requested,
                          EditorTabService& editor_tabs,
+                         PromptSurfaceService& prompt_surfaces,
                          Operations operations);
 
   void Confirm();
@@ -40,6 +42,7 @@ class DirtyPromptCoordinator {
   WorkspaceContext& context_;
   bool& quit_requested_;
   EditorTabService& editor_tabs_;
+  PromptSurfaceService& prompt_surfaces_;
   Operations operations_;
 };
 
