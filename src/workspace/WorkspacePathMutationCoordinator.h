@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "workspace/EditorTabService.h"
 #include "workspace/WorkspaceContext.h"
-#include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
@@ -22,10 +22,6 @@ class PathMutationCoordinator {
     std::function<void()> refresh_project_files;
     std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void()> refresh_project_search;
-    std::function<bool()> active_tab_is_editor;
-    std::function<void()> sync_active_editor_tab;
-    std::function<bool(std::size_t)> save_tab;
-    std::function<void(std::size_t)> close_tab;
     std::function<void()> refresh_problems_sidebar;
     std::function<void()> queue_editor_hover_refresh;
     std::function<void()> request_editor_surface_redraw;
@@ -41,8 +37,6 @@ class PathMutationCoordinator {
     std::function<void()> sync_active_editor_tab_metadata;
     std::function<void()> reset_caret_blink;
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
-    std::function<bool(const std::filesystem::path&, std::string*)> has_dirty_editor_tabs_for_path;
-    std::function<void(const std::filesystem::path&)> reload_clean_editor_tabs_for_path;
     std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&)>
         build_compare_tab_entry;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
@@ -52,12 +46,14 @@ class PathMutationCoordinator {
         build_merge_tab_entry;
   };
 
-  PathMutationCoordinator(WorkspaceContext& context, Operations operations);
+  PathMutationCoordinator(WorkspaceContext& context,
+                          EditorTabService& editor_tabs,
+                          Operations operations);
 
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
-  void ConfirmPromptSurface(WorkspaceShell::DirtyPathResolution resolution);
+  void ConfirmPromptSurface(DirtyPathResolution resolution);
 
  private:
   struct DirtyPathTarget {
@@ -78,7 +74,7 @@ class PathMutationCoordinator {
   std::vector<std::size_t> AffectedMergeTabIndices(const std::filesystem::path& path) const;
   bool ResolveDirtyTabsForPath(const std::filesystem::path& path,
                                DirtyPromptState::Kind prompt_kind,
-                               WorkspaceShell::DirtyPathResolution resolution);
+                               DirtyPathResolution resolution);
   void RefreshDiagnosticsAfterMutation();
   void RetargetDiagnosticsForRename(const std::filesystem::path& old_path,
                                     const std::filesystem::path& new_path);
@@ -92,6 +88,7 @@ class PathMutationCoordinator {
   const ProjectWorkspaceState& CurrentProjectState() const;
 
   WorkspaceContext& context_;
+  EditorTabService& editor_tabs_;
   Operations operations_;
 };
 

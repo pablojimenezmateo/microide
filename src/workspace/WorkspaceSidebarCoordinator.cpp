@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "workspace/EditorTabService.h"
 #include "util/SingleLineText.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
@@ -247,7 +248,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               },
           .has_dirty_editor_tabs_for_path =
               [this](const std::filesystem::path& path, std::string* blocking_label) {
-                return MakePathMutationCoordinator().HasDirtyEditorTabsForPath(path, blocking_label);
+                EditorTabService editor_tabs = MakeEditorTabService();
+                return MakePathMutationCoordinator(editor_tabs).HasDirtyEditorTabsForPath(path, blocking_label);
               },
           .invalidate_editor_blame_path =
               [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
@@ -255,7 +257,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](const std::filesystem::path& path) { ReloadCleanEditorTabsForPath(path); },
           .close_open_tabs_for_path =
               [this](const std::filesystem::path& path) {
-                MakePathMutationCoordinator().CloseOpenTabsForPath(path);
+                EditorTabService editor_tabs = MakeEditorTabService();
+                MakePathMutationCoordinator(editor_tabs).CloseOpenTabsForPath(path);
               },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .compute_tree_sidebar_list_layout =

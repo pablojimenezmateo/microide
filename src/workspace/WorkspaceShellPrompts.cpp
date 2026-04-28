@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include "util/SingleLineText.h"
+#include "workspace/EditorTabService.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -104,7 +105,8 @@ void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
 }
 
 void WorkspaceShell::ConfirmDirtyPrompt() {
-  MakeDirtyPromptCoordinator().Confirm();
+  EditorTabService editor_tabs = MakeEditorTabService();
+  MakeDirtyPromptCoordinator(editor_tabs).Confirm();
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
@@ -343,12 +345,14 @@ std::filesystem::path WorkspaceShell::TreeMutationBasePath(ActionSource source) 
 
 bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                                std::string* blocking_label) const {
-  return const_cast<WorkspaceShell*>(this)->MakePathMutationCoordinator().HasDirtyEditorTabsForPath(
-      path, blocking_label);
+  auto* shell = const_cast<WorkspaceShell*>(this);
+  EditorTabService editor_tabs = shell->MakeEditorTabService();
+  return shell->MakePathMutationCoordinator(editor_tabs).HasDirtyEditorTabsForPath(path, blocking_label);
 }
 
 void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
-  MakePathMutationCoordinator().CloseOpenTabsForPath(path);
+  EditorTabService editor_tabs = MakeEditorTabService();
+  MakePathMutationCoordinator(editor_tabs).CloseOpenTabsForPath(path);
 }
 
 void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
@@ -371,7 +375,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     }
     return;
   }
-  MakePathMutationCoordinator().ConfirmPromptSurface(resolution);
+  EditorTabService editor_tabs = MakeEditorTabService();
+  MakePathMutationCoordinator(editor_tabs).ConfirmPromptSurface(resolution);
 }
 
 }  // namespace microide::workspace

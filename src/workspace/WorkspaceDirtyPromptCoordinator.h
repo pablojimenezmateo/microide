@@ -7,6 +7,7 @@
 #include <span>
 #include <vector>
 
+#include "workspace/EditorTabService.h"
 #include "workspace/WorkspaceContext.h"
 
 namespace microide::workspace {
@@ -16,14 +17,14 @@ class DirtyPromptCoordinator {
   struct Operations {
     std::function<void(bool)> dismiss_dirty_prompt;
     std::function<void(bool)> confirm_path_prompt;
-    std::function<bool(std::size_t)> save_tab;
     std::function<bool(std::size_t, bool)> switch_project;
-    std::function<void(std::size_t)> close_tab;
     std::function<void(std::size_t)> close_project;
-    std::function<std::vector<std::size_t>()> dirty_editor_tab_indices;
   };
 
-  DirtyPromptCoordinator(WorkspaceContext& context, bool& quit_requested, Operations operations);
+  DirtyPromptCoordinator(WorkspaceContext& context,
+                         bool& quit_requested,
+                         EditorTabService& editor_tabs,
+                         Operations operations);
 
   void Confirm();
 
@@ -38,6 +39,7 @@ class DirtyPromptCoordinator {
 
   WorkspaceContext& context_;
   bool& quit_requested_;
+  EditorTabService& editor_tabs_;
   Operations operations_;
 };
 

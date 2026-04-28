@@ -660,9 +660,9 @@ class WorkspaceShell {
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
   CommandPromptCoordinator MakeCommandPromptCoordinator();
-  DirtyPromptCoordinator MakeDirtyPromptCoordinator();
+  DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs);
   CompareInteractionCoordinator MakeCompareInteractionCoordinator();
-  PathMutationCoordinator MakePathMutationCoordinator();
+  PathMutationCoordinator MakePathMutationCoordinator(EditorTabService& editor_tabs);
   DiffTabCoordinator MakeDiffTabCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   SidebarCoordinator MakeSidebarCoordinator();

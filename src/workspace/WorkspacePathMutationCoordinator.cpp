@@ -5,11 +5,16 @@
 
 #include "project/FileOperationService.h"
 #include "workspace/WorkspacePathUtils.h"
+#include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
-PathMutationCoordinator::PathMutationCoordinator(WorkspaceContext& context, Operations operations)
-    : context_(context), operations_(std::move(operations)) {}
+PathMutationCoordinator::PathMutationCoordinator(WorkspaceContext& context,
+                                                 EditorTabService& editor_tabs,
+                                                 Operations operations)
+    : context_(context),
+      editor_tabs_(editor_tabs),
+      operations_(std::move(operations)) {}
 
 ProjectWorkspaceState& PathMutationCoordinator::CurrentProjectState() {
   return context_.current_project_state;
@@ -19,7 +24,7 @@ const ProjectWorkspaceState& PathMutationCoordinator::CurrentProjectState() cons
   return context_.current_project_state;
 }
 
-void PathMutationCoordinator::ConfirmPromptSurface(WorkspaceShell::DirtyPathResolution resolution) {
+void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolution) {
   if (!context_.prompts.surface_visible) {
     return;
   }
@@ -83,7 +88,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(WorkspaceShell::DirtyPathReso
     }
 
     RetargetOpenTabsForRename(state.path, result.resulting_path,
-                              resolution != WorkspaceShell::DirtyPathResolution::Discard);
+                              resolution != DirtyPathResolution::Discard);
     RetargetDiagnosticsForRename(state.path, result.resulting_path);
     operations_.clear_editor_blame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
@@ -121,9 +126,10 @@ void PathMutationCoordinator::ConfirmPromptSurface(WorkspaceShell::DirtyPathReso
   CurrentProjectState().surface.focus = FocusTarget::Sidebar;
 }
 
-PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator() {
+PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabService& editor_tabs) {
   return PathMutationCoordinator(
       context_,
+      editor_tabs,
       PathMutationCoordinator::Operations{
           .dismiss_prompt_surface = [this](bool restore_focus) { DismissPromptSurface(restore_focus); },
           .dismiss_dirty_prompt = [this](bool restore_focus) { DismissDirtyPrompt(restore_focus); },
@@ -133,10 +139,6 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator() {
           .refresh_project_files = [this]() { RefreshProjectFiles(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
-          .active_tab_is_editor = [this]() { return ActiveTabIsEditor(); },
-          .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
-          .save_tab = [this](std::size_t index) { return SaveTab(index); },
-          .close_tab = [this](std::size_t index) { CloseTab(index); },
           .refresh_problems_sidebar = [this]() { RefreshProblemsSidebar(); },
           .queue_editor_hover_refresh = [this]() { QueueEditorHoverRefresh(); },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
@@ -166,12 +168,6 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator() {
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .invalidate_editor_blame_path =
               [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
-          .has_dirty_editor_tabs_for_path =
-              [this](const std::filesystem::path& path, std::string* blocking_label) {
-                return HasDirtyEditorTabsForPath(path, blocking_label);
-              },
-          .reload_clean_editor_tabs_for_path =
-              [this](const std::filesystem::path& path) { ReloadCleanEditorTabsForPath(path); },
           .build_compare_tab_entry =
               [this](const std::filesystem::path& path, const CompareTabState& compare_state) {
                 return BuildCompareTabEntry(path, compare_state);

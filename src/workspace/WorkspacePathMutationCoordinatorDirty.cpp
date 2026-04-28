@@ -124,14 +124,14 @@ bool PathMutationCoordinator::HasDirtyEditorTabsForPath(const std::filesystem::p
 bool PathMutationCoordinator::ResolveDirtyTabsForPath(
     const std::filesystem::path& path,
     DirtyPromptState::Kind prompt_kind,
-    WorkspaceShell::DirtyPathResolution resolution) {
+    DirtyPathResolution resolution) {
   auto& state = CurrentProjectState();
   const std::vector<DirtyPathTarget> dirty_targets = DirtyPathTargetsForPath(path);
   if (dirty_targets.empty()) {
     return true;
   }
 
-  if (resolution == WorkspaceShell::DirtyPathResolution::RequirePrompt) {
+  if (resolution == DirtyPathResolution::RequirePrompt) {
     context_.prompts.dirty_visible = true;
     context_.prompts.dirty_previous_focus = state.surface.focus;
     context_.prompts.dirty.kind = prompt_kind;
@@ -143,7 +143,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
     return false;
   }
 
-  if (resolution == WorkspaceShell::DirtyPathResolution::Save) {
+  if (resolution == DirtyPathResolution::Save) {
     bool saved_any = false;
     for (const DirtyPathTarget& target : dirty_targets) {
       if (target.tab_index >= state.open_tabs.size()) {
@@ -156,7 +156,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
             !tab.compare->right_viewport.dirty()) {
           continue;
         }
-        if (!operations_.save_tab(target.tab_index)) {
+        if (!editor_tabs_.Save(target.tab_index)) {
           return false;
         }
         saved_any = true;
@@ -169,7 +169,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         if (!tab.merge->result_viewport.dirty()) {
           continue;
         }
-        if (!operations_.save_tab(target.tab_index)) {
+        if (!editor_tabs_.Save(target.tab_index)) {
           return false;
         }
         saved_any = true;
@@ -182,7 +182,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       }
 
       if (target.tab_index == state.active_tab_index) {
-        operations_.sync_active_editor_tab();
+        editor_tabs_.SyncActiveEditorTab();
       }
 
       auto* view_state = operations_.find_editor_view_state(*tab.editor_state, target.leaf_id);

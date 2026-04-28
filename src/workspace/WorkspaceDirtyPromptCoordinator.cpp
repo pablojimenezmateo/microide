@@ -11,9 +11,11 @@ namespace microide::workspace {
 
 DirtyPromptCoordinator::DirtyPromptCoordinator(WorkspaceContext& context,
                                                bool& quit_requested,
+                                               EditorTabService& editor_tabs,
                                                Operations operations)
     : context_(context),
       quit_requested_(quit_requested),
+      editor_tabs_(editor_tabs),
       operations_(std::move(operations)) {}
 
 void DirtyPromptCoordinator::Confirm() {
@@ -67,7 +69,7 @@ std::optional<std::size_t> DirtyPromptCoordinator::FindProjectIndexByRoot(
 
 bool DirtyPromptCoordinator::SaveDirtyTabs(std::span<const std::size_t> tab_indices) {
   for (std::size_t index : tab_indices) {
-    if (!operations_.save_tab(index)) {
+    if (!editor_tabs_.Save(index)) {
       return false;
     }
   }
@@ -80,11 +82,11 @@ bool DirtyPromptCoordinator::SwitchProjectByRoot(const std::filesystem::path& ro
 }
 
 void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
-  if (prompt.selected_action == 0 && !operations_.save_tab(prompt.tab_index)) {
+  if (prompt.selected_action == 0 && !editor_tabs_.Save(prompt.tab_index)) {
     return;
   }
   operations_.dismiss_dirty_prompt(false);
-  operations_.close_tab(prompt.tab_index);
+  editor_tabs_.Close(prompt.tab_index);
 }
 
 void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
@@ -97,7 +99,7 @@ void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   for (std::size_t i = indices.size(); i > 0; --i) {
-    operations_.close_tab(indices[i - 1]);
+    editor_tabs_.Close(indices[i - 1]);
   }
 }
 
@@ -154,7 +156,7 @@ void DirtyPromptCoordinator::ConfirmQuit(const DirtyPromptState& prompt) {
       if (!SwitchProjectByRoot(root)) {
         continue;
       }
-      if (!SaveDirtyTabs(operations_.dirty_editor_tab_indices())) {
+      if (!SaveDirtyTabs(editor_tabs_.DirtyIndices())) {
         if (!original_active_root.empty()) {
           SwitchProjectByRoot(original_active_root);
         }
@@ -171,10 +173,11 @@ void DirtyPromptCoordinator::ConfirmQuit(const DirtyPromptState& prompt) {
   quit_requested_ = true;
 }
 
-DirtyPromptCoordinator WorkspaceShell::MakeDirtyPromptCoordinator() {
+DirtyPromptCoordinator WorkspaceShell::MakeDirtyPromptCoordinator(EditorTabService& editor_tabs) {
   return DirtyPromptCoordinator(
       context_,
       quit_requested_,
+      editor_tabs,
       DirtyPromptCoordinator::Operations{
           .dismiss_dirty_prompt = [this](bool restore_focus) { DismissDirtyPrompt(restore_focus); },
           .confirm_path_prompt =
@@ -182,14 +185,11 @@ DirtyPromptCoordinator WorkspaceShell::MakeDirtyPromptCoordinator() {
                 ConfirmPromptSurface(save_changes ? DirtyPathResolution::Save
                                                  : DirtyPathResolution::Discard);
               },
-          .save_tab = [this](std::size_t index) { return SaveTab(index); },
           .switch_project =
               [this](std::size_t index, bool log_feedback) {
                 return SwitchProject(index, log_feedback);
               },
-          .close_tab = [this](std::size_t index) { CloseTab(index); },
           .close_project = [this](std::size_t index) { CloseProject(index); },
-          .dirty_editor_tab_indices = [this]() { return DirtyEditorTabIndices(); },
       });
 }
 

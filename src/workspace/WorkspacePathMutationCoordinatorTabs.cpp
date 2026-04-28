@@ -16,8 +16,8 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     const std::filesystem::path& new_path,
     bool preserve_unsaved_state) {
   auto& state = CurrentProjectState();
-  if (operations_.active_tab_is_editor()) {
-    operations_.sync_active_editor_tab();
+  if (editor_tabs_.ActiveTabIsEditor()) {
+    editor_tabs_.SyncActiveEditorTab();
   }
 
   std::vector<std::size_t> special_tabs_to_close;
@@ -210,7 +210,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
 
   std::sort(special_tabs_to_close.rbegin(), special_tabs_to_close.rend());
   for (std::size_t index : special_tabs_to_close) {
-    operations_.close_tab(index);
+    editor_tabs_.Close(index);
   }
 
   if (!state.overlay.workflow.compare_picker.path.empty() &&
@@ -225,8 +225,8 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
 
 void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& path) {
   auto& state = CurrentProjectState();
-  if (operations_.active_tab_is_editor()) {
-    operations_.sync_active_editor_tab();
+  if (editor_tabs_.ActiveTabIsEditor()) {
+    editor_tabs_.SyncActiveEditorTab();
   }
 
   const std::filesystem::path normalized_path = path.lexically_normal();
@@ -328,7 +328,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   std::sort(indices.rbegin(), indices.rend());
   for (std::size_t index : indices) {
-    operations_.close_tab(index);
+    editor_tabs_.Close(index);
   }
 
   if (!state.overlay.workflow.compare_picker.path.empty() &&
