@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "render/Theme.h"
+#include "workspace/PersistenceService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 
@@ -20,6 +21,7 @@ class PersistenceCoordinator {
     std::function<std::filesystem::path()> config_state_path;
     std::function<std::filesystem::path()> user_config_path;
     std::function<std::filesystem::path()> project_state_directory;
+    const PersistenceService* persistence_service = nullptr;
     std::function<void()> apply_editor_preferences_to_all_tabs;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,

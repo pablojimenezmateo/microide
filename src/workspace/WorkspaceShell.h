@@ -60,6 +60,7 @@
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceMenuRegistry.h"
+#include "workspace/PersistenceService.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePluginRuntime.h"
@@ -1507,6 +1508,7 @@ class WorkspaceShell {
   McpToolRegistry mcp_tool_registry_;
   AiContextManager ai_context_manager_;
   WorkspaceProviderBridgeManager provider_bridge_manager_;
+  PersistenceService persistence_service_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_file_event_type_ = 0;

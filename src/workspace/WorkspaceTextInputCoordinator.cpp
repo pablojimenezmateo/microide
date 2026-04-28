@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/SingleLineEditor.h"
+#include "editor/SingleLineKeyHandler.h"
 #include "util/SingleLineText.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceShell.h"
@@ -18,6 +20,23 @@ void SyncChatDraft(ProjectWorkspaceState& state) {
       conversation != nullptr) {
     conversation->draft = util::SerializeLines(state.panel.chat.composer.lines(), util::LineEnding::LF);
   }
+}
+
+editor::SingleLineEditor BuildSingleLineEditor(const util::SingleLineTextState& state) {
+  editor::SingleLineEditor value(state.text);
+  value.SetCaret(state.cursor);
+  value.SetSelectionAnchor(state.selection_anchor);
+  return value;
+}
+
+void WriteSingleLineEditor(const editor::SingleLineEditor& value,
+                           util::SingleLineTextState* state) {
+  if (state == nullptr) {
+    return;
+  }
+  state->text = value.text();
+  state->cursor = value.caret();
+  state->selection_anchor = value.selection_anchor();
 }
 
 }  // namespace
@@ -278,9 +297,11 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
   }
   if (util::SingleLineTextState* text_state = ActiveSingleLineTextState();
       text_state != nullptr) {
-    if (!util::InsertSingleLineText(text_state, input)) {
+    editor::SingleLineEditor editor = BuildSingleLineEditor(*text_state);
+    if (!editor.Insert(input)) {
       return false;
     }
+    WriteSingleLineEditor(editor, text_state);
     RequestSingleLineTextRedraw(surface, true);
     return true;
   }
@@ -438,60 +459,26 @@ bool TextInputCoordinator::HandleSingleLineKeyDown(const SDL_KeyboardEvent& even
     return false;
   }
 
+  editor::SingleLineEditor editor = BuildSingleLineEditor(*text_state);
+  const std::string before_text = editor.text();
   const TextInputSurface surface = operations_.current_text_input_surface();
-  const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
-  bool handled = false;
-  bool text_changed = false;
-
-  if ((modifiers & SDL_KMOD_CTRL) != 0) {
-    switch (event.key) {
-      case SDLK_A:
-        handled = util::SelectAllSingleLineText(text_state);
-        break;
-      case SDLK_LEFT:
-      case SDLK_HOME:
-        handled = util::MoveSingleLineCursorHome(text_state, extend_selection);
-        break;
-      case SDLK_RIGHT:
-      case SDLK_END:
-        handled = util::MoveSingleLineCursorEnd(text_state, extend_selection);
-        break;
-      default:
-        return false;
-    }
-  } else {
-    switch (event.key) {
-      case SDLK_BACKSPACE:
-        handled = util::BackspaceSingleLineText(text_state);
-        text_changed = handled;
-        break;
-      case SDLK_DELETE:
-        handled = util::DeleteForwardSingleLineText(text_state);
-        text_changed = handled;
-        break;
-      case SDLK_LEFT:
-        handled = util::MoveSingleLineCursorLeft(text_state, extend_selection);
-        break;
-      case SDLK_RIGHT:
-        handled = util::MoveSingleLineCursorRight(text_state, extend_selection);
-        break;
-      case SDLK_HOME:
-        handled = util::MoveSingleLineCursorHome(text_state, extend_selection);
-        break;
-      case SDLK_END:
-        handled = util::MoveSingleLineCursorEnd(text_state, extend_selection);
-        break;
-      default:
-        return false;
-    }
-  }
+  const bool handled = editor::SingleLineKeyHandler::HandleKeyDown(
+      editor, event.key, modifiers,
+      editor::SingleLineKeyHandler::Clipboard{
+          .write_text = [this](const std::string& text) {
+            (void)operations_.write_clipboard_text(text);
+          },
+          .read_text = [this]() { return operations_.read_clipboard_text(); },
+      });
 
   if (!handled) {
     return false;
   }
+  const bool text_changed = editor.text() != before_text;
+  WriteSingleLineEditor(editor, text_state);
   RequestSingleLineTextRedraw(surface, text_changed);
-  if (util::HasSingleLineSelection(*text_state)) {
-    operations_.write_primary_selection_text(util::SelectedSingleLineText(*text_state));
+  if (editor.HasSelection()) {
+    operations_.write_primary_selection_text(editor.SelectedText());
   }
   return true;
 }
@@ -501,7 +488,7 @@ bool TextInputCoordinator::HasSelectionAtActiveSingleLineSurface() const {
     return state_.panel.chat.composer.has_selection();
   }
   const util::SingleLineTextState* text_state = ActiveSingleLineTextState();
-  return text_state != nullptr && util::HasSingleLineSelection(*text_state);
+  return text_state != nullptr && BuildSingleLineEditor(*text_state).HasSelection();
 }
 
 std::string TextInputCoordinator::SelectedTextAtActiveSingleLineSurface() const {
@@ -509,7 +496,7 @@ std::string TextInputCoordinator::SelectedTextAtActiveSingleLineSurface() const 
     return state_.panel.chat.composer.SelectedText();
   }
   const util::SingleLineTextState* text_state = ActiveSingleLineTextState();
-  return text_state != nullptr ? util::SelectedSingleLineText(*text_state) : std::string{};
+  return text_state != nullptr ? BuildSingleLineEditor(*text_state).SelectedText() : std::string{};
 }
 
 bool TextInputCoordinator::SelectAllAtActiveSingleLineSurface() {
@@ -522,10 +509,12 @@ bool TextInputCoordinator::SelectAllAtActiveSingleLineSurface() {
   if (text_state == nullptr) {
     return false;
   }
-  if (!util::SelectAllSingleLineText(text_state)) {
+  editor::SingleLineEditor editor = BuildSingleLineEditor(*text_state);
+  if (!editor.SelectAll()) {
     RequestSingleLineTextRedraw(operations_.current_text_input_surface(), false);
     return false;
   }
+  WriteSingleLineEditor(editor, text_state);
   RequestSingleLineTextRedraw(operations_.current_text_input_surface(), false);
   return true;
 }
@@ -549,14 +538,16 @@ bool TextInputCoordinator::CutSelectionAtActiveSingleLineSurface() {
   if (text_state == nullptr) {
     return false;
   }
-  const std::string selected = util::SelectedSingleLineText(*text_state);
+  editor::SingleLineEditor editor = BuildSingleLineEditor(*text_state);
+  const std::string selected = editor.SelectedText();
   if (selected.empty() || !operations_.write_clipboard_text(selected)) {
     return false;
   }
   operations_.write_primary_selection_text(selected);
-  if (!util::DeleteSelectedSingleLineText(text_state)) {
+  if (!editor.DeleteSelection()) {
     return false;
   }
+  WriteSingleLineEditor(editor, text_state);
   RequestSingleLineTextRedraw(operations_.current_text_input_surface(), true);
   return true;
 }

@@ -12,6 +12,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "platform/Subprocess.h"
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -353,19 +354,14 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
   }
 
   const std::string lowered_specifier = ToLower(specifier);
-  try {
-    std::size_t parsed_length = 0;
-    const int tab_number = std::stoi(std::string(specifier), &parsed_length);
-    if (parsed_length == specifier.size()) {
-      if (tab_number >= 1 && static_cast<std::size_t>(tab_number) <= state_.open_tabs.size()) {
-        return static_cast<std::size_t>(tab_number - 1);
-      }
-      if (error_message != nullptr) {
-        *error_message = "Invalid tab index";
-      }
-      return std::nullopt;
+  if (const auto tab_number = util::ParseInt(specifier); tab_number.has_value()) {
+    if (*tab_number >= 1 && static_cast<std::size_t>(*tab_number) <= state_.open_tabs.size()) {
+      return static_cast<std::size_t>(*tab_number - 1);
     }
-  } catch (...) {
+    if (error_message != nullptr) {
+      *error_message = "Invalid tab index";
+    }
+    return std::nullopt;
   }
 
   std::vector<std::size_t> exact_matches;

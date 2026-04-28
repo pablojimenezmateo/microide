@@ -1188,6 +1188,12 @@ struct WorkspaceShell::TestAccess {
   static bool RestoreSessionState(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreSessionState();
   }
+  static bool RestoreUserConfig(WorkspaceShell& shell) {
+    return shell.MakePersistenceCoordinator().RestoreUserConfig();
+  }
+  static bool RestoreConfigState(WorkspaceShell& shell) {
+    return shell.MakePersistenceCoordinator().RestoreConfigState();
+  }
   static void SaveSessionState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveSessionState();
   }

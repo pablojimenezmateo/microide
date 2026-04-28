@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -40,23 +41,6 @@ std::uint64_t HashChatContent(std::string_view text) {
     hash *= 1099511628211ull;
   }
   return hash;
-}
-
-bool ParseUnsignedStrict(std::string_view text, std::size_t* value) {
-  if (value == nullptr || text.empty()) {
-    return false;
-  }
-  try {
-    std::size_t parsed_length = 0;
-    const auto parsed = std::stoull(std::string(text), &parsed_length);
-    if (parsed_length != text.size()) {
-      return false;
-    }
-    *value = static_cast<std::size_t>(parsed);
-    return true;
-  } catch (...) {
-    return false;
-  }
 }
 
 std::string_view TrimAscii(std::string_view text) {
@@ -100,7 +84,12 @@ bool ParseFragmentLocation(std::string_view fragment,
   }
   const std::size_t column_marker = fragment.find_first_of("Cc:");
   if (column_marker == std::string_view::npos) {
-    return ParseUnsignedStrict(fragment, line);
+    const auto parsed = util::ParseSize(fragment);
+    if (!parsed.has_value()) {
+      return false;
+    }
+    *line = *parsed;
+    return true;
   }
 
   const std::string_view line_text = fragment.substr(0, column_marker);
@@ -109,8 +98,14 @@ bool ParseFragmentLocation(std::string_view fragment,
       (column_text.front() == 'C' || column_text.front() == 'c')) {
     column_text.remove_prefix(1);
   }
-  return ParseUnsignedStrict(line_text, line) &&
-         ParseUnsignedStrict(column_text, column);
+  const auto parsed_line = util::ParseSize(line_text);
+  const auto parsed_column = util::ParseSize(column_text);
+  if (!parsed_line.has_value() || !parsed_column.has_value()) {
+    return false;
+  }
+  *line = *parsed_line;
+  *column = *parsed_column;
+  return true;
 }
 
 bool ParsePathLocationSuffix(std::string_view text,
@@ -130,26 +125,25 @@ bool ParsePathLocationSuffix(std::string_view text,
     return false;
   }
 
-  std::size_t parsed_tail = 0;
-  if (!ParseUnsignedStrict(text.substr(last_colon + 1), &parsed_tail)) {
+  const auto parsed_tail = util::ParseSize(text.substr(last_colon + 1));
+  if (!parsed_tail.has_value()) {
     return false;
   }
 
   const std::size_t second_last_colon = text.rfind(':', last_colon - 1);
   if (second_last_colon != std::string_view::npos && second_last_colon > 0) {
-    std::size_t parsed_line = 0;
-    if (ParseUnsignedStrict(text.substr(second_last_colon + 1,
-                                        last_colon - second_last_colon - 1),
-                            &parsed_line)) {
+    const auto parsed_line = util::ParseSize(text.substr(second_last_colon + 1,
+                                                         last_colon - second_last_colon - 1));
+    if (parsed_line.has_value()) {
       *path_text = text.substr(0, second_last_colon);
-      *line = parsed_line;
-      *column = parsed_tail;
+      *line = *parsed_line;
+      *column = *parsed_tail;
       return true;
     }
   }
 
   *path_text = text.substr(0, last_colon);
-  *line = parsed_tail;
+  *line = *parsed_tail;
   return true;
 }
 
@@ -700,11 +694,11 @@ WorkspaceShell::ChatMarkdownDocument WorkspaceShell::ParseChatMarkdown(
       }
       if (cursor > 0 && cursor + 1 < trimmed.size() && trimmed[cursor] == '.' &&
           std::isspace(static_cast<unsigned char>(trimmed[cursor + 1])) != 0) {
-        std::size_t item_number = 0;
-        if (ParseUnsignedStrict(trimmed.substr(0, cursor), &item_number)) {
+        const auto item_number = util::ParseSize(trimmed.substr(0, cursor));
+        if (item_number.has_value()) {
           document.blocks.push_back(ChatMarkdownBlock{
               .kind = ChatMarkdownBlock::Kind::ListItem,
-              .level = item_number,
+              .level = *item_number,
               .ordered_list = true,
               .fragments = parse_inline(TrimAscii(trimmed.substr(cursor + 2))),
               .code_lines = {},

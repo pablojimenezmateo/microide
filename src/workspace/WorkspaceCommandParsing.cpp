@@ -5,6 +5,8 @@
 #include <cmath>
 #include <utility>
 
+#include "util/Parse.h"
+
 namespace microide::workspace {
 
 std::string UiScaleLabel(float scale) {
@@ -26,21 +28,18 @@ std::optional<float> ParseUiScaleValue(std::string_view text) {
     return std::nullopt;
   }
 
-  try {
-    float scale = std::stof(std::string(text));
-    if (!percent && scale > 10.0f) {
-      scale *= 0.01f;
-    }
-    if (percent) {
-      scale *= 0.01f;
-    }
-    if (!std::isfinite(scale)) {
-      return std::nullopt;
-    }
-    return std::clamp(scale, kMinUiScale, kMaxUiScale);
-  } catch (...) {
+  const std::optional<float> parsed = util::ParseFloat(text);
+  if (!parsed.has_value()) {
     return std::nullopt;
   }
+  float scale = *parsed;
+  if (!percent && scale > 10.0f) {
+    scale *= 0.01f;
+  }
+  if (percent) {
+    scale *= 0.01f;
+  }
+  return std::clamp(scale, kMinUiScale, kMaxUiScale);
 }
 
 float StepUiScale(float current_scale, int delta) {

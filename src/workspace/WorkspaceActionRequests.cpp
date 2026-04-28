@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string_view>
 
+#include "util/Parse.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -19,26 +20,24 @@ bool ParseLineColumnSpec(std::string_view location,
   }
 
   const std::size_t colon = location.find(':');
-  const std::string line_text(location.substr(0, colon));
-  const std::string column_text =
-      colon == std::string_view::npos ? std::string{} : std::string(location.substr(colon + 1));
-
-  long long parsed_line = 0;
+  const std::optional<std::int64_t> parsed_line = util::ParseInt64(location.substr(0, colon));
+  if (!parsed_line.has_value()) {
+    return false;
+  }
   std::size_t parsed_column = 0;
-  try {
-    parsed_line = std::stoll(line_text);
-    if (!column_text.empty()) {
-      parsed_column = static_cast<std::size_t>(std::stoull(column_text));
+  if (colon != std::string_view::npos) {
+    const std::optional<std::size_t> column_value = util::ParseSize(location.substr(colon + 1));
+    if (!column_value.has_value()) {
+      return false;
     }
-  } catch (...) {
+    parsed_column = *column_value;
+  }
+
+  if (!allow_zero_line && *parsed_line == 0) {
     return false;
   }
 
-  if (!allow_zero_line && parsed_line == 0) {
-    return false;
-  }
-
-  *line = parsed_line;
+  *line = static_cast<long long>(*parsed_line);
   *column = parsed_column;
   return true;
 }
@@ -55,33 +54,21 @@ std::filesystem::path NormalizeCommandPath(const std::filesystem::path& project_
 }
 
 std::optional<float> ParseFloatArgument(const std::string& text) {
-  try {
-    return std::stof(text);
-  } catch (...) {
-    return std::nullopt;
-  }
+  return util::ParseFloat(text);
 }
 
 std::optional<int> ParseIntArgument(const std::string& text) {
-  std::size_t parsed_length = 0;
-  try {
-    const int value = std::stoi(text, &parsed_length);
-    if (parsed_length == text.size()) {
-      return value;
-    }
-  } catch (...) {
-  }
-  return std::nullopt;
+  return util::ParseInt(text);
 }
 
 std::optional<std::size_t> ParseClampedSizeArgument(const std::string& text,
                                                     std::size_t minimum,
                                                     std::size_t maximum) {
-  try {
-    return std::clamp<std::size_t>(static_cast<std::size_t>(std::stoull(text)), minimum, maximum);
-  } catch (...) {
+  const std::optional<std::size_t> parsed = util::ParseSize(text);
+  if (!parsed.has_value()) {
     return std::nullopt;
   }
+  return std::clamp(*parsed, minimum, maximum);
 }
 
 }  // namespace

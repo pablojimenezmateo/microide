@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
-#include <stdexcept>
 
 #include "plugin/PluginHost.h"
+#include "util/Parse.h"
 
 namespace microide::workspace {
 
@@ -128,12 +128,7 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
     }
 
     case SettingType::Float: {
-      try {
-        const float value = std::stof(std::string(text));
-        return value;
-      } catch (...) {
-        return std::nullopt;
-      }
+      return util::ParseFloat(text);
     }
 
     case SettingType::String:
@@ -202,12 +197,7 @@ std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) 
       info.default_value = v;
     } else if (contrib.type == "float") {
       info.type = SettingType::Float;
-      float v = 0.0f;
-      try {
-        v = std::stof(contrib.default_value);
-      } catch (...) {
-      }
-      info.default_value = v;
+      info.default_value = util::ParseFloat(contrib.default_value).value_or(0.0f);
     } else if (contrib.type == "enum") {
       info.type = SettingType::Enum;
       info.default_value = contrib.default_value;

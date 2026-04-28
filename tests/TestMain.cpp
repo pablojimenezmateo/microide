@@ -46,6 +46,12 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests);
 void RegisterPhase3Tests(std::vector<TestCase>& tests);
 void RegisterPhase4Tests(std::vector<TestCase>& tests);
 void RegisterPhase5Tests(std::vector<TestCase>& tests);
+void RegisterParseTests(std::vector<TestCase>& tests);
+void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests);
+void RegisterSingleLineEditorTests(std::vector<TestCase>& tests);
+void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests);
+void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests);
+void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -61,6 +67,12 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellSharedSearchTests(tests);
   microide::tests::RegisterWorkspaceShellSharedTerminalTests(tests);
   microide::tests::RegisterPluginHostTests(tests);
+  microide::tests::RegisterParseTests(tests);
+  microide::tests::RegisterArchitectureInvariantsTests(tests);
+  microide::tests::RegisterSingleLineEditorTests(tests);
+  microide::tests::RegisterPersistedRecordIoTests(tests);
+  microide::tests::RegisterPersistedStateRecordTests(tests);
+  microide::tests::RegisterPersistedRecordDumpTests(tests);
   microide::tests::RegisterProjectSearchServiceTests(tests);
   microide::tests::RegisterGitBlameServiceTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);

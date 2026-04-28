@@ -1,28 +1,14 @@
 #include "workspace/WorkspaceOutputChannels.h"
 
-#include <charconv>
 #include <filesystem>
 #include <string_view>
 #include <utility>
 
+#include "util/Parse.h"
+
 namespace microide::workspace {
 
 namespace {
-
-bool ParseUnsignedStrict(std::string_view text, std::size_t* value) {
-  if (value == nullptr || text.empty()) {
-    return false;
-  }
-  std::size_t parsed = 0;
-  const char* begin = text.data();
-  const char* end = text.data() + text.size();
-  const auto result = std::from_chars(begin, end, parsed);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    return false;
-  }
-  *value = parsed;
-  return true;
-}
 
 std::optional<std::filesystem::path> ParseOutputReferencePath(std::string_view text) {
   const std::size_t column_delimiter = text.rfind(':');
@@ -34,13 +20,12 @@ std::optional<std::filesystem::path> ParseOutputReferencePath(std::string_view t
     return std::nullopt;
   }
 
-  std::size_t line = 0;
-  std::size_t column = 0;
   const std::string_view line_text =
       text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
   const std::string_view column_text = text.substr(column_delimiter + 1);
-  if (!ParseUnsignedStrict(line_text, &line) || !ParseUnsignedStrict(column_text, &column) ||
-      line == 0) {
+  const auto parsed_line = util::ParseSize(line_text);
+  const auto parsed_column = util::ParseSize(column_text);
+  if (!parsed_line.has_value() || !parsed_column.has_value() || *parsed_line == 0) {
     return std::nullopt;
   }
   return std::filesystem::path(std::string(text.substr(0, line_delimiter)));

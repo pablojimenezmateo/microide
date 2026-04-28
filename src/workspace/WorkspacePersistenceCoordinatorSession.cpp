@@ -1,12 +1,12 @@
 #include "workspace/WorkspacePersistenceCoordinator.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <limits>
 
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
-#include "util/TextFileIO.h"
 #include "workspace/WorkspaceConversation.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -202,14 +202,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreSessionState");
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::RestoreSessionState");
   const std::filesystem::path session_path = SessionStatePath();
-  if (session_path.empty()) {
-    return false;
-  }
-  const auto text = [&]() -> std::optional<std::string> {
-    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ReadSessionFile");
-    return util::ReadTextFile(session_path);
-  }();
-  if (!text.has_value()) {
+  if (session_path.empty() || operations_.persistence_service == nullptr) {
     return false;
   }
 
@@ -220,7 +213,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
   persisted_session.active_tab_index = CurrentProjectState().active_tab_index;
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ParseSessionFile");
-    if (!ParseProjectSessionText(*text, &persisted_session)) {
+    if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
       return false;
     }
   }
@@ -568,7 +561,7 @@ void PersistenceCoordinator::SaveSessionState() {
       CurrentProjectState().conversations,
       CurrentProjectState().panel.chat.conversation_id);
 
-  util::WriteTextFileAtomically(session_path, SerializeProjectSession(persisted_session));
+  operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
 }
 
 std::optional<PersistedEditorTabState>

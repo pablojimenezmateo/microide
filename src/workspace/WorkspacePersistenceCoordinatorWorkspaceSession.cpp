@@ -4,8 +4,6 @@
 
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
-#include "util/TextFileIO.h"
-#include "workspace/WorkspacePersistenceFormat.h"
 namespace microide::workspace {
 
 std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const {
@@ -17,16 +15,12 @@ std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const 
 bool PersistenceCoordinator::RestoreWorkspaceSession() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreWorkspaceSession");
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
-  if (session_path.empty()) {
-    return false;
-  }
-  const auto text = util::ReadTextFile(session_path);
-  if (!text.has_value()) {
+  if (session_path.empty() || operations_.persistence_service == nullptr) {
     return false;
   }
 
   PersistedWorkspaceSessionState persisted_session;
-  if (!ParseWorkspaceSessionText(*text, &persisted_session)) {
+  if (!operations_.persistence_service->LoadWorkspaceSession(session_path, &persisted_session)) {
     return false;
   }
 
@@ -69,7 +63,7 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
 
 void PersistenceCoordinator::SaveWorkspaceSession() const {
   const std::filesystem::path session_path = WorkspaceSessionStatePath();
-  if (session_path.empty()) {
+  if (session_path.empty() || operations_.persistence_service == nullptr) {
     return;
   }
 
@@ -89,7 +83,7 @@ void PersistenceCoordinator::SaveWorkspaceSession() const {
     }
     persisted_session.project_roots.push_back(project_root.lexically_normal());
   }
-  util::WriteTextFileAtomically(session_path, SerializeWorkspaceSession(persisted_session));
+  operations_.persistence_service->SaveWorkspaceSession(session_path, persisted_session);
 }
 
 }  // namespace microide::workspace

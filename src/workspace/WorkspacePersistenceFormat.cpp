@@ -4,63 +4,12 @@
 #include <sstream>
 #include <utility>
 
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
-
-namespace {
-
-bool ParseSizeToken(std::string_view text, std::size_t* value) {
-  if (value == nullptr) {
-    return false;
-  }
-  try {
-    *value = static_cast<std::size_t>(std::stoull(std::string(text)));
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-bool ParseFloatToken(std::string_view text, float* value) {
-  if (value == nullptr) {
-    return false;
-  }
-  try {
-    *value = std::stof(std::string(text));
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-bool ParseIntToken(std::string_view text, int* value) {
-  if (value == nullptr) {
-    return false;
-  }
-  try {
-    *value = std::stoi(std::string(text));
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-bool ParseInt64Token(std::string_view text, std::int64_t* value) {
-  if (value == nullptr) {
-    return false;
-  }
-  try {
-    *value = std::stoll(std::string(text));
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-}  // namespace
 
 bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state) {
   if (state == nullptr) {
@@ -141,14 +90,16 @@ bool ParseProjectConfigText(std::string_view text, PersistedProjectConfigState* 
     }
     if (command == "editor-tab-size" && tokens.size() == 2) {
       std::size_t value = state->editor_tab_size;
-      if (ParseSizeToken(tokens[1].text, &value)) {
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        value = *parsed;
         state->editor_tab_size = std::clamp<std::size_t>(value, 1, 16);
       }
       continue;
     }
     if (command == "editor-indent-width" && tokens.size() == 2) {
       std::size_t value = state->editor_indent_width;
-      if (ParseSizeToken(tokens[1].text, &value)) {
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        value = *parsed;
         state->editor_indent_width = std::clamp<std::size_t>(value, 1, 16);
       }
       continue;
@@ -177,9 +128,8 @@ bool ParseProjectConfigText(std::string_view text, PersistedProjectConfigState* 
         if (tokens[i].text == "hidden") {
           policy.hidden = true;
         } else if (tokens[i].text.starts_with("order=")) {
-          try {
-            policy.order = std::stoi(tokens[i].text.substr(6));
-          } catch (...) {
+          if (const auto order = util::ParseInt(tokens[i].text.substr(6)); order.has_value()) {
+            policy.order = *order;
           }
         }
       }
@@ -244,7 +194,7 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       version_ok = tokens.size() == 2 &&
                    (tokens[1].text == "1" || tokens[1].text == "2" || tokens[1].text == "3" ||
                     tokens[1].text == "4" || tokens[1].text == "5");
-      version = version_ok ? std::stoi(tokens[1].text) : 0;
+      version = version_ok ? util::ParseInt(tokens[1].text).value_or(0) : 0;
       continue;
     }
     if (!version_ok) {
@@ -255,15 +205,21 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (command == "sidebar-width" && tokens.size() == 2) {
-      ParseFloatToken(tokens[1].text, &state->sidebar_width);
+      if (const auto parsed = util::ParseFloat(tokens[1].text); parsed.has_value()) {
+        state->sidebar_width = *parsed;
+      }
       continue;
     }
     if (command == "bottom-panel-height" && tokens.size() == 2) {
-      ParseFloatToken(tokens[1].text, &state->bottom_panel_height);
+      if (const auto parsed = util::ParseFloat(tokens[1].text); parsed.has_value()) {
+        state->bottom_panel_height = *parsed;
+      }
       continue;
     }
     if (command == "active-tab" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &state->active_tab_index);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        state->active_tab_index = *parsed;
+      }
       continue;
     }
     if (version >= 3 && command == "chat-active-conversation" && tokens.size() == 2) {
@@ -303,7 +259,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     }
     if (version >= 3 && current_conv.has_value()) {
       if (command == "conv-schema" && tokens.size() == 2) {
-        ParseIntToken(tokens[1].text, &current_conv->schema_version);
+        if (const auto parsed = util::ParseInt(tokens[1].text); parsed.has_value()) {
+          current_conv->schema_version = *parsed;
+        }
       } else if (command == "conv-title" && tokens.size() == 2) {
         current_conv->title = tokens[1].text;
       } else if (command == "conv-provider" && tokens.size() == 2) {
@@ -323,7 +281,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       } else if (command == "conv-system-prompt" && tokens.size() == 2) {
         current_conv->system_prompt = tokens[1].text;
       } else if (command == "conv-last-request-duration-ms" && tokens.size() == 2) {
-        ParseInt64Token(tokens[1].text, &current_conv->last_request_duration_ms);
+        if (const auto parsed = util::ParseInt64(tokens[1].text); parsed.has_value()) {
+          current_conv->last_request_duration_ms = *parsed;
+        }
       } else if (command == "msg-begin" && tokens.size() == 2) {
         if (current_tool.has_value() && current_msg.has_value()) {
           current_msg->tool_events.push_back(std::move(*current_tool));
@@ -364,7 +324,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
         } else if (command == "tool-finished" && tokens.size() == 2) {
           current_tool->finished_at = tokens[1].text;
         } else if (command == "tool-duration-ms" && tokens.size() == 2) {
-          ParseInt64Token(tokens[1].text, &current_tool->duration_ms);
+          if (const auto parsed = util::ParseInt64(tokens[1].text); parsed.has_value()) {
+            current_tool->duration_ms = *parsed;
+          }
         } else if (command == "tool-error" && tokens.size() == 2) {
           current_tool->error = tokens[1].text;
         } else if (command == "tool-output" && tokens.size() == 2) {
@@ -384,7 +346,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
         } else if (command == "msg-error" && tokens.size() == 2) {
           current_msg->error = tokens[1].text;
         } else if (command == "msg-request-duration-ms" && tokens.size() == 2) {
-          ParseInt64Token(tokens[1].text, &current_msg->request_duration_ms);
+          if (const auto parsed = util::ParseInt64(tokens[1].text); parsed.has_value()) {
+            current_msg->request_duration_ms = *parsed;
+          }
         } else if (command == "msg-content" && tokens.size() == 2) {
           current_msg->content = tokens[1].text;
         }
@@ -404,7 +368,9 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (command == "active-leaf" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->active_leaf_id);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->active_leaf_id = *parsed;
+      }
       continue;
     }
     if (command == "kind" && tokens.size() == 2) {
@@ -413,23 +379,30 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
     }
     if (command == "view" && tokens.size() == 7) {
       PersistedEditorViewState view_state;
-      if (ParseSizeToken(tokens[1].text, &view_state.leaf_id) &&
-          ParseSizeToken(tokens[3].text, &view_state.cursor_line) &&
-          ParseSizeToken(tokens[4].text, &view_state.cursor_column) &&
-          ParseSizeToken(tokens[5].text, &view_state.scroll_line) &&
-          ParseSizeToken(tokens[6].text, &view_state.horizontal_scroll)) {
+      const auto leaf_id = util::ParseSize(tokens[1].text);
+      const auto cursor_line = util::ParseSize(tokens[3].text);
+      const auto cursor_column = util::ParseSize(tokens[4].text);
+      const auto scroll_line = util::ParseSize(tokens[5].text);
+      const auto horizontal_scroll = util::ParseSize(tokens[6].text);
+      if (leaf_id.has_value() && cursor_line.has_value() && cursor_column.has_value() &&
+          scroll_line.has_value() && horizontal_scroll.has_value()) {
+        view_state.leaf_id = *leaf_id;
+        view_state.cursor_line = *cursor_line;
+        view_state.cursor_column = *cursor_column;
+        view_state.scroll_line = *scroll_line;
+        view_state.horizontal_scroll = *horizontal_scroll;
         view_state.path = std::filesystem::path(tokens[2].text);
         current_tab->views.push_back(std::move(view_state));
       }
       continue;
     }
     if (version >= 2 && command == "view-dirty" && tokens.size() == 3) {
-      std::size_t leaf_id = 0;
-      if (!ParseSizeToken(tokens[1].text, &leaf_id)) {
+      const auto leaf_id = util::ParseSize(tokens[1].text);
+      if (!leaf_id.has_value()) {
         continue;
       }
       auto it = std::find_if(current_tab->views.begin(), current_tab->views.end(),
-                             [leaf_id](const auto& view) { return view.leaf_id == leaf_id; });
+                             [leaf_id](const auto& view) { return view.leaf_id == *leaf_id; });
       if (it == current_tab->views.end()) {
         continue;
       }
@@ -438,12 +411,12 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (version >= 2 && command == "view-buffer-line" && tokens.size() == 3) {
-      std::size_t leaf_id = 0;
-      if (!ParseSizeToken(tokens[1].text, &leaf_id)) {
+      const auto leaf_id = util::ParseSize(tokens[1].text);
+      if (!leaf_id.has_value()) {
         continue;
       }
       auto it = std::find_if(current_tab->views.begin(), current_tab->views.end(),
-                             [leaf_id](const auto& view) { return view.leaf_id == leaf_id; });
+                             [leaf_id](const auto& view) { return view.leaf_id == *leaf_id; });
       if (it == current_tab->views.end()) {
         continue;
       }
@@ -477,15 +450,21 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (command == "compare-selected-row" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->compare_selected_row);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->compare_selected_row = *parsed;
+      }
       continue;
     }
     if (command == "compare-scroll-row" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->compare_scroll_row);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->compare_scroll_row = *parsed;
+      }
       continue;
     }
     if (command == "compare-horizontal-scroll" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->compare_horizontal_scroll);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->compare_horizontal_scroll = *parsed;
+      }
       continue;
     }
     if (command == "merge-base" && tokens.size() == 2) {
@@ -505,34 +484,44 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       continue;
     }
     if (command == "merge-selected-hunk" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->merge_selected_hunk);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->merge_selected_hunk = *parsed;
+      }
       continue;
     }
     if (command == "merge-scroll-row" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->merge_scroll_row);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->merge_scroll_row = *parsed;
+      }
       continue;
     }
     if (command == "merge-horizontal-scroll" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &current_tab->merge_horizontal_scroll);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        current_tab->merge_horizontal_scroll = *parsed;
+      }
       continue;
     }
     if (command == "merge-left-divider" && tokens.size() == 2) {
-      ParseFloatToken(tokens[1].text, &current_tab->merge_left_divider_fraction);
+      if (const auto parsed = util::ParseFloat(tokens[1].text); parsed.has_value()) {
+        current_tab->merge_left_divider_fraction = *parsed;
+      }
       continue;
     }
     if (command == "merge-right-divider" && tokens.size() == 2) {
-      ParseFloatToken(tokens[1].text, &current_tab->merge_right_divider_fraction);
+      if (const auto parsed = util::ParseFloat(tokens[1].text); parsed.has_value()) {
+        current_tab->merge_right_divider_fraction = *parsed;
+      }
       continue;
     }
     if (command == "merge-choice" && tokens.size() == 3) {
-      std::size_t hunk_index = 0;
-      if (!ParseSizeToken(tokens[1].text, &hunk_index)) {
+      const auto hunk_index = util::ParseSize(tokens[1].text);
+      if (!hunk_index.has_value()) {
         continue;
       }
-      if (current_tab->merge_hunk_choices.size() <= hunk_index) {
-        current_tab->merge_hunk_choices.resize(hunk_index + 1);
+      if (current_tab->merge_hunk_choices.size() <= *hunk_index) {
+        current_tab->merge_hunk_choices.resize(*hunk_index + 1);
       }
-      current_tab->merge_hunk_choices[hunk_index] = tokens[2].text;
+      current_tab->merge_hunk_choices[*hunk_index] = tokens[2].text;
       continue;
     }
     if (command == "split-node" && tokens.size() == 5) {
@@ -541,8 +530,11 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
         continue;
       }
       PersistedSplitNodeState node_state;
-      if (ParseFloatToken(tokens[3].text, &node_state.size_fraction) &&
-          ParseSizeToken(tokens[4].text, &node_state.leaf_id)) {
+      const auto size_fraction = util::ParseFloat(tokens[3].text);
+      const auto leaf_id = util::ParseSize(tokens[4].text);
+      if (size_fraction.has_value() && leaf_id.has_value()) {
+        node_state.size_fraction = *size_fraction;
+        node_state.leaf_id = *leaf_id;
         node_state.path = *path;
         node_state.orientation = tokens[2].text;
         current_tab->split_nodes.push_back(std::move(node_state));
@@ -769,7 +761,9 @@ bool ParseWorkspaceSessionText(std::string_view text, PersistedWorkspaceSessionS
       continue;
     }
     if (command == "active-project" && tokens.size() == 2) {
-      ParseSizeToken(tokens[1].text, &state->active_project_index);
+      if (const auto parsed = util::ParseSize(tokens[1].text); parsed.has_value()) {
+        state->active_project_index = *parsed;
+      }
     }
   }
 
@@ -819,9 +813,9 @@ std::optional<std::vector<std::size_t>> DecodeSessionNodePath(std::string_view t
     if (part.empty()) {
       return std::nullopt;
     }
-    try {
-      path.push_back(static_cast<std::size_t>(std::stoull(std::string(part))));
-    } catch (...) {
+    if (const auto parsed = util::ParseSize(part); parsed.has_value()) {
+      path.push_back(*parsed);
+    } else {
       return std::nullopt;
     }
     if (slash == std::string_view::npos) {

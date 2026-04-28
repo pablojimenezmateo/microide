@@ -133,6 +133,8 @@ set(MICROIDE_CORE_SOURCES
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
+  src/editor/SingleLineEditor.cpp
+  src/editor/SingleLineKeyHandler.cpp
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
@@ -149,6 +151,10 @@ set(MICROIDE_CORE_SOURCES
   src/platform/Subprocess.cpp
   src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp
+  src/persistence/PersistedRecord.cpp
+  src/persistence/PersistedRecordDump.cpp
+  src/persistence/PersistedRecordReader.cpp
+  src/persistence/PersistedRecordWriter.cpp
   src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp
   src/project/FileOperationService.cpp
@@ -170,6 +176,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
   src/util/JsonValue.cpp
+  src/util/Parse.cpp
   src/util/SingleLineText.cpp
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
@@ -249,6 +256,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/WorkspaceTaskRuntime.cpp
   src/workspace/WorkspacePersistenceFormat.cpp
+  src/workspace/WorkspacePersistenceBinaryFormat.cpp
+  src/workspace/PersistenceService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
   src/workspace/WorkspaceProjectFileMonitor.cpp
@@ -395,6 +404,11 @@ add_executable(microide_tests
   tests/TestMain.cpp
   tests/TestSupport.cpp
   tests/PluginHostTests.cpp
+  tests/ParseTests.cpp
+  tests/ArchitectureInvariantsTests.cpp
+  tests/PersistedRecordDumpTests.cpp
+  tests/PersistedRecordIoTests.cpp
+  tests/PersistedStateRecordTests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
@@ -418,6 +432,7 @@ add_executable(microide_tests
   tests/Phase3Tests.cpp
   tests/Phase4Tests.cpp
   tests/Phase5Tests.cpp
+  tests/SingleLineEditorTests.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -497,6 +512,7 @@ add_executable(microide_diff_bench
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/util/PerformanceTrace.cpp
+  src/util/Parse.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
   src/util/TextFileIO.cpp

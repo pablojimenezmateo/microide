@@ -36,6 +36,7 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
           .config_state_path = [this]() { return ConfigStatePath(); },
           .user_config_path = [this]() { return UserConfigPath(); },
           .project_state_directory = [this]() { return ProjectStateDirectory(); },
+          .persistence_service = &persistence_service_,
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
           .apply_editor_preferences =
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },

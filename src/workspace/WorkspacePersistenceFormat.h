@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -155,5 +156,26 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
 std::string SerializeProjectSession(const PersistedProjectSessionState& state);
 bool ParseWorkspaceSessionText(std::string_view text, PersistedWorkspaceSessionState* state);
 std::string SerializeWorkspaceSession(const PersistedWorkspaceSessionState& state);
+
+bool EncodeUserConfigRecord(const PersistedUserConfigState& state,
+                            std::vector<std::byte>* out);
+bool DecodeUserConfigRecord(std::span<const std::byte> input,
+                            PersistedUserConfigState* state);
+bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state,
+                               std::vector<std::byte>* out);
+bool DecodeProjectConfigRecord(std::span<const std::byte> input,
+                               PersistedProjectConfigState* state);
+bool EncodeConversationRegistryRecord(const PersistedChatState& state,
+                                      std::vector<std::byte>* out);
+bool DecodeConversationRegistryRecord(std::span<const std::byte> input,
+                                      PersistedChatState* state);
+bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
+                                std::vector<std::byte>* out);
+bool DecodeProjectSessionRecord(std::span<const std::byte> input,
+                                PersistedProjectSessionState* state);
+bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
+                                  std::vector<std::byte>* out);
+bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
+                                  PersistedWorkspaceSessionState* state);
 
 }  // namespace microide::workspace

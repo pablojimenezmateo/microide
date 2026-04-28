@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "project/GitCommandUtil.h"
+#include "util/Parse.h"
 #include "util/TaskExecutor.h"
 
 namespace microide::project {
@@ -284,32 +285,6 @@ bool StartsWith(std::string_view text, std::string_view prefix) {
   return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
 }
 
-std::optional<std::int64_t> ParseInt64(std::string_view text) {
-  try {
-    std::size_t parsed = 0;
-    const std::int64_t value = std::stoll(std::string(text), &parsed);
-    if (parsed != text.size()) {
-      return std::nullopt;
-    }
-    return value;
-  } catch (...) {
-    return std::nullopt;
-  }
-}
-
-std::optional<std::size_t> ParseSize(std::string_view text) {
-  try {
-    std::size_t parsed = 0;
-    const std::size_t value = std::stoull(std::string(text), &parsed);
-    if (parsed != text.size()) {
-      return std::nullopt;
-    }
-    return value;
-  } catch (...) {
-    return std::nullopt;
-  }
-}
-
 struct CommitMetadata {
   std::string author;
   std::string summary;
@@ -371,8 +346,8 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
       }
 
       current_commit = std::string(fields[0]);
-      const auto parsed_result = ParseSize(fields[2]);
-      const auto parsed_count = ParseSize(fields[3]);
+      const auto parsed_result = util::ParseSize(fields[2]);
+      const auto parsed_count = util::ParseSize(fields[3]);
       if (!parsed_result.has_value() || !parsed_count.has_value() || *parsed_result == 0 ||
           *parsed_count == 0) {
         in_entry = false;
@@ -394,7 +369,7 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
       continue;
     }
     if (StartsWith(line, "author-time ")) {
-      if (const auto parsed = ParseInt64(line.substr(12)); parsed.has_value()) {
+      if (const auto parsed = util::ParseInt64(line.substr(12)); parsed.has_value()) {
         current_metadata.author_time = *parsed;
       }
       continue;

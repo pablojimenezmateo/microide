@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "platform/Filesystem.h"
+#include "util/Parse.h"
 
 namespace microide::render {
 
@@ -236,7 +237,7 @@ std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
   }
 
   if (IsDigits(token)) {
-    return Ansi256Color(std::stoi(token));
+    return Ansi256Color(util::ParseInt(token).value_or(0));
   }
 
   if (token == "black") {

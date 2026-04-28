@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "util/TextFileIO.h"
 #include "workspace/WorkspaceCommandParsing.h"
-#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 
@@ -149,12 +147,7 @@ bool PersistenceCoordinator::ApplyUiScale(float scale,
 
 bool PersistenceCoordinator::RestoreUserConfig() {
   const std::filesystem::path config_path = operations_.user_config_path();
-  if (config_path.empty()) {
-    return false;
-  }
-
-  const auto text = util::ReadTextFile(config_path);
-  if (!text.has_value()) {
+  if (config_path.empty() || operations_.persistence_service == nullptr) {
     return false;
   }
 
@@ -163,7 +156,7 @@ bool PersistenceCoordinator::RestoreUserConfig() {
       .settings = {},
       .disabled_keybinding_ids = {},
   };
-  if (!ParseUserConfigText(*text, &state)) {
+  if (!operations_.persistence_service->LoadUserConfig(config_path, &state)) {
     return false;
   }
 
@@ -181,26 +174,21 @@ bool PersistenceCoordinator::RestoreUserConfig() {
 
 void PersistenceCoordinator::SaveUserConfig() const {
   const std::filesystem::path config_path = operations_.user_config_path();
-  if (config_path.empty()) {
+  if (config_path.empty() || operations_.persistence_service == nullptr) {
     return;
   }
 
-  util::WriteTextFileAtomically(
-      config_path,
-      SerializeUserConfig(PersistedUserConfigState{
-          .ui_scale = ui_scale_,
-          .settings = context_.user_settings,
-          .disabled_keybinding_ids = context_.disabled_keybinding_ids,
-      }));
+  PersistedUserConfigState state{
+      .ui_scale = ui_scale_,
+      .settings = context_.user_settings,
+      .disabled_keybinding_ids = context_.disabled_keybinding_ids,
+  };
+  operations_.persistence_service->SaveUserConfig(config_path, state);
 }
 
 bool PersistenceCoordinator::RestoreConfigState() {
   const std::filesystem::path config_path = operations_.config_state_path();
-  if (config_path.empty()) {
-    return false;
-  }
-  const auto text = util::ReadTextFile(config_path);
-  if (!text.has_value()) {
+  if (config_path.empty() || operations_.persistence_service == nullptr) {
     return false;
   }
 
@@ -214,7 +202,7 @@ bool PersistenceCoordinator::RestoreConfigState() {
       .settings = {},
       .sidebar_policies = {},
   };
-  if (!ParseProjectConfigText(*text, &persisted_state)) {
+  if (!operations_.persistence_service->LoadProjectConfig(config_path, &persisted_state)) {
     return false;
   }
 
@@ -243,20 +231,19 @@ void PersistenceCoordinator::SaveConfigState() const {
   }
 
   const std::filesystem::path config_path = operations_.config_state_path();
-  if (config_path.empty()) {
+  if (config_path.empty() || operations_.persistence_service == nullptr) {
     return;
   }
-  util::WriteTextFileAtomically(
-      config_path,
-      SerializeProjectConfig(PersistedProjectConfigState{
-          .editor_tab_size = state.editor_preferences.tab_size,
-          .editor_indent_width = state.editor_preferences.indent_width,
-          .editor_soft_tabs = state.editor_preferences.soft_tabs,
-          .colorscheme_name = state.active_colorscheme_name,
-          .project_base_color = state.project_base_color.value_or(DefaultProjectBaseColor(state.root)),
-          .settings = state.settings,
-          .sidebar_policies = PersistedSidebarPolicies(state.sidebar_policies),
-      }));
+  PersistedProjectConfigState persisted{
+      .editor_tab_size = state.editor_preferences.tab_size,
+      .editor_indent_width = state.editor_preferences.indent_width,
+      .editor_soft_tabs = state.editor_preferences.soft_tabs,
+      .colorscheme_name = state.active_colorscheme_name,
+      .project_base_color = state.project_base_color.value_or(DefaultProjectBaseColor(state.root)),
+      .settings = state.settings,
+      .sidebar_policies = PersistedSidebarPolicies(state.sidebar_policies),
+  };
+  operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }
 
 }  // namespace microide::workspace

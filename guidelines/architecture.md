@@ -75,6 +75,16 @@ Keep these boundaries obvious. UI code should not grow direct knowledge of git c
 - External tool boundaries belong in `src/project/*` or `src/platform/*`, where the UI can consume stable results without caring how they were produced.
 - Shared helpers in `src/util/*` should stay small and reusable. Do not move subsystem ownership into generic buckets just to avoid creating a focused file.
 
+## Enforced Invariants
+
+- `microide_tests` includes an `ArchitectureInvariants` fixture and it runs through the default `ctest` entrypoint.
+- New numeric parsing in `src/` must use `src/util/Parse.{h,cpp}`. Do not add `try`/`catch` wrappers around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, `std::stod`, or similar APIs.
+- Workspace source under `src/workspace/*` should not add `friend class` or `friend struct` declarations.
+- Coordinator headers under `src/workspace/Workspace*Coordinator*.h` should not take `WorkspaceShell&` or `WorkspaceShell*` in constructors; inject the narrow service or callback dependency instead.
+- No single `src/plugin/*.cpp` translation unit should exceed 800 lines.
+- `src/workspace/WorkspaceShell.h` should stay at or below 400 lines and `src/workspace/WorkspaceShell.cpp` at or below 600 lines.
+- Some invariants still warn instead of hard-failing while the cleanup change is in flight. When a slice removes the last known violation for a rule, flip that rule to hard-fail in the same change.
+
 ## Plugin-Phase Direction
 
 Plugin expansion is a major current phase. The durable direction is:

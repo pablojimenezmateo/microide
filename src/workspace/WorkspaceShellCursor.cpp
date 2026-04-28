@@ -2,31 +2,15 @@
 
 #include <algorithm>
 #include <cctype>
-#include <string>
 #include <string_view>
+
+#include "util/Parse.h"
 
 namespace microide::workspace {
 
 namespace {
 
 constexpr float kWindowFrameHitThickness = 6.0f;
-
-bool ParseUnsignedStrict(std::string_view text, std::size_t* value) {
-  if (value == nullptr || text.empty()) {
-    return false;
-  }
-  try {
-    std::size_t parsed_length = 0;
-    const unsigned long long parsed = std::stoull(std::string(text), &parsed_length);
-    if (parsed_length != text.size()) {
-      return false;
-    }
-    *value = static_cast<std::size_t>(parsed);
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
 
 bool IsNavigableOutputLine(std::string_view text) {
   const std::size_t column_delimiter = text.rfind(':');
@@ -42,10 +26,9 @@ bool IsNavigableOutputLine(std::string_view text) {
   const std::string_view line_text =
       text.substr(line_delimiter + 1, column_delimiter - line_delimiter - 1);
   const std::string_view column_text = text.substr(column_delimiter + 1);
-  std::size_t line = 0;
-  std::size_t column = 0;
-  return !path_text.empty() && ParseUnsignedStrict(line_text, &line) && line > 0 &&
-         ParseUnsignedStrict(column_text, &column);
+  const auto line = util::ParseSize(line_text);
+  const auto column = util::ParseSize(column_text);
+  return !path_text.empty() && line.has_value() && *line > 0 && column.has_value();
 }
 
 SDL_HitTestResult ResizeHitTestResult(bool left, bool right, bool top, bool bottom) {
