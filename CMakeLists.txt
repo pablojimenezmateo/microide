@@ -271,6 +271,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMergeState.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
   src/workspace/WorkspaceSidebarCoordinator.cpp
+  src/workspace/SidebarService.cpp
   src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp
   src/workspace/WorkspaceSidebarCoordinatorActions.cpp
   src/workspace/WorkspaceSidebarMouseCoordinator.cpp

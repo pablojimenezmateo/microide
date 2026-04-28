@@ -4,6 +4,7 @@
 
 #include "workspace/EditorTabService.h"
 #include "workspace/PromptSurfaceService.h"
+#include "workspace/SidebarService.h"
 #include "util/SingleLineText.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
@@ -294,60 +295,64 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
       });
 }
 
+SidebarService WorkspaceShell::MakeSidebarService() {
+  return SidebarService(MakeSidebarCoordinator());
+}
+
 void WorkspaceShell::ShowSidebarMode(SidebarMode mode, bool temporary) {
-  MakeSidebarCoordinator().ShowMode(mode, temporary);
+  MakeSidebarService().ShowMode(mode, temporary);
 }
 
 void WorkspaceShell::ShowTreeSidebar(const std::filesystem::path& root) {
-  MakeSidebarCoordinator().ShowTree(root);
+  MakeSidebarService().ShowTree(root);
 }
 
 void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
-  MakeSidebarCoordinator().ShowSearch(std::move(query), temporary);
+  MakeSidebarService().ShowSearch(std::move(query), temporary);
 }
 
 void WorkspaceShell::ShowChatSidebar() {
-  MakeSidebarCoordinator().ShowMode(SidebarMode::Chat, false);
+  MakeSidebarService().ShowMode(SidebarMode::Chat, false);
 }
 
 void WorkspaceShell::ShowProblemsSidebar() {
-  MakeSidebarCoordinator().ShowProblems();
+  MakeSidebarService().ShowProblems();
 }
 
 void WorkspaceShell::ShowGitSidebar() {
-  MakeSidebarCoordinator().ShowGit();
+  MakeSidebarService().ShowGit();
 }
 
 void WorkspaceShell::ShowTestsSidebar() {
-  MakeSidebarCoordinator().ShowTests();
+  MakeSidebarService().ShowTests();
 }
 
 bool WorkspaceShell::ShowPluginSidebar(std::string_view id, bool temporary) {
-  return MakeSidebarCoordinator().ShowPlugin(id, temporary);
+  return MakeSidebarService().ShowPlugin(id, temporary);
 }
 
 void WorkspaceShell::CloseSidebar() {
-  MakeSidebarCoordinator().Close();
+  MakeSidebarService().Close();
 }
 
 void WorkspaceShell::ToggleSidebar() {
-  MakeSidebarCoordinator().Toggle();
+  MakeSidebarService().Toggle();
 }
 
 void WorkspaceShell::RestorePreviousSidebar() {
-  MakeSidebarCoordinator().RestorePrevious();
+  MakeSidebarService().RestorePrevious();
 }
 
 void WorkspaceShell::RefreshProjectFiles() {
-  MakeSidebarCoordinator().RefreshProjectFiles();
+  MakeSidebarService().RefreshProjectFiles();
 }
 
 void WorkspaceShell::RefreshGitSidebar() {
-  MakeSidebarCoordinator().RefreshGit();
+  MakeSidebarService().RefreshGit();
 }
 
 bool WorkspaceShell::RefreshProblemsSidebar() {
-  return MakeSidebarCoordinator().RefreshProblems();
+  return MakeSidebarService().RefreshProblems();
 }
 
 bool WorkspaceShell::RefreshTestsSidebar() {
@@ -421,99 +426,99 @@ bool WorkspaceShell::RefreshTestsSidebar() {
 }
 
 bool WorkspaceShell::RefreshPluginSidebar() {
-  return MakeSidebarCoordinator().RefreshPlugin();
+  return MakeSidebarService().RefreshPlugin();
 }
 
 void WorkspaceShell::RevealSelectedGitSidebarLine() {
-  MakeSidebarCoordinator().RevealSelectedGitLine();
+  MakeSidebarService().RevealSelectedGitLine();
 }
 
 void WorkspaceShell::RevealSelectedProblemsSidebarLine() {
-  MakeSidebarCoordinator().RevealSelectedProblemsLine();
+  MakeSidebarService().RevealSelectedProblemsLine();
 }
 
 void WorkspaceShell::RevealSelectedTestsSidebarLine() {
-  MakeSidebarCoordinator().RevealSelectedTestsLine();
+  MakeSidebarService().RevealSelectedTestsLine();
 }
 
 void WorkspaceShell::RevealSelectedTreeSidebarLine() {
-  MakeSidebarCoordinator().RevealSelectedTreeLine();
+  MakeSidebarService().RevealSelectedTreeLine();
 }
 
 void WorkspaceShell::RevealSelectedPluginSidebarLine() {
-  MakeSidebarCoordinator().RevealSelectedPluginLine();
+  MakeSidebarService().RevealSelectedPluginLine();
 }
 
 void WorkspaceShell::MoveGitSidebarSelection(int delta) {
-  MakeSidebarCoordinator().MoveGitSelection(delta);
+  MakeSidebarService().MoveGitSelection(delta);
 }
 
 void WorkspaceShell::MoveProblemsSidebarSelection(int delta) {
-  MakeSidebarCoordinator().MoveProblemsSelection(delta);
+  MakeSidebarService().MoveProblemsSelection(delta);
 }
 
 void WorkspaceShell::MoveTestsSidebarSelection(int delta) {
-  MakeSidebarCoordinator().MoveTestsSelection(delta);
+  MakeSidebarService().MoveTestsSelection(delta);
 }
 
 void WorkspaceShell::MovePluginSidebarSelection(int delta) {
-  MakeSidebarCoordinator().MovePluginSelection(delta);
+  MakeSidebarService().MovePluginSelection(delta);
 }
 
 bool WorkspaceShell::OpenGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarCoordinator().OpenGitEntry(entry_index);
+  return MakeSidebarService().OpenGitEntry(entry_index);
 }
 
 bool WorkspaceShell::OpenSelectedProblemSidebarItem() {
-  return MakeSidebarCoordinator().OpenProblemItem();
+  return MakeSidebarService().OpenProblemItem();
 }
 
 bool WorkspaceShell::OpenSelectedTestSidebarItem() {
-  return MakeSidebarCoordinator().OpenTestItem();
+  return MakeSidebarService().OpenTestItem();
 }
 
 bool WorkspaceShell::OpenSelectedPluginSidebarItem() {
-  return MakeSidebarCoordinator().OpenPluginItem();
+  return MakeSidebarService().OpenPluginItem();
 }
 
 bool WorkspaceShell::RunSelectedTestSidebarItem() {
-  return MakeSidebarCoordinator().RunTestItem();
+  return MakeSidebarService().RunTestItem();
 }
 
 bool WorkspaceShell::CanStageAllGitSidebarEntries() const {
-  return const_cast<WorkspaceShell*>(this)->MakeSidebarCoordinator().CanStageAllGitEntries();
+  return const_cast<WorkspaceShell*>(this)->MakeSidebarService().CanStageAllGitEntries();
 }
 
 bool WorkspaceShell::CanDiscardAllGitSidebarEntries() const {
-  return const_cast<WorkspaceShell*>(this)->MakeSidebarCoordinator().CanDiscardAllGitEntries();
+  return const_cast<WorkspaceShell*>(this)->MakeSidebarService().CanDiscardAllGitEntries();
 }
 
 bool WorkspaceShell::StageAllGitSidebarEntries() {
-  return MakeSidebarCoordinator().StageAllGitEntries();
+  return MakeSidebarService().StageAllGitEntries();
 }
 
 void WorkspaceShell::OpenDiscardAllGitSidebarPrompt() {
-  MakeSidebarCoordinator().OpenDiscardAllGitPrompt();
+  MakeSidebarService().OpenDiscardAllGitPrompt();
 }
 
 bool WorkspaceShell::DiscardAllGitSidebarEntries() {
-  return MakeSidebarCoordinator().DiscardAllGitEntries();
+  return MakeSidebarService().DiscardAllGitEntries();
 }
 
 bool WorkspaceShell::StageGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarCoordinator().StageGitEntry(entry_index);
+  return MakeSidebarService().StageGitEntry(entry_index);
 }
 
 bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarCoordinator().UnstageGitEntry(entry_index);
+  return MakeSidebarService().UnstageGitEntry(entry_index);
 }
 
 bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
-  return MakeSidebarCoordinator().DiscardGitEntry(entry_index);
+  return MakeSidebarService().DiscardGitEntry(entry_index);
 }
 
 void WorkspaceShell::ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path) {
-  MakeSidebarCoordinator().ReconcileOpenTabsAfterPathDiscard(path);
+  MakeSidebarService().ReconcileOpenTabsAfterPathDiscard(path);
 }
 
 }  // namespace microide::workspace

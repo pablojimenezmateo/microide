@@ -93,6 +93,7 @@ class DirtyPromptCoordinator;
 class CompareInteractionCoordinator;
 class DiffTabCoordinator;
 class SidebarCoordinator;
+class SidebarService;
 class ChromeMouseCoordinator;
 class EditorMouseCoordinator;
 class CompareMouseCoordinator;
@@ -670,6 +671,7 @@ class WorkspaceShell {
   DiffTabCoordinator MakeDiffTabCoordinator();
   LifecycleCoordinator MakeLifecycleCoordinator();
   SidebarCoordinator MakeSidebarCoordinator();
+  SidebarService MakeSidebarService();
   KeyInputCoordinator MakeKeyInputCoordinator();
   TextInputCoordinator MakeTextInputCoordinator();
   EditorTabService MakeEditorTabService();
