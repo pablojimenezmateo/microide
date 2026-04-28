@@ -26,10 +26,6 @@ class TabCoordinator {
     std::function<TabEntry::EditorTabState(const editor::TextViewport&)> make_editor_tab_state;
     std::function<std::filesystem::path(const TabEntry::EditorTabState::EditorViewState&)>
         editor_view_path;
-    std::function<bool(TabEntry::EditorTabState::EditorViewState&)> restore_editor_view;
-    std::function<TabEntry::EditorTabState::EditorViewState*(TabEntry::EditorTabState&,
-                                                             std::size_t)>
-        find_editor_view_state;
     std::function<editor::TextViewport*(TabEntry::EditorTabState&, std::size_t)> find_editor_view;
     std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
     std::function<void()> sync_active_editor_tab;
@@ -74,6 +70,13 @@ class TabCoordinator {
   static bool TabStateIsDirty(const TabEntry& tab);
 
  private:
+  bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
+  TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
+      TabEntry::EditorTabState& editor_tab,
+      std::size_t leaf_id);
+  const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
+      const TabEntry::EditorTabState& editor_tab,
+      std::size_t leaf_id) const;
   bool EnsureEditorTabLoaded(TabEntry& tab);
 
   ProjectCatalogState& project_catalog_;

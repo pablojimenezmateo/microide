@@ -764,8 +764,6 @@ class WorkspaceShell {
                                  std::string* blocking_label = nullptr) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   std::filesystem::path EditorViewPath(const TabEntry::EditorTabState::EditorViewState& view) const;
-  bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
-  bool EnsureEditorTabLoaded(TabEntry& tab);
   bool ActivateCurrentTabAfterStateLoad();
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();

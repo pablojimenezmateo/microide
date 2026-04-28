@@ -66,6 +66,43 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
       state_(current_project_state),
       operations_(std::move(operations)) {}
 
+TabEntry::EditorTabState::EditorViewState* TabCoordinator::FindEditorViewState(
+    TabEntry::EditorTabState& editor_tab,
+    std::size_t leaf_id) {
+  auto it = std::find_if(editor_tab.views.begin(), editor_tab.views.end(),
+                         [&](const auto& view) { return view.leaf_id == leaf_id; });
+  return it == editor_tab.views.end() ? nullptr : &*it;
+}
+
+const TabEntry::EditorTabState::EditorViewState* TabCoordinator::FindEditorViewState(
+    const TabEntry::EditorTabState& editor_tab,
+    std::size_t leaf_id) const {
+  auto it = std::find_if(editor_tab.views.begin(), editor_tab.views.end(),
+                         [&](const auto& view) { return view.leaf_id == leaf_id; });
+  return it == editor_tab.views.end() ? nullptr : &*it;
+}
+
+bool TabCoordinator::RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view) {
+  if (!view.needs_restore) {
+    return true;
+  }
+  if (view.restored_path.empty()) {
+    return false;
+  }
+
+  editor::TextViewport loaded_view;
+  if (!loaded_view.OpenFile(view.restored_path)) {
+    return false;
+  }
+  loaded_view.MoveCursorTo(view.restored_cursor_line, view.restored_cursor_column);
+  loaded_view.SetScrollLine(view.restored_scroll_line);
+  loaded_view.SetHorizontalScroll(view.restored_horizontal_scroll);
+  operations_.apply_editor_preferences(loaded_view);
+  view.viewport = std::move(loaded_view);
+  view.needs_restore = false;
+  return true;
+}
+
 bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     return tab.compare->right_editable && tab.compare->right_viewport.dirty();
@@ -277,7 +314,7 @@ void TabCoordinator::SyncActiveEditorTab() {
 
   operations_.normalize_editor_split_tree(*tab.editor_state);
   auto* active_view_state =
-      operations_.find_editor_view_state(*tab.editor_state, tab.editor_state->active_leaf_id);
+      FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
   if (active_view_state != nullptr) {
     if (active_view_state->needs_restore) {
       tab.path = operations_.editor_view_path(*active_view_state);
@@ -324,7 +361,7 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
       }
       continue;
     }
-    if (operations_.restore_editor_view(view)) {
+    if (RestoreEditorView(view)) {
       loaded_any = true;
       if (view.leaf_id == editor_state.active_leaf_id) {
         active_loaded = true;
@@ -345,7 +382,7 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
   }
 
   operations_.normalize_editor_split_tree(editor_state);
-  const auto* active_view = operations_.find_editor_view_state(editor_state, editor_state.active_leaf_id);
+  const auto* active_view = FindEditorViewState(editor_state, editor_state.active_leaf_id);
   if (active_view != nullptr) {
     tab.path = operations_.editor_view_path(*active_view);
     tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
@@ -815,14 +852,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .editor_view_path =
               [this](const TabEntry::EditorTabState::EditorViewState& view) {
                 return EditorViewPath(view);
-              },
-          .restore_editor_view =
-              [this](TabEntry::EditorTabState::EditorViewState& view) {
-                return RestoreEditorView(view);
-              },
-          .find_editor_view_state =
-              [this](TabEntry::EditorTabState& editor_tab, std::size_t leaf_id) {
-                return FindEditorViewState(editor_tab, leaf_id);
               },
           .find_editor_view =
               [this](TabEntry::EditorTabState& editor_tab, std::size_t leaf_id) {
