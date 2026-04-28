@@ -275,6 +275,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSidebarMouseCoordinator.cpp
   src/workspace/WorkspaceSidebarMouseCoordinatorScroll.cpp
   src/workspace/WorkspaceTabMouseCoordinator.cpp
+  src/workspace/EditorTabService.cpp
   src/workspace/WorkspaceTabCoordinator.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceProjectStateCoordinator.cpp

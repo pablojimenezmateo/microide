@@ -84,6 +84,7 @@ class CommandPromptCoordinator;
 class MenuCoordinator;
 class KeyInputCoordinator;
 class TextInputCoordinator;
+class EditorTabService;
 class TabCoordinator;
 class PathMutationCoordinator;
 class LifecycleCoordinator;
@@ -667,6 +668,7 @@ class WorkspaceShell {
   SidebarCoordinator MakeSidebarCoordinator();
   KeyInputCoordinator MakeKeyInputCoordinator();
   TextInputCoordinator MakeTextInputCoordinator();
+  EditorTabService MakeEditorTabService();
   TabCoordinator MakeTabCoordinator();
   ChromeMouseCoordinator MakeChromeMouseCoordinator();
   EditorMouseCoordinator MakeEditorMouseCoordinator();

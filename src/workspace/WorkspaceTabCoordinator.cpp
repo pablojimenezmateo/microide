@@ -14,6 +14,7 @@
 #include "platform/Subprocess.h"
 #include "util/Parse.h"
 #include "util/StringUtil.h"
+#include "workspace/EditorTabService.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceShell.h"
@@ -498,12 +499,16 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
       });
 }
 
+EditorTabService WorkspaceShell::MakeEditorTabService() {
+  return EditorTabService(MakeTabCoordinator());
+}
+
 std::string WorkspaceShell::ActiveTabTitle() const {
-  return const_cast<WorkspaceShell*>(this)->MakeTabCoordinator().ActiveTitle();
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().ActiveTitle();
 }
 
 bool WorkspaceShell::SaveTab(std::size_t index) {
-  return MakeTabCoordinator().Save(index);
+  return MakeEditorTabService().Save(index);
 }
 
 bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& path,
@@ -670,7 +675,7 @@ bool WorkspaceShell::IsReadOnlyVirtualDocument(const std::filesystem::path& path
 }
 
 bool WorkspaceShell::TabIsDirty(std::size_t index) const {
-  return const_cast<WorkspaceShell*>(this)->MakeTabCoordinator().IsDirty(index);
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().IsDirty(index);
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
@@ -704,7 +709,7 @@ std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
-  return const_cast<WorkspaceShell*>(this)->MakeTabCoordinator().DirtyIndices();
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyIndices();
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
@@ -721,30 +726,30 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(
     std::size_t project_index) const {
-  return const_cast<WorkspaceShell*>(this)->MakeTabCoordinator().DirtyIndicesForProject(project_index);
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyIndicesForProject(project_index);
 }
 
 void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
-  MakeTabCoordinator().ReloadCleanEditorTabsForPath(path);
+  MakeEditorTabService().ReloadCleanEditorTabsForPath(path);
 }
 
 bool WorkspaceShell::OpenUntitledTab() {
-  return MakeTabCoordinator().OpenUntitled();
+  return MakeEditorTabService().OpenUntitled();
 }
 
 bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
-  return MakeTabCoordinator().OpenFileInNewTab(path);
+  return MakeEditorTabService().OpenFileInNewTab(path);
 }
 
 bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
-  return MakeTabCoordinator().MoveActiveTo(index);
+  return MakeEditorTabService().MoveActiveTo(index);
 }
 
 std::optional<std::size_t> WorkspaceShell::FindTabIndexBySpecifier(
     std::string_view specifier,
     std::string* error_message) const {
-  return const_cast<WorkspaceShell*>(this)->MakeTabCoordinator().FindIndexBySpecifier(specifier,
-                                                                                       error_message);
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().FindIndexBySpecifier(
+      specifier, error_message);
 }
 
 void WorkspaceShell::OpenFile(const std::filesystem::path& path) {
@@ -764,7 +769,7 @@ void WorkspaceShell::OpenFile(const std::filesystem::path& path) {
 }
 
 bool WorkspaceShell::ReopenActiveTab() {
-  return MakeTabCoordinator().ReopenActive();
+  return MakeEditorTabService().ReopenActive();
 }
 
 }  // namespace microide::workspace
