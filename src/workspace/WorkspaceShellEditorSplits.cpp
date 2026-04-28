@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <optional>
 
+#include "workspace/EditorTabService.h"
+
 namespace microide::workspace {
 
 WorkspaceShell::EditorSplitSlot WorkspaceShell::FindEditorLeafSlot(
@@ -155,148 +157,23 @@ std::vector<std::size_t> WorkspaceShell::EditorLeafOrder(
 }
 
 void WorkspaceShell::SetActiveEditorSplit(std::size_t index) {
-  auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return;
-  }
-
-  NormalizeEditorSplitTree(*editor_tab);
-  if (auto* current_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
-      current_view != nullptr) {
-    *current_view = context_.current_project_state.text_viewport;
-  }
-
-  if (auto* target_view = FindEditorView(*editor_tab, index); target_view != nullptr) {
-    editor_tab->active_leaf_id = index;
-    context_.current_project_state.text_viewport = *target_view;
-    SyncActiveEditorTabMetadata();
-    ResetCaretBlink();
-  }
-  context_.current_project_state.surface.focus = FocusTarget::Editor;
-  RequestActiveTabRedraw(!context_.current_project_state.text_viewport.path().empty());
+  MakeEditorTabService().SetActiveEditorSplit(index);
 }
 
 bool WorkspaceShell::ActivateOrderedEditorSplit(std::size_t order_index) {
-  auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.size() < 2) {
-    return false;
-  }
-
-  NormalizeEditorSplitTree(*editor_tab);
-  const std::vector<std::size_t> leaf_order = EditorLeafOrder(*editor_tab);
-  if (order_index >= leaf_order.size()) {
-    return false;
-  }
-
-  SetActiveEditorSplit(leaf_order[order_index]);
-  return true;
+  return MakeEditorTabService().ActivateOrderedEditorSplit(order_index);
 }
 
 bool WorkspaceShell::SplitActiveEditor(EditorSplitOrientation orientation) {
-  auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || orientation == EditorSplitOrientation::None) {
-    return false;
-  }
-
-  if (editor_tab->views.empty()) {
-    *editor_tab = MakeEditorTabState(context_.current_project_state.text_viewport);
-  }
-
-  NormalizeEditorSplitTree(*editor_tab);
-  SyncActiveEditorTab();
-  auto* active_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
-  if (active_view == nullptr) {
-    return false;
-  }
-
-  const std::size_t new_leaf_id = editor_tab->next_leaf_id++;
-  editor_tab->views.push_back(TabEntry::EditorTabState::EditorViewState{
-      .leaf_id = new_leaf_id,
-      .viewport = *active_view,
-      .restored_path = active_view->path().lexically_normal(),
-      .restored_cursor_line = active_view->cursor_line(),
-      .restored_cursor_column = active_view->cursor_column(),
-      .restored_scroll_line = active_view->scroll_line(),
-      .restored_horizontal_scroll = active_view->horizontal_scroll(),
-      .needs_restore = false,
-  });
-
-  EditorSplitSlot active_slot = FindEditorLeafSlot(*editor_tab, editor_tab->active_leaf_id);
-  if (active_slot.slot == nullptr || active_slot.slot->get() == nullptr) {
-    editor_tab->views.pop_back();
-    return false;
-  }
-
-  if (active_slot.parent != nullptr && active_slot.parent->orientation == orientation) {
-    auto sibling = MakeEditorLeafNode(new_leaf_id, (*active_slot.slot)->size_fraction * 0.5f);
-    (*active_slot.slot)->size_fraction *= 0.5f;
-    active_slot.parent->children.insert(
-        active_slot.parent->children.begin() + static_cast<std::ptrdiff_t>(active_slot.index + 1),
-        std::move(sibling));
-    NormalizeEditorSplitNode(*active_slot.parent);
-  } else {
-    const float branch_fraction = std::max(0.0f, (*active_slot.slot)->size_fraction);
-    auto group = std::make_unique<TabEntry::EditorTabState::EditorSplitNode>();
-    group->orientation = orientation;
-    group->size_fraction = branch_fraction > 0.0f ? branch_fraction : 1.0f;
-    (*active_slot.slot)->size_fraction = 0.5f;
-    group->children.push_back(std::move(*active_slot.slot));
-    group->children.push_back(MakeEditorLeafNode(new_leaf_id, 0.5f));
-    NormalizeEditorSplitNode(*group);
-    *active_slot.slot = std::move(group);
-  }
-
-  NormalizeEditorSplitTree(*editor_tab);
-  editor_tab->active_leaf_id = new_leaf_id;
-  if (auto* new_view = FindEditorView(*editor_tab, new_leaf_id); new_view != nullptr) {
-    context_.current_project_state.text_viewport = *new_view;
-  }
-  context_.current_project_state.surface.focus = FocusTarget::Editor;
-  ResetCaretBlink();
-  RequestEditorSurfaceRedraw();
-  return true;
+  return MakeEditorTabService().SplitActiveEditor(orientation);
 }
 
 bool WorkspaceShell::UnsplitActiveEditor() {
-  auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.size() < 2) {
-    return false;
-  }
-
-  SyncActiveEditorTab();
-  auto* active_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
-  if (active_view == nullptr) {
-    return false;
-  }
-
-  const editor::TextViewport preserved_view = *active_view;
-  *editor_tab = MakeEditorTabState(preserved_view);
-  context_.current_project_state.text_viewport = preserved_view;
-  context_.current_project_state.surface.focus = FocusTarget::Editor;
-  ResetCaretBlink();
-  RequestEditorSurfaceRedraw();
-  return true;
+  return MakeEditorTabService().UnsplitActiveEditor();
 }
 
 bool WorkspaceShell::CycleEditorSplit(int delta) {
-  auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.size() < 2 || delta == 0) {
-    return false;
-  }
-
-  NormalizeEditorSplitTree(*editor_tab);
-  const std::vector<std::size_t> leaf_order = EditorLeafOrder(*editor_tab);
-  if (leaf_order.size() < 2) {
-    return false;
-  }
-
-  const int size = static_cast<int>(leaf_order.size());
-  const auto current_it = std::find(leaf_order.begin(), leaf_order.end(), editor_tab->active_leaf_id);
-  const int current =
-      current_it == leaf_order.end() ? 0 : static_cast<int>(current_it - leaf_order.begin());
-  const int next = (current + delta % size + size) % size;
-  SetActiveEditorSplit(leaf_order[static_cast<std::size_t>(next)]);
-  return true;
+  return MakeEditorTabService().CycleEditorSplit(delta);
 }
 
 void WorkspaceShell::CollectEditorPaneLayouts(

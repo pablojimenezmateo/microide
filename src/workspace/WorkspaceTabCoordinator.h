@@ -28,7 +28,6 @@ class TabCoordinator {
         editor_view_path;
     std::function<editor::TextViewport*(TabEntry::EditorTabState&, std::size_t)> find_editor_view;
     std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
-    std::function<void()> sync_active_editor_tab;
     std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void()> reveal_active_compare_selection;
     std::function<void()> reveal_active_merge_selection;
@@ -53,6 +52,11 @@ class TabCoordinator {
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
+  void SetActiveEditorSplit(std::size_t leaf_id);
+  bool ActivateOrderedEditorSplit(std::size_t order_index);
+  bool SplitActiveEditor(EditorSplitOrientation orientation);
+  bool UnsplitActiveEditor();
+  bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
@@ -70,6 +74,17 @@ class TabCoordinator {
   static bool TabStateIsDirty(const TabEntry& tab);
 
  private:
+  struct EditorSplitSlot {
+    TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
+    std::size_t index = 0;
+    std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot = nullptr;
+  };
+
+  static std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode> MakeEditorLeafNode(
+      std::size_t leaf_id,
+      float size_fraction = 1.0f);
+  EditorSplitSlot FindEditorLeafSlot(TabEntry::EditorTabState& editor_tab,
+                                     std::size_t leaf_id);
   bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
   TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
       TabEntry::EditorTabState& editor_tab,
@@ -77,6 +92,11 @@ class TabCoordinator {
   const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
       const TabEntry::EditorTabState& editor_tab,
       std::size_t leaf_id) const;
+  TabEntry::EditorTabState* ActiveEditorTab();
+  const TabEntry::EditorTabState* ActiveEditorTab() const;
+  void CollectEditorLeafOrder(const TabEntry::EditorTabState::EditorSplitNode* node,
+                              std::vector<std::size_t>& order) const;
+  std::vector<std::size_t> EditorLeafOrder(const TabEntry::EditorTabState& editor_tab) const;
   bool EnsureEditorTabLoaded(TabEntry& tab);
 
   ProjectCatalogState& project_catalog_;

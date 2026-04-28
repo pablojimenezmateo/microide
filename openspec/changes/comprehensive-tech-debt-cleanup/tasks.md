@@ -33,7 +33,7 @@
 
 ## 6. EditorTabService And Active-Viewport Cleanup
 
-- [ ] 6.1 Add `workspace/EditorTabService.{h,cpp}` owning tab list, active index, splits, dirty state, and view restore. Move tab-mutating logic out of `WorkspaceShell`/`WorkspaceShellTooling`.
+- [x] 6.1 Add `workspace/EditorTabService.{h,cpp}` owning tab list, active index, splits, dirty state, and view restore. Move tab-mutating logic out of `WorkspaceShell`/`WorkspaceShellTooling`.
 - [ ] 6.2 Remove `current_project_state_.text_viewport` and the `text_viewport_` alias entirely. Move welcome/placeholder responsibilities to a dedicated `WelcomeSurface` model.
 - [ ] 6.3 Migrate every editor-action caller to `EditorTabService::ActiveViewport()` (or equivalent typed accessor). Verify with `grep` that no `text_viewport_` reference remains.
 - [ ] 6.4 Rewrite `WorkspaceTabCoordinator`, `WorkspacePathMutationCoordinator*`, and `WorkspaceDirtyPromptCoordinator` to take `EditorTabService&` (and `PromptSurfaceService&` from step 7); remove the `WorkspaceShell&` parameter.

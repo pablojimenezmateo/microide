@@ -43,6 +43,26 @@ void EditorTabService::SyncActiveEditorTabMetadata() {
   coordinator_.SyncActiveEditorTabMetadata();
 }
 
+void EditorTabService::SetActiveEditorSplit(std::size_t leaf_id) {
+  coordinator_.SetActiveEditorSplit(leaf_id);
+}
+
+bool EditorTabService::ActivateOrderedEditorSplit(std::size_t order_index) {
+  return coordinator_.ActivateOrderedEditorSplit(order_index);
+}
+
+bool EditorTabService::SplitActiveEditor(EditorSplitOrientation orientation) {
+  return coordinator_.SplitActiveEditor(orientation);
+}
+
+bool EditorTabService::UnsplitActiveEditor() {
+  return coordinator_.UnsplitActiveEditor();
+}
+
+bool EditorTabService::CycleEditorSplit(int delta) {
+  return coordinator_.CycleEditorSplit(delta);
+}
+
 void EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
   coordinator_.ReloadCleanEditorTabsForPath(path);
 }

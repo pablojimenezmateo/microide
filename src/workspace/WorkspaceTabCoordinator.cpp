@@ -66,6 +66,51 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
       state_(current_project_state),
       operations_(std::move(operations)) {}
 
+std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode> TabCoordinator::MakeEditorLeafNode(
+    std::size_t leaf_id,
+    float size_fraction) {
+  auto leaf = std::make_unique<TabEntry::EditorTabState::EditorSplitNode>();
+  leaf->leaf_id = leaf_id;
+  leaf->orientation = EditorSplitOrientation::None;
+  leaf->size_fraction = size_fraction;
+  return leaf;
+}
+
+TabCoordinator::EditorSplitSlot TabCoordinator::FindEditorLeafSlot(
+    TabEntry::EditorTabState& editor_tab,
+    std::size_t leaf_id) {
+  EditorSplitSlot result;
+  const auto find_slot =
+      [&](auto&& self,
+          std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot,
+          TabEntry::EditorTabState::EditorSplitNode* parent,
+          std::size_t index) -> bool {
+    if (slot == nullptr || slot->get() == nullptr) {
+      return false;
+    }
+
+    auto* node = slot->get();
+    if (node->IsLeaf()) {
+      if (node->leaf_id != leaf_id) {
+        return false;
+      }
+      result.parent = parent;
+      result.index = index;
+      result.slot = slot;
+      return true;
+    }
+
+    for (std::size_t child_index = 0; child_index < node->children.size(); ++child_index) {
+      if (self(self, &node->children[child_index], node, child_index)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  find_slot(find_slot, &editor_tab.split_root, nullptr, 0);
+  return result;
+}
+
 TabEntry::EditorTabState::EditorViewState* TabCoordinator::FindEditorViewState(
     TabEntry::EditorTabState& editor_tab,
     std::size_t leaf_id) {
@@ -101,6 +146,50 @@ bool TabCoordinator::RestoreEditorView(TabEntry::EditorTabState::EditorViewState
   view.viewport = std::move(loaded_view);
   view.needs_restore = false;
   return true;
+}
+
+TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
+  if (state_.active_tab_index >= state_.open_tabs.size()) {
+    return nullptr;
+  }
+  auto& tab = state_.open_tabs[state_.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return nullptr;
+  }
+  return &tab.editor_state.value();
+}
+
+const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
+  if (state_.active_tab_index >= state_.open_tabs.size()) {
+    return nullptr;
+  }
+  const auto& tab = state_.open_tabs[state_.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return nullptr;
+  }
+  return &tab.editor_state.value();
+}
+
+void TabCoordinator::CollectEditorLeafOrder(
+    const TabEntry::EditorTabState::EditorSplitNode* node,
+    std::vector<std::size_t>& order) const {
+  if (node == nullptr) {
+    return;
+  }
+  if (node->IsLeaf()) {
+    order.push_back(node->leaf_id);
+    return;
+  }
+  for (const auto& child : node->children) {
+    CollectEditorLeafOrder(child.get(), order);
+  }
+}
+
+std::vector<std::size_t> TabCoordinator::EditorLeafOrder(
+    const TabEntry::EditorTabState& editor_tab) const {
+  std::vector<std::size_t> order;
+  CollectEditorLeafOrder(editor_tab.split_root.get(), order);
+  return order;
 }
 
 bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
@@ -374,6 +463,150 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     state_.directory_tree.SelectPath(active_path);
     operations_.reveal_selected_tree_sidebar_line();
   }
+}
+
+void TabCoordinator::SetActiveEditorSplit(std::size_t leaf_id) {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.empty()) {
+    return;
+  }
+
+  operations_.normalize_editor_split_tree(*editor_tab);
+  if (auto* current_view = operations_.find_editor_view(*editor_tab, editor_tab->active_leaf_id);
+      current_view != nullptr) {
+    *current_view = state_.text_viewport;
+  }
+
+  if (auto* target_view = operations_.find_editor_view(*editor_tab, leaf_id); target_view != nullptr) {
+    editor_tab->active_leaf_id = leaf_id;
+    state_.text_viewport = *target_view;
+    SyncActiveEditorTabMetadata();
+    operations_.reset_caret_blink();
+  }
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.request_active_tab_redraw(!state_.text_viewport.path().empty());
+}
+
+bool TabCoordinator::ActivateOrderedEditorSplit(std::size_t order_index) {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.size() < 2) {
+    return false;
+  }
+
+  operations_.normalize_editor_split_tree(*editor_tab);
+  const std::vector<std::size_t> leaf_order = EditorLeafOrder(*editor_tab);
+  if (order_index >= leaf_order.size()) {
+    return false;
+  }
+
+  SetActiveEditorSplit(leaf_order[order_index]);
+  return true;
+}
+
+bool TabCoordinator::SplitActiveEditor(EditorSplitOrientation orientation) {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || orientation == EditorSplitOrientation::None) {
+    return false;
+  }
+
+  if (editor_tab->views.empty()) {
+    *editor_tab = operations_.make_editor_tab_state(state_.text_viewport);
+  }
+
+  operations_.normalize_editor_split_tree(*editor_tab);
+  SyncActiveEditorTab();
+  auto* active_view = operations_.find_editor_view(*editor_tab, editor_tab->active_leaf_id);
+  if (active_view == nullptr) {
+    return false;
+  }
+
+  const std::size_t new_leaf_id = editor_tab->next_leaf_id++;
+  editor_tab->views.push_back(TabEntry::EditorTabState::EditorViewState{
+      .leaf_id = new_leaf_id,
+      .viewport = *active_view,
+      .restored_path = active_view->path().lexically_normal(),
+      .restored_cursor_line = active_view->cursor_line(),
+      .restored_cursor_column = active_view->cursor_column(),
+      .restored_scroll_line = active_view->scroll_line(),
+      .restored_horizontal_scroll = active_view->horizontal_scroll(),
+      .needs_restore = false,
+  });
+
+  EditorSplitSlot active_slot = FindEditorLeafSlot(*editor_tab, editor_tab->active_leaf_id);
+  if (active_slot.slot == nullptr || active_slot.slot->get() == nullptr) {
+    editor_tab->views.pop_back();
+    return false;
+  }
+
+  if (active_slot.parent != nullptr && active_slot.parent->orientation == orientation) {
+    auto sibling = MakeEditorLeafNode(new_leaf_id, (*active_slot.slot)->size_fraction * 0.5f);
+    (*active_slot.slot)->size_fraction *= 0.5f;
+    active_slot.parent->children.insert(
+        active_slot.parent->children.begin() + static_cast<std::ptrdiff_t>(active_slot.index + 1),
+        std::move(sibling));
+    operations_.normalize_editor_split_tree(*editor_tab);
+  } else {
+    const float branch_fraction = std::max(0.0f, (*active_slot.slot)->size_fraction);
+    auto group = std::make_unique<TabEntry::EditorTabState::EditorSplitNode>();
+    group->orientation = orientation;
+    group->size_fraction = branch_fraction > 0.0f ? branch_fraction : 1.0f;
+    (*active_slot.slot)->size_fraction = 0.5f;
+    group->children.push_back(std::move(*active_slot.slot));
+    group->children.push_back(MakeEditorLeafNode(new_leaf_id, 0.5f));
+    *active_slot.slot = std::move(group);
+    operations_.normalize_editor_split_tree(*editor_tab);
+  }
+
+  editor_tab->active_leaf_id = new_leaf_id;
+  if (auto* new_view = operations_.find_editor_view(*editor_tab, new_leaf_id); new_view != nullptr) {
+    state_.text_viewport = *new_view;
+  }
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.reset_caret_blink();
+  operations_.request_editor_surface_redraw();
+  return true;
+}
+
+bool TabCoordinator::UnsplitActiveEditor() {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.size() < 2) {
+    return false;
+  }
+
+  SyncActiveEditorTab();
+  auto* active_view = operations_.find_editor_view(*editor_tab, editor_tab->active_leaf_id);
+  if (active_view == nullptr) {
+    return false;
+  }
+
+  const editor::TextViewport preserved_view = *active_view;
+  *editor_tab = operations_.make_editor_tab_state(preserved_view);
+  state_.text_viewport = preserved_view;
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.reset_caret_blink();
+  operations_.request_editor_surface_redraw();
+  return true;
+}
+
+bool TabCoordinator::CycleEditorSplit(int delta) {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr || editor_tab->views.size() < 2 || delta == 0) {
+    return false;
+  }
+
+  operations_.normalize_editor_split_tree(*editor_tab);
+  const std::vector<std::size_t> leaf_order = EditorLeafOrder(*editor_tab);
+  if (leaf_order.size() < 2) {
+    return false;
+  }
+
+  const int size = static_cast<int>(leaf_order.size());
+  const auto current_it = std::find(leaf_order.begin(), leaf_order.end(), editor_tab->active_leaf_id);
+  const int current =
+      current_it == leaf_order.end() ? 0 : static_cast<int>(current_it - leaf_order.begin());
+  const int next = (current + delta % size + size) % size;
+  SetActiveEditorSplit(leaf_order[static_cast<std::size_t>(next)]);
+  return true;
 }
 
 bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
@@ -890,7 +1123,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               },
           .normalize_editor_split_tree =
               [this](TabEntry::EditorTabState& editor_tab) { NormalizeEditorSplitTree(editor_tab); },
-          .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
