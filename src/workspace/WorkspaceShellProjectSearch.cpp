@@ -341,7 +341,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
         view.restored_horizontal_scroll = reopened_view.horizontal_scroll();
         view.needs_restore = false;
         if (active_view) {
-          context_.current_project_state.text_viewport = reopened_view;
+          context_.current_project_state.welcome_surface.viewport = reopened_view;
         }
         reloaded_any = true;
       }

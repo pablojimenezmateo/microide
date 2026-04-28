@@ -21,7 +21,7 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
             i == state.active_tab_index && view.leaf_id == tab.editor_state->active_leaf_id &&
             !view.needs_restore;
         const editor::TextViewport& viewport =
-            active_live_view ? state.text_viewport : view.viewport;
+            active_live_view ? state.welcome_surface.viewport : view.viewport;
         if (view.needs_restore || viewport.path().empty() || !viewport.dirty()) {
           continue;
         }
@@ -193,7 +193,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       editor::TextViewport* viewport = &view_state->viewport;
       if (target.tab_index == state.active_tab_index &&
           target.leaf_id == tab.editor_state->active_leaf_id && !view_state->needs_restore) {
-        viewport = &state.text_viewport;
+        viewport = &state.welcome_surface.viewport;
       }
 
       if (view_state->needs_restore || viewport->path().empty() || !viewport->dirty()) {
@@ -211,8 +211,8 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       view_state->restored_scroll_line = viewport->scroll_line();
       view_state->restored_horizontal_scroll = viewport->horizontal_scroll();
       view_state->needs_restore = false;
-      if (viewport == &state.text_viewport) {
-        view_state->viewport = state.text_viewport;
+      if (viewport == &state.welcome_surface.viewport) {
+        view_state->viewport = state.welcome_surface.viewport;
       }
     }
     if (saved_any) {

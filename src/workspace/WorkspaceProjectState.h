@@ -249,6 +249,10 @@ struct PanelState {
   ChatPanelState chat;
 };
 
+struct WelcomeSurfaceState {
+  editor::TextViewport viewport;
+};
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;
@@ -256,7 +260,7 @@ struct ProjectWorkspaceState {
   project::DirectoryTree directory_tree;
   project::FileIndex file_index;
   project::FileFinder file_finder;
-  editor::TextViewport text_viewport;
+  WelcomeSurfaceState welcome_surface;
   std::vector<TabEntry> open_tabs;
   std::size_t active_tab_index = 0;
   int tab_scroll_index = 0;

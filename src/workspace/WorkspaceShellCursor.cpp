@@ -674,7 +674,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* viewport =
-      pane_it->active ? &context_.current_project_state.text_viewport
+      pane_it->active ? &context_.current_project_state.welcome_surface.viewport
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane_it->leaf_id)
                                                : nullptr);
   if (viewport == nullptr || viewport->is_placeholder()) {

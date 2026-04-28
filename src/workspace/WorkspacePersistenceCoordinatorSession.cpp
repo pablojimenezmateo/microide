@@ -501,7 +501,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
   }
 
   if (state.open_tabs.empty()) {
-    state.text_viewport.SetPlaceholderText(
+    state.welcome_surface.viewport.SetPlaceholderText(
         "microide\n\n"
         "Project loaded.\n"
         "Use the sidebar to open files.\n");

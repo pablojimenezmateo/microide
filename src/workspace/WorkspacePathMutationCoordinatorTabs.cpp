@@ -74,8 +74,8 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
           if (auto* active_view =
                   operations_.find_editor_view_state(*tab.editor_state, tab.editor_state->active_leaf_id);
               active_view != nullptr && !active_view->needs_restore) {
-            state.text_viewport = active_view->viewport;
-            operations_.apply_editor_preferences(state.text_viewport);
+            state.welcome_surface.viewport = active_view->viewport;
+            operations_.apply_editor_preferences(state.welcome_surface.viewport);
           }
           operations_.sync_active_editor_tab_metadata();
         } else if (auto* active_view =
@@ -307,8 +307,8 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
       if (const auto* active_view =
               operations_.find_editor_view(*tab.editor_state, tab.editor_state->active_leaf_id);
           active_view != nullptr) {
-        state.text_viewport = *active_view;
-        operations_.apply_editor_preferences(state.text_viewport);
+        state.welcome_surface.viewport = *active_view;
+        operations_.apply_editor_preferences(state.welcome_surface.viewport);
       }
       operations_.sync_active_editor_tab_metadata();
       operations_.reset_caret_blink();

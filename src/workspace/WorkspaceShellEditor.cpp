@@ -13,7 +13,7 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
-  ApplyEditorPreferences(context_.current_project_state.text_viewport);
+  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
   for (auto& tab : context_.current_project_state.open_tabs) {
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
       continue;
@@ -126,7 +126,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
       active_view != nullptr) {
     const std::filesystem::path old_path = active_view->path().lexically_normal();
     *active_view = configured_view;
-    context_.current_project_state.text_viewport = configured_view;
+    context_.current_project_state.welcome_surface.viewport = configured_view;
     const std::filesystem::path new_path = configured_view.path().lexically_normal();
     if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {
       NotifyLspBufferClose(old_path);
@@ -136,7 +136,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
     }
     SyncActiveEditorTabMetadata();
     ResetCaretBlink();
-    RequestActiveTabRedraw(!context_.current_project_state.text_viewport.path().empty());
+    RequestActiveTabRedraw(!context_.current_project_state.welcome_surface.viewport.path().empty());
     return true;
   }
   return false;
@@ -162,7 +162,7 @@ const editor::TextViewport* WorkspaceShell::FindEditorView(
 editor::TextViewport* WorkspaceShell::ActiveEditorViewport() {
   auto* editor_tab = ActiveEditorTab();
   if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return &context_.current_project_state.text_viewport;
+    return &context_.current_project_state.welcome_surface.viewport;
   }
   if (auto* viewport = FindEditorView(*editor_tab, editor_tab->active_leaf_id); viewport != nullptr) {
     return viewport;
@@ -173,7 +173,7 @@ editor::TextViewport* WorkspaceShell::ActiveEditorViewport() {
 const editor::TextViewport* WorkspaceShell::ActiveEditorViewport() const {
   const auto* editor_tab = ActiveEditorTab();
   if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return &context_.current_project_state.text_viewport;
+    return &context_.current_project_state.welcome_surface.viewport;
   }
   if (const auto* viewport = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
       viewport != nullptr) {

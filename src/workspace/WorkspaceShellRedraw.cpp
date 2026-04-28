@@ -753,20 +753,20 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(const WorkspaceLa
   auto pane_it = std::find_if(panes.begin(), panes.end(),
                               [](const EditorPaneLayout& pane) { return pane.active; });
   if (pane_it == panes.end()) {
-    return context_.current_project_state.text_viewport.is_placeholder() ? std::optional<SDL_FRect>(layout.editor_surface)
+    return context_.current_project_state.welcome_surface.viewport.is_placeholder() ? std::optional<SDL_FRect>(layout.editor_surface)
                                            : std::nullopt;
   }
 
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, context_.current_project_state.text_viewport, pane_it->rect);
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, context_.current_project_state.welcome_surface.viewport, pane_it->rect);
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
   const float cursor_x =
       metrics.text_x +
-      static_cast<float>(context_.current_project_state.text_viewport.cursor_visual_column() - context_.current_project_state.text_viewport.horizontal_scroll()) *
+      static_cast<float>(context_.current_project_state.welcome_surface.viewport.cursor_visual_column() - context_.current_project_state.welcome_surface.viewport.horizontal_scroll()) *
           char_width;
   const float cursor_y =
       metrics.first_line_y +
-      static_cast<float>(context_.current_project_state.text_viewport.cursor_line() - context_.current_project_state.text_viewport.scroll_line()) *
+      static_cast<float>(context_.current_project_state.welcome_surface.viewport.cursor_line() - context_.current_project_state.welcome_surface.viewport.scroll_line()) *
           metrics.line_height;
   return MakeRect(cursor_x, cursor_y - 1.0f, char_width, metrics.line_height);
 }

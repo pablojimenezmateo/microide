@@ -40,7 +40,7 @@ struct WorkspaceShell::TestAccess {
       throw std::runtime_error("failed to open editor fixture: " + path.string());
     }
     shell.ApplyEditorPreferences(opened_view);
-    shell.context_.current_project_state.text_viewport = opened_view;
+    shell.context_.current_project_state.welcome_surface.viewport = opened_view;
     shell.context_.current_project_state.open_tabs.push_back(WorkspaceShell::TabEntry{
         .kind = WorkspaceShell::TabEntry::Kind::Editor,
         .path = path.lexically_normal(),
