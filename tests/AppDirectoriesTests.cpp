@@ -20,6 +20,7 @@ void TestAppDirectoriesPreferExplicitEnvironmentRoots() {
   const std::filesystem::path data = temp_dir.path() / "data";
   const std::filesystem::path cache = temp_dir.path() / "cache";
 
+  ScopedHostPlatformOverride scoped_platform(microide::platform::HostPlatform::Linux);
   ScopedEnvVar scoped_home("HOME", home.string());
   ScopedEnvVar scoped_config("XDG_CONFIG_HOME", config.string());
   ScopedEnvVar scoped_state("XDG_STATE_HOME", state.string());
@@ -44,6 +45,7 @@ void TestAppDirectoriesFallBackToHomeRoots() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path home = temp_dir.path() / "home";
 
+  ScopedHostPlatformOverride scoped_platform(microide::platform::HostPlatform::Linux);
   ScopedEnvVar scoped_home("HOME", home.string());
   ScopedEnvVar scoped_config("XDG_CONFIG_HOME", "");
   ScopedEnvVar scoped_state("XDG_STATE_HOME", "");

@@ -1,7 +1,5 @@
 #include "project/IgnoreMatcher.h"
 
-#include <fnmatch.h>
-
 #include <cctype>
 #include <fstream>
 #include <system_error>
@@ -24,8 +22,100 @@ std::string ToSlash(const std::filesystem::path& path) {
   return path.lexically_normal().generic_string();
 }
 
+// Glob matcher honoring fnmatch's FNM_PATHNAME semantics: '*' and '?' do not
+// cross '/' boundaries, '[...]' classes match a single non-separator char,
+// and '\\' escapes the next pattern character. Implemented in-tree because
+// MinGW/UCRT does not ship <fnmatch.h>.
 bool GlobMatches(std::string_view pattern, std::string_view text) {
-  return fnmatch(std::string(pattern).c_str(), std::string(text).c_str(), FNM_PATHNAME) == 0;
+  const std::size_t plen = pattern.size();
+  const std::size_t tlen = text.size();
+  std::size_t pi = 0;
+  std::size_t ti = 0;
+  std::size_t star_pi = std::string_view::npos;
+  std::size_t star_ti = 0;
+
+  while (ti < tlen) {
+    if (pi < plen) {
+      const char pc = pattern[pi];
+      if (pc == '*') {
+        star_pi = ++pi;
+        star_ti = ti;
+        continue;
+      }
+      if (pc == '?') {
+        if (text[ti] == '/') {
+          // fall through to backtrack
+        } else {
+          ++pi;
+          ++ti;
+          continue;
+        }
+      } else if (pc == '[') {
+        const char tc = text[ti];
+        if (tc == '/') {
+          // fall through to backtrack
+        } else {
+          std::size_t scan = pi + 1;
+          bool negate = false;
+          if (scan < plen && (pattern[scan] == '!' || pattern[scan] == '^')) {
+            negate = true;
+            ++scan;
+          }
+          bool matched = false;
+          bool closed = false;
+          while (scan < plen) {
+            if (pattern[scan] == ']' && scan != pi + 1 + (negate ? 1 : 0)) {
+              closed = true;
+              ++scan;
+              break;
+            }
+            char lo = pattern[scan++];
+            if (lo == '\\' && scan < plen) {
+              lo = pattern[scan++];
+            }
+            char hi = lo;
+            if (scan + 1 < plen && pattern[scan] == '-' && pattern[scan + 1] != ']') {
+              ++scan;
+              hi = pattern[scan++];
+              if (hi == '\\' && scan < plen) {
+                hi = pattern[scan++];
+              }
+            }
+            if (tc >= lo && tc <= hi) {
+              matched = true;
+            }
+          }
+          if (closed && (matched != negate)) {
+            pi = scan;
+            ++ti;
+            continue;
+          }
+        }
+      } else {
+        char lit = pc;
+        std::size_t advance = 1;
+        if (lit == '\\' && pi + 1 < plen) {
+          lit = pattern[pi + 1];
+          advance = 2;
+        }
+        if (text[ti] == lit) {
+          pi += advance;
+          ++ti;
+          continue;
+        }
+      }
+    }
+    if (star_pi != std::string_view::npos && text[star_ti] != '/') {
+      pi = star_pi;
+      ti = ++star_ti;
+      continue;
+    }
+    return false;
+  }
+  while (pi < plen && pattern[pi] == '*') {
+    ++pi;
+  }
+  return pi == plen;
 }
 
 }  // namespace
