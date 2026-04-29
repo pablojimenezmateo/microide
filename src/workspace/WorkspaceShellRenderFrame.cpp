@@ -6,6 +6,7 @@
 
 #include "editor/TextLayout.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
@@ -88,6 +89,7 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
 }
 
 void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const {
+  const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
   DrawFilledRect(renderer, layout.full, theme_.window_background);
   DrawFilledRect(renderer, layout.menu_bar, theme_.chrome_background);
   DrawFilledRect(renderer,
@@ -115,7 +117,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
                           layout.breadcrumb.w, kWorkspaceDividerThickness),
                  theme_.border);
 
-  if (context_.current_project_state.sidebar.visible) {
+  if (frame_vm.sidebar_visible) {
     DrawFilledRect(renderer, layout.sidebar, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
@@ -132,7 +134,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
                    theme_.border);
   }
 
-  if (BottomPanelVisible()) {
+  if (frame_vm.bottom_panel_visible) {
     DrawFilledRect(renderer, layout.bottom_panel, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
