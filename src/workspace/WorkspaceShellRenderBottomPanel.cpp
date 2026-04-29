@@ -321,7 +321,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           cursor.row <
               static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
                                        panel_layout.scroll.visible_rows) &&
-          (context_.current_project_state.surface.focus != FocusTarget::Panel ||
+          (panel_vm.focus != FocusTarget::Panel ||
            CaretVisibleNow())) {
         const float char_width = std::max(1.0f, text_renderer_.CharWidth());
         const float cursor_x = panel_layout.text_x + static_cast<float>(cursor.column) * char_width;
@@ -363,7 +363,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
     const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
     const std::string status_text = CommandPromptCoordinator::PromptStatusText(
-        context_.current_project_state.panel.command);
+        *panel_vm.command_state);
     DrawTextOn(text_renderer_, renderer, command_area.x + 12.0f, status_y, theme_.text_muted,
                theme_.surface_raised, TruncateLabel(status_text, command_area.w - 24.0f));
 
@@ -375,7 +375,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
                                            : std::nullopt;
     const std::string panel_fallback =
-        "> " + context_.current_project_state.panel.command.input.text;
+        "> " + panel_vm.command_state->input.text;
     const std::string_view panel_display_text =
         (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
                                                                 : std::string_view(panel_fallback);

@@ -53,6 +53,7 @@ OverlaySurfaceViewModel RenderViewModelBuilder::BuildOverlaySurface() const {
       .buffer_search_query_text =
           context_.current_project_state.overlay.workflow.buffer_search.query.text,
       .state = &context_.current_project_state.overlay,
+      .project_state = &context_.current_project_state,
   };
 }
 
@@ -91,6 +92,8 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       .height = context_.current_project_state.panel.height,
       .output_channel_id = context_.current_project_state.panel.output.channel_id,
       .project_root = context_.current_project_state.root,
+      .focus = context_.current_project_state.surface.focus,
+      .command_state = &context_.current_project_state.panel.command,
   };
 }
 

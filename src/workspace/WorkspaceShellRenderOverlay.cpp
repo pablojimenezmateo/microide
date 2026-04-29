@@ -11,6 +11,7 @@ using namespace detail;
 void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
   const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
   const OverlayState& overlay_state = *overlay_vm.state;
+  const ProjectWorkspaceState& project_state = *overlay_vm.project_state;
   if (!overlay_vm.visible) {
     return;
   }
@@ -354,9 +355,9 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawSingleLineTextTail(renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
                            std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
                            theme_.text_secondary, theme_.surface_background,
-                           "> " + context_.current_project_state.file_finder.query());
+                           "> " + project_state.file_finder.query());
 
-    const auto& results = context_.current_project_state.file_finder.results();
+    const auto& results = project_state.file_finder.results();
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = overlay_vm.scroll_row + row;
       if (item_index >= static_cast<int>(results.size())) {
@@ -364,7 +365,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
       }
       draw_overlay_row(
           row,
-          static_cast<int>(context_.current_project_state.file_finder.selected_index()) - overlay_vm.scroll_row,
+          static_cast<int>(project_state.file_finder.selected_index()) - overlay_vm.scroll_row,
           results[static_cast<std::size_t>(item_index)].path_string);
     }
     if (results.empty()) {

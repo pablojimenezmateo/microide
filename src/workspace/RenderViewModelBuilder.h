@@ -21,6 +21,7 @@ struct OverlaySurfaceViewModel {
   int scroll_row = 0;
   std::string buffer_search_query_text;
   const OverlayState* state = nullptr;
+  const ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct TextInputSurfaceViewModel {
@@ -50,6 +51,8 @@ struct BottomPanelSurfaceViewModel {
   float height = 0.0f;
   std::string output_channel_id;
   std::filesystem::path project_root;
+  FocusTarget focus = FocusTarget::Sidebar;
+  const CommandState* command_state = nullptr;
 };
 
 struct HoverPopupViewModel {
