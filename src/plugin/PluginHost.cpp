@@ -27,6 +27,7 @@
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
+#include "plugin/PluginLifecycleLoadInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
@@ -93,15 +94,6 @@ std::filesystem::path RepoPluginDirectory() {
   return error ? std::filesystem::path{} : repo_plugins_from_root(cwd);
 }
 #endif
-
-bool IsValidIdentifier(std::string_view value) {
-  if (value.empty()) {
-    return false;
-  }
-  return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-    return std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_';
-  });
-}
 
 std::string Basename(const std::filesystem::path& path) {
   return path.filename().empty() ? path.lexically_normal().string() : path.filename().string();
@@ -359,11 +351,6 @@ struct PluginHost::Impl {
   std::string FormatPluginPrefix(const PluginInstance* plugin) const {
     return plugin == nullptr ? std::string("plugin")
                              : std::string("plugin ") + plugin->id;
-  }
-
-  static std::string LuaErrorString(lua_State* state) {
-    const char* message = lua_tostring(state, -1);
-    return message != nullptr ? std::string(message) : std::string("unknown Lua error");
   }
 
   static int LuaLog(lua_State* state) {
@@ -1642,149 +1629,12 @@ struct PluginHost::Impl {
     }
   }
 
-  void ConfigurePackage(lua_State* state, const std::filesystem::path& plugin_root) {
-    lua_getglobal(state, "package");
-    if (!lua_istable(state, -1)) {
-      lua_pop(state, 1);
-      return;
-    }
-
-    const std::string prefix =
-        (plugin_root / "?.lua").generic_string() + ";" +
-        (plugin_root / "?" / "init.lua").generic_string();
-    lua_pushlstring(state, prefix.c_str(), prefix.size());
-    lua_setfield(state, -2, "path");
-    lua_pushliteral(state, "");
-    lua_setfield(state, -2, "cpath");
-    lua_pushnil(state);
-    lua_setfield(state, -2, "loadlib");
-
-    lua_getfield(state, -1, "preload");
-    if (lua_istable(state, -1)) {
-      lua_pushcfunction(state, &LuaOpenMicroide);
-      lua_setfield(state, -2, "microide");
-    }
-    lua_pop(state, 2);
-  }
-
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {
-    plugin->runtime = LuaRuntime::Create(error_message);
-    if (!plugin->runtime) {
-      return false;
-    }
-    plugin->state = plugin->runtime->state();
-    ConfigurePackage(plugin->state, plugin->root);
-    return true;
-  }
-
-  int ExtractFunctionRef(lua_State* state,
-                         int table_index,
-                         const char* field_name,
-                         const std::filesystem::path& plugin_root,
-                         std::string* error_message) {
-    lua_getfield(state, table_index, field_name);
-    if (lua_isnil(state, -1)) {
-      lua_pop(state, 1);
-      return LUA_NOREF;
-    }
-    if (!lua_isfunction(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = std::string("expected ") + field_name + " to be a function in " +
-                         plugin_root.string();
-      }
-      lua_pop(state, 1);
-      return LUA_NOREF;
-    }
-    return luaL_ref(state, LUA_REGISTRYINDEX);
+    return lifecycle_load_interop::InitializeState(plugin, &LuaOpenMicroide, error_message);
   }
 
   bool LoadPluginDescriptor(PluginInstance* plugin, std::string* error_message) {
-    const std::filesystem::path entry_path = plugin->root / "init.lua";
-    if (luaL_loadfile(plugin->state, entry_path.string().c_str()) != LUA_OK) {
-      if (error_message != nullptr) {
-        *error_message = "failed to load " + entry_path.string() + ": " +
-                         LuaErrorString(plugin->state);
-      }
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-    std::string call_error;
-    if (!plugin->runtime->PCall(0, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "failed to evaluate " + entry_path.string() + ": " + call_error;
-      }
-      return false;
-    }
-    if (!lua_istable(plugin->state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin entry point must return a table: " + entry_path.string();
-      }
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-
-    const int table_index = lua_absindex(plugin->state, -1);
-    lua_getfield(plugin->state, table_index, "id");
-    if (!lua_isstring(plugin->state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin id must be a string: " + entry_path.string();
-      }
-      lua_pop(plugin->state, 2);
-      return false;
-    }
-    plugin->id = lua_tostring(plugin->state, -1);
-    lua_pop(plugin->state, 1);
-    if (!IsValidIdentifier(plugin->id)) {
-      if (error_message != nullptr) {
-        *error_message = "invalid plugin id: " + plugin->id;
-      }
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-
-    plugin->setup_ref =
-        ExtractFunctionRef(plugin->state, table_index, "setup", plugin->root, error_message);
-    if (error_message != nullptr && !error_message->empty()) {
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-    plugin->on_project_open_ref =
-        ExtractFunctionRef(plugin->state, table_index, "on_project_open", plugin->root,
-                           error_message);
-    if (error_message != nullptr && !error_message->empty()) {
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-    plugin->on_project_close_ref =
-        ExtractFunctionRef(plugin->state, table_index, "on_project_close", plugin->root,
-                           error_message);
-    if (error_message != nullptr && !error_message->empty()) {
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-    plugin->on_buffer_open_ref =
-        ExtractFunctionRef(plugin->state, table_index, "on_buffer_open", plugin->root,
-                           error_message);
-    if (error_message != nullptr && !error_message->empty()) {
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-    plugin->on_buffer_save_ref =
-        ExtractFunctionRef(plugin->state, table_index, "on_buffer_save", plugin->root,
-                           error_message);
-    if (error_message != nullptr && !error_message->empty()) {
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-    plugin->shutdown_ref =
-        ExtractFunctionRef(plugin->state, table_index, "shutdown", plugin->root, error_message);
-    if (error_message != nullptr && !error_message->empty()) {
-      lua_pop(plugin->state, 1);
-      return false;
-    }
-
-    lua_pop(plugin->state, 1);
-    return true;
+    return lifecycle_load_interop::LoadPluginDescriptor(plugin, error_message);
   }
 
   bool CallSetup(PluginInstance* plugin, std::string* error_message) {
