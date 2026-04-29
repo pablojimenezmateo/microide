@@ -359,86 +359,8 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
 }
 
 bool WorkspaceShell::HandleTabMouseMotion(const SDL_Event& event, const WorkspaceLayout& layout) {
-  if (context_.interaction_state.tab_drag.kind == TabDragKind::None) {
-    return false;
-  }
-  if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
-    const TabDragKind kind = context_.interaction_state.tab_drag.kind;
-    const bool reordered = context_.interaction_state.tab_drag.reordered;
-    ClearTabDrag();
-    if (reordered) {
-      if (kind == TabDragKind::Project) {
-        MakePersistenceCoordinator().SaveWorkspaceSession();
-      } else {
-        MakePersistenceCoordinator().SaveSessionState();
-      }
-    }
-    return false;
-  }
-
-  const float delta_x = static_cast<float>(event.motion.x) - context_.interaction_state.tab_drag.press_x;
-  const float delta_y = static_cast<float>(event.motion.y) - context_.interaction_state.tab_drag.press_y;
-  if (!context_.interaction_state.tab_drag.dragging && std::hypot(delta_x, delta_y) < kTabDragStartDistance) {
-    return true;
-  }
-  context_.interaction_state.tab_drag.dragging = true;
-
-  switch (context_.interaction_state.tab_drag.kind) {
-    case TabDragKind::Project:
-      if (Contains(layout.project_tab_strip, event.motion.x, event.motion.y) &&
-          !context_.project_catalog.entries.empty()) {
-        const auto visible_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
-        const std::size_t insertion_slot = StripInsertionSlot(
-            layout.project_tab_strip, visible_tabs, static_cast<float>(event.motion.x),
-            context_.project_catalog.entries.size());
-        const std::size_t target_index = MoveTargetIndexForInsertion(
-            insertion_slot, context_.project_catalog.active_index, context_.project_catalog.entries.size());
-        if (target_index != context_.project_catalog.active_index &&
-            MoveActiveProjectTo(target_index)) {
-          context_.interaction_state.tab_drag.reordered = true;
-        }
-      }
-      return true;
-    case TabDragKind::Editor:
-      if (Contains(layout.tab_strip, event.motion.x, event.motion.y) &&
-          !context_.current_project_state.open_tabs.empty()) {
-        const auto visible_tabs = ComputeVisibleTabs(layout.tab_strip);
-        const std::size_t insertion_slot =
-            StripInsertionSlot(layout.tab_strip, visible_tabs, static_cast<float>(event.motion.x),
-                               context_.current_project_state.open_tabs.size());
-        const std::size_t target_index =
-            MoveTargetIndexForInsertion(insertion_slot, context_.current_project_state.active_tab_index,
-                                       context_.current_project_state.open_tabs.size());
-        if (target_index != context_.current_project_state.active_tab_index &&
-            MoveActiveTabTo(target_index)) {
-          context_.interaction_state.tab_drag.reordered = true;
-        }
-      }
-      return true;
-    case TabDragKind::Terminal:
-      if (BottomPanelVisible()) {
-        const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
-                                               layout.bottom_panel.w, kWorkspaceBottomPanelHeaderHeight);
-        if (Contains(panel_header, event.motion.x, event.motion.y) &&
-            !context_.current_project_state.terminal_tabs.empty()) {
-          const auto visible_tabs = ComputeVisibleTerminalTabs(panel_header);
-          const std::size_t insertion_slot = StripInsertionSlot(
-              panel_header, visible_tabs, static_cast<float>(event.motion.x),
-              context_.current_project_state.terminal_tabs.size());
-          const std::size_t target_index = MoveTargetIndexForInsertion(
-              insertion_slot, context_.current_project_state.active_terminal_tab_index,
-              context_.current_project_state.terminal_tabs.size());
-          if (target_index != context_.current_project_state.active_terminal_tab_index &&
-              MoveActiveTerminalTabTo(target_index)) {
-            context_.interaction_state.tab_drag.reordered = true;
-          }
-        }
-      }
-      return true;
-    case TabDragKind::None:
-    default:
-      return false;
-  }
+  (void)layout;
+  return MakeTabMouseCoordinator().HandleMotion(event);
 }
 
 bool WorkspaceShell::HandleTabMouseButtonDown(const SDL_Event& event, const WorkspaceLayout& layout) {
