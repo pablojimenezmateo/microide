@@ -24,6 +24,7 @@
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
 #include "plugin/PluginLuaInterop.h"
+#include "plugin/PluginHostRuntimeTypes.h"
 #include "plugin/LuaRuntime.h"
 #include "util/TextFileIO.h"
 
@@ -145,153 +146,25 @@ bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSever
 }  // namespace
 
 struct PluginHost::Impl {
-  struct PluginInstance {
-    std::string id;
-    std::filesystem::path root;
-    bool project_local = false;
-#if MICROIDE_HAS_LUA_PLUGINS
-    std::unique_ptr<LuaRuntime> runtime;
-    lua_State* state = nullptr;
-    int setup_ref = LUA_NOREF;
-    int on_project_open_ref = LUA_NOREF;
-    int on_project_close_ref = LUA_NOREF;
-    int on_buffer_open_ref = LUA_NOREF;
-    int on_buffer_save_ref = LUA_NOREF;
-    int shutdown_ref = LUA_NOREF;
-#endif
-  };
-
-  struct PluginCommand {
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int function_ref = LUA_NOREF;
-#endif
-  };
-
-  struct SidebarProvider {
-    SidebarProviderInfo info;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int snapshot_ref = LUA_NOREF;
-    int confirm_ref = LUA_NOREF;
-#endif
-  };
-
-  struct HoverProvider {
-    std::string id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int provide_ref = LUA_NOREF;
-#endif
-  };
-
-  struct SaveParticipantRuntime {
-    std::string id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int function_ref = LUA_NOREF;
-#endif
-  };
-
-  struct CompletionRuntime {
-    std::string id;
-    std::string language_id;
-    std::string trigger_characters;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int provide_ref = LUA_NOREF;
-#endif
-  };
-
-  struct CodeActionRuntime {
-    std::string id;
-    std::string language_id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int provide_ref = LUA_NOREF;
-#endif
-  };
-
-  struct TestProviderRuntime {
-    std::string id;
-    std::string language_id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int discover_ref = LUA_NOREF;
-    int run_ref = LUA_NOREF;
-#endif
-  };
-
-  struct ScmProviderRuntime {
-    std::string id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int snapshot_ref = LUA_NOREF;
-#endif
-  };
-
-  struct AnnotationProviderRuntime {
-    std::string id;
-    std::string language_id;
-    std::string type;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int provide_ref = LUA_NOREF;
-#endif
-  };
-
-  struct AuthProviderRuntime {
-    std::string id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int login_ref = LUA_NOREF;
-    int refresh_ref = LUA_NOREF;
-    int logout_ref = LUA_NOREF;
-#endif
-  };
-
-  struct McpToolRuntime {
-    std::string id;
-    std::string plugin_id;
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* state = nullptr;
-    int run_ref = LUA_NOREF;
-#endif
-  };
+  using PluginInstance = runtime_types::PluginInstance;
+  using PluginCommand = runtime_types::PluginCommand;
+  using SidebarProvider = runtime_types::SidebarProvider;
+  using HoverProvider = runtime_types::HoverProvider;
+  using SaveParticipantRuntime = runtime_types::SaveParticipantRuntime;
+  using CompletionRuntime = runtime_types::CompletionRuntime;
+  using CodeActionRuntime = runtime_types::CodeActionRuntime;
+  using TestProviderRuntime = runtime_types::TestProviderRuntime;
+  using ScmProviderRuntime = runtime_types::ScmProviderRuntime;
+  using AnnotationProviderRuntime = runtime_types::AnnotationProviderRuntime;
+  using AuthProviderRuntime = runtime_types::AuthProviderRuntime;
+  using McpToolRuntime = runtime_types::McpToolRuntime;
 
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
 
-  struct AsyncProcessCallback {
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* lua_state = nullptr;
-    int callback_ref = LUA_NOREF;
-#endif
-    platform::SubprocessResult result;
-  };
-  struct AsyncProcessRequest {
-#if MICROIDE_HAS_LUA_PLUGINS
-    lua_State* lua_state = nullptr;
-    int callback_ref = LUA_NOREF;
-#endif
-    bool cancelled = false;
-  };
-  struct AsyncProcessState {
-    Uint32 event_type = 0;
-    std::mutex mutex;
-    std::atomic<int> in_flight{0};
-    std::vector<std::shared_ptr<AsyncProcessRequest>> active_requests;
-    std::vector<AsyncProcessCallback> pending_callbacks;
-  };
+  using AsyncProcessCallback = runtime_types::AsyncProcessCallback;
+  using AsyncProcessRequest = runtime_types::AsyncProcessRequest;
+  using AsyncProcessState = runtime_types::AsyncProcessState;
   std::shared_ptr<AsyncProcessState> async_process_state = std::make_shared<AsyncProcessState>();
   std::vector<PluginInstance> plugins;
   std::unordered_map<std::string, PluginCommand> commands;
