@@ -25,6 +25,7 @@
 #include "platform/Subprocess.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginProcessInterop.h"
+#include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
 #include "plugin/PluginHostRuntimeTypes.h"
 #include "plugin/LuaRuntime.h"
@@ -430,43 +431,9 @@ struct PluginHost::Impl {
                        std::string_view command_name,
                        int function_index,
                        std::string* error_message) {
-    PluginInstance* plugin = FindPluginByState(state);
-    if (plugin == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "plugin command registration requires an active plugin state";
-      }
-      return false;
-    }
-    if (!IsValidIdentifier(command_name)) {
-      if (error_message != nullptr) {
-        *error_message = "invalid command name: " + std::string(command_name);
-      }
-      return false;
-    }
-    if (callbacks.is_command_name_available &&
-        !callbacks.is_command_name_available(command_name)) {
-      if (error_message != nullptr) {
-        *error_message = "command name already used by the host: " + std::string(command_name);
-      }
-      return false;
-    }
-    if (commands.contains(std::string(command_name))) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate plugin command: " + std::string(command_name);
-      }
-      return false;
-    }
-
-    lua_pushvalue(state, function_index);
-    const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    commands.emplace(std::string(command_name),
-                     PluginCommand{
-                         .plugin_id = plugin->id,
-                         .state = state,
-                         .function_ref = function_ref,
-                     });
-    RebuildCommandNames();
-    return true;
+    return registry_interop::RegisterCommand(state, FindPluginByState(state), callbacks,
+                                             command_name, function_index, &commands,
+                                             &command_names, error_message);
   }
 
   static int LuaCommandsAdd(lua_State* state) {
@@ -483,86 +450,8 @@ struct PluginHost::Impl {
   }
 
   bool RegisterSidebar(lua_State* state, int table_index, std::string* error_message) {
-    PluginInstance* plugin = FindPluginByState(state);
-    if (plugin == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "plugin sidebar registration requires an active plugin state";
-      }
-      return false;
-    }
-
-    lua_getfield(state, table_index, "id");
-    if (!lua_isstring(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "sidebar id must be a string";
-      }
-      lua_pop(state, 1);
-      return false;
-    }
-    const std::string id = lua_tostring(state, -1);
-    lua_pop(state, 1);
-    if (!IsValidIdentifier(id)) {
-      if (error_message != nullptr) {
-        *error_message = "invalid sidebar id: " + id;
-      }
-      return false;
-    }
-    if (sidebars.contains(id)) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate plugin sidebar: " + id;
-      }
-      return false;
-    }
-
-    lua_getfield(state, table_index, "label");
-    if (!lua_isstring(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "sidebar label must be a string";
-      }
-      lua_pop(state, 1);
-      return false;
-    }
-    const std::string label = lua_tostring(state, -1);
-    lua_pop(state, 1);
-
-    lua_getfield(state, table_index, "snapshot");
-    if (!lua_isfunction(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "sidebar snapshot must be a function";
-      }
-      lua_pop(state, 1);
-      return false;
-    }
-    const int snapshot_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-
-    int confirm_ref = LUA_NOREF;
-    lua_getfield(state, table_index, "on_confirm");
-    if (lua_isnil(state, -1)) {
-      lua_pop(state, 1);
-    } else if (lua_isfunction(state, -1)) {
-      confirm_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    } else {
-      if (error_message != nullptr) {
-        *error_message = "sidebar on_confirm must be a function";
-      }
-      lua_pop(state, 1);
-      luaL_unref(state, LUA_REGISTRYINDEX, snapshot_ref);
-      return false;
-    }
-
-    sidebars.emplace(id, SidebarProvider{
-                            .info =
-                                SidebarProviderInfo{
-                                    .id = id,
-                                    .label = label,
-                                    .plugin_id = plugin->id,
-                                },
-                            .state = state,
-                            .snapshot_ref = snapshot_ref,
-                            .confirm_ref = confirm_ref,
-                        });
-    RebuildSidebarProviders();
-    return true;
+    return registry_interop::RegisterSidebar(state, FindPluginByState(state), table_index,
+                                             &sidebars, &sidebar_providers, error_message);
   }
 
   static int LuaSidebarAdd(lua_State* state) {
@@ -578,56 +467,9 @@ struct PluginHost::Impl {
   }
 
   bool RegisterHoverProvider(lua_State* state, int table_index, std::string* error_message) {
-    PluginInstance* plugin = FindPluginByState(state);
-    if (plugin == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "hover provider registration requires an active plugin";
-      }
-      return false;
-    }
-
-    const int absolute_index = lua_absindex(state, table_index);
-    lua_getfield(state, absolute_index, "id");
-    if (!lua_isstring(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "hover provider id must be a string";
-      }
-      lua_pop(state, 1);
-      return false;
-    }
-    const std::string id = lua_tostring(state, -1);
-    lua_pop(state, 1);
-    if (!IsValidIdentifier(id)) {
-      if (error_message != nullptr) {
-        *error_message = "invalid hover provider id: " + id;
-      }
-      return false;
-    }
-    if (hovers.contains(id)) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate hover provider: " + id;
-      }
-      return false;
-    }
-
-    lua_getfield(state, absolute_index, "provide");
-    if (!lua_isfunction(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "hover provider provide must be a function";
-      }
-      lua_pop(state, 1);
-      return false;
-    }
-    const int provide_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-
-    hovers.emplace(id, HoverProvider{
-                           .id = id,
-                           .plugin_id = plugin->id,
-                           .state = state,
-                           .provide_ref = provide_ref,
-                       });
-    hover_provider_order.push_back(id);
-    return true;
+    return registry_interop::RegisterHoverProvider(state, FindPluginByState(state), table_index,
+                                                   &hovers, &hover_provider_order,
+                                                   error_message);
   }
 
   static int LuaHoverAdd(lua_State* state) {
