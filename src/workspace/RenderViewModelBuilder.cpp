@@ -71,6 +71,7 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
           &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
       .commit_picker_query = &context_.current_project_state.overlay.workflow.compare_picker.query,
       .file_finder_query = &context_.current_project_state.file_finder.query_state(),
+      .chat_composer = &context_.current_project_state.panel.chat.composer,
   };
 }
 

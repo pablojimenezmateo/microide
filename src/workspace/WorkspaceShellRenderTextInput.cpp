@@ -214,8 +214,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Chat
               ? ChatSidebarComposerRect(layout.sidebar)
               : BottomPanelCommandPromptRect(layout);
-      auto& composer =
-          const_cast<editor::TextViewport&>(context_.current_project_state.panel.chat.composer);
+      auto& composer = const_cast<editor::TextViewport&>(*text_input_vm.chat_composer);
       const std::size_t visible_lines = std::max<std::size_t>(
           1, static_cast<std::size_t>(std::floor(std::max(1.0f, prompt_rect.h - 8.0f) / line_height)));
       const std::size_t visible_columns = std::max<std::size_t>(

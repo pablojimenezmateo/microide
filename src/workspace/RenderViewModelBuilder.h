@@ -35,6 +35,7 @@ struct TextInputSurfaceViewModel {
   const util::SingleLineTextState* project_search_edit_buffer = nullptr;
   const util::SingleLineTextState* commit_picker_query = nullptr;
   const util::SingleLineTextState* file_finder_query = nullptr;
+  const editor::TextViewport* chat_composer = nullptr;
 };
 
 struct SidebarSurfaceViewModel {
