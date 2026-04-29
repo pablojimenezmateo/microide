@@ -3471,12 +3471,11 @@ struct PluginHost::Impl {
       lua_pop(plugin->state, 1);
       return false;
     }
-    if (lua_pcall(plugin->state, 0, 1, 0) != LUA_OK) {
+    std::string call_error;
+    if (!plugin->runtime->PCall(0, 1, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = "failed to evaluate " + entry_path.string() + ": " +
-                         LuaErrorString(plugin->state);
+        *error_message = "failed to evaluate " + entry_path.string() + ": " + call_error;
       }
-      lua_pop(plugin->state, 1);
       return false;
     }
     if (!lua_istable(plugin->state, -1)) {
@@ -3558,13 +3557,12 @@ struct PluginHost::Impl {
     active_plugin = plugin;
     lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, plugin->setup_ref);
     PushPluginContext(plugin->state);
-    if (lua_pcall(plugin->state, 1, 0, 0) != LUA_OK) {
+    std::string call_error;
+    if (!plugin->runtime->PCall(1, 0, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = FormatPluginPrefix(plugin) + " setup failed: " +
-                         LuaErrorString(plugin->state);
+        *error_message = FormatPluginPrefix(plugin) + " setup failed: " + call_error;
       }
       active_plugin = nullptr;
-      lua_pop(plugin->state, 1);
       return false;
     }
     active_plugin = nullptr;
@@ -3578,10 +3576,9 @@ struct PluginHost::Impl {
     lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, ref);
     PushPluginContext(plugin->state);
     PushProjectTable(plugin->state, current_project_root);
-    if (lua_pcall(plugin->state, 2, 0, 0) != LUA_OK) {
-      RecordError(FormatPluginPrefix(plugin) + " " + callback_name + " failed: " +
-                  LuaErrorString(plugin->state));
-      lua_pop(plugin->state, 1);
+    std::string call_error;
+    if (!plugin->runtime->PCall(2, 0, &call_error)) {
+      RecordError(FormatPluginPrefix(plugin) + " " + callback_name + " failed: " + call_error);
     }
   }
 
@@ -3595,10 +3592,9 @@ struct PluginHost::Impl {
     lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, ref);
     PushPluginContext(plugin->state);
     PushBufferTable(plugin->state, path);
-    if (lua_pcall(plugin->state, 2, 0, 0) != LUA_OK) {
-      RecordError(FormatPluginPrefix(plugin) + " " + callback_name + " failed: " +
-                  LuaErrorString(plugin->state));
-      lua_pop(plugin->state, 1);
+    std::string call_error;
+    if (!plugin->runtime->PCall(2, 0, &call_error)) {
+      RecordError(FormatPluginPrefix(plugin) + " " + callback_name + " failed: " + call_error);
     }
   }
 
@@ -3608,10 +3604,9 @@ struct PluginHost::Impl {
     }
     lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, plugin->shutdown_ref);
     PushPluginContext(plugin->state);
-    if (lua_pcall(plugin->state, 1, 0, 0) != LUA_OK) {
-      RecordError(FormatPluginPrefix(plugin) + " shutdown failed: " +
-                  LuaErrorString(plugin->state));
-      lua_pop(plugin->state, 1);
+    std::string call_error;
+    if (!plugin->runtime->PCall(1, 0, &call_error)) {
+      RecordError(FormatPluginPrefix(plugin) + " shutdown failed: " + call_error);
     }
   }
 
