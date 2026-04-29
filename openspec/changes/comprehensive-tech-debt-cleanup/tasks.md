@@ -56,7 +56,7 @@
 ## 9. Render View Models
 
 - [ ] 9.1 Add `workspace/RenderViewModelBuilder.{h,cpp}` and a typed `<Surface>ViewModel` struct per render surface. Populate from service queries.
-- [ ] 9.2 Migrate `WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, and `WorkspaceShellHoverTargets` to consume their view-model structs only.
+- [x] 9.2 Migrate `WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, and `WorkspaceShellHoverTargets` to consume their view-model structs only.
 - [ ] 9.3 Verify with the lint that no render translation unit calls `WorkspaceShell` member functions other than the view-model builder entry. Flip lint to hard-fail.
 - [ ] 9.4 Capture `MICROIDE_TRACE_REDRAW` for typing, scrolling, and merge-tab scrolling; confirm no regression vs. baseline.
 
