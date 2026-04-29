@@ -24,6 +24,7 @@
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
 #include "plugin/PluginLuaInterop.h"
+#include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
@@ -666,15 +667,13 @@ struct PluginHost::Impl {
       return luaL_error(state, "formatter registration requires an active plugin state");
     }
 
-    registration_parsers::FormatterRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseFormatterRegistration(state, plugin->id, &registration,
-                                                          &error_message)) {
+    if (!contribution_interop::RegisterFormatter(state, plugin->id, &host->formatters,
+                                                 &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse formatter registration"
                                               : error_message.c_str());
     }
-    host->formatters.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -684,17 +683,15 @@ struct PluginHost::Impl {
     if (plugin == nullptr) {
       return luaL_error(state, "save participant registration requires an active plugin state");
     }
-    registration_parsers::SaveParticipantRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseSaveParticipantRegistration(state, plugin->id, &registration,
-                                                               &error_message)) {
+    if (!contribution_interop::RegisterSaveParticipant(state, plugin->id, &host->save_participants,
+                                                       &host->save_participant_runtimes,
+                                                       &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty()
                             ? "failed to parse save participant registration"
                             : error_message.c_str());
     }
-    host->save_participants.push_back(std::move(registration.contributed));
-    host->save_participant_runtimes.push_back(std::move(registration.runtime));
     return 0;
   }
 
@@ -705,17 +702,12 @@ struct PluginHost::Impl {
     if (plugin == nullptr) {
       return luaL_error(state, "completion registration requires an active plugin state");
     }
-    registration_parsers::CompletionRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseCompletionRegistration(state, plugin->id, &registration,
-                                                           &error_message)) {
+    if (!contribution_interop::RegisterCompletion(state, plugin->id, &host->completions,
+                                                  &host->completion_runtimes, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse completion registration"
                                               : error_message.c_str());
-    }
-    host->completions.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->completion_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
@@ -728,17 +720,13 @@ struct PluginHost::Impl {
       return luaL_error(state, "code action registration requires an active plugin state");
     }
 
-    registration_parsers::CodeActionRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseCodeActionRegistration(state, plugin->id, &registration,
-                                                           &error_message)) {
+    if (!contribution_interop::RegisterCodeAction(state, plugin->id, &host->code_actions,
+                                                  &host->code_action_runtimes,
+                                                  &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse code action registration"
                                               : error_message.c_str());
-    }
-    host->code_actions.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->code_action_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
@@ -751,15 +739,12 @@ struct PluginHost::Impl {
       return luaL_error(state, "task registration requires an active plugin state");
     }
 
-    registration_parsers::TaskRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseTaskRegistration(state, plugin->id, &registration,
-                                                     &error_message)) {
+    if (!contribution_interop::RegisterTask(state, plugin->id, &host->tasks, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse task registration"
                                               : error_message.c_str());
     }
-    host->tasks.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -771,15 +756,13 @@ struct PluginHost::Impl {
       return luaL_error(state, "language server registration requires an active plugin state");
     }
 
-    registration_parsers::LanguageServerRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseLanguageServerRegistration(state, plugin->id, &registration,
-                                                               &error_message)) {
+    if (!contribution_interop::RegisterLanguageServer(state, plugin->id, &host->language_servers,
+                                                      &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse language server registration"
                                               : error_message.c_str());
     }
-    host->language_servers.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -791,15 +774,12 @@ struct PluginHost::Impl {
       return luaL_error(state, "tool registration requires an active plugin state");
     }
 
-    registration_parsers::ToolRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseToolRegistration(state, plugin->id, &registration,
-                                                     &error_message)) {
+    if (!contribution_interop::RegisterTool(state, plugin->id, &host->tools, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse tool registration"
                                               : error_message.c_str());
     }
-    host->tools.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -811,15 +791,13 @@ struct PluginHost::Impl {
       return luaL_error(state, "debugger registration requires an active plugin state");
     }
 
-    registration_parsers::DebuggerRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseDebuggerRegistration(state, plugin->id, &registration,
-                                                         &error_message)) {
+    if (!contribution_interop::RegisterDebugger(state, plugin->id, &host->debuggers,
+                                                &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse debugger registration"
                                               : error_message.c_str());
     }
-    host->debuggers.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -831,17 +809,13 @@ struct PluginHost::Impl {
       return luaL_error(state, "test provider registration requires an active plugin state");
     }
 
-    registration_parsers::TestProviderRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseTestProviderRegistration(state, plugin->id, &registration,
-                                                             &error_message)) {
+    if (!contribution_interop::RegisterTestProvider(state, plugin->id, &host->test_providers,
+                                                    &host->test_provider_runtimes,
+                                                    &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse test provider registration"
                                               : error_message.c_str());
-    }
-    host->test_providers.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->test_provider_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }

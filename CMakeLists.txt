@@ -156,6 +156,7 @@ set(MICROIDE_CORE_SOURCES
   src/persistence/PersistedRecordReader.cpp
   src/persistence/PersistedRecordWriter.cpp
   src/plugin/PluginLuaInterop.cpp
+  src/plugin/PluginContributionInterop.cpp
   src/plugin/PluginProcessInterop.cpp
   src/plugin/PluginRegistryInterop.cpp
   src/plugin/PluginProviderRegistrationParsers.cpp
