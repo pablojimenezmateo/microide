@@ -2,6 +2,8 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include <algorithm>
+
 namespace microide::plugin::lifecycle_callback_interop {
 
 bool CallSetup(runtime_types::PluginInstance* plugin,
@@ -93,6 +95,109 @@ void CallShutdown(runtime_types::PluginInstance* plugin,
   if (!plugin->runtime->PCall(1, 0, &call_error)) {
     record_error(format_plugin_prefix(plugin) + " shutdown failed: " + call_error);
   }
+}
+
+void TearDownPlugins(std::vector<runtime_types::PluginInstance>* plugins,
+                     bool has_project_root,
+                     const std::function<void(runtime_types::PluginInstance*, int, const char*)>&
+                         call_project_callback,
+                     const std::function<void(runtime_types::PluginInstance*)>& call_shutdown,
+                     const std::function<void(lua_State*)>& unregister_for_state,
+                     const std::function<void(const runtime_types::PluginInstance*)>&
+                         clear_plugin_diagnostics,
+                     const std::function<void(runtime_types::PluginInstance*)>&
+                         destroy_plugin_state) {
+  if (plugins == nullptr) {
+    return;
+  }
+  if (has_project_root) {
+    for (auto& plugin : *plugins) {
+      call_project_callback(&plugin, plugin.on_project_close_ref, "on_project_close");
+    }
+  }
+  for (auto& plugin : *plugins) {
+    call_shutdown(&plugin);
+  }
+  for (auto& plugin : *plugins) {
+    if (plugin.state != nullptr) {
+      unregister_for_state(plugin.state);
+    }
+  }
+  for (const auto& plugin : *plugins) {
+    clear_plugin_diagnostics(&plugin);
+  }
+  for (auto& plugin : *plugins) {
+    destroy_plugin_state(&plugin);
+  }
+  plugins->clear();
+}
+
+bool LoadPluginRoot(const std::filesystem::path& plugin_root,
+                    bool project_local,
+                    std::vector<runtime_types::PluginInstance>* plugins,
+                    const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
+                        initialize_state,
+                    const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
+                        load_plugin_descriptor,
+                    const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
+                        call_setup,
+                    const std::function<void(lua_State*)>& unregister_for_state,
+                    const std::function<void(const runtime_types::PluginInstance*)>&
+                        clear_plugin_diagnostics,
+                    const std::function<void(runtime_types::PluginInstance*)>&
+                        destroy_plugin_state,
+                    std::string* error_message) {
+  if (plugins == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "plugin root load requires plugin storage";
+    }
+    return false;
+  }
+  runtime_types::PluginInstance plugin{
+      .id = {},
+      .root = plugin_root.lexically_normal(),
+      .project_local = project_local,
+      .runtime = nullptr,
+      .state = nullptr,
+      .setup_ref = LUA_NOREF,
+      .on_project_open_ref = LUA_NOREF,
+      .on_project_close_ref = LUA_NOREF,
+      .on_buffer_open_ref = LUA_NOREF,
+      .on_buffer_save_ref = LUA_NOREF,
+      .shutdown_ref = LUA_NOREF,
+  };
+
+  if (!initialize_state(&plugin, error_message)) {
+    destroy_plugin_state(&plugin);
+    return false;
+  }
+  if (!load_plugin_descriptor(&plugin, error_message)) {
+    destroy_plugin_state(&plugin);
+    return false;
+  }
+
+  const auto duplicate = std::find_if(plugins->begin(), plugins->end(),
+                                      [&](const runtime_types::PluginInstance& loaded) {
+                                        return loaded.id == plugin.id;
+                                      });
+  if (duplicate != plugins->end()) {
+    if (error_message != nullptr) {
+      *error_message = "duplicate plugin id '" + plugin.id + "' in " + plugin.root.string() +
+                       " and " + duplicate->root.string();
+    }
+    destroy_plugin_state(&plugin);
+    return false;
+  }
+
+  if (!call_setup(&plugin, error_message)) {
+    unregister_for_state(plugin.state);
+    clear_plugin_diagnostics(&plugin);
+    destroy_plugin_state(&plugin);
+    return false;
+  }
+
+  plugins->push_back(std::move(plugin));
+  return true;
 }
 
 }  // namespace microide::plugin::lifecycle_callback_interop

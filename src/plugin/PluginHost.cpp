@@ -1685,76 +1685,34 @@ struct PluginHost::Impl {
   }
 
   void TearDownPlugins() {
-    if (!current_project_root.empty()) {
-      for (auto& plugin : plugins) {
-        CallProjectCallback(&plugin, plugin.on_project_close_ref, "on_project_close");
-      }
-    }
-    for (auto& plugin : plugins) {
-      CallShutdown(&plugin);
-    }
-    for (auto& plugin : plugins) {
-      if (plugin.state != nullptr) {
-        UnregisterContributionsForState(plugin.state);
-      }
-    }
-    for (const auto& plugin : plugins) {
-      ClearPluginDiagnostics(&plugin);
-    }
-    for (auto& plugin : plugins) {
-      DestroyPluginState(&plugin);
-    }
-    plugins.clear();
+    lifecycle_callback_interop::TearDownPlugins(
+        &plugins, !current_project_root.empty(),
+        [this](PluginInstance* plugin, int ref, const char* callback_name) {
+          CallProjectCallback(plugin, ref, callback_name);
+        },
+        [this](PluginInstance* plugin) { CallShutdown(plugin); },
+        [this](lua_State* state) { UnregisterContributionsForState(state); },
+        [this](const PluginInstance* plugin) { ClearPluginDiagnostics(plugin); },
+        [this](PluginInstance* plugin) { DestroyPluginState(plugin); });
   }
 
   bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                       bool project_local,
                       std::string* error_message) {
-    PluginInstance plugin{
-        .id = {},
-        .root = plugin_root.lexically_normal(),
-        .project_local = project_local,
-        .runtime = nullptr,
-        .state = nullptr,
-        .setup_ref = LUA_NOREF,
-        .on_project_open_ref = LUA_NOREF,
-        .on_project_close_ref = LUA_NOREF,
-        .on_buffer_open_ref = LUA_NOREF,
-        .on_buffer_save_ref = LUA_NOREF,
-        .shutdown_ref = LUA_NOREF,
-    };
-
-    if (!InitializeState(&plugin, error_message)) {
-      DestroyPluginState(&plugin);
-      return false;
-    }
-    if (!LoadPluginDescriptor(&plugin, error_message)) {
-      DestroyPluginState(&plugin);
-      return false;
-    }
-
-    const auto duplicate =
-        std::find_if(plugins.begin(), plugins.end(), [&](const PluginInstance& loaded) {
-          return loaded.id == plugin.id;
-        });
-    if (duplicate != plugins.end()) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate plugin id '" + plugin.id + "' in " +
-                         plugin.root.string() + " and " + duplicate->root.string();
-      }
-      DestroyPluginState(&plugin);
-      return false;
-    }
-
-    if (!CallSetup(&plugin, error_message)) {
-      UnregisterContributionsForState(plugin.state);
-      ClearPluginDiagnostics(&plugin);
-      DestroyPluginState(&plugin);
-      return false;
-    }
-
-    plugins.push_back(std::move(plugin));
-    return true;
+    return lifecycle_callback_interop::LoadPluginRoot(
+        plugin_root, project_local, &plugins,
+        [this](PluginInstance* plugin, std::string* init_error) {
+          return InitializeState(plugin, init_error);
+        },
+        [this](PluginInstance* plugin, std::string* descriptor_error) {
+          return LoadPluginDescriptor(plugin, descriptor_error);
+        },
+        [this](PluginInstance* plugin, std::string* setup_error) {
+          return CallSetup(plugin, setup_error);
+        },
+        [this](lua_State* state) { UnregisterContributionsForState(state); },
+        [this](const PluginInstance* plugin) { ClearPluginDiagnostics(plugin); },
+        [this](PluginInstance* plugin) { DestroyPluginState(plugin); }, error_message);
   }
 #endif
 
