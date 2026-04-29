@@ -1,0 +1,93 @@
+## ADDED Requirements
+
+### Requirement: Headless-But-Real Performance Harness Binary
+
+The repository SHALL ship a `microide_perf` binary that drives a real SDL window through scripted scenarios on the `SDL_RENDERER_SOFTWARE` backend with a fixed window size, fixed DPI, and the bundled debug font, and SHALL NOT depend on `SDL_VIDEODRIVER=dummy` for measurement.
+
+#### Scenario: Harness uses the software renderer
+- **WHEN** the harness binary starts a scenario
+- **THEN** it SHALL initialize SDL with the software renderer, paint frames into a memory surface, and exercise the same render-path code (clip rects, retained-redraw promotion, view-model construction) that the production binary uses
+
+#### Scenario: Harness window configuration is fixed
+- **WHEN** any scenario runs
+- **THEN** the SDL window SHALL be created at 1920x1080 with DPI 1.0 and the bundled debug font, and SHALL NOT vary based on the host display configuration
+
+#### Scenario: Harness is registered as a CTest entry
+- **WHEN** `ctest --test-dir build/microide` runs
+- **THEN** the harness SHALL be invokable as the `microide_perf_tests` entry, and the entry SHALL fail the run if any scenario regresses beyond the per-metric tolerance against its committed baseline
+
+### Requirement: Scenario Definition And Coverage
+
+Performance scenarios SHALL be authored as C++ files under `tests/perf/scenarios/<name>.cpp` that register themselves with a static registrar and declare their setup, driving loop, and per-iteration assertions inline. The repository SHALL ship at minimum the following scenarios as part of the initial harness landing.
+
+#### Scenario: Initial scenario set covers required workloads
+- **WHEN** the harness suite runs
+- **THEN** it SHALL include scenarios named `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project`, `multi_project_switch`, `multi_tab_cycle`, `typing_small_file`, `typing_large_file`, `scroll_large_file`, `project_search_literal`, `project_search_regex`, `linter_on_save`, `compare_tab_open`, `merge_tab_open`, `chat_pane_long_transcript`, and `idle_soak_30s`
+
+#### Scenario: New features ship with a perf scenario
+- **WHEN** a change adds a new user-facing hot path (editor surface, sidebar surface, overlay, render path, background-task category)
+- **THEN** the change SHALL add at least one perf scenario covering that hot path, with a committed baseline, in the same change
+
+#### Scenario: Scenarios are deterministic
+- **WHEN** any scenario runs
+- **THEN** it SHALL use a fixed random seed, fixed fixture project trees committed under `tests/perf/fixtures/`, plugins disabled by default (opt-in per scenario), and frame ticks driven by explicit `PumpFrames(N)` calls rather than wall-clock scheduling
+
+### Requirement: Structured Metric Capture
+
+Every scenario SHALL capture a documented metric set per iteration and SHALL run a configurable number of iterations (N≥10 by default), reporting the median across iterations as the comparison value while preserving every percentile in the baseline.
+
+#### Scenario: Per-frame metrics are captured
+- **WHEN** a scenario completes
+- **THEN** the harness SHALL produce, for each scenario, the per-frame render time (p50, p90, p95, p99, max), the full-redraw count, the partial-redraw count, the promote-to-full count, the per-frame allocation count, the total wall time, the user+sys CPU time, the start and end RSS, the SDL wake-up count, and the aggregate background-task count
+
+#### Scenario: Allocation counter is exact
+- **WHEN** the harness build flag `MICROIDE_PERF_HARNESS_BUILD` is enabled
+- **THEN** the harness SHALL instrument global `operator new` and `operator delete` to expose `Allocations::Snapshot()`, and render-path scenarios SHALL be able to assert `AssertNoAllocationsDuringDraw()` to guard against silent regressions
+
+#### Scenario: Median over N iterations is the comparison value
+- **WHEN** a scenario produces metrics across N iterations
+- **THEN** the harness SHALL compare the median value per metric against the baseline; mean values SHALL NOT be used because tail-latency regressions can hide behind a stable mean
+
+### Requirement: Committed Baselines And CI Regression Gate
+
+Performance baselines SHALL be committed JSON files under `tests/perf/baselines/<scenario>.json`, one file per scenario, and a CI runner labeled `perf-runner-v1` SHALL run the harness on every merge candidate and fail the merge on any regression beyond the per-metric tolerance.
+
+#### Scenario: Baselines are visible in the PR diff
+- **WHEN** a change moves a baseline
+- **THEN** the modified `tests/perf/baselines/*.json` file SHALL be part of the same commit, SHALL be reviewable in the PR diff, and SHALL NOT live in an external store
+
+#### Scenario: CI gate exits with a documented status
+- **WHEN** the harness runs on `perf-runner-v1`
+- **THEN** it SHALL exit 0 on no regression, 1 on regression beyond tolerance, and 2 on harness error; the merge gate SHALL block on exit code 1 and SHALL NOT block on exit code 0 or 2
+
+#### Scenario: Baseline movement requires a tagged change record
+- **WHEN** a `tests/perf/baselines/*.json` file is modified in a commit
+- **THEN** the commit message or PR description SHALL include a line beginning with `perf-baseline:` explaining the move, and a pre-merge check SHALL fail otherwise
+
+#### Scenario: Smoke subset for fork PRs
+- **WHEN** a CI run executes on a runner not labeled `perf-runner-v1`
+- **THEN** the harness SHALL run a smoke-only subset of scenarios, SHALL emit advisory output only, and SHALL NOT gate the merge
+
+### Requirement: Per-Metric Tolerance Configuration
+
+Each baseline file SHALL carry per-metric tolerance windows. Default tolerances SHALL be p50 ±10 %, p95 ±20 %, and max ±50 %, and a scenario MAY override them with documented justification in the baseline file.
+
+#### Scenario: Default tolerances apply when not overridden
+- **WHEN** a baseline file does not specify a tolerance for a metric
+- **THEN** the harness SHALL apply the documented default tolerances for that metric
+
+#### Scenario: Overrides require justification
+- **WHEN** a baseline file overrides a default tolerance
+- **THEN** the file SHALL include a `rationale` string explaining why, and the rationale SHALL be reviewable in the PR diff
+
+### Requirement: Harness Acts As The Regression Oracle For Internal Refactors
+
+Service extractions, render-path edits, persistence-format changes, plugin-host changes, and view-model migrations SHALL use the harness as the primary regression oracle. The change record SHALL cite the harness CI run, not a hand-captured trace.
+
+#### Scenario: Service extraction cites the harness run
+- **WHEN** a workspace service is extracted from the shell, a coordinator is rewritten, or a render surface is migrated to a new view model
+- **THEN** the change record SHALL cite the harness CI run as the regression oracle, and SHALL only include hand-captured `MICROIDE_STARTUP_TRACE` or `MICROIDE_PERF_TRACE` output as a debugging fallback when the harness reports a regression
+
+#### Scenario: Hand-captured traces remain available
+- **WHEN** a developer needs to investigate a regression flagged by the harness
+- **THEN** the existing `MICROIDE_STARTUP_TRACE`, `MICROIDE_PERF_TRACE`, and `MICROIDE_TRACE_REDRAW` env-variable surfaces SHALL continue to function and produce the same output they do today

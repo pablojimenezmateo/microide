@@ -26,9 +26,11 @@ Rules:
 
 Workspace-specific rules:
 
-- `WorkspaceShell` should own service instances and route events, not own broad subsystem behavior.
-- Coordinators should consume narrow service interfaces (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PersistenceService`) instead of `WorkspaceShell&`.
-- Workspace persistence file I/O should route through `PersistenceService`; ad hoc direct reads or writes for workspace/session/config/conversation state are not allowed.
+- `WorkspaceShell` owns service instances and routes events. It does not own broad subsystem behavior, and the lint test caps its source size (`WorkspaceShell.h` ≤ 400 lines, `WorkspaceShell.cpp` ≤ 600 lines).
+- Coordinators consume narrow service interfaces (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`) by reference. The lint test rejects any `WorkspaceShell&` or `WorkspaceShell*` in a `Workspace*Coordinator*.h` constructor.
+- Coordinators never reach around a service. If a coordinator needs a method the service does not expose, add it to the service contract — do not friend, do not pass a shell pointer, do not introduce a back-door accessor.
+- Workspace persistence file I/O routes through `PersistenceService`. Ad-hoc direct reads or writes for workspace, session, config, or conversation state are forbidden, and there is exactly one reader/writer pair (`PersistedRecordReader`/`PersistedRecordWriter`) for these artifacts.
+- `lua_State*` ownership stays inside `plugin/LuaRuntime`. The plugin host is decomposed into per-surface registries; do not regrow a monolithic `PluginHost.cpp` (each `src/plugin/*.cpp` translation unit stays ≤ 800 lines).
 
 ## Interface Design
 

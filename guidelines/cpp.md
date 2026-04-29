@@ -58,8 +58,9 @@ Choose the narrowest type that expresses the real contract. Do not force callers
 
 Parsing policy:
 
-- Prefer non-throwing parse helpers in `src/util/Parse.{h,cpp}` over exception-driven numeric parsing.
-- Do not introduce `try`/`catch` wrappers around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`.
+- Use the non-throwing helpers in `src/util/Parse.{h,cpp}` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`) for every numeric token. They return `std::optional`; handle the absent case directly.
+- Do not introduce `try`/`catch` wrappers around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`. The architectural-lint test in `tests/ArchitectureInvariantsTests.cpp` warns on any `try` block in `src/` that contains `std::sto*`; treat that as a hard rule and replace the call with the helpers.
+- Do not write a new text-command parser for workspace state, config, session, or conversation files. Add a typed record to the persistence format and route through `PersistedRecordReader`/`PersistedRecordWriter`.
 
 ## Dependency And State Management
 

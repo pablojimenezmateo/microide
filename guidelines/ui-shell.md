@@ -32,6 +32,8 @@ Plugins may request contributions, but they do not own frame composition, paint 
 ## Render-Path Rules
 
 - Rendering stays host-owned.
+- Render functions consume typed POD-like view-model structs built by `RenderViewModelBuilder`. Do not call `WorkspaceShell` member functions, query coordinators, or read mutable shell state from inside a draw pass. The architectural-lint test rejects render TUs that read `context_.current_project_state` or call `CurrentTextInputSurface(...)`.
+- View models do not hold pointers or references to the shell, coordinators, or services. They contain exactly the fields the surface needs.
 - Keep layout math, hover hit-testing, dirty-region invalidation, and interaction mapping explicit and reviewable.
 - Avoid hidden redraw side effects. Invalidation should happen through clear pathways.
 - Reuse host render primitives so the shell does not drift into many one-off drawing conventions.
@@ -43,6 +45,8 @@ Plugins may request contributions, but they do not own frame composition, paint 
 - Keep mouse, keyboard, prompt, and text-input handling testable without requiring deep render inspection.
 - Prefer deterministic helpers for hit-testing, geometry, and selection math.
 - Avoid embedding service logic directly in render or input handlers when a coordinator can own it.
+- Single-line shell input surfaces (prompts, command input, overlay query, sidebar search) consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not reimplement insert / backspace / delete / movement / selection / clipboard / select-all per surface. The chat composer is the documented multiline exception.
+- The active editor viewport is owned by the active editor tab. Resolve it through `EditorTabService::ActiveViewport()` (or equivalent typed accessor); do not reintroduce a shell-level or project-level fallback under any name.
 
 ## Testing Expectations
 

@@ -79,6 +79,22 @@ When a change affects performance-sensitive code, collect before-and-after evide
 - Coordinators should translate input or intent into state changes and service calls; they should not become long-lived ownership sinks.
 - If a subsystem boundary is wrong, fix the boundary rather than adding a compatibility shim around it.
 
+## Hard Architectural Invariants
+
+Several patterns were intentionally removed by the 2026-04-29 `comprehensive-tech-debt-cleanup` change. Do not reintroduce them. The architectural-lint test (`tests/ArchitectureInvariantsTests.cpp`) hard-fails on the load-bearing ones; the policy ones are reviewer-enforced.
+
+- Workspace coordinator constructors take service-interface references, never `WorkspaceShell&` or `WorkspaceShell*`. Services live alongside the shell (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`).
+- No `friend class`/`friend struct` in `src/workspace/*`.
+- Numeric token parsing uses `util/Parse.h` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`). No `try`/`catch` around `std::sto*`.
+- The shell stays a thin orchestrator: `src/workspace/WorkspaceShell.h` ≤ 400 lines, `src/workspace/WorkspaceShell.cpp` ≤ 600 lines.
+- Workspace-state persistence (project state, user config, session restore, chat conversations) routes through `PersistenceService` plus `PersistedRecordReader`/`PersistedRecordWriter`. Do not hand-roll a new text format or open these files directly elsewhere.
+- Single-line input surfaces consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler` (chat composer is the documented multiline exception).
+- The active editor viewport is owned by the active editor tab; resolve it through `EditorTabService::ActiveViewport()`. Do not reintroduce a shell-level or project-level viewport fallback under any name.
+- Plugin host stays decomposed; `lua_State*` lives behind `plugin/LuaRuntime` only, and no `src/plugin/*.cpp` translation unit exceeds 800 lines.
+- Render TUs covered by the lint (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, `WorkspaceShellHoverTargets`) consume view models built by `RenderViewModelBuilder` and do not read `context_.current_project_state` or call `CurrentTextInputSurface(...)`.
+
+The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`, and `openspec/specs/shared-edit-primitives/spec.md`. The full reasoning is in `AGENTS.md` § Do-Not-Regress Patterns and in the archived change at `openspec/changes/archive/2026-04-29-comprehensive-tech-debt-cleanup/`.
+
 ## Validation Expectations
 
 - Every meaningful bug fix should add or tighten regression coverage.

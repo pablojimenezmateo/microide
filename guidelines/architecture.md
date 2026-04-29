@@ -77,20 +77,39 @@ Keep these boundaries obvious. UI code should not grow direct knowledge of git c
 
 ## Enforced Invariants
 
-- `microide_tests` includes an `ArchitectureInvariants` fixture and it runs through the default `ctest` entrypoint.
+These are checked by the `ArchitectureInvariants/SoftChecks` test in `microide_tests` (registered via `tests/ArchitectureInvariantsTests.cpp` and run as part of the default `ctest` entrypoint). The rules below are hard-fail unless the test source explicitly marks them otherwise.
+
 - New numeric parsing in `src/` must use `src/util/Parse.{h,cpp}`. Do not add `try`/`catch` wrappers around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, `std::stod`, or similar APIs.
-- Workspace source under `src/workspace/*` should not add `friend class` or `friend struct` declarations.
-- Coordinator headers under `src/workspace/Workspace*Coordinator*.h` should not take `WorkspaceShell&` or `WorkspaceShell*` in constructors; inject the narrow service or callback dependency instead.
-- No single `src/plugin/*.cpp` translation unit should exceed 800 lines.
-- `src/workspace/WorkspaceShell.h` should stay at or below 400 lines and `src/workspace/WorkspaceShell.cpp` at or below 600 lines.
-- Some invariants still warn instead of hard-failing while the cleanup change is in flight. When a slice removes the last known violation for a rule, flip that rule to hard-fail in the same change.
+- Workspace source under `src/workspace/*` must not add `friend class` or `friend struct` declarations.
+- Coordinator headers matching `src/workspace/Workspace*Coordinator*.h` must not take `WorkspaceShell&` or `WorkspaceShell*` in constructors. Inject the narrow service or callback dependency instead.
+- `src/workspace/WorkspaceShell.h` stays at or below 400 lines and `src/workspace/WorkspaceShell.cpp` at or below 600 lines.
+- The render translation units listed in `CheckRenderSurfaceStateAccess` (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, `WorkspaceShellHoverTargets`) must not read `context_.current_project_state` or call `CurrentTextInputSurface(...)`. They consume view models built by `RenderViewModelBuilder`.
+- No single `src/plugin/*.cpp` translation unit should exceed 800 lines (currently emitted as a soft warning; treat it as a hard rule and flip it in the test when adding new plugin code).
+
+When extending these rules, modify `tests/ArchitectureInvariantsTests.cpp` in the same change so the invariant is enforced by CI rather than by review alone.
 
 ## Workspace Service Model
 
-- Workspace behavior should be service-oriented: services own state and mutations, coordinators translate input into service intents.
-- Render code should consume typed view models from `RenderViewModelBuilder`; render surfaces should not reach into mutable shell state.
-- Single-line shell inputs should use shared `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler` for standard edit behavior.
-- Persistence should use the shared typed record format through `PersistedRecordReader` and `PersistedRecordWriter`, with `PersistenceService` as the workspace entrypoint.
+The workspace decomposes into a small set of services owned by the shell and consumed by coordinators through interface references. The canonical service set is:
+
+- `EditorTabService` — tab list, active tab, splits, dirty state, save/load, view restore. Owns the active editor viewport (no shell-level fallback).
+- `ProjectCatalogService` — open projects, switch, close, project-state activation.
+- `PromptSurfaceService` — prompt, dirty-prompt, and path-mutation prompt lifecycle.
+- `SidebarService` — sidebar mode, refresh, open-or-select.
+- `CompareMergeService` — compare/merge tab orchestration and navigation.
+- `TerminalPanelService` — terminal tabs, focus, panel layout requests.
+- `PluginRuntimeService` — plugin lifecycle, asset reload, output channels.
+- `PersistenceService` — sole owner of disk I/O for project state, user config, workspace session, and conversation registry. Routes through `PersistedRecordReader`/`PersistedRecordWriter`.
+- `RenderViewModelBuilder` — produces typed POD-like view-model structs per render surface from service queries.
+
+Rules:
+
+- Coordinators take only the service interfaces they need, value-typed input state, and read-only resource handles. They never take `WorkspaceShell&`, never hold a shell pointer, and never reach into shell-private state.
+- Services own their state and the only mutation API for it. If a coordinator needs a behavior the service does not expose, add the method to the service contract; do not add a friend escape hatch.
+- Render code consumes view-model parameters only. View models are POD-like, trivially copyable, and contain exactly the fields the surface needs. They do not hold pointers or references to the shell, coordinators, or services.
+- Single-line shell inputs use `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not duplicate insert / backspace / delete / movement / selection / clipboard / select-all logic per surface. The chat composer is the only documented multiline exception.
+- `lua_State*` lifecycle lives in `plugin/LuaRuntime` only. Plugin extension-surface modules consume the runtime through opaque handles.
+- Persistence for project state, user config, session restore, and chat conversations always routes through `PersistenceService`. Do not hand-roll a new text format or open these files directly from elsewhere.
 
 ## Plugin-Phase Direction
 

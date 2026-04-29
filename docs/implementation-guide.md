@@ -141,10 +141,17 @@ through `WorkspaceEventDispatcher`, scheduled wake handling runs through `Worksp
 and a dedicated `WorkspaceShell::Bootstrapper` owns the shell's action, render, and event
 composition. The shell's `Render` or `RenderPrepared` entry points now delegate the ordered frame
 composition path to `WorkspaceRootView`, which composes dedicated active-surface, chrome, sidebar,
-overlay, panel, menu, and prompt views. Shell tests now use the `MICROIDE_TESTING`-gated public
-`WorkspaceShell::TestAccess` API from `workspace/WorkspaceShellTesting.h`. Plugin runtime,
-project, terminal, compare, and rendering work should continue to move into narrower subsystems
-rather than accrete more logic in one file.
+overlay, panel, menu, and prompt views. Shell tests use the `MICROIDE_TESTING`-gated public
+`WorkspaceShell::TestAccess` API from `workspace/WorkspaceShellTestAccess.h`. The 2026-04-29
+`comprehensive-tech-debt-cleanup` change locked the workspace into a service-oriented model:
+coordinators consume narrow service interfaces (`EditorTabService`, `ProjectCatalogService`,
+`PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`,
+`PluginRuntimeService`, `PersistenceService`) instead of `WorkspaceShell&`, render functions
+consume view-model structs built by `RenderViewModelBuilder`, and the architectural-lint test in
+`tests/ArchitectureInvariantsTests.cpp` enforces the shell-size, no-friend, no-shell-in-coordinator,
+no-throwing-numeric-parse, and render-view-model-only invariants on every `ctest` run. New plugin
+runtime, project, terminal, compare, and rendering work should continue to move into narrower
+subsystems and services rather than accrete more logic on the shell or in one file.
 
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed

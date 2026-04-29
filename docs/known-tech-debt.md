@@ -205,10 +205,34 @@ Relevant code:
 
 See also `docs/performance-findings.md` — Second Performance Pass, New finding 4.
 
-## Suggested Order For Later Work
+## Open Follow-Ups After The 2026-04-29 Cleanup
 
-1. Keep shrinking `WorkspaceShell` and reduce friend-based coordinator access.
-2. Finish the active-viewport migration so stale floating-editor paths are harder to reintroduce.
-3. Build one shared selection-aware editor model for single-line shell inputs.
-4. Revisit project-content and indexing architecture only if profiling still shows meaningful
-   search or refresh cost after the current fixes.
+The cleanup change closed items 1–4 and 7 above and shipped the durable contracts in
+`openspec/specs/workspace-architecture/spec.md`,
+`openspec/specs/persisted-state-format/spec.md`, and
+`openspec/specs/shared-edit-primitives/spec.md`. These follow-ups are still worth tracking and
+are good candidates for the next openspec tech-debt pass:
+
+1. `WorkspaceShellTestAccess.h` (~1500 lines) is now the largest single workspace header. Its
+   contents should be re-evaluated against the service interfaces and trimmed; tests that drive
+   services directly do not need a giant test-access surface.
+2. The `WorkspaceShell*.cpp` companion files (~70 translation units defined against
+   `WorkspaceShellMembers.inc`) keep behavior on the shell namespace even though the header was
+   slimmed. Any new behavior should land on a service, not a new `WorkspaceShell*.cpp` companion.
+3. `WorkspacePersistenceLegacyFormat.cpp` and the surrounding one-shot importer should be deleted
+   in the scheduled `legacy-persistence-cleanup` follow-up (release +2). Do not extend the legacy
+   parser; only the structured format gets new fields.
+4. `src/util/SingleLineText.{h,cpp}` still coexists with `editor/SingleLineEditor.{h,cpp}`. The
+   shared model is the source of truth for new surfaces; the older type is retained because some
+   workspace state still stores it. Future cleanup should collapse the two representations.
+5. The architectural-lint test (`tests/ArchitectureInvariantsTests.cpp`) does not currently cover
+   every render translation unit (e.g. `WorkspaceShellRenderChrome.cpp`,
+   `WorkspaceShellRenderMenus.cpp`, `WorkspaceShellRenderPrompts.cpp`,
+   `WorkspaceShellRender.cpp`) and the plugin-translation-unit-size rule is still soft-fail.
+   Tightening these should accompany any new pass.
+6. Larger coordinator translation units (`WorkspaceTabCoordinator.cpp`,
+   `WorkspaceActionServices.cpp`, `WorkspaceChatTranscript.cpp`,
+   `WorkspaceKeyInputCoordinatorSurfaces.cpp`) have grown well past the ~800-line threshold the
+   plugin-host rule uses; consider an analogous guard for workspace coordinators.
+7. Project-content and indexing architecture (item 5) still consumes a point-in-time file list;
+   only revisit if profiling shows meaningful search or refresh cost after the recent fixes.

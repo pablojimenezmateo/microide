@@ -43,8 +43,8 @@ The exact mechanism should remain host-owned and registry-first.
 - built-in compare and merge flows
 - built-in search, git, and terminal workflows
 - redraw invalidation and performance policy
-- workspace persistence and top-level project state ownership
-- Lua runtime lifecycle (`lua_State*` create/suspend/destroy and protected-call error capture)
+- workspace persistence and top-level project state ownership (routed through `PersistenceService` and the typed record format only)
+- Lua runtime lifecycle (`lua_State*` create/suspend/destroy and protected-call error capture); this lives in `plugin/LuaRuntime` and no extension-surface module holds a raw `lua_State*`
 
 Do not expose `WorkspaceShell` wholesale to plugins.
 
@@ -74,4 +74,4 @@ Do not expose `WorkspaceShell` wholesale to plugins.
 - Narrow contracts are easier to preserve than broad object access.
 - If a plugin requirement reveals a bad host boundary, fix the host boundary rather than layering a compatibility escape hatch around it.
 - Dogfood new seams with repo-owned plugins before widening them further.
-- Keep plugin translation units modular and focused; avoid re-growing monolithic `PluginHost`-style files.
+- Keep plugin translation units modular and focused. The 2026-04-29 cleanup decomposed `PluginHost` into a runtime core plus per-surface modules (`PluginCommandRegistry`, `PluginSidebarRegistry`, `PluginSyntaxRegistry`, `PluginDiagnosticsRegistry`, `PluginHoverRegistry`, `PluginProviderRegistry`, `PluginLifecycle`); do not re-merge those concerns or grow any single `src/plugin/*.cpp` translation unit beyond 800 lines.

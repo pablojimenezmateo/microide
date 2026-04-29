@@ -77,6 +77,62 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 - Avoid hidden coupling through mutable global state.
 - If a coordinator grows because a subsystem lacks a real API, add the API and move logic out.
 
+## Do-Not-Regress Patterns
+
+The 2026-04-29 `comprehensive-tech-debt-cleanup` (archived under
+`openspec/changes/archive/2026-04-29-comprehensive-tech-debt-cleanup/`) removed several patterns
+that had previously grown back. Do not reintroduce any of them. The architectural-lint test
+(`tests/ArchitectureInvariantsTests.cpp`, registered as `ArchitectureInvariants/SoftChecks` in the
+default `ctest` run) hard-fails on most of these; the rest are policy and reviewer-enforced.
+
+Hard-fail invariants (lint will reject the change):
+
+- No `friend class` or `friend struct` in `src/workspace/*`. Use a service interface or an
+  explicit narrow accessor instead.
+- No `WorkspaceShell&` or `WorkspaceShell*` parameters in any
+  `src/workspace/Workspace*Coordinator*.h` constructor. Inject the specific service interface
+  (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`,
+  `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`) or
+  a small callback bundle.
+- No `try`/`catch` around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`.
+  Use the non-throwing `util/Parse.h` helpers (`ParseInt`, `ParseInt64`, `ParseSize`,
+  `ParseFloat`) and handle `std::optional` directly.
+- `src/workspace/WorkspaceShell.h` ≤ 400 lines and `src/workspace/WorkspaceShell.cpp` ≤ 600 lines.
+  Add behavior to a service, not the shell.
+- The render translation units covered by `CheckRenderSurfaceStateAccess`
+  (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`,
+  `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`,
+  `WorkspaceShellHoverTargets`) consume view models built by `RenderViewModelBuilder`. Do not read
+  `context_.current_project_state` or call `CurrentTextInputSurface(...)` from these files.
+
+Policy invariants (no automated lint, but reviewers will reject):
+
+- No project-level or shell-level fallback editor viewport. Resolve the active editor target
+  through `EditorTabService::ActiveViewport()` (or equivalent typed accessor). The legacy symbols
+  `text_viewport_` and `current_project_state_.text_viewport` were deleted intentionally; do not
+  reintroduce equivalents under a new name.
+- No bespoke per-section parser for project state, user config, session restore, or chat
+  conversations. All four artifacts route through `PersistedRecordReader`/`PersistedRecordWriter`
+  and `PersistenceService`. Add a typed record, do not hand-roll a text format.
+- No new direct file I/O for workspace/session/config/conversation state outside
+  `PersistenceService`.
+- No per-surface duplicate of single-line edit operations (insert, backspace, delete-forward,
+  caret movement, selection, copy, cut, paste, select-all). Single-line surfaces consume
+  `editor/SingleLineEditor.{h,cpp}` plus `editor/SingleLineKeyHandler.{h,cpp}`. The chat composer
+  is the only documented exception because it is multiline.
+- No `lua_State*` outside `plugin/LuaRuntime.{h,cpp}`. Plugin extension-surface modules consume
+  the runtime through opaque handles.
+- Plugin extension surfaces stay split across focused translation units (commands, sidebars,
+  syntax, diagnostics, hover, providers, lifecycle); do not collapse them back into a monolithic
+  `PluginHost.cpp`. Each `src/plugin/*.cpp` translation unit stays at or below 800 lines.
+- View models do not hold pointers or references to `WorkspaceShell`, coordinators, or services.
+  They are POD-like structs populated by the builder.
+
+The durable contracts these rules implement live in
+`openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`,
+and `openspec/specs/shared-edit-primitives/spec.md`. Update those specs in the same change when a
+durable invariant moves.
+
 ## Testing Rules
 
 - Every meaningful bug fix should add or tighten regression coverage.
