@@ -574,6 +574,9 @@ std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
 }
 
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
+  if (plugin_runtime_.PendingAsyncProcessCount() > 0) {
+    return 10;
+  }
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
   if (const auto plugin_delay = plugin_runtime_.NextPollDelay(); plugin_delay.has_value()) {
     const Uint32 plugin_delay_ms =
@@ -587,12 +590,6 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
         static_cast<Uint32>(std::max<std::int64_t>(0, project_delay->count()));
     if (!next_delay.has_value() || project_delay_ms < *next_delay) {
       next_delay = project_delay_ms;
-    }
-  }
-  if (plugin_runtime_.PendingAsyncProcessCount() > 0) {
-    constexpr Uint32 kPluginAsyncPollDelayMs = 10;
-    if (!next_delay.has_value() || kPluginAsyncPollDelayMs < *next_delay) {
-      next_delay = kPluginAsyncPollDelayMs;
     }
   }
   const auto update_delay_from_project = [&](const ProjectWorkspaceState& project) {
