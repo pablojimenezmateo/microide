@@ -275,6 +275,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellInlineCompletion.cpp
+  src/workspace/WorkspaceShellChatPanel.cpp
+  src/workspace/WorkspaceShellLsp.cpp
+  src/workspace/WorkspaceShellAssist.cpp
+  src/workspace/WorkspaceShellAuthDebug.cpp
+  src/workspace/WorkspaceShellTesting.cpp
   src/workspace/WorkspaceShellOutput.cpp
   src/workspace/WorkspaceShellProviderAuth.cpp
   src/workspace/WorkspaceShellTasks.cpp
