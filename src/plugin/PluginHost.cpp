@@ -24,6 +24,7 @@
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
 #include "plugin/PluginAsyncStateInterop.h"
+#include "plugin/PluginAsyncCallbackInterop.h"
 #include "plugin/PluginLuaBufferProjectInterop.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginLuaContextInterop.h"
@@ -944,32 +945,14 @@ void PluginHost::SetAsyncProcessEventType(std::uint32_t type) {
 
 int PluginHost::ConsumeAsyncProcessCallbacks() {
 #if MICROIDE_HAS_LUA_PLUGINS
-  std::vector<Impl::AsyncProcessCallback> callbacks =
-      async_state_interop::TakePendingCallbacks(*impl_->async_process_state);
-  for (auto& cb : callbacks) {
-    lua_State* state = cb.lua_state;
-    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
-    if (state == nullptr || cb.callback_ref == LUA_NOREF) {
-      continue;
-    }
-    lua_rawgeti(state, LUA_REGISTRYINDEX, cb.callback_ref);
-    luaL_unref(state, LUA_REGISTRYINDEX, cb.callback_ref);
-    cb.callback_ref = LUA_NOREF;
-    lua_createtable(state, 0, 3);
-    lua_pushinteger(state, cb.result.exit_code);
-    lua_setfield(state, -2, "exit_code");
-    lua_pushlstring(state, cb.result.stdout_text.c_str(), cb.result.stdout_text.size());
-    lua_setfield(state, -2, "stdout");
-    lua_pushlstring(state, cb.result.stderr_text.c_str(), cb.result.stderr_text.size());
-    lua_setfield(state, -2, "stderr");
-    std::string call_error;
-    if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 0, &call_error)) {
-      if (impl_->callbacks.error_sink && !call_error.empty()) {
-        impl_->callbacks.error_sink(std::string("plugin async callback: ") + call_error);
-      }
-    }
-  }
-  return static_cast<int>(callbacks.size());
+  return async_callback_interop::ConsumeCallbacks(
+      *impl_->async_process_state,
+      [this](lua_State* state) { return impl_->FindPluginByState(state); },
+      [this](std::string error) {
+        if (impl_->callbacks.error_sink) {
+          impl_->callbacks.error_sink(std::move(error));
+        }
+      });
 #endif
   return 0;
 }
