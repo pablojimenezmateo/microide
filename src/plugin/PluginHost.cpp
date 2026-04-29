@@ -3822,6 +3822,7 @@ int PluginHost::ConsumeAsyncProcessCallbacks() {
   }
   for (auto& cb : callbacks) {
     lua_State* state = cb.lua_state;
+    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
     if (state == nullptr || cb.callback_ref == LUA_NOREF) {
       continue;
     }
@@ -3835,12 +3836,11 @@ int PluginHost::ConsumeAsyncProcessCallbacks() {
     lua_setfield(state, -2, "stdout");
     lua_pushlstring(state, cb.result.stderr_text.c_str(), cb.result.stderr_text.size());
     lua_setfield(state, -2, "stderr");
-    if (lua_pcall(state, 1, 0, 0) != LUA_OK) {
-      const char* msg = lua_tostring(state, -1);
-      if (impl_->callbacks.error_sink && msg != nullptr) {
-        impl_->callbacks.error_sink(std::string("plugin async callback: ") + msg);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 0, &call_error)) {
+      if (impl_->callbacks.error_sink && !call_error.empty()) {
+        impl_->callbacks.error_sink(std::string("plugin async callback: ") + call_error);
       }
-      lua_pop(state, 1);
     }
   }
   return static_cast<int>(callbacks.size());
