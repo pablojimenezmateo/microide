@@ -315,27 +315,6 @@ struct PluginHost::Impl {
     return plugin_roots;
   }
 
-  void RebuildCommandNames() {
-    command_names.clear();
-    command_names.reserve(commands.size());
-    for (const auto& entry : commands) {
-      command_names.push_back(entry.first);
-    }
-    std::sort(command_names.begin(), command_names.end());
-  }
-
-  void RebuildSidebarProviders() {
-    sidebar_providers.clear();
-    sidebar_providers.reserve(sidebars.size());
-    for (const auto& entry : sidebars) {
-      sidebar_providers.push_back(entry.second.info);
-    }
-    std::sort(sidebar_providers.begin(), sidebar_providers.end(),
-              [](const SidebarProviderInfo& lhs, const SidebarProviderInfo& rhs) {
-                return lhs.id < rhs.id;
-              });
-  }
-
 #if MICROIDE_HAS_LUA_PLUGINS
   static int LuaMicroidePlugin(lua_State* state) {
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -1424,7 +1403,7 @@ struct PluginHost::Impl {
       luaL_unref(state, LUA_REGISTRYINDEX, it->second.function_ref);
       it = commands.erase(it);
     }
-    RebuildCommandNames();
+    registry_interop::RebuildCommandNames(commands, &command_names);
 
     for (auto it = sidebars.begin(); it != sidebars.end();) {
       if (it->second.state != state) {
@@ -1437,7 +1416,7 @@ struct PluginHost::Impl {
       }
       it = sidebars.erase(it);
     }
-    RebuildSidebarProviders();
+    registry_interop::RebuildSidebarProviders(sidebars, &sidebar_providers);
 
     for (auto it = hovers.begin(); it != hovers.end();) {
       if (it->second.state != state) {

@@ -17,8 +17,9 @@ bool IsValidIdentifier(std::string_view value) {
   });
 }
 
-void RebuildCommandNames(const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
-                         std::vector<std::string>* command_names) {
+void RebuildCommandNamesImpl(
+    const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
+    std::vector<std::string>* command_names) {
   if (command_names == nullptr) {
     return;
   }
@@ -30,7 +31,7 @@ void RebuildCommandNames(const std::unordered_map<std::string, runtime_types::Pl
   std::sort(command_names->begin(), command_names->end());
 }
 
-void RebuildSidebarProviders(
+void RebuildSidebarProvidersImpl(
     const std::unordered_map<std::string, runtime_types::SidebarProvider>& sidebars,
     std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers) {
   if (sidebar_providers == nullptr) {
@@ -48,6 +49,17 @@ void RebuildSidebarProviders(
 }
 
 }  // namespace
+
+void RebuildCommandNames(const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
+                         std::vector<std::string>* command_names) {
+  RebuildCommandNamesImpl(commands, command_names);
+}
+
+void RebuildSidebarProviders(
+    const std::unordered_map<std::string, runtime_types::SidebarProvider>& sidebars,
+    std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers) {
+  RebuildSidebarProvidersImpl(sidebars, sidebar_providers);
+}
 
 bool RegisterCommand(lua_State* state,
                      const runtime_types::PluginInstance* plugin,
@@ -95,7 +107,7 @@ bool RegisterCommand(lua_State* state,
                         .state = state,
                         .function_ref = function_ref,
                     });
-  RebuildCommandNames(*commands, command_names);
+  RebuildCommandNamesImpl(*commands, command_names);
   return true;
 }
 
@@ -187,7 +199,7 @@ bool RegisterSidebar(lua_State* state,
                             .snapshot_ref = snapshot_ref,
                             .confirm_ref = confirm_ref,
                         });
-  RebuildSidebarProviders(*sidebars, sidebar_providers);
+  RebuildSidebarProvidersImpl(*sidebars, sidebar_providers);
   return true;
 }
 
