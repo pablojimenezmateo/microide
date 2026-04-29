@@ -34,6 +34,7 @@
 #include "plugin/PluginProviderQueryInterop.h"
 #include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
+#include "plugin/PluginSidebarHoverInterop.h"
 #include "plugin/PluginStateTeardownInterop.h"
 #include "plugin/PluginWorkspaceInterop.h"
 #include "plugin/PluginHostRuntimeTypes.h"
@@ -1033,128 +1034,24 @@ struct PluginHost::Impl {
   bool SnapshotSidebarProvider(const SidebarProvider& provider,
                                std::vector<SidebarItem>* items,
                                std::string* error_message) {
-    if (provider.state == nullptr || provider.snapshot_ref == LUA_NOREF || items == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "plugin sidebar is unavailable";
-      }
-      return false;
-    }
-
-    items->clear();
-    lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.snapshot_ref);
-    const PluginInstance* plugin = FindPluginByState(provider.state);
-    std::string call_error;
-    if (plugin == nullptr || !plugin->runtime ||
-        !plugin->runtime->PCall(0, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message =
-            "plugin sidebar '" + provider.info.id + "' snapshot failed: " + call_error;
-      }
-      return false;
-    }
-    if (!lua_istable(provider.state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin sidebar '" + provider.info.id +
-                         "' snapshot must return an array table";
-      }
-      lua_pop(provider.state, 1);
-      return false;
-    }
-
-    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(provider.state, -1));
-    items->reserve(static_cast<std::size_t>(count));
-    for (lua_Integer i = 1; i <= count; ++i) {
-      lua_rawgeti(provider.state, -1, i);
-      if (!lua_istable(provider.state, -1)) {
-        if (error_message != nullptr) {
-          *error_message = "plugin sidebar '" + provider.info.id +
-                           "' snapshot items must be tables";
-        }
-        lua_pop(provider.state, 2);
-        items->clear();
-        return false;
-      }
-      SidebarItem item = lua_interop::ReadSidebarItem(provider.state, -1);
-      if (item.label.empty()) {
-        if (error_message != nullptr) {
-          *error_message = "plugin sidebar '" + provider.info.id +
-                           "' items require a label";
-        }
-        lua_pop(provider.state, 2);
-        items->clear();
-        return false;
-      }
-      if (!item.path.empty()) {
-        item.path = ResolveRuntimePath(current_project_root, item.path);
-      }
-      items->push_back(std::move(item));
-      lua_pop(provider.state, 1);
-    }
-
-    lua_pop(provider.state, 1);
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
-    return true;
+    return sidebar_hover_interop::SnapshotSidebarProvider(
+        provider, current_project_root,
+        [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+          return ResolveRuntimePath(project_root, runtime_path);
+        },
+        [this](lua_State* state) { return FindPluginByState(state); }, items, error_message);
   }
 
   bool ConfirmSidebarProviderItem(const SidebarProvider& provider,
                                   const SidebarItem& item,
                                   std::string* error_message) {
-    if (provider.confirm_ref == LUA_NOREF || provider.state == nullptr) {
-      if (!item.path.empty() && callbacks.open_file) {
-        const bool opened = callbacks.open_file(OpenFileRequest{
-            .path = item.path,
-            .line = item.line,
-            .column = item.column,
-        });
-        if (error_message != nullptr) {
-          error_message->clear();
-        }
-        return opened;
-      }
-      if (error_message != nullptr) {
-        *error_message = "plugin sidebar '" + provider.info.id + "' has no confirm action";
-      }
-      return false;
-    }
-
-    lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.confirm_ref);
-    lua_createtable(provider.state, 0, 5);
-    lua_pushstring(provider.state, item.label.c_str());
-    lua_setfield(provider.state, -2, "label");
-    if (!item.detail.empty()) {
-      lua_pushstring(provider.state, item.detail.c_str());
-      lua_setfield(provider.state, -2, "detail");
-    }
-    if (!item.path.empty()) {
-      const std::filesystem::path resolved_path =
-          ResolveRuntimePath(current_project_root, item.path);
-      lua_pushstring(provider.state, resolved_path.generic_string().c_str());
-      lua_setfield(provider.state, -2, "path");
-    }
-    if (item.line > 0) {
-      lua_pushinteger(provider.state, static_cast<lua_Integer>(item.line));
-      lua_setfield(provider.state, -2, "line");
-    }
-    if (item.column > 0) {
-      lua_pushinteger(provider.state, static_cast<lua_Integer>(item.column));
-      lua_setfield(provider.state, -2, "column");
-    }
-    const PluginInstance* plugin = FindPluginByState(provider.state);
-    std::string call_error;
-    if (plugin == nullptr || !plugin->runtime ||
-        !plugin->runtime->PCall(1, 0, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message =
-            "plugin sidebar '" + provider.info.id + "' confirm failed: " + call_error;
-      }
-      return false;
-    }
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
-    return true;
+    return sidebar_hover_interop::ConfirmSidebarProviderItem(
+        provider, item, current_project_root,
+        [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+          return ResolveRuntimePath(project_root, runtime_path);
+        },
+        [this](lua_State* state) { return FindPluginByState(state); }, callbacks.open_file,
+        error_message);
   }
 
   bool QueryHoverProvider(const HoverProvider& provider,
@@ -1163,86 +1060,12 @@ struct PluginHost::Impl {
                           std::size_t column,
                           PluginHost::HoverResult* result,
                           std::string* error_message) {
-    if (provider.state == nullptr || provider.provide_ref == LUA_NOREF || result == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "plugin hover provider is unavailable";
-      }
-      return false;
-    }
-
-    lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.provide_ref);
-    PushBufferTable(provider.state, path);
-    lua_interop::PushHoverPosition(provider.state, line, column);
-    const PluginInstance* plugin = FindPluginByState(provider.state);
-    std::string call_error;
-    if (plugin == nullptr || !plugin->runtime ||
-        !plugin->runtime->PCall(2, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin hover '" + provider.id + "' failed: " + call_error;
-      }
-      return false;
-    }
-
-    if (lua_isnil(provider.state, -1)) {
-      lua_pop(provider.state, 1);
-      result->title.clear();
-      result->content.clear();
-      if (error_message != nullptr) {
-        error_message->clear();
-      }
-      return true;
-    }
-
-    if (!lua_istable(provider.state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin hover '" + provider.id + "' must return a table or nil";
-      }
-      lua_pop(provider.state, 1);
-      return false;
-    }
-
-    const int absolute_index = lua_absindex(provider.state, -1);
-    result->title.clear();
-    result->content.clear();
-
-    lua_getfield(provider.state, absolute_index, "title");
-    if (lua_isstring(provider.state, -1)) {
-      result->title = lua_tostring(provider.state, -1);
-    } else if (!lua_isnil(provider.state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin hover '" + provider.id + "' title must be a string when present";
-      }
-      lua_pop(provider.state, 2);
-      return false;
-    }
-    lua_pop(provider.state, 1);
-
-    lua_getfield(provider.state, absolute_index, "content");
-    if (lua_isstring(provider.state, -1)) {
-      result->content = lua_tostring(provider.state, -1);
-    } else if (!lua_isnil(provider.state, -1)) {
-      if (error_message != nullptr) {
-        *error_message =
-            "plugin hover '" + provider.id + "' content must be a string when present";
-      }
-      lua_pop(provider.state, 2);
-      return false;
-    }
-    lua_pop(provider.state, 1);
-
-    if (result->title.empty() && result->content.empty()) {
-      if (error_message != nullptr) {
-        *error_message = "plugin hover '" + provider.id + "' must return a title or content";
-      }
-      lua_pop(provider.state, 1);
-      return false;
-    }
-
-    lua_pop(provider.state, 1);
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
-    return true;
+    return sidebar_hover_interop::QueryHoverProvider(
+        provider, path, line, column,
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          PushBufferTable(state, buffer_path);
+        },
+        [this](lua_State* state) { return FindPluginByState(state); }, result, error_message);
   }
 
   void ClearPluginDiagnostics(const PluginInstance* plugin) {
