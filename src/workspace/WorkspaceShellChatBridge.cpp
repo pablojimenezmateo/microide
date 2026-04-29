@@ -187,6 +187,35 @@ ProjectWorkspaceState* FindProjectForChatRequest(WorkspaceContext& context,
   return nullptr;
 }
 
+bool ApplyInlineBridgeUpdate(ProjectWorkspaceState* project,
+                             bool active,
+                             const WorkspaceProviderBridgeManager::ChatUpdate& update,
+                             bool* request_focus_redraw) {
+  if (project == nullptr) {
+    return false;
+  }
+  InlineCompletionState& inline_completion = project->inline_completion;
+  if (!inline_completion.request_in_flight ||
+      inline_completion.pending_bridge_agent_id != update.agent_id ||
+      inline_completion.pending_bridge_request_id != update.request_id) {
+    return false;
+  }
+  if (update.kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Chunk) {
+    inline_completion.text += update.chunk;
+  } else if (update.kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Done) {
+    inline_completion.text += update.chunk;
+    inline_completion.request_in_flight = false;
+    inline_completion.visible = update.terminal_status == "succeeded" && !inline_completion.text.empty();
+    inline_completion.error = update.terminal_status == "succeeded" ? std::string{} : update.status_text;
+    inline_completion.pending_bridge_agent_id.clear();
+    inline_completion.pending_bridge_request_id.clear();
+  }
+  if (active && request_focus_redraw != nullptr) {
+    *request_focus_redraw = true;
+  }
+  return true;
+}
+
 }  // namespace
 
 void WorkspaceShell::ConsumeProviderBridgeUpdates() {
@@ -409,42 +438,20 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
         handled = true;
       }
     } else {
-      auto apply_inline_update = [&](ProjectWorkspaceState* project, bool active) {
-        if (project == nullptr) {
-          return false;
-        }
-        InlineCompletionState& inline_completion = project->inline_completion;
-        if (!inline_completion.request_in_flight ||
-            inline_completion.pending_bridge_agent_id != update->agent_id ||
-            inline_completion.pending_bridge_request_id != update->request_id) {
-          return false;
-        }
-        if (update->kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Chunk) {
-          inline_completion.text += update->chunk;
-        } else if (update->kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Done) {
-          inline_completion.text += update->chunk;
-          inline_completion.request_in_flight = false;
-          inline_completion.visible =
-              update->terminal_status == "succeeded" && !inline_completion.text.empty();
-          inline_completion.error =
-              update->terminal_status == "succeeded" ? std::string{} : update->status_text;
-          inline_completion.pending_bridge_agent_id.clear();
-          inline_completion.pending_bridge_request_id.clear();
-        }
-        if (active) {
+      bool request_focus_redraw = false;
+      if (ApplyInlineBridgeUpdate(&context_.current_project_state, true, *update,
+                                  &request_focus_redraw)) {
+        handled = true;
+        if (request_focus_redraw) {
           RequestFocusedEditorRedraw();
         }
-        return true;
-      };
-
-      if (apply_inline_update(&context_.current_project_state, true)) {
-        handled = true;
       } else {
         for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
           if (context_.HasActiveProjectCatalogEntry() && i == context_.project_catalog.active_index) {
             continue;
           }
-          if (apply_inline_update(context_.project_catalog.entries[i].get(), false)) {
+          if (ApplyInlineBridgeUpdate(context_.project_catalog.entries[i].get(), false, *update,
+                                      nullptr)) {
             handled = true;
             break;
           }
