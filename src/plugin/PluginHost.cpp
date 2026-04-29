@@ -231,7 +231,6 @@ struct PluginHost::Impl {
                                        const char* default_error_message,
                                        RegisterFn&& register_fn) {
     Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     if (plugin == nullptr) {
       return luaL_error(state, "%s", missing_plugin_message);
@@ -455,205 +454,117 @@ struct PluginHost::Impl {
   }
 
   static int LuaTaskAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "task registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterTask(state, plugin->id, &host->tasks,
-                                                         &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse task registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "task registration requires an active plugin state",
+        "failed to parse task registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterTask(
+              state, plugin->id, &host->tasks, error_message);
+        });
   }
 
   static int LuaLspAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "language server registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterLanguageServer(
-            state, plugin->id, &host->language_servers, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse language server registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "language server registration requires an active plugin state",
+        "failed to parse language server registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterLanguageServer(
+              state, plugin->id, &host->language_servers, error_message);
+        });
   }
 
   static int LuaToolAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "tool registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterTool(state, plugin->id, &host->tools,
-                                                         &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse tool registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "tool registration requires an active plugin state",
+        "failed to parse tool registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterTool(
+              state, plugin->id, &host->tools, error_message);
+        });
   }
 
   static int LuaDebuggerAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "debugger registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterDebugger(state, plugin->id, &host->debuggers,
-                                                             &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse debugger registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "debugger registration requires an active plugin state",
+        "failed to parse debugger registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterDebugger(
+              state, plugin->id, &host->debuggers, error_message);
+        });
   }
 
   static int LuaTestProviderAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "test provider registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterTestProvider(
-            state, plugin->id, &host->test_providers, &host->test_provider_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse test provider registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "test provider registration requires an active plugin state",
+        "failed to parse test provider registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterTestProvider(
+              state, plugin->id, &host->test_providers, &host->test_provider_runtimes,
+              error_message);
+        });
   }
 
   static int LuaScmProviderAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "scm provider registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterScmProvider(
-            state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse scm provider registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "scm provider registration requires an active plugin state",
+        "failed to parse scm provider registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterScmProvider(
+              state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
+              error_message);
+        });
   }
 
   static int LuaAnnotationProviderAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "annotation provider registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterAnnotationProvider(
-            state, plugin->id, &host->annotation_providers, &host->annotation_provider_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty()
-                            ? "failed to parse annotation provider registration"
-                            : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "annotation provider registration requires an active plugin state",
+        "failed to parse annotation provider registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterAnnotationProvider(
+              state, plugin->id, &host->annotation_providers, &host->annotation_provider_runtimes,
+              error_message);
+        });
   }
 
   static int LuaAuthProviderAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "auth provider registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterAuthProvider(
-            state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse auth provider registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "auth provider registration requires an active plugin state",
+        "failed to parse auth provider registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterAuthProvider(
+              state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
+              error_message);
+        });
   }
 
   static int LuaAiProviderAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "AI provider registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterAiProvider(
-            state, plugin->id, &host->ai_providers, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse AI provider registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "AI provider registration requires an active plugin state",
+        "failed to parse AI provider registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterAiProvider(
+              state, plugin->id, &host->ai_providers, error_message);
+        });
   }
 
   static int LuaExternalAgentAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "external agent registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterExternalAgent(
-            state, plugin->id, &host->external_agents, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty()
-                            ? "failed to parse external agent registration"
-                            : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "external agent registration requires an active plugin state",
+        "failed to parse external agent registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterExternalAgent(
+              state, plugin->id, &host->external_agents, error_message);
+        });
   }
 
   static int LuaMcpToolAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "MCP tool registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterMcpTool(
-            state, plugin->id, &host->mcp_tools, &host->mcp_tool_runtimes, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse MCP tool registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "MCP tool registration requires an active plugin state",
+        "failed to parse MCP tool registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterMcpTool(
+              state, plugin->id, &host->mcp_tools, &host->mcp_tool_runtimes, error_message);
+        });
   }
 
   static int LuaWorkspaceProjectRoot(lua_State* state) {
