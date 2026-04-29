@@ -326,7 +326,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
       if (!sidebar_vm.visible || sidebar_vm.mode != SidebarMode::Search ||
-          !context_.current_project_state.overlay.workflow.project_search.editing) {
+          !sidebar_vm.project_search_editing) {
         return std::nullopt;
       }
       const SDL_FRect text_rect =

@@ -30,6 +30,7 @@ struct SidebarSurfaceViewModel {
   bool visible = false;
   SidebarMode mode = SidebarMode::Tree;
   int scroll_row = 0;
+  bool project_search_editing = false;
 };
 
 struct BottomPanelSurfaceViewModel {

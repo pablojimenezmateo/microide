@@ -66,6 +66,8 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .visible = context_.current_project_state.sidebar.visible,
       .mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id),
       .scroll_row = context_.current_project_state.sidebar.scroll_row,
+      .project_search_editing =
+          context_.current_project_state.overlay.workflow.project_search.editing,
   };
 }
 
