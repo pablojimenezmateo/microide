@@ -63,9 +63,9 @@
 ## 10. Plugin Host Decomposition
 
 - [x] 10.1 Carve out `plugin/LuaRuntime.{h,cpp}` as the sole owner of `lua_State*` lifecycle (create/suspend/destroy, pcall wrapping, error capture). All other plugin code consumes it through opaque handles.
-- [ ] 10.2 Split `PluginHost.cpp` into per-surface modules: `PluginCommandRegistry`, `PluginSidebarRegistry`, `PluginSyntaxRegistry`, `PluginDiagnosticsRegistry`, `PluginHoverRegistry`, `PluginProviderRegistry`, `PluginLifecycle`. Each owns its registry, exposes a narrow API, and stays ≤ 800 lines.
-- [ ] 10.3 Reduce `PluginHost` to a thin coordinator that holds the runtime and the registry set, exposing only what plugin lifecycle and the workspace-side `PluginRuntimeService` actually need.
-- [ ] 10.4 Capture `MICROIDE_STARTUP_TRACE` covering plugin load + first idle frame; confirm no regression. Flip the lint rule for `src/plugin/*.cpp` size to hard-fail.
+- [x] 10.2 Split `PluginHost.cpp` into per-surface modules: `PluginCommandRegistry`, `PluginSidebarRegistry`, `PluginSyntaxRegistry`, `PluginDiagnosticsRegistry`, `PluginHoverRegistry`, `PluginProviderRegistry`, `PluginLifecycle`. Each owns its registry, exposes a narrow API, and stays ≤ 800 lines.
+- [x] 10.3 Reduce `PluginHost` to a thin coordinator that holds the runtime and the registry set, exposing only what plugin lifecycle and the workspace-side `PluginRuntimeService` actually need.
+- [x] 10.4 Capture `MICROIDE_STARTUP_TRACE` covering plugin load + first idle frame; confirm no regression. Flip the lint rule for `src/plugin/*.cpp` size to hard-fail.
 
 ## 11. WorkspaceShell Final Slim And God-Class Removal
 
