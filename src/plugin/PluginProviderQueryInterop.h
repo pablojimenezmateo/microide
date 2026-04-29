@@ -34,6 +34,27 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     const std::function<void(lua_State*, const std::filesystem::path&)>& push_buffer_context,
     std::string* error_message);
+
+bool DiscoverTests(
+    std::string_view provider_id,
+    const std::filesystem::path& path,
+    const std::filesystem::path& current_project_root,
+    const std::vector<runtime_types::TestProviderRuntime>& test_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    const std::function<void(lua_State*, const std::filesystem::path&)>& push_buffer_context,
+    const std::function<std::filesystem::path(const std::filesystem::path&,
+                                              const std::filesystem::path&)>&
+        resolve_runtime_path,
+    std::vector<PluginHost::TestCase>* tests,
+    std::string* error_message);
+
+bool RunTests(
+    std::string_view provider_id,
+    const std::vector<std::string>& test_ids,
+    const std::vector<runtime_types::TestProviderRuntime>& test_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::vector<PluginHost::TestRunResult>* results,
+    std::string* error_message);
 #endif
 
 }  // namespace microide::plugin::provider_query_interop

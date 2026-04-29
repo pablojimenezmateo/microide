@@ -2238,72 +2238,16 @@ bool PluginHost::DiscoverTests(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  const auto it =
-      std::find_if(impl_->test_provider_runtimes.begin(), impl_->test_provider_runtimes.end(),
-                   [provider_id](const auto& provider) { return provider.id == provider_id; });
-  if (it == impl_->test_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown test provider: " + std::string(provider_id);
-    }
-    return false;
-  }
-  if (it->discover_ref == LUA_NOREF || it->discover_ref == LUA_REFNIL) {
-    return true;
-  }
-
-  lua_State* state = it->state;
-  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->discover_ref);
-  impl_->PushBufferContext(state, path);
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime ||
-      !plugin->runtime->PCall(1, 1, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "test discovery provider '" + it->id + "' failed: " + call_error;
-    }
-    return false;
-  }
-  if (lua_istable(state, -1)) {
-    for (lua_Integer i = 1; ; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
-      if (!lua_istable(state, -1)) {
-        lua_pop(state, 1);
-        continue;
-      }
-      TestCase test;
-      auto read_string = [&](const char* field) -> std::string {
-        lua_getfield(state, -1, field);
-        std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
-                                                    : std::string{};
-        lua_pop(state, 1);
-        return value;
-      };
-      test.id = read_string("id");
-      test.label = read_string("label");
-      const std::string file = read_string("file");
-      if (!file.empty()) {
-        test.file = ResolveRuntimePath(impl_->current_project_root, std::filesystem::path(file));
-      } else {
-        test.file = path.lexically_normal();
-      }
-      test.parent_id = read_string("parent_id");
-      lua_getfield(state, -1, "line");
-      if (lua_isinteger(state, -1)) {
-        test.line = static_cast<int>(lua_tointeger(state, -1));
-      }
-      lua_pop(state, 1);
-      if (!test.id.empty()) {
-        tests->push_back(std::move(test));
-      }
-      lua_pop(state, 1);
-    }
-  }
-  lua_pop(state, 1);
-  return true;
+  return provider_query_interop::DiscoverTests(
+      provider_id, path, impl_->current_project_root, impl_->test_provider_runtimes,
+      [this](lua_State* state) { return impl_->FindPluginByState(state); },
+      [this](lua_State* state, const std::filesystem::path& buffer_path) {
+        impl_->PushBufferContext(state, buffer_path);
+      },
+      [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+        return ResolveRuntimePath(project_root, runtime_path);
+      },
+      tests, error_message);
 #else
   (void)provider_id;
   (void)path;
@@ -2330,73 +2274,10 @@ bool PluginHost::RunTests(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  const auto it =
-      std::find_if(impl_->test_provider_runtimes.begin(), impl_->test_provider_runtimes.end(),
-                   [provider_id](const auto& provider) { return provider.id == provider_id; });
-  if (it == impl_->test_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown test provider: " + std::string(provider_id);
-    }
-    return false;
-  }
-  if (it->run_ref == LUA_NOREF || it->run_ref == LUA_REFNIL) {
-    if (error_message != nullptr) {
-      *error_message = "test provider '" + std::string(provider_id) + "' does not support run";
-    }
-    return false;
-  }
-
-  lua_State* state = it->state;
-  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
-  lua_createtable(state, static_cast<int>(test_ids.size()), 0);
-  for (std::size_t i = 0; i < test_ids.size(); ++i) {
-    lua_pushlstring(state, test_ids[i].c_str(), test_ids[i].size());
-    lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
-  }
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime ||
-      !plugin->runtime->PCall(1, 1, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "test provider '" + it->id + "' run failed: " + call_error;
-    }
-    return false;
-  }
-  if (lua_istable(state, -1)) {
-    for (lua_Integer i = 1; ; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
-      if (!lua_istable(state, -1)) {
-        lua_pop(state, 1);
-        continue;
-      }
-      TestRunResult result;
-      auto read_string = [&](const char* field) -> std::string {
-        lua_getfield(state, -1, field);
-        std::string value = lua_isstring(state, -1) ? std::string(lua_tostring(state, -1))
-                                                    : std::string{};
-        lua_pop(state, 1);
-        return value;
-      };
-      result.test_id = read_string("test_id");
-      result.state = read_string("state");
-      result.message = read_string("message");
-      lua_getfield(state, -1, "duration_ms");
-      if (lua_isinteger(state, -1)) {
-        result.duration_ms = static_cast<int>(lua_tointeger(state, -1));
-      }
-      lua_pop(state, 1);
-      if (!result.test_id.empty()) {
-        results->push_back(std::move(result));
-      }
-      lua_pop(state, 1);
-    }
-  }
-  lua_pop(state, 1);
-  return true;
+  return provider_query_interop::RunTests(
+      provider_id, test_ids, impl_->test_provider_runtimes,
+      [this](lua_State* state) { return impl_->FindPluginByState(state); }, results,
+      error_message);
 #else
   (void)provider_id;
   (void)test_ids;
