@@ -271,7 +271,7 @@ struct PluginHost::Impl {
     const char* name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
     std::string error_message;
-    if (host == nullptr || !registry_interop::RegisterCommand(
+    if (host == nullptr || !lua_provider_registration_interop::RegisterCommand(
                                state, host->FindPluginByState(state), host->callbacks, name, 2,
                                &host->commands, &host->command_names, &error_message)) {
       return luaL_error(state, "%s",
@@ -285,7 +285,7 @@ struct PluginHost::Impl {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     std::string error_message;
-    if (host == nullptr || !registry_interop::RegisterSidebar(
+    if (host == nullptr || !lua_provider_registration_interop::RegisterSidebar(
                                state, host->FindPluginByState(state), 1, &host->sidebars,
                                &host->sidebar_providers, &error_message)) {
       return luaL_error(state, "%s",
@@ -299,7 +299,7 @@ struct PluginHost::Impl {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     std::string error_message;
-    if (host == nullptr || !registry_interop::RegisterHoverProvider(
+    if (host == nullptr || !lua_provider_registration_interop::RegisterHoverProvider(
                                state, host->FindPluginByState(state), 1, &host->hovers,
                                &host->hover_provider_order, &error_message)) {
       return luaL_error(state, "%s",
@@ -313,14 +313,9 @@ struct PluginHost::Impl {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    registration_parsers::MenuEntryRegistration registration;
     std::string error_message;
-    if (host == nullptr ||
-        !registration_parsers::ParseMenuEntryRegistration(
-            state, plugin != nullptr ? plugin->id : std::string{}, &registration,
-            &error_message) ||
-        !registry_interop::RegisterMenuEntry(plugin, std::move(registration.contributed),
-                                             &host->menu_entries, &error_message)) {
+    if (host == nullptr || !lua_provider_registration_interop::RegisterMenuEntry(
+                               state, plugin, &host->menu_entries, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to register menu entry"
                                               : error_message.c_str());
@@ -332,14 +327,9 @@ struct PluginHost::Impl {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    registration_parsers::KeybindingRegistration registration;
     std::string error_message;
-    if (host == nullptr ||
-        !registration_parsers::ParseKeybindingRegistration(
-            state, plugin != nullptr ? plugin->id : std::string{}, &registration,
-            &error_message) ||
-        !registry_interop::RegisterKeybinding(plugin, std::move(registration.contributed),
-                                              &host->keybindings, &error_message)) {
+    if (host == nullptr || !lua_provider_registration_interop::RegisterKeybinding(
+                               state, plugin, &host->keybindings, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to register keybinding"
                                               : error_message.c_str());
@@ -351,14 +341,9 @@ struct PluginHost::Impl {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    registration_parsers::SettingRegistration registration;
     std::string error_message;
-    if (host == nullptr ||
-        !registration_parsers::ParseSettingRegistration(
-            state, plugin != nullptr ? plugin->id : std::string{}, &registration,
-            &error_message) ||
-        !registry_interop::RegisterSetting(plugin, std::move(registration.contributed),
-                                           &host->settings, &error_message)) {
+    if (host == nullptr || !lua_provider_registration_interop::RegisterSetting(
+                               state, plugin, &host->settings, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to declare setting"
                                               : error_message.c_str());
@@ -386,15 +371,10 @@ struct PluginHost::Impl {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    registration_parsers::StatusItemRegistration registration;
     std::string error_message;
-    if (host == nullptr ||
-        !registration_parsers::ParseStatusItemRegistration(
-            state, plugin != nullptr ? plugin->id : std::string{}, &registration,
-            &error_message) ||
-        !registry_interop::RegisterStatusItem(plugin, std::move(registration.contributed),
-                                              &host->status_items, &host->status_item_order,
-                                              &error_message)) {
+    if (host == nullptr || !lua_provider_registration_interop::RegisterStatusItem(
+                               state, plugin, &host->status_items, &host->status_item_order,
+                               &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to register status item"
                                               : error_message.c_str());
@@ -409,11 +389,9 @@ struct PluginHost::Impl {
     if (host == nullptr) {
       return 0;
     }
-    if (registry_interop::UpdateStatusItem(state, host->FindPluginByState(state), id,
-                                           &host->status_items, &host->status_item_order) &&
-        host->callbacks.request_status_redraw) {
-      host->callbacks.request_status_redraw();
-    }
+    lua_provider_registration_interop::UpdateStatusItem(
+        state, host->FindPluginByState(state), id, &host->status_items,
+        &host->status_item_order, host->callbacks.request_status_redraw);
     return 0;
   }
 

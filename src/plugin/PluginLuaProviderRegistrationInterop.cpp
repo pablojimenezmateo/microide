@@ -3,8 +3,110 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include "plugin/PluginContributionInterop.h"
+#include "plugin/PluginRegistrationParsers.h"
+#include "plugin/PluginRegistryInterop.h"
 
 namespace microide::plugin::lua_provider_registration_interop {
+
+bool RegisterCommand(
+    lua_State* state,
+    const runtime_types::PluginInstance* plugin,
+    const PluginHost::Callbacks& callbacks,
+    const char* name,
+    int function_index,
+    std::unordered_map<std::string, runtime_types::PluginCommand>* commands,
+    std::vector<std::string>* command_names,
+    std::string* error_message) {
+  return registry_interop::RegisterCommand(state, plugin, callbacks, name, function_index,
+                                           commands, command_names, error_message);
+}
+
+bool RegisterSidebar(
+    lua_State* state,
+    const runtime_types::PluginInstance* plugin,
+    int descriptor_index,
+    std::unordered_map<std::string, runtime_types::SidebarProvider>* sidebars,
+    std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers,
+    std::string* error_message) {
+  return registry_interop::RegisterSidebar(state, plugin, descriptor_index, sidebars,
+                                           sidebar_providers, error_message);
+}
+
+bool RegisterHoverProvider(lua_State* state,
+                           const runtime_types::PluginInstance* plugin,
+                           int descriptor_index,
+                           std::unordered_map<std::string, runtime_types::HoverProvider>* hovers,
+                           std::vector<std::string>* hover_provider_order,
+                           std::string* error_message) {
+  return registry_interop::RegisterHoverProvider(state, plugin, descriptor_index, hovers,
+                                                 hover_provider_order, error_message);
+}
+
+bool RegisterMenuEntry(lua_State* state,
+                       const runtime_types::PluginInstance* plugin,
+                       std::vector<PluginHost::ContributedMenuEntry>* menu_entries,
+                       std::string* error_message) {
+  registration_parsers::MenuEntryRegistration registration;
+  if (!registration_parsers::ParseMenuEntryRegistration(
+          state, plugin != nullptr ? plugin->id : std::string{}, &registration, error_message)) {
+    return false;
+  }
+  return registry_interop::RegisterMenuEntry(plugin, std::move(registration.contributed),
+                                             menu_entries, error_message);
+}
+
+bool RegisterKeybinding(lua_State* state,
+                        const runtime_types::PluginInstance* plugin,
+                        std::vector<PluginHost::ContributedKeybinding>* keybindings,
+                        std::string* error_message) {
+  registration_parsers::KeybindingRegistration registration;
+  if (!registration_parsers::ParseKeybindingRegistration(
+          state, plugin != nullptr ? plugin->id : std::string{}, &registration, error_message)) {
+    return false;
+  }
+  return registry_interop::RegisterKeybinding(plugin, std::move(registration.contributed),
+                                              keybindings, error_message);
+}
+
+bool RegisterSetting(lua_State* state,
+                     const runtime_types::PluginInstance* plugin,
+                     std::vector<PluginHost::ContributedSettingSpec>* settings,
+                     std::string* error_message) {
+  registration_parsers::SettingRegistration registration;
+  if (!registration_parsers::ParseSettingRegistration(
+          state, plugin != nullptr ? plugin->id : std::string{}, &registration, error_message)) {
+    return false;
+  }
+  return registry_interop::RegisterSetting(plugin, std::move(registration.contributed), settings,
+                                           error_message);
+}
+
+bool RegisterStatusItem(
+    lua_State* state,
+    const runtime_types::PluginInstance* plugin,
+    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
+    std::vector<PluginHost::ContributedStatusItem>* status_item_order,
+    std::string* error_message) {
+  registration_parsers::StatusItemRegistration registration;
+  if (!registration_parsers::ParseStatusItemRegistration(
+          state, plugin != nullptr ? plugin->id : std::string{}, &registration, error_message)) {
+    return false;
+  }
+  return registry_interop::RegisterStatusItem(plugin, std::move(registration.contributed),
+                                              status_items, status_item_order, error_message);
+}
+
+void UpdateStatusItem(lua_State* state,
+                      const runtime_types::PluginInstance* plugin,
+                      const char* id,
+                      std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
+                      std::vector<PluginHost::ContributedStatusItem>* status_item_order,
+                      const std::function<void()>& request_status_redraw) {
+  if (registry_interop::UpdateStatusItem(state, plugin, id, status_items, status_item_order) &&
+      request_status_redraw) {
+    request_status_redraw();
+  }
+}
 
 bool RegisterFormatter(lua_State* state,
                        std::string_view plugin_id,
