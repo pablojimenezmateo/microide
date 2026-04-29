@@ -274,6 +274,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
+  src/workspace/WorkspaceShellInlineCompletion.cpp
+  src/workspace/WorkspaceShellOutput.cpp
+  src/workspace/WorkspaceShellProviderAuth.cpp
+  src/workspace/WorkspaceShellTasks.cpp
   src/workspace/WorkspaceShellTooling.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp

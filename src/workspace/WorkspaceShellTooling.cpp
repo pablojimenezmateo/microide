@@ -48,10 +48,6 @@ std::string_view LineAtOrEmpty(const std::vector<std::string>& lines, std::size_
   return index < lines.size() ? std::string_view(lines[index]) : std::string_view{};
 }
 
-std::string OutputChannelIdForTask(const TaskSpec& spec) {
-  return "task." + spec.id;
-}
-
 std::string LspUnavailableMessage(const LspManager& manager,
                                   std::string_view language_id,
                                   std::string_view fallback) {
@@ -137,17 +133,6 @@ std::string TruncateSummary(std::string text, std::size_t max_length = 160) {
 
 std::string ToolOutputSummary(std::string_view output_json) {
   return TruncateSummary(CollapseWhitespaceForSummary(output_json));
-}
-
-std::string ProviderApiKeySettingId(const AiProviderSpec& provider) {
-  if (!provider.plugin_id.empty()) {
-    return provider.plugin_id + ".api_key";
-  }
-  const std::size_t separator = provider.id.find('.');
-  const std::string prefix = separator == std::string::npos
-                                 ? provider.id
-                                 : provider.id.substr(0, separator);
-  return prefix.empty() ? std::string{} : prefix + ".api_key";
 }
 
 std::string JoinSummaryParts(const std::vector<std::string>& parts) {
@@ -415,32 +400,6 @@ const char* ToolPermissionDecisionLabel(ToolPermissionLevel permission) {
 
 }  // namespace
 
-std::string WorkspaceShell::ProviderApiKeyStorageKey(const AiProviderSpec& provider) const {
-  return !provider.api_key_name.empty() ? provider.api_key_name : provider.id + ".api_key";
-}
-
-std::optional<std::string> WorkspaceShell::ResolveProviderApiKey(
-    const AiProviderSpec& provider) const {
-  if (const std::optional<std::string> stored =
-          secret_storage_.Retrieve(ProviderApiKeyStorageKey(provider));
-      stored.has_value() && !stored->empty()) {
-    return stored;
-  }
-  const std::string setting_id = ProviderApiKeySettingId(provider);
-  if (setting_id.empty()) {
-    return std::nullopt;
-  }
-  if (const std::optional<std::string> configured = GetSettingValue(setting_id);
-      configured.has_value() && !configured->empty()) {
-    return configured;
-  }
-  return std::nullopt;
-}
-
-const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceShell::OutputChannels() const {
-  return output_channels_.Channels();
-}
-
 std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& path) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (normalized_path.empty()) {
@@ -643,72 +602,6 @@ void WorkspaceShell::SyncLspForActiveEditableChange(const std::vector<std::strin
               LspClient::Position{static_cast<int>(end_line), static_cast<int>(end_column)},
       },
       full_text);
-}
-
-const std::vector<std::string>* WorkspaceShell::OutputChannelEntries(std::string_view id) const {
-  return output_channels_.Entries(id);
-}
-
-void WorkspaceShell::EnsureOutputChannelTabOpen(std::string_view channel_id) {
-  if (channel_id.empty()) {
-    return;
-  }
-  auto& tabs = context_.current_project_state.panel.output.open_channel_ids;
-  if (std::find(tabs.begin(), tabs.end(), channel_id) == tabs.end()) {
-    tabs.emplace_back(channel_id);
-  }
-}
-
-void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {
-  auto& tabs = context_.current_project_state.panel.output.open_channel_ids;
-  const auto it = std::find(tabs.begin(), tabs.end(), channel_id);
-  if (it == tabs.end()) {
-    return;
-  }
-  const std::size_t closed_index = static_cast<std::size_t>(std::distance(tabs.begin(), it));
-  tabs.erase(it);
-
-  if (context_.current_project_state.panel.content != PanelContentKind::Output ||
-      context_.current_project_state.panel.output.channel_id != channel_id) {
-    return;
-  }
-
-  if (!tabs.empty()) {
-    const std::size_t next_index = std::min(closed_index, tabs.size() - 1);
-    context_.current_project_state.panel.output.channel_id = tabs[next_index];
-    return;
-  }
-
-  if (ActiveTerminalTab() != nullptr) {
-    context_.current_project_state.panel.content = PanelContentKind::Terminal;
-    return;
-  }
-
-  context_.current_project_state.panel.content = PanelContentKind::None;
-  if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    context_.current_project_state.surface.focus = FocusTarget::Editor;
-  }
-}
-
-void WorkspaceShell::ShowOutputChannel(std::string_view id) {
-  const std::string channel_id =
-      id.empty() ? (context_.current_project_state.panel.output.channel_id.empty()
-                        ? std::string("plugins.log")
-                        : context_.current_project_state.panel.output.channel_id)
-                 : std::string(id);
-  std::string channel_label = channel_id;
-  for (const auto& channel : output_channels_.Channels()) {
-    if (channel.id == channel_id) {
-      channel_label = channel.label.empty() ? channel.id : channel.label;
-      break;
-    }
-  }
-  output_channels_.EnsureChannel(channel_id, channel_label);
-  EnsureOutputChannelTabOpen(channel_id);
-  context_.current_project_state.panel.content = PanelContentKind::Output;
-  context_.current_project_state.panel.output.channel_id = channel_id;
-  context_.current_project_state.surface.focus = FocusTarget::Panel;
-  RequestBottomPanelRedraw();
 }
 
 void WorkspaceShell::ShowChatPanel() {
@@ -1000,81 +893,6 @@ std::string WorkspaceShell::ChatAuthBannerText(const Conversation* conversation)
     return "The selected model is no longer offered by " + provider->label + ".";
   }
   return {};
-}
-
-void WorkspaceShell::ConsumeTaskRuntimeUpdates() {
-  const std::optional<WorkspaceTaskRuntime::TaskUpdate> update =
-      task_runtime_.ConsumeActiveUpdate();
-  if (!update.has_value()) {
-    return;
-  }
-
-  output_channels_.EnsureChannel(update->channel_id, update->channel_label);
-  for (const std::string& line : update->appended_lines) {
-    output_channels_.AppendLine(update->channel_id, update->channel_label, line);
-  }
-  if (update->finished && !update->status_text.empty()) {
-    output_channels_.AppendLine(update->channel_id, update->channel_label, update->status_text);
-  }
-  EnsureOutputChannelTabOpen(update->channel_id);
-  context_.current_project_state.panel.content = PanelContentKind::Output;
-  context_.current_project_state.panel.output.channel_id = update->channel_id;
-  RequestBottomPanelRedraw();
-}
-
-bool WorkspaceShell::ShowTaskPickerOverlay() {
-  context_.current_project_state.overlay.workflow.task_picker.entries.clear();
-  context_.current_project_state.overlay.workflow.task_picker.error.clear();
-  context_.current_project_state.overlay.workflow.task_picker.selected_index = 0;
-  for (const TaskSpec& task : task_registry_.Specs()) {
-    context_.current_project_state.overlay.workflow.task_picker.entries.push_back(TaskPickerEntry{
-        .id = task.id,
-        .label = task.label,
-        .group = task.group,
-    });
-  }
-  if (context_.current_project_state.overlay.workflow.task_picker.entries.empty()) {
-    context_.current_project_state.overlay.workflow.task_picker.error = "No tasks registered";
-  }
-  ShowOverlay(OverlayMode::TaskPicker);
-  return true;
-}
-
-bool WorkspaceShell::RunSelectedTask() {
-  if (context_.current_project_state.overlay.workflow.task_picker.entries.empty()) {
-    return false;
-  }
-  const TaskPickerEntry& selected =
-      context_.current_project_state.overlay.workflow.task_picker.entries[std::min(
-          context_.current_project_state.overlay.workflow.task_picker.selected_index,
-          context_.current_project_state.overlay.workflow.task_picker.entries.size() - 1)];
-  const TaskSpec* spec = task_registry_.FindTask(selected.id);
-  if (spec == nullptr) {
-    return false;
-  }
-  return RunTaskById(spec->id, nullptr);
-}
-
-bool WorkspaceShell::RunTaskById(std::string_view id, std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  const TaskSpec* spec = task_registry_.FindTask(std::string(id));
-  if (spec == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "Unknown task: " + std::string(id);
-    }
-    return false;
-  }
-  task_runtime_.Start(*spec, context_.current_project_state.root);
-  const std::string channel_id = OutputChannelIdForTask(*spec);
-  output_channels_.EnsureChannel(channel_id, spec->label.empty() ? spec->id : spec->label);
-  EnsureOutputChannelTabOpen(channel_id);
-  context_.current_project_state.panel.content = PanelContentKind::Output;
-  context_.current_project_state.panel.output.channel_id = channel_id;
-  DismissOverlay(false);
-  RequestBottomPanelRedraw();
-  return true;
 }
 
 bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
@@ -2488,193 +2306,6 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
       RequestChromeRedraw();
     }
   }
-}
-
-bool WorkspaceShell::SetProviderApiKey(std::string_view provider_id,
-                                       std::string_view api_key,
-                                       std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  const AiProviderSpec* provider = ai_provider_registry_.FindProvider(std::string(provider_id));
-  if (provider == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "Unknown provider: " + std::string(provider_id);
-    }
-    return false;
-  }
-  const std::string key = ProviderApiKeyStorageKey(*provider);
-  if (!secret_storage_.Store(key, std::string(api_key))) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to store API key for " + std::string(provider_id);
-    }
-    return false;
-  }
-  // If there is a running bridge for this provider, restart it with the new key.
-  const ExternalAgentSpec* agent =
-      external_agent_registry_.FindAgent(std::string(provider_id));
-  if (agent != nullptr && !agent->command.empty()) {
-    provider_bridge_manager_.StartBridge(agent->id,
-                                         agent->command,
-                                         std::string(api_key),
-                                         context_.current_project_state.root);
-  }
-  return true;
-}
-
-bool WorkspaceShell::ClearProviderApiKey(std::string_view provider_id,
-                                         std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  const AiProviderSpec* provider = ai_provider_registry_.FindProvider(std::string(provider_id));
-  const std::string key = provider != nullptr ? ProviderApiKeyStorageKey(*provider)
-                                              : std::string(provider_id) + ".api_key";
-  secret_storage_.Delete(key);
-  provider_bridge_manager_.StopBridge(std::string(provider_id));
-  return true;
-}
-
-ProviderAuthStatus WorkspaceShell::GetProviderAuthStatus(std::string_view provider_id) const {
-  const AiProviderSpec* provider = ai_provider_registry_.FindProvider(std::string(provider_id));
-  if (provider == nullptr) {
-    return ProviderAuthStatus::Unknown;
-  }
-  if (!ResolveProviderApiKey(*provider).has_value()) {
-    return ProviderAuthStatus::KeyMissing;
-  }
-  // If a bridge is running, return the bridge's reported auth status.
-  const ProviderAuthStatus bridge_status =
-      provider_bridge_manager_.GetAuthStatus(std::string(provider_id));
-  if (bridge_status != ProviderAuthStatus::Unknown &&
-      bridge_status != ProviderAuthStatus::KeyMissing) {
-    return bridge_status;
-  }
-  return ProviderAuthStatus::KeyPresent;
-}
-
-void WorkspaceShell::ConsumeLspCallbacks() {
-  EnsureProjectLspManager(context_.current_project_state).DrainCallbacks();
-  for (const auto& entry : context_.project_catalog.entries) {
-    if (entry != nullptr) {
-      EnsureProjectLspManager(*entry).DrainCallbacks();
-    }
-  }
-  RequestFullRedraw();
-}
-
-bool WorkspaceShell::RequestInlineCompletion(std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr) {
-    return false;
-  }
-  const ExternalAgentSpec* agent =
-      SelectAgentForCapability(external_agent_registry_, "inline-completion");
-  if (agent == nullptr || agent->protocol != "stdio") {
-    if (error_message != nullptr) {
-      *error_message = "No stdio inline completion agent is available";
-    }
-    return false;
-  }
-  if (agent->command.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "Inline completion agent command is empty";
-    }
-    return false;
-  }
-
-  inline_completion_registry_.Clear();
-  context_.current_project_state.inline_completion.visible = false;
-  context_.current_project_state.inline_completion.request_in_flight = true;
-  context_.current_project_state.inline_completion.start_line = viewport->cursor_line();
-  context_.current_project_state.inline_completion.start_column = viewport->cursor_column();
-  context_.current_project_state.inline_completion.provider_id = agent->id;
-  context_.current_project_state.inline_completion.text.clear();
-  context_.current_project_state.inline_completion.error.clear();
-  context_.current_project_state.inline_completion.pending_bridge_agent_id.clear();
-  context_.current_project_state.inline_completion.pending_bridge_request_id.clear();
-
-  std::ostringstream prompt;
-  prompt << "Complete the code at line " << (viewport->cursor_line() + 1) << ", column "
-         << (viewport->cursor_column() + 1) << ". Return only the completion text.\n\n";
-  const auto& lines = viewport->lines();
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    prompt << lines[i] << '\n';
-  }
-  if (!provider_bridge_manager_.IsBridgeRunning(agent->id) &&
-      !provider_bridge_manager_.StartBridge(agent->id,
-                                            agent->command,
-                                            {},
-                                            context_.current_project_state.root)) {
-    context_.current_project_state.inline_completion.request_in_flight = false;
-    if (error_message != nullptr) {
-      *error_message = "Failed to start inline completion agent bridge";
-    }
-    return false;
-  }
-  const std::string request_id = GenerateRuntimeMessageId("bridge-inline");
-  context_.current_project_state.inline_completion.pending_bridge_agent_id = agent->id;
-  context_.current_project_state.inline_completion.pending_bridge_request_id = request_id;
-  if (!provider_bridge_manager_.SendChat(agent->id,
-                                         request_id,
-                                         {{"user", prompt.str()}},
-                                         {},
-                                         {},
-                                         "no_tools",
-                                         {})) {
-    context_.current_project_state.inline_completion.request_in_flight = false;
-    context_.current_project_state.inline_completion.pending_bridge_agent_id.clear();
-    context_.current_project_state.inline_completion.pending_bridge_request_id.clear();
-    if (error_message != nullptr) {
-      *error_message = "Failed to send inline completion request to agent bridge";
-    }
-    return false;
-  }
-  return true;
-}
-
-bool WorkspaceShell::AcceptInlineCompletion() {
-  if (!context_.current_project_state.inline_completion.visible ||
-      context_.current_project_state.inline_completion.text.empty()) {
-    return false;
-  }
-  editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr) {
-    return false;
-  }
-
-  const std::vector<std::string> before_lines = viewport->lines();
-  const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-  const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
-  viewport->ReplaceRange(
-      editor::SelectionRange{
-          .start = editor::TextPosition{
-              context_.current_project_state.inline_completion.start_line,
-              context_.current_project_state.inline_completion.start_column,
-          },
-          .end = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
-      },
-      context_.current_project_state.inline_completion.text);
-  if (auto* compare_tab = ActiveCompareTab();
-      compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-    RefreshCompareTabDerivedState(*compare_tab);
-    SyncCompareSelectionFromViewport(*compare_tab, true);
-  }
-  if (auto* merge_tab = ActiveMergeTab();
-      merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-    UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
-  }
-  DismissInlineCompletion();
-  RequestFocusedEditorRedraw();
-  return true;
-}
-
-void WorkspaceShell::DismissInlineCompletion() {
-  context_.current_project_state.inline_completion = InlineCompletionState{};
-  RequestFocusedEditorRedraw();
 }
 
 bool WorkspaceShell::InvokeMcpTool(std::string_view tool_id,
