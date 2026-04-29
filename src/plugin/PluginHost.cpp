@@ -26,6 +26,7 @@
 #include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginAsyncCallbackInterop.h"
 #include "plugin/PluginDataDirectoryInterop.h"
+#include "plugin/PluginHoverQueryInterop.h"
 #include "plugin/PluginLuaBufferProjectInterop.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginLuaContextInterop.h"
@@ -1094,26 +1095,21 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
 
   const std::filesystem::path resolved_path =
       path_interop::ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
-  Impl* impl = impl_.get();
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (const std::string& provider_id : impl->hover_provider_order) {
-    const auto it = impl->hovers.find(provider_id);
-    if (it == impl->hovers.end()) {
-      continue;
-    }
-    if (!impl->QueryHoverProvider(it->second, resolved_path, line, column, result, error_message)) {
-      return false;
-    }
-    if (!result->title.empty() || !result->content.empty()) {
-      if (error_message != nullptr) {
-        error_message->clear();
-      }
-      return true;
-    }
-  }
+  return hover_query_interop::QueryHover(
+      impl_->hover_provider_order, impl_->hovers, resolved_path, line, column,
+      [this](const runtime_types::HoverProvider& provider,
+             const std::filesystem::path& hover_path,
+             std::size_t hover_line,
+             std::size_t hover_column,
+             HoverResult* hover_result,
+             std::string* hover_error_message) {
+        return impl_->QueryHoverProvider(provider, hover_path, hover_line, hover_column,
+                                         hover_result, hover_error_message);
+      },
+      result, error_message);
 #else
   (void)resolved_path;
-  (void)impl;
 #endif
 
   if (error_message != nullptr) {
