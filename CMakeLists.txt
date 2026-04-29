@@ -166,6 +166,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginRegistryInterop.cpp
   src/plugin/PluginProviderRegistrationParsers.cpp
   src/plugin/PluginRegistrationParsers.cpp
+  src/plugin/PluginStateTeardownInterop.cpp
   src/plugin/PluginWorkspaceInterop.cpp
   src/plugin/LuaRuntime.cpp
   src/plugin/PluginHost.cpp
