@@ -24,6 +24,7 @@
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
 #include "plugin/PluginAsyncStateInterop.h"
+#include "plugin/PluginLuaBufferProjectInterop.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginLuaContextInterop.h"
 #include "plugin/PluginDiscoveryInterop.h"
@@ -686,25 +687,14 @@ struct PluginHost::Impl {
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
-    lua_createtable(state, 0, 2);
-    lua_pushstring(state, project_root.generic_string().c_str());
-    lua_setfield(state, -2, "root");
-    lua_pushstring(state, path_interop::Basename(project_root).c_str());
-    lua_setfield(state, -2, "name");
+    lua_buffer_project_interop::PushProjectTable(state, project_root);
   }
 
   void PushBufferTable(lua_State* state, const std::filesystem::path& path) {
-    lua_createtable(state, 0, 3);
-    const std::filesystem::path normalized_path = path.lexically_normal();
-    lua_pushstring(state, normalized_path.generic_string().c_str());
-    lua_setfield(state, -2, "path");
-    lua_pushstring(state, normalized_path.filename().string().c_str());
-    lua_setfield(state, -2, "name");
-    if (const std::optional<std::string> relative = RelativePathString(normalized_path);
-        relative.has_value()) {
-      lua_pushstring(state, relative->c_str());
-      lua_setfield(state, -2, "relative_path");
-    }
+    lua_buffer_project_interop::PushBufferTable(
+        state, path, [this](const std::filesystem::path& buffer_path) {
+          return RelativePathString(buffer_path);
+        });
   }
 
   bool SnapshotSidebarProvider(const SidebarProvider& provider,
