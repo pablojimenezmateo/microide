@@ -158,6 +158,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginLuaInterop.cpp
   src/plugin/PluginContributionInterop.cpp
   src/plugin/PluginAsyncStateInterop.cpp
+  src/plugin/PluginDiscoveryInterop.cpp
   src/plugin/PluginDiagnosticsInterop.cpp
   src/plugin/PluginLifecycleCallbackInterop.cpp
   src/plugin/PluginLifecycleLoadInterop.cpp
