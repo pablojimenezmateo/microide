@@ -56,6 +56,11 @@ Choose the narrowest type that expresses the real contract. Do not force callers
 - Return structured failure information for operational errors that callers are expected to handle.
 - Use assertions for impossible internal states, not as a substitute for input validation at real boundaries.
 
+Parsing policy:
+
+- Prefer non-throwing parse helpers in `src/util/Parse.{h,cpp}` over exception-driven numeric parsing.
+- Do not introduce `try`/`catch` wrappers around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`.
+
 ## Dependency And State Management
 
 - Prefer explicit dependencies passed to constructors or functions over hidden global access.

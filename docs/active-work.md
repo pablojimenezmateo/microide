@@ -566,6 +566,7 @@ These are not current project work unless deliberately promoted into their own p
 - recent-project and recent-file affordances
 - soft wrap
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
+- legacy persisted text-file cleanup (`*.legacy`) before release +2; this is scheduled as a dedicated follow-up change after the current structured-persistence migration settles
 
 ## Companion Docs
 

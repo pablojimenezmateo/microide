@@ -24,6 +24,12 @@ Rules:
 - Do not let services depend on `WorkspaceShell` when a narrower callback or state dependency would do.
 - Keep external command construction, path normalization, parser logic, and retry or fallback behavior inside the service boundary that owns it.
 
+Workspace-specific rules:
+
+- `WorkspaceShell` should own service instances and route events, not own broad subsystem behavior.
+- Coordinators should consume narrow service interfaces (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PersistenceService`) instead of `WorkspaceShell&`.
+- Workspace persistence file I/O should route through `PersistenceService`; ad hoc direct reads or writes for workspace/session/config/conversation state are not allowed.
+
 ## Interface Design
 
 - Prefer small structs for requests and results when a service has more than one input or output field.

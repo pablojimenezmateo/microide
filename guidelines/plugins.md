@@ -44,6 +44,7 @@ The exact mechanism should remain host-owned and registry-first.
 - built-in search, git, and terminal workflows
 - redraw invalidation and performance policy
 - workspace persistence and top-level project state ownership
+- Lua runtime lifecycle (`lua_State*` create/suspend/destroy and protected-call error capture)
 
 Do not expose `WorkspaceShell` wholesale to plugins.
 
@@ -73,3 +74,4 @@ Do not expose `WorkspaceShell` wholesale to plugins.
 - Narrow contracts are easier to preserve than broad object access.
 - If a plugin requirement reveals a bad host boundary, fix the host boundary rather than layering a compatibility escape hatch around it.
 - Dogfood new seams with repo-owned plugins before widening them further.
+- Keep plugin translation units modular and focused; avoid re-growing monolithic `PluginHost`-style files.

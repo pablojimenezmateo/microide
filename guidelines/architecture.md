@@ -85,6 +85,13 @@ Keep these boundaries obvious. UI code should not grow direct knowledge of git c
 - `src/workspace/WorkspaceShell.h` should stay at or below 400 lines and `src/workspace/WorkspaceShell.cpp` at or below 600 lines.
 - Some invariants still warn instead of hard-failing while the cleanup change is in flight. When a slice removes the last known violation for a rule, flip that rule to hard-fail in the same change.
 
+## Workspace Service Model
+
+- Workspace behavior should be service-oriented: services own state and mutations, coordinators translate input into service intents.
+- Render code should consume typed view models from `RenderViewModelBuilder`; render surfaces should not reach into mutable shell state.
+- Single-line shell inputs should use shared `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler` for standard edit behavior.
+- Persistence should use the shared typed record format through `PersistedRecordReader` and `PersistedRecordWriter`, with `PersistenceService` as the workspace entrypoint.
+
 ## Plugin-Phase Direction
 
 Plugin expansion is a major current phase. The durable direction is:

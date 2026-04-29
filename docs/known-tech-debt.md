@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-04-23. Updated 2026-04-23 with render-path and syntax-highlighter debt from deep-dive.
+Reviewed on 2026-04-23. Updated 2026-04-29 after comprehensive tech-debt cleanup slices.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -137,7 +137,10 @@ Recommended follow-up:
 - When touching a coordinator for another reason, check whether one or two direct field accesses
   can be replaced with a dedicated API instead of preserving the friend pattern by default.
 
-## 3. Active Editor Viewport Ownership Is Better, but the Migration Is Not Fully Complete
+## 3. Active Editor Viewport Ownership Migration
+
+Status:
+- Addressed on 2026-04-29 by removing `text_viewport_` alias paths and routing editor actions through tab-owned active viewport APIs
 
 Impact:
 - Medium
@@ -147,19 +150,14 @@ Current state:
 - The major user-facing paths now use `ActiveEditorViewport()` or `ActiveNavigableViewport()`.
 - Full tests passed after fixing several remaining stale-path callers.
 
-What is still debt:
-- `current_project_state_.text_viewport` still exists as a project-level viewport object and
-  placeholder holder.
-- The codebase still has historical assumptions around `text_viewport_`, and future edits can
-  easily regress into mutating it directly instead of the tab-owned active view.
-- The recent fix was deliberately pragmatic, not a full deletion of the old concept.
+What remains:
+- Keep validating active-viewport ownership through regression tests when adding editor or split behavior.
 
 Evidence:
 - Active viewport helpers:
   - `src/workspace/WorkspaceShell.h`
   - `src/workspace/WorkspaceShellEditor.cpp`
-- The alias still exists:
-  - `src/workspace/WorkspaceShell.h:1439`
+- The legacy alias has been removed; use service-owned active viewport accessors only.
 
 Why this is still debt:
 - The architecture is safer than before, but not yet simplified enough that the wrong path is
@@ -271,21 +269,18 @@ Recommended follow-up:
   - project search across large trees with smart-case and regex modes
   - syntax cache invalidation after plugin reload
 
-## 7. Single-Line Shell Text Inputs Still Lack One Shared Selection-Aware Editor Model
+## 7. Single-Line Shell Text Input Model
+
+Status:
+- Addressed on 2026-04-29 by introducing shared `SingleLineEditor` and `SingleLineKeyHandler` for migrated single-line surfaces
 
 Impact:
 - Medium
 - Text insertion, caret painting, IME composition, and paste routing are standardized, but basic
   editing behavior still depends too much on per-surface handlers
 
-What still happens:
-- Prompt input, command input, chat composer, overlay query fields, and sidebar search fields now
-  share `WorkspaceTextInputCoordinator` for insertion and composition, but they do not yet share
-  one selection-aware editing state
-- Backspace, escape, submit, some cursor movement, and confirm or cancel behavior still live in
-  prompt, overlay, sidebar, and panel-specific handlers
-- Edit actions such as select-all, copy, and cut are still more complete for viewport-backed
-  surfaces than for these single-line buffers
+What remains:
+- Chat composer still uses the multiline viewport model by design and should only migrate shared behavior where semantics match.
 
 Why this is still debt:
 - New single-line surfaces can still reintroduce behavior drift even though rendering is now
@@ -304,16 +299,10 @@ What a good fix likely looks like:
 - Keep submit, history, and other surface-specific actions outside that shared editor model
 - Extend tests so keyboard shortcuts and menu actions exercise the same single-line editing path
 
-Likely starting files:
-- `src/util/SingleLineText.h`
-- `src/util/SingleLineText.cpp`
-- `src/workspace/WorkspaceTextInputCoordinator.cpp`
-- `src/workspace/WorkspaceKeyInputCoordinatorSurfaces.cpp`
-- `src/workspace/WorkspaceCommandPromptCoordinator.cpp`
-
-Recommended follow-up:
-- Add focused regression coverage for select-all, copy, cut, left or right movement, and home or
-  end on prompt, command, and overlay inputs once the shared editor model exists.
+Relevant code:
+- `src/editor/SingleLineEditor.h`
+- `src/editor/SingleLineKeyHandler.h`
+- `tests/SingleLineEditorTests.cpp`
 
 ## 8. `WorkspaceReviewComments` Does Linear Scans Per Frame When Review Comments Are Active
 

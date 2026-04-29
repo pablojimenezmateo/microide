@@ -10,7 +10,7 @@
 - [x] 2.1 Add `editor/SingleLineEditor.{h,cpp}` (buffer + caret + optional selection + standard ops) and `editor/SingleLineKeyHandler.{h,cpp}` for shared key dispatch.
 - [x] 2.2 Add a focused regression suite for insert, backspace, delete-forward, left/right movement, home/end, select-all, copy, cut, paste, and selection-range invariants.
 - [x] 2.3 Migrate prompt input, command input, overlay query field, and sidebar search field to the shared model; delete per-surface duplicates of those operations. Keep the chat composer on `editor::TextViewport` in this change and track its shared-input alignment separately.
-- [ ] 2.4 Capture `MICROIDE_TRACE_REDRAW` evidence on a representative session covering each migrated surface; attach to the change record.
+- [x] 2.4 Capture `MICROIDE_TRACE_REDRAW` evidence on a representative session covering each migrated surface; attach to the change record.
 
 ## 3. Persistence Format Foundation
 
@@ -55,10 +55,10 @@
 
 ## 9. Render View Models
 
-- [ ] 9.1 Add `workspace/RenderViewModelBuilder.{h,cpp}` and a typed `<Surface>ViewModel` struct per render surface. Populate from service queries.
+- [x] 9.1 Add `workspace/RenderViewModelBuilder.{h,cpp}` and a typed `<Surface>ViewModel` struct per render surface. Populate from service queries.
 - [x] 9.2 Migrate `WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, and `WorkspaceShellHoverTargets` to consume their view-model structs only.
 - [x] 9.3 Verify with the lint that no render translation unit calls `WorkspaceShell` member functions other than the view-model builder entry. Flip lint to hard-fail.
-- [ ] 9.4 Capture `MICROIDE_TRACE_REDRAW` for typing, scrolling, and merge-tab scrolling; confirm no regression vs. baseline.
+- [x] 9.4 Capture `MICROIDE_TRACE_REDRAW` for typing, scrolling, and merge-tab scrolling; confirm no regression vs. baseline.
 
 ## 10. Plugin Host Decomposition
 
@@ -76,11 +76,11 @@
 
 ## 12. Full-Tree Validation And Documentation
 
-- [ ] 12.1 Run `cmake --build build/microide` clean and `ctest --test-dir build/microide --output-on-failure`; resolve any flake.
-- [ ] 12.2 Run startup-trace and runtime-profiling capture per `docs/startup-tracing.md` and `docs/runtime-profiling.md` end-to-end. Compare against the pre-cleanup baseline; verify all `performance-budgets` requirements still hold.
+- [x] 12.1 Run `cmake --build build/microide` clean and `ctest --test-dir build/microide --output-on-failure`; resolve any flake.
+- [x] 12.2 Run startup-trace and runtime-profiling capture per `docs/startup-tracing.md` and `docs/runtime-profiling.md` end-to-end. Compare against the pre-cleanup baseline; verify all `performance-budgets` requirements still hold.
 - [ ] 12.3 Update `docs/active-work.md` to reflect the new architecture as the shipped baseline. Close items 1, 2, 3, 4, and 7 in `docs/known-tech-debt.md`.
-- [ ] 12.4 Update `guidelines/architecture.md`, `guidelines/host-services.md`, `guidelines/cpp.md`, and `guidelines/plugins.md` to describe the service-oriented model, the single-line editor model, the persistence format, and the lint invariants.
-- [ ] 12.5 Schedule the `.legacy`-file cleanup as a follow-up change for the release after next; do not delete `.legacy` files in this change.
+- [x] 12.4 Update `guidelines/architecture.md`, `guidelines/host-services.md`, `guidelines/cpp.md`, and `guidelines/plugins.md` to describe the service-oriented model, the single-line editor model, the persistence format, and the lint invariants.
+- [x] 12.5 Schedule the `.legacy`-file cleanup as a follow-up change for the release after next; do not delete `.legacy` files in this change.
 
 ## 13. Final Status
 

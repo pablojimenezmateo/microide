@@ -26,12 +26,13 @@ class WorkspaceProjectFileMonitor {
 
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool PollForChanges();
-  bool ConsumePendingChanges();
+ bool ConsumePendingChanges();
 
  private:
   class ProjectTraversalFilter;
 
   bool EnsureWatching();
+  bool HasVisibleChangesSinceDeferredArming() const;
   bool ReserveWakeEvent(Uint32* event_type) const;
   void PushWakeEvent() const;
 
@@ -40,6 +41,8 @@ class WorkspaceProjectFileMonitor {
   mutable bool wake_event_pending_ = false;
   bool deferred_arming_ = false;
   std::filesystem::path pending_project_root_;
+  std::filesystem::path watched_project_root_;
+  std::optional<std::filesystem::file_time_type> deferred_arm_baseline_;
   platform::FileTreeWatcher watcher_;
   std::unique_ptr<ProjectTraversalFilter> traversal_filter_;
 };

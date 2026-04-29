@@ -96,6 +96,8 @@ bool WorkspaceProjectFileMonitor::ConsumeWakeEvent(Uint32 type) {
 void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& project_root) {
   if (project_root.empty()) {
     pending_project_root_.clear();
+    watched_project_root_.clear();
+    deferred_arm_baseline_.reset();
     traversal_filter_.reset();
     watcher_.SetDeferInitialSnapshot(false);
     watcher_.SetEntryFilter({});
@@ -106,6 +108,7 @@ void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& pr
   }
 
   if (!deferred_arming_) {
+    watched_project_root_ = project_root.lexically_normal();
     traversal_filter_ =
         std::make_unique<ProjectTraversalFilter>(project_root.lexically_normal());
     watcher_.SetDeferInitialSnapshot(false);
@@ -114,10 +117,13 @@ void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& pr
     });
     watcher_.SetRoots({project_root.lexically_normal()});
     pending_project_root_.clear();
+    deferred_arm_baseline_.reset();
     return;
   }
 
   pending_project_root_ = project_root.lexically_normal();
+  watched_project_root_.clear();
+  deferred_arm_baseline_ = std::filesystem::file_time_type::clock::now();
   traversal_filter_.reset();
   watcher_.SetDeferInitialSnapshot(true);
   watcher_.SetEntryFilter({});
@@ -126,6 +132,8 @@ void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& pr
 
 void WorkspaceProjectFileMonitor::Reset() {
   pending_project_root_.clear();
+  watched_project_root_.clear();
+  deferred_arm_baseline_.reset();
   traversal_filter_.reset();
   watcher_.SetDeferInitialSnapshot(false);
   watcher_.SetEntryFilter({});
@@ -152,7 +160,11 @@ bool WorkspaceProjectFileMonitor::PollForChanges() {
 
 bool WorkspaceProjectFileMonitor::ConsumePendingChanges() {
   if (EnsureWatching()) {
-    return false;
+    if (HasVisibleChangesSinceDeferredArming()) {
+      deferred_arm_baseline_.reset();
+      return true;
+    }
+    deferred_arm_baseline_.reset();
   }
   return watcher_.Poll();
 }
@@ -164,6 +176,7 @@ bool WorkspaceProjectFileMonitor::EnsureWatching() {
 
   traversal_filter_ =
       std::make_unique<ProjectTraversalFilter>(pending_project_root_);
+  watched_project_root_ = pending_project_root_;
   watcher_.SetDeferInitialSnapshot(true);
   watcher_.SetEntryFilter([this](const std::filesystem::path& path, platform::PathType type) {
     return traversal_filter_ == nullptr || traversal_filter_->Includes(path, type);
@@ -171,6 +184,51 @@ bool WorkspaceProjectFileMonitor::EnsureWatching() {
   watcher_.SetRoots({pending_project_root_});
   pending_project_root_.clear();
   return true;
+}
+
+bool WorkspaceProjectFileMonitor::HasVisibleChangesSinceDeferredArming() const {
+  if (!deferred_arm_baseline_.has_value() || traversal_filter_ == nullptr) {
+    return false;
+  }
+
+  const std::filesystem::path root = watched_project_root_;
+  if (root.empty()) {
+    return false;
+  }
+
+  std::error_code root_error;
+  if (!std::filesystem::exists(root, root_error)) {
+    return false;
+  }
+
+  std::error_code root_time_error;
+  const auto root_time = std::filesystem::last_write_time(root, root_time_error);
+  if (!root_time_error &&
+      traversal_filter_->Includes(root, platform::ReadPathType(root)) &&
+      root_time > *deferred_arm_baseline_) {
+    return true;
+  }
+
+  constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
+  std::error_code iterate_error;
+  for (std::filesystem::recursive_directory_iterator it(root, options, iterate_error), end;
+       !iterate_error && it != end; it.increment(iterate_error)) {
+    const std::filesystem::path path = it->path().lexically_normal();
+    const platform::PathType type = platform::ReadPathType(path);
+    if (!traversal_filter_->Includes(path, type)) {
+      if (type == platform::PathType::Directory) {
+        it.disable_recursion_pending();
+      }
+      continue;
+    }
+    std::error_code time_error;
+    const auto modified = std::filesystem::last_write_time(path, time_error);
+    if (!time_error && modified > *deferred_arm_baseline_) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool WorkspaceProjectFileMonitor::ReserveWakeEvent(Uint32* event_type) const {
