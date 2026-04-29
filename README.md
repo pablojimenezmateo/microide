@@ -190,6 +190,65 @@ ui-scale [n|up|down|reset]          unsplit
 vsplit [path]
 ```
 
+Current commands:
+- `auth-login <provider> [scope...]`
+- `auth-logout <provider> <session>`
+- `auth-refresh <provider> <session>`
+- `code-actions`
+- `colorscheme [name|list]`
+- `completion`
+- `compare [path] [commit-prefix]`
+- `debug-start <type>`
+- `debug-stop`
+- `merge <base> <incoming> <current> [output]`
+- `files [root]`
+- `find <query>`
+- `find-references`
+- `focus <editor|sidebar|panel>`
+- `goto-definition`
+- `goto <line[:col]>`
+- `git-refresh`
+- `indent-width [n]`
+- `inline-complete`
+- `jump <line[:col]>`
+- `mcp <tool> [json]`
+- `open <path>`
+- `project-close`
+- `project-next`
+- `project-open [path]`
+- `project-prev`
+- `project-search [query]`
+- `plugins-reload`
+- `quit`
+- `reopen`
+- `save`
+- `search <query>`
+- `chat [message]`
+- `output [channel]`
+- `sidebar-close`
+- `sidebar-hide`
+- `sidebar-show [tool]`
+- `sidebar-toggle [tool]`
+- `sidebar-width <n>`
+- `soft-tabs [on|off]`
+- `split-first`
+- `split-last`
+- `split-next`
+- `split-prev`
+- `tab [path]`
+- `tab-size [n]`
+- `tabmove <n>`
+- `tabswitch <tab>`
+- `term [command]`
+- `tasks [task-id]`
+- `tests-discover`
+- `tests-run [test-id...]`
+- `tree [root]`
+- `tree-refresh`
+- `ui-scale [n|up|down|reset]`
+- `unsplit`
+- `vsplit [path]`
+
 Merge example:
 ```
 merge /path/to/base.txt /path/to/incoming.txt /path/to/current.txt /path/to/result.txt
