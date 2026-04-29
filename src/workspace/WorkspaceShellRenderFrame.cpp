@@ -162,6 +162,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const WorkspaceLayout& layout,
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect) {
+  const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
+  const ProjectWorkspaceState& project_state = *frame_vm.project_state;
   const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
   const bool render_editor_surface = !ActiveTabIsCompare() && !ActiveTabIsMerge();
   const std::vector<EditorPaneLayout> editor_panes =
@@ -173,12 +175,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     RenderMergeSurface(renderer, layout.editor_surface);
   } else {
     const auto diagnostics_for_viewport =
-        [this](const editor::TextViewport& viewport)
+        [this, &project_state](const editor::TextViewport& viewport)
         -> std::span<const editor::PublishedDiagnostic> {
       if (viewport.path().empty() || viewport.dirty()) {
         return {};
       }
-      const auto* diagnostics = context_.current_project_state.diagnostics_store.FindByPath(viewport.path());
+      const auto* diagnostics = project_state.diagnostics_store.FindByPath(viewport.path());
       return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
@@ -250,16 +252,16 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    blame_overlay, diagnostics_for_viewport(*viewport));
       draw_review_comment_markers(*viewport, pane.rect);
 
-      if (pane.active && context_.current_project_state.inline_completion.visible &&
-          !context_.current_project_state.inline_completion.text.empty()) {
-        const std::size_t line_index = context_.current_project_state.inline_completion.start_line;
+      if (pane.active && project_state.inline_completion.visible &&
+          !project_state.inline_completion.text.empty()) {
+        const std::size_t line_index = project_state.inline_completion.start_line;
         const auto& lines = viewport->lines();
         if (line_index < lines.size() && line_index >= viewport->scroll_line() &&
             line_index < viewport->scroll_line() + viewport->visible_lines()) {
           const editor::EditorViewMetrics metrics =
               editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
           const std::size_t visual_column = editor::TextLayout::VisualColumnForTextColumn(
-              lines[line_index], context_.current_project_state.inline_completion.start_column,
+              lines[line_index], project_state.inline_completion.start_column,
               viewport->tab_size());
           if (visual_column >= viewport->horizontal_scroll() &&
               visual_column < viewport->horizontal_scroll() + viewport->visible_columns()) {
@@ -270,7 +272,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             const float draw_y =
                 metrics.first_line_y +
                 static_cast<float>(line_index - viewport->scroll_line()) * metrics.line_height;
-            std::string ghost_text = context_.current_project_state.inline_completion.text;
+            std::string ghost_text = project_state.inline_completion.text;
             if (const std::size_t newline = ghost_text.find('\n'); newline != std::string::npos) {
               ghost_text.erase(newline);
             }

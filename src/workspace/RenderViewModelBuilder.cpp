@@ -41,6 +41,7 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
       .bottom_panel_visible = context_.current_project_state.panel.command_mode ||
                               context_.current_project_state.panel.content !=
                                   PanelContentKind::None,
+      .project_state = &context_.current_project_state,
   };
 }
 

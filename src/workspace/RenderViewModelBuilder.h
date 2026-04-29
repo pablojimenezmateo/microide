@@ -12,6 +12,7 @@ struct FrameSurfaceViewModel {
   WorkspaceLayout layout{};
   bool sidebar_visible = false;
   bool bottom_panel_visible = false;
+  const ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct OverlaySurfaceViewModel {
