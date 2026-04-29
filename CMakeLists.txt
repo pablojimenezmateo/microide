@@ -176,6 +176,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginProviderRegistrationParsers.cpp
   src/plugin/PluginRegistrationParsers.cpp
   src/plugin/PluginSidebarHoverInterop.cpp
+  src/plugin/PluginStatusInterop.cpp
   src/plugin/PluginStateTeardownInterop.cpp
   src/plugin/PluginWorkspaceInterop.cpp
   src/plugin/LuaRuntime.cpp

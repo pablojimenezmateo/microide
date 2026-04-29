@@ -39,6 +39,7 @@
 #include "plugin/PluginProviderQueryInterop.h"
 #include "plugin/PluginRuntimeApiInterop.h"
 #include "plugin/PluginSidebarHoverInterop.h"
+#include "plugin/PluginStatusInterop.h"
 #include "plugin/PluginStateTeardownInterop.h"
 #include "plugin/PluginWorkspaceInterop.h"
 #include "plugin/PluginHostRuntimeTypes.h"
@@ -1139,25 +1140,9 @@ const std::vector<PluginHost::ContributedStatusItem>& PluginHost::ContributedSta
 }
 
 bool PluginHost::UpdateStatusItem(std::string_view id, std::string text, std::string tooltip) {
-  auto it = impl_->status_items.find(std::string(id));
-  if (it == impl_->status_items.end()) {
-    return false;
-  }
-  it->second.text = std::move(text);
-  if (!tooltip.empty()) {
-    it->second.tooltip = std::move(tooltip);
-  }
-  for (auto& order_item : impl_->status_item_order) {
-    if (order_item.id == it->first) {
-      order_item.text = it->second.text;
-      order_item.tooltip = it->second.tooltip;
-      break;
-    }
-  }
-  if (impl_->callbacks.request_status_redraw) {
-    impl_->callbacks.request_status_redraw();
-  }
-  return true;
+  return status_interop::UpdateStatusItem(
+      id, std::move(text), std::move(tooltip), &impl_->status_items, &impl_->status_item_order,
+      impl_->callbacks.request_status_redraw);
 }
 
 bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
