@@ -13,6 +13,27 @@
 namespace microide::plugin::lua_provider_registration_interop {
 
 #if MICROIDE_HAS_LUA_PLUGINS
+bool RegisterFormatter(lua_State* state,
+                       std::string_view plugin_id,
+                       std::vector<PluginHost::ContributedFormatter>* formatters,
+                       std::string* error_message);
+bool RegisterSaveParticipant(
+    lua_State* state,
+    std::string_view plugin_id,
+    std::vector<PluginHost::ContributedSaveParticipant>* save_participants,
+    std::vector<runtime_types::SaveParticipantRuntime>* save_participant_runtimes,
+    std::string* error_message);
+bool RegisterCompletion(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedCompletion>* completions,
+                        std::vector<runtime_types::CompletionRuntime>* completion_runtimes,
+                        std::string* error_message);
+bool RegisterCodeAction(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedCodeAction>* code_actions,
+                        std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes,
+                        std::string* error_message);
+
 bool RegisterTask(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTask>* tasks,

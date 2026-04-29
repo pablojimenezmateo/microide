@@ -426,8 +426,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterFormatter(state, plugin->id, &host->formatters,
-                                                 &error_message)) {
+    if (!lua_provider_registration_interop::RegisterFormatter(
+            state, plugin->id, &host->formatters, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse formatter registration"
                                               : error_message.c_str());
@@ -442,9 +442,9 @@ struct PluginHost::Impl {
       return luaL_error(state, "save participant registration requires an active plugin state");
     }
     std::string error_message;
-    if (!contribution_interop::RegisterSaveParticipant(state, plugin->id, &host->save_participants,
-                                                       &host->save_participant_runtimes,
-                                                       &error_message)) {
+    if (!lua_provider_registration_interop::RegisterSaveParticipant(
+            state, plugin->id, &host->save_participants, &host->save_participant_runtimes,
+            &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty()
                             ? "failed to parse save participant registration"
@@ -461,8 +461,9 @@ struct PluginHost::Impl {
       return luaL_error(state, "completion registration requires an active plugin state");
     }
     std::string error_message;
-    if (!contribution_interop::RegisterCompletion(state, plugin->id, &host->completions,
-                                                  &host->completion_runtimes, &error_message)) {
+    if (!lua_provider_registration_interop::RegisterCompletion(
+            state, plugin->id, &host->completions, &host->completion_runtimes,
+            &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse completion registration"
                                               : error_message.c_str());
@@ -479,9 +480,9 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterCodeAction(state, plugin->id, &host->code_actions,
-                                                  &host->code_action_runtimes,
-                                                  &error_message)) {
+    if (!lua_provider_registration_interop::RegisterCodeAction(
+            state, plugin->id, &host->code_actions, &host->code_action_runtimes,
+            &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse code action registration"
                                               : error_message.c_str());

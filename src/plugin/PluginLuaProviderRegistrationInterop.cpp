@@ -6,6 +6,43 @@
 
 namespace microide::plugin::lua_provider_registration_interop {
 
+bool RegisterFormatter(lua_State* state,
+                       std::string_view plugin_id,
+                       std::vector<PluginHost::ContributedFormatter>* formatters,
+                       std::string* error_message) {
+  return contribution_interop::RegisterFormatter(state, std::string(plugin_id), formatters,
+                                                 error_message);
+}
+
+bool RegisterSaveParticipant(
+    lua_State* state,
+    std::string_view plugin_id,
+    std::vector<PluginHost::ContributedSaveParticipant>* save_participants,
+    std::vector<runtime_types::SaveParticipantRuntime>* save_participant_runtimes,
+    std::string* error_message) {
+  return contribution_interop::RegisterSaveParticipant(state, std::string(plugin_id),
+                                                       save_participants, save_participant_runtimes,
+                                                       error_message);
+}
+
+bool RegisterCompletion(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedCompletion>* completions,
+                        std::vector<runtime_types::CompletionRuntime>* completion_runtimes,
+                        std::string* error_message) {
+  return contribution_interop::RegisterCompletion(state, std::string(plugin_id), completions,
+                                                  completion_runtimes, error_message);
+}
+
+bool RegisterCodeAction(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedCodeAction>* code_actions,
+                        std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes,
+                        std::string* error_message) {
+  return contribution_interop::RegisterCodeAction(state, std::string(plugin_id), code_actions,
+                                                  code_action_runtimes, error_message);
+}
+
 bool RegisterTask(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTask>* tasks,
