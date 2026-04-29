@@ -33,6 +33,7 @@
 #include "plugin/PluginDiscoveryInterop.h"
 #include "plugin/PluginLifecycleCallbackInterop.h"
 #include "plugin/PluginLifecycleLoadInterop.h"
+#include "plugin/PluginLifecycleResetInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginLuaProviderRegistrationInterop.h"
@@ -882,15 +883,10 @@ bool PluginHost::enabled() const {
 bool PluginHost::Reload(const std::filesystem::path& project_root) {
   impl_->errors.clear();
   if (!impl_->enabled()) {
-    impl_->current_project_root = project_root.empty() ? std::filesystem::path{}
-                                                       : project_root.lexically_normal();
-    impl_->commands.clear();
-    impl_->command_names.clear();
-    impl_->sidebars.clear();
-    impl_->sidebar_providers.clear();
-    impl_->hovers.clear();
-    impl_->hover_provider_order.clear();
-    impl_->plugins.clear();
+    lifecycle_reset_interop::ResetForDisabledRuntime(
+        project_root, &impl_->current_project_root, &impl_->commands, &impl_->command_names,
+        &impl_->sidebars, &impl_->sidebar_providers, &impl_->hovers, &impl_->hover_provider_order,
+        &impl_->plugins);
     impl_->SetReloadSummary();
     return false;
   }
@@ -922,14 +918,9 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 
 void PluginHost::Shutdown() {
   if (!impl_->enabled()) {
-    impl_->plugins.clear();
-    impl_->commands.clear();
-    impl_->command_names.clear();
-    impl_->sidebars.clear();
-    impl_->sidebar_providers.clear();
-    impl_->hovers.clear();
-    impl_->hover_provider_order.clear();
-    impl_->current_project_root.clear();
+    lifecycle_reset_interop::ShutdownForDisabledRuntime(
+        &impl_->current_project_root, &impl_->commands, &impl_->command_names, &impl_->sidebars,
+        &impl_->sidebar_providers, &impl_->hovers, &impl_->hover_provider_order, &impl_->plugins);
     impl_->SetReloadSummary();
     return;
   }
