@@ -35,7 +35,7 @@ std::string BuildProjectSearchResultLabel(std::size_t line,
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
   const SidebarSurfaceViewModel sidebar_vm = RenderViewModelBuilder(context_).BuildSidebarSurface();
-  const ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+  ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
   if (!sidebar_vm.visible) {
     return;
   }
@@ -200,7 +200,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const int selected_line =
         ProjectSearchLineForResult(project_state.overlay.workflow.project_search.selected_index);
     scroll_row = RevealScrollableListIndex(list_layout, selected_line);
-    context_.current_project_state.sidebar.scroll_row = scroll_row;
+    project_state.sidebar.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
@@ -342,7 +342,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto list_layout =
         ComputeChatSidebarListLayout(layout.sidebar, transcript.rows.size());
     const int scroll_row = list_layout.scroll_row;
-    context_.current_project_state.panel.chat.scroll_row = scroll_row;
+    project_state.panel.chat.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
@@ -435,7 +435,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const bool chat_input_active = current_surface == TextInputSurface::ChatComposer;
     const auto visual = chat_input_active ? BuildActiveTextInputVisual(layout, std::nullopt)
                                           : std::nullopt;
-    auto& composer = context_.current_project_state.panel.chat.composer;
+    auto& composer = project_state.panel.chat.composer;
     const SDL_FRect composer_rect = ChatSidebarComposerRect(layout.sidebar);
     composer.SetViewportSize(
         std::max<std::size_t>(1, static_cast<std::size_t>((composer_rect.h - 8.0f) /
@@ -490,7 +490,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto lines = BuildGitSidebarLines();
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
-    context_.current_project_state.sidebar.scroll_row = scroll_row;
+    project_state.sidebar.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;

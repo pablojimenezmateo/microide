@@ -41,7 +41,7 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
       .bottom_panel_visible = context_.current_project_state.panel.command_mode ||
                               context_.current_project_state.panel.content !=
                                   PanelContentKind::None,
-      .project_state = &context_.current_project_state,
+      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }
 
@@ -53,7 +53,7 @@ OverlaySurfaceViewModel RenderViewModelBuilder::BuildOverlaySurface() const {
       .buffer_search_query_text =
           context_.current_project_state.overlay.workflow.buffer_search.query.text,
       .state = &context_.current_project_state.overlay,
-      .project_state = &context_.current_project_state,
+      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }
 
@@ -82,7 +82,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .scroll_row = context_.current_project_state.sidebar.scroll_row,
       .project_search_editing =
           context_.current_project_state.overlay.workflow.project_search.editing,
-      .project_state = &context_.current_project_state,
+      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }
 

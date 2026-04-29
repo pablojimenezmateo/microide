@@ -12,7 +12,7 @@ struct FrameSurfaceViewModel {
   WorkspaceLayout layout{};
   bool sidebar_visible = false;
   bool bottom_panel_visible = false;
-  const ProjectWorkspaceState* project_state = nullptr;
+  ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct OverlaySurfaceViewModel {
@@ -21,7 +21,7 @@ struct OverlaySurfaceViewModel {
   int scroll_row = 0;
   std::string buffer_search_query_text;
   const OverlayState* state = nullptr;
-  const ProjectWorkspaceState* project_state = nullptr;
+  ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct TextInputSurfaceViewModel {
@@ -43,7 +43,7 @@ struct SidebarSurfaceViewModel {
   SidebarMode mode = SidebarMode::Tree;
   int scroll_row = 0;
   bool project_search_editing = false;
-  const ProjectWorkspaceState* project_state = nullptr;
+  ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct BottomPanelSurfaceViewModel {

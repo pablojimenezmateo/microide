@@ -65,14 +65,15 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   const SidebarSurfaceViewModel sidebar_vm = RenderViewModelBuilder(context_).BuildSidebarSurface();
   const BottomPanelSurfaceViewModel panel_vm =
       RenderViewModelBuilder(context_).BuildBottomPanelSurface();
-  context_.current_project_state.sidebar.width = ClampSidebarWidth(context_.current_project_state.sidebar.width, static_cast<float>(width));
-  context_.current_project_state.panel.height =
-      ClampBottomPanelHeight(context_.current_project_state.panel.height, static_cast<float>(height));
+  ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+  project_state.sidebar.width = ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
+  project_state.panel.height =
+      ClampBottomPanelHeight(project_state.panel.height, static_cast<float>(height));
 
   const WorkspaceLayout layout =
       ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
                     panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
-                    context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
+                    project_state.sidebar.width, project_state.panel.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
@@ -163,7 +164,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect) {
   const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
-  const ProjectWorkspaceState& project_state = *frame_vm.project_state;
+  ProjectWorkspaceState& project_state = *frame_vm.project_state;
   const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
   const bool render_editor_surface = !ActiveTabIsCompare() && !ActiveTabIsMerge();
   const std::vector<EditorPaneLayout> editor_panes =
