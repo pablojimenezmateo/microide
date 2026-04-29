@@ -155,6 +155,7 @@ set(MICROIDE_CORE_SOURCES
   src/persistence/PersistedRecordDump.cpp
   src/persistence/PersistedRecordReader.cpp
   src/persistence/PersistedRecordWriter.cpp
+  src/plugin/PluginLuaInterop.cpp
   src/plugin/LuaRuntime.cpp
   src/plugin/PluginHost.cpp
   src/project/DirectoryTree.cpp

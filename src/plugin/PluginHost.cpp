@@ -23,6 +23,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
+#include "plugin/PluginLuaInterop.h"
 #include "plugin/LuaRuntime.h"
 #include "util/TextFileIO.h"
 
@@ -420,25 +421,6 @@ struct PluginHost::Impl {
     }
   }
 
-  static void PushPosition(lua_State* state, std::size_t line, std::size_t column) {
-    lua_createtable(state, 0, 2);
-    lua_pushinteger(state, static_cast<lua_Integer>(line));
-    lua_setfield(state, -2, "line");
-    lua_pushinteger(state, static_cast<lua_Integer>(column));
-    lua_setfield(state, -2, "column");
-  }
-
-  static void PushRange(lua_State* state,
-                        std::size_t start_line,
-                        std::size_t start_column,
-                        std::size_t end_line,
-                        std::size_t end_column) {
-    lua_createtable(state, 0, 2);
-    PushPosition(state, start_line, start_column);
-    lua_setfield(state, -2, "start");
-    PushPosition(state, end_line, end_column);
-    lua_setfield(state, -2, "end");
-  }
 #endif
 
   std::vector<std::pair<std::filesystem::path, bool>> DiscoverPluginRoots() const {
@@ -2860,14 +2842,6 @@ struct PluginHost::Impl {
     }
   }
 
-  static void PushHoverPositionTable(lua_State* state, std::size_t line, std::size_t column) {
-    lua_createtable(state, 0, 2);
-    lua_pushinteger(state, static_cast<lua_Integer>(line));
-    lua_setfield(state, -2, "line");
-    lua_pushinteger(state, static_cast<lua_Integer>(column));
-    lua_setfield(state, -2, "column");
-  }
-
   bool ReadHoverResultTable(lua_State* state,
                             int table_index,
                             PluginHost::HoverResult* result,
@@ -2922,45 +2896,6 @@ struct PluginHost::Impl {
       error_message->clear();
     }
     return true;
-  }
-
-  static SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
-    SidebarItem item;
-    const int absolute_index = lua_absindex(state, table_index);
-
-    lua_getfield(state, absolute_index, "label");
-    if (lua_isstring(state, -1)) {
-      item.label = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-
-    lua_getfield(state, absolute_index, "detail");
-    if (lua_isstring(state, -1)) {
-      item.detail = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-
-    lua_getfield(state, absolute_index, "path");
-    if (lua_isstring(state, -1)) {
-      item.path = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-
-    lua_getfield(state, absolute_index, "line");
-    if (lua_isinteger(state, -1)) {
-      const lua_Integer line = lua_tointeger(state, -1);
-      item.line = line > 0 ? static_cast<std::size_t>(line) : 0;
-    }
-    lua_pop(state, 1);
-
-    lua_getfield(state, absolute_index, "column");
-    if (lua_isinteger(state, -1)) {
-      const lua_Integer column = lua_tointeger(state, -1);
-      item.column = column > 0 ? static_cast<std::size_t>(column) : 0;
-    }
-    lua_pop(state, 1);
-
-    return item;
   }
 
   void PushSidebarItemTable(lua_State* state, const SidebarItem& item) const {
@@ -3031,7 +2966,7 @@ struct PluginHost::Impl {
         items->clear();
         return false;
       }
-      SidebarItem item = ReadSidebarItem(provider.state, -1);
+      SidebarItem item = lua_interop::ReadSidebarItem(provider.state, -1);
       if (item.label.empty()) {
         if (error_message != nullptr) {
           *error_message = "plugin sidebar '" + provider.info.id +
@@ -3109,7 +3044,7 @@ struct PluginHost::Impl {
 
     lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.provide_ref);
     PushBufferTable(provider.state, path);
-    PushHoverPositionTable(provider.state, line, column);
+    lua_interop::PushHoverPosition(provider.state, line, column);
     const PluginInstance* plugin = FindPluginByState(provider.state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime ||
@@ -4181,7 +4116,7 @@ std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
     lua_State* state = provider.state;
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
     impl_->PushBufferContext(state, path);
-    Impl::PushPosition(state, line, column);
+    lua_interop::PushPosition(state, line, column);
     lua_pushlstring(state, trigger_character.data(), trigger_character.size());
     const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
     std::string call_error;
@@ -4264,7 +4199,7 @@ std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     lua_State* state = provider.state;
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
     impl_->PushBufferContext(state, path);
-    Impl::PushRange(state, start_line, start_column, end_line, end_column);
+    lua_interop::PushRange(state, start_line, start_column, end_line, end_column);
     const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime ||
