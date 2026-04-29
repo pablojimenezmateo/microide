@@ -162,6 +162,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginDiagnosticsInterop.cpp
   src/plugin/PluginLifecycleCallbackInterop.cpp
   src/plugin/PluginLifecycleLoadInterop.cpp
+  src/plugin/PluginPathInterop.cpp
   src/plugin/PluginProcessInterop.cpp
   src/plugin/PluginProviderQueryInterop.cpp
   src/plugin/PluginRegistryInterop.cpp

@@ -30,6 +30,7 @@
 #include "plugin/PluginDiagnosticsInterop.h"
 #include "plugin/PluginLifecycleCallbackInterop.h"
 #include "plugin/PluginLifecycleLoadInterop.h"
+#include "plugin/PluginPathInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
 #include "plugin/PluginRegistryInterop.h"
@@ -48,21 +49,6 @@
 namespace microide::plugin {
 
 namespace {
-
-std::string Basename(const std::filesystem::path& path) {
-  return path.filename().empty() ? path.lexically_normal().string() : path.filename().string();
-}
-
-std::filesystem::path ResolveRuntimePath(const std::filesystem::path& project_root,
-                                         const std::filesystem::path& path) {
-  if (path.empty()) {
-    return {};
-  }
-  if (path.is_absolute() || project_root.empty()) {
-    return path.lexically_normal();
-  }
-  return (project_root / path).lexically_normal();
-}
 
 }  // namespace
 
@@ -793,7 +779,7 @@ struct PluginHost::Impl {
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     std::optional<std::filesystem::path> path;
     if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
-      path = ResolveRuntimePath(host != nullptr ? host->current_project_root : std::filesystem::path{},
+      path = path_interop::ResolveRuntimePath(host != nullptr ? host->current_project_root : std::filesystem::path{},
                                 std::filesystem::path(luaL_checkstring(state, 1)));
     }
 
@@ -1013,7 +999,7 @@ struct PluginHost::Impl {
     lua_createtable(state, 0, 2);
     lua_pushstring(state, project_root.generic_string().c_str());
     lua_setfield(state, -2, "root");
-    lua_pushstring(state, Basename(project_root).c_str());
+    lua_pushstring(state, path_interop::Basename(project_root).c_str());
     lua_setfield(state, -2, "name");
   }
 
@@ -1037,7 +1023,7 @@ struct PluginHost::Impl {
     return sidebar_hover_interop::SnapshotSidebarProvider(
         provider, current_project_root,
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
-          return ResolveRuntimePath(project_root, runtime_path);
+          return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
         [this](lua_State* state) { return FindPluginByState(state); }, items, error_message);
   }
@@ -1048,7 +1034,7 @@ struct PluginHost::Impl {
     return sidebar_hover_interop::ConfirmSidebarProviderItem(
         provider, item, current_project_root,
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
-          return ResolveRuntimePath(project_root, runtime_path);
+          return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
         [this](lua_State* state) { return FindPluginByState(state); }, callbacks.open_file,
         error_message);
@@ -1443,7 +1429,7 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
   }
 
   const std::filesystem::path resolved_path =
-      ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
+      path_interop::ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
   Impl* impl = impl_.get();
 #if MICROIDE_HAS_LUA_PLUGINS
   for (const std::string& provider_id : impl->hover_provider_order) {
@@ -1661,7 +1647,7 @@ bool PluginHost::DiscoverTests(std::string_view provider_id,
         impl_->PushBufferContext(state, buffer_path);
       },
       [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
-        return ResolveRuntimePath(project_root, runtime_path);
+        return path_interop::ResolveRuntimePath(project_root, runtime_path);
       },
       tests, error_message);
 #else
@@ -1723,7 +1709,7 @@ bool PluginHost::SnapshotScm(std::string_view provider_id,
       provider_id, impl_->current_project_root, impl_->scm_provider_runtimes,
       [this](lua_State* state) { return impl_->FindPluginByState(state); },
       [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
-        return ResolveRuntimePath(project_root, runtime_path);
+        return path_interop::ResolveRuntimePath(project_root, runtime_path);
       },
       snapshot, error_message);
 #else
