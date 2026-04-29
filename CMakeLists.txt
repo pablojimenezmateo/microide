@@ -620,6 +620,7 @@ add_executable(microide_provider_bridge
   src/app/ProviderBridgeMain.cpp
   src/provider/CloudProviderBridge.cpp
   src/util/JsonValue.cpp
+  src/util/Parse.cpp
 )
 
 target_include_directories(microide_provider_bridge PRIVATE src)

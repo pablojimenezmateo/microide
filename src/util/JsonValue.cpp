@@ -6,6 +6,8 @@
 #include <cstring>
 #include <sstream>
 
+#include "util/Parse.h"
+
 namespace microide::util {
 
 const JsonValue& JsonValue::operator[](std::string_view key) const {
@@ -100,15 +102,13 @@ struct Parser {
     }
     const std::string_view tok = src.substr(start, pos - start);
     if (is_float) {
-      double d = 0.0;
-      const auto [ptr, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), d);
-      if (ec != std::errc{}) return std::nullopt;
-      return JsonValue(d);
+      const auto parsed = ParseDouble(tok);
+      if (!parsed.has_value()) return std::nullopt;
+      return JsonValue(*parsed);
     }
-    std::int64_t n = 0;
-    const auto [ptr, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), n);
-    if (ec != std::errc{}) return std::nullopt;
-    return JsonValue(n);
+    const auto parsed = ParseInt64(tok);
+    if (!parsed.has_value()) return std::nullopt;
+    return JsonValue(*parsed);
   }
 
   static unsigned int HexDigit(char c) {

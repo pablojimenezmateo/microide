@@ -14,7 +14,16 @@ jobs:
             shell: bash
             deps: |
               sudo apt-get update
-              sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev libpcre2-dev libcurl4-openssl-dev
+              sudo apt-get install -y \
+                cmake ninja-build pkg-config git \
+                libpcre2-dev libcurl4-openssl-dev \
+                libfreetype-dev libharfbuzz-dev \
+                libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+                libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev \
+                libwayland-dev wayland-protocols \
+                libegl1-mesa-dev libgl1-mesa-dev \
+                libpulse-dev libasound2-dev libdbus-1-dev libudev-dev
+              ./scripts/ci/install-sdl3-linux.sh
           - os: macos-15
             shell: bash
             deps: |
@@ -26,8 +35,8 @@ jobs:
                 mingw-w64-ucrt-x86_64-cmake \
                 mingw-w64-ucrt-x86_64-ninja \
                 mingw-w64-ucrt-x86_64-gcc \
-                mingw-w64-ucrt-x86_64-SDL3 \
-                mingw-w64-ucrt-x86_64-SDL3_ttf \
+                mingw-w64-ucrt-x86_64-sdl3 \
+                mingw-w64-ucrt-x86_64-sdl3-ttf \
                 mingw-w64-ucrt-x86_64-pcre2 \
                 mingw-w64-ucrt-x86_64-curl \
                 pkgconf
@@ -81,7 +90,16 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev libpcre2-dev libcurl4-openssl-dev
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config git \
+            libpcre2-dev libcurl4-openssl-dev \
+            libfreetype-dev libharfbuzz-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev \
+            libpulse-dev libasound2-dev libdbus-1-dev libudev-dev
+          ./scripts/ci/install-sdl3-linux.sh
 
       - name: Configure (${{ matrix.preset }})
         run: cmake --preset ${{ matrix.preset }}

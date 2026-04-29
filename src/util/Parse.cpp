@@ -1,8 +1,11 @@
 #include "util/Parse.h"
 
+#include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <string>
 
 namespace microide::util {
 
@@ -23,6 +26,31 @@ std::optional<T> ParseExact(std::string_view text) {
   return value;
 }
 
+// Floating-point std::from_chars is not yet implemented in libc++ shipped
+// with current Apple toolchains, so we route real-number parsing through
+// strto* with a null-terminated copy. The program never installs a numeric
+// locale, so the "C" locale's '.' decimal separator is used.
+template <typename T, typename Convert>
+std::optional<T> ParseRealExact(std::string_view text, Convert convert) {
+  if (text.empty()) {
+    return std::nullopt;
+  }
+  std::string buffer(text);
+  errno = 0;
+  char* end = nullptr;
+  const T value = convert(buffer.c_str(), &end);
+  if (errno != 0) {
+    return std::nullopt;
+  }
+  if (end != buffer.c_str() + buffer.size()) {
+    return std::nullopt;
+  }
+  if (!std::isfinite(value)) {
+    return std::nullopt;
+  }
+  return value;
+}
+
 }  // namespace
 
 std::optional<int> ParseInt(std::string_view text) {
@@ -38,11 +66,11 @@ std::optional<std::size_t> ParseSize(std::string_view text) {
 }
 
 std::optional<float> ParseFloat(std::string_view text) {
-  const std::optional<float> value = ParseExact<float>(text);
-  if (!value.has_value() || !std::isfinite(*value)) {
-    return std::nullopt;
-  }
-  return value;
+  return ParseRealExact<float>(text, std::strtof);
+}
+
+std::optional<double> ParseDouble(std::string_view text) {
+  return ParseRealExact<double>(text, std::strtod);
 }
 
 }  // namespace microide::util

@@ -13,7 +13,16 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config xvfb libsdl3-dev libsdl3-ttf-dev libpcre2-dev libcurl4-openssl-dev
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config git xvfb \
+            libpcre2-dev libcurl4-openssl-dev \
+            libfreetype-dev libharfbuzz-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev \
+            libpulse-dev libasound2-dev libdbus-1-dev libudev-dev
+          ./scripts/ci/install-sdl3-linux.sh
 
       - name: Configure
         run: cmake --preset microide-perf
