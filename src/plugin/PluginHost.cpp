@@ -1877,14 +1877,6 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
 bool PluginHost::ExecuteCommand(std::string_view name,
                                 const std::vector<std::string>& args,
                                 std::string* error_message) {
-  const auto it = impl_->commands.find(std::string(name));
-  if (it == impl_->commands.end()) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
-    return false;
-  }
-
   if (!impl_->enabled()) {
     if (error_message != nullptr) {
       *error_message = "Lua plugin runtime unavailable";
@@ -1893,23 +1885,10 @@ bool PluginHost::ExecuteCommand(std::string_view name,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  lua_State* state = it->second.state;
-  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->second.function_ref);
-  impl_->PushPluginContext(state);
-  lua_createtable(state, static_cast<int>(args.size()), 0);
-  for (std::size_t i = 0; i < args.size(); ++i) {
-    lua_pushstring(state, args[i].c_str());
-    lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
-  }
-
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 0, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin command '" + std::string(name) + "' failed: " + call_error;
-    }
-    return false;
-  }
+  return provider_query_interop::ExecuteCommand(
+      name, args, impl_->commands,
+      [this](lua_State* state) { return impl_->FindPluginByState(state); },
+      [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message);
 #else
   (void)args;
 #endif
@@ -2112,38 +2091,13 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (const auto& participant : impl_->save_participant_runtimes) {
-    lua_State* state = participant.state;
-    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
-    lua_rawgeti(state, LUA_REGISTRYINDEX, participant.function_ref);
-    impl_->PushBufferContext(state, path, *text);
-    std::string call_error;
-    if (plugin == nullptr || !plugin->runtime ||
-        !plugin->runtime->PCall(1, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "save participant '" + participant.id + "' failed: " + call_error;
-      }
-      return false;
-    }
-    if (lua_isstring(state, -1)) {
-      std::size_t size = 0;
-      const char* updated = lua_tolstring(state, -1, &size);
-      if (updated != nullptr) {
-        *text = std::string(updated, size);
-      }
-    } else if (lua_istable(state, -1)) {
-      lua_getfield(state, -1, "text");
-      if (lua_isstring(state, -1)) {
-        std::size_t size = 0;
-        const char* updated = lua_tolstring(state, -1, &size);
-        if (updated != nullptr) {
-          *text = std::string(updated, size);
-        }
-      }
-      lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
-  }
+  return provider_query_interop::RunSaveParticipants(
+      path, text, impl_->save_participant_runtimes,
+      [this](lua_State* state) { return impl_->FindPluginByState(state); },
+      [this](lua_State* state, const std::filesystem::path& buffer_path, std::string_view value) {
+        impl_->PushBufferContext(state, buffer_path, value);
+      },
+      error_message);
 #endif
   return true;
 }

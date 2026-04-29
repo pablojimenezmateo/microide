@@ -686,6 +686,86 @@ bool InvokeMcpTool(
   return true;
 }
 
+bool ExecuteCommand(
+    std::string_view name,
+    const std::vector<std::string>& args,
+    const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    const std::function<void(lua_State*)>& push_plugin_context,
+    std::string* error_message) {
+  const auto it = commands.find(std::string(name));
+  if (it == commands.end()) {
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return false;
+  }
+
+  lua_State* state = it->second.state;
+  const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->second.function_ref);
+  push_plugin_context(state);
+  lua_createtable(state, static_cast<int>(args.size()), 0);
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    lua_pushstring(state, args[i].c_str());
+    lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
+  }
+
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 0, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message = "plugin command '" + std::string(name) + "' failed: " + call_error;
+    }
+    return false;
+  }
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool RunSaveParticipants(
+    const std::filesystem::path& path,
+    std::string* text,
+    const std::vector<runtime_types::SaveParticipantRuntime>& save_participant_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    const std::function<void(lua_State*, const std::filesystem::path&, std::string_view)>&
+        push_buffer_context_with_text,
+    std::string* error_message) {
+  for (const auto& participant : save_participant_runtimes) {
+    lua_State* state = participant.state;
+    const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
+    lua_rawgeti(state, LUA_REGISTRYINDEX, participant.function_ref);
+    push_buffer_context_with_text(state, path, *text);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
+      if (error_message != nullptr) {
+        *error_message = "save participant '" + participant.id + "' failed: " + call_error;
+      }
+      return false;
+    }
+    if (lua_isstring(state, -1)) {
+      std::size_t size = 0;
+      const char* updated = lua_tolstring(state, -1, &size);
+      if (updated != nullptr) {
+        *text = std::string(updated, size);
+      }
+    } else if (lua_istable(state, -1)) {
+      lua_getfield(state, -1, "text");
+      if (lua_isstring(state, -1)) {
+        std::size_t size = 0;
+        const char* updated = lua_tolstring(state, -1, &size);
+        if (updated != nullptr) {
+          *text = std::string(updated, size);
+        }
+      }
+      lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+  }
+  return true;
+}
+
 }  // namespace microide::plugin::provider_query_interop
 
 #endif

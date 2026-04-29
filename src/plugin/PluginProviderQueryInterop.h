@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "plugin/PluginHost.h"
@@ -107,6 +108,23 @@ bool InvokeMcpTool(
     const std::vector<runtime_types::McpToolRuntime>& mcp_tool_runtimes,
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     std::string* output_json,
+    std::string* error_message);
+
+bool ExecuteCommand(
+    std::string_view name,
+    const std::vector<std::string>& args,
+    const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    const std::function<void(lua_State*)>& push_plugin_context,
+    std::string* error_message);
+
+bool RunSaveParticipants(
+    const std::filesystem::path& path,
+    std::string* text,
+    const std::vector<runtime_types::SaveParticipantRuntime>& save_participant_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    const std::function<void(lua_State*, const std::filesystem::path&, std::string_view)>&
+        push_buffer_context_with_text,
     std::string* error_message);
 #endif
 
