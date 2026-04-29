@@ -276,6 +276,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellInlineCompletion.cpp
   src/workspace/WorkspaceShellChatPanel.cpp
+  src/workspace/WorkspaceShellChatRequests.cpp
+  src/workspace/WorkspaceShellChatBridge.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellAssist.cpp
   src/workspace/WorkspaceShellAuthDebug.cpp
