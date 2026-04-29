@@ -1209,74 +1209,15 @@ struct PluginHost::Impl {
       return luaL_error(state, "task registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto label_opt = read_string("label");
-    if (!id_opt || !label_opt) {
-      return luaL_error(state, "task requires id and label");
+    registration_parsers::TaskRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseTaskRegistration(state, plugin->id, &registration,
+                                                     &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse task registration"
+                                              : error_message.c_str());
     }
-
-    lua_getfield(state, 1, "command");
-    if (!lua_istable(state, -1)) {
-      lua_pop(state, 1);
-      return luaL_error(state, "task command must be an array");
-    }
-    std::vector<std::string> command;
-    for (lua_Integer i = 1; ; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 2);
-        return luaL_error(state, "task command must be a string array");
-      }
-      command.push_back(lua_tostring(state, -1));
-      lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
-
-    if (command.empty()) {
-      return luaL_error(state, "task command cannot be empty");
-    }
-
-    std::string group;
-    if (auto group_opt = read_string("group")) {
-      group = std::move(*group_opt);
-    }
-
-    std::string cwd;
-    if (auto cwd_opt = read_string("cwd")) {
-      cwd = std::move(*cwd_opt);
-    }
-
-    bool run_in_shell = false;
-    lua_getfield(state, 1, "run_in_shell");
-    if (lua_isboolean(state, -1)) {
-      run_in_shell = lua_toboolean(state, -1) != 0;
-    }
-    lua_pop(state, 1);
-
-    host->tasks.push_back(PluginHost::ContributedTask{
-        .id = plugin->id + "." + *id_opt,
-        .label = std::move(*label_opt),
-        .group = std::move(group),
-        .command = std::move(command),
-        .cwd = std::move(cwd),
-        .run_in_shell = run_in_shell,
-        .plugin_id = plugin->id,
-    });
+    host->tasks.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -1288,54 +1229,15 @@ struct PluginHost::Impl {
       return luaL_error(state, "language server registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto language_id_opt = read_string("language_id");
-    if (!id_opt || !language_id_opt) {
-      return luaL_error(state, "language server requires id and language_id");
+    registration_parsers::LanguageServerRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseLanguageServerRegistration(state, plugin->id, &registration,
+                                                               &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse language server registration"
+                                              : error_message.c_str());
     }
-
-    lua_getfield(state, 1, "command");
-    if (!lua_istable(state, -1)) {
-      lua_pop(state, 1);
-      return luaL_error(state, "language server command must be an array");
-    }
-    std::vector<std::string> command;
-    for (lua_Integer i = 1; ; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 2);
-        return luaL_error(state, "language server command must be a string array");
-      }
-      command.push_back(lua_tostring(state, -1));
-      lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
-
-    if (command.empty()) {
-      return luaL_error(state, "language server command cannot be empty");
-    }
-
-    host->language_servers.push_back(PluginHost::ContributedLanguageServer{
-        .id = plugin->id + "." + *id_opt,
-        .language_id = std::move(*language_id_opt),
-        .command = std::move(command),
-        .plugin_id = plugin->id,
-    });
+    host->language_servers.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -1347,44 +1249,15 @@ struct PluginHost::Impl {
       return luaL_error(state, "tool registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto platform_opt = read_string("platform");
-    auto url_opt = read_string("url");
-    auto sha256_opt = read_string("sha256");
-    if (!id_opt || !platform_opt || !url_opt || !sha256_opt) {
-      return luaL_error(state, "tool requires id, platform, url, and sha256");
+    registration_parsers::ToolRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseToolRegistration(state, plugin->id, &registration,
+                                                     &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse tool registration"
+                                              : error_message.c_str());
     }
-
-    std::string label;
-    if (auto label_opt = read_string("label")) {
-      label = std::move(*label_opt);
-    }
-
-    std::string install_dir;
-    if (auto dir_opt = read_string("install_dir")) {
-      install_dir = std::move(*dir_opt);
-    }
-
-    host->tools.push_back(PluginHost::ContributedTool{
-        .id = plugin->id + "." + *id_opt,
-        .label = std::move(label),
-        .platform = std::move(*platform_opt),
-        .download_url = std::move(*url_opt),
-        .sha256 = std::move(*sha256_opt),
-        .install_dir = std::move(install_dir),
-        .plugin_id = plugin->id,
-    });
+    host->tools.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -1396,54 +1269,15 @@ struct PluginHost::Impl {
       return luaL_error(state, "debugger registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto type_opt = read_string("type");
-    if (!id_opt || !type_opt) {
-      return luaL_error(state, "debugger requires id and type");
+    registration_parsers::DebuggerRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseDebuggerRegistration(state, plugin->id, &registration,
+                                                         &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse debugger registration"
+                                              : error_message.c_str());
     }
-
-    lua_getfield(state, 1, "command");
-    if (!lua_istable(state, -1)) {
-      lua_pop(state, 1);
-      return luaL_error(state, "debugger command must be an array");
-    }
-    std::vector<std::string> command;
-    for (lua_Integer i = 1; ; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 2);
-        return luaL_error(state, "debugger command must be a string array");
-      }
-      command.push_back(lua_tostring(state, -1));
-      lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
-
-    if (command.empty()) {
-      return luaL_error(state, "debugger command cannot be empty");
-    }
-
-    host->debuggers.push_back(PluginHost::ContributedDebugger{
-        .id = plugin->id + "." + *id_opt,
-        .type = std::move(*type_opt),
-        .command = std::move(command),
-        .plugin_id = plugin->id,
-    });
+    host->debuggers.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -1477,51 +1311,25 @@ struct PluginHost::Impl {
       return luaL_error(state, "scm provider registration requires an active plugin state");
     }
 
-    std::string id;
-    std::string label;
-    int snapshot_ref = LUA_NOREF;
+    registration_parsers::ScmProviderRegistration registration;
+    std::string error_message;
     if (lua_istable(state, 1)) {
-      auto read_string = [&](const char* field) -> std::optional<std::string> {
-        lua_getfield(state, 1, field);
-        if (!lua_isstring(state, -1)) {
-          lua_pop(state, 1);
-          return std::nullopt;
-        }
-        std::string value = lua_tostring(state, -1);
-        lua_pop(state, 1);
-        return value;
-      };
-      auto id_opt = read_string("id");
-      auto label_opt = read_string("label");
-      if (!id_opt || !label_opt) {
-        return luaL_error(state, "scm provider requires id and label");
-      }
-      id = std::move(*id_opt);
-      label = std::move(*label_opt);
-
-      lua_getfield(state, 1, "snapshot");
-      if (lua_isfunction(state, -1)) {
-        snapshot_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-      } else {
-        lua_pop(state, 1);
+      if (!registration_parsers::ParseScmProviderRegistration(state, plugin->id, &registration,
+                                                              &error_message)) {
+        return luaL_error(state, "%s",
+                          error_message.empty() ? "failed to parse scm provider registration"
+                                                : error_message.c_str());
       }
     } else {
-      id = luaL_checkstring(state, 1);
-      label = luaL_checkstring(state, 2);
-    }
-
-    host->scm_providers.push_back(PluginHost::ContributedScmProvider{
-        .id = plugin->id + "." + id,
-        .label = std::move(label),
-        .plugin_id = plugin->id,
-    });
-    if (snapshot_ref != LUA_NOREF && snapshot_ref != LUA_REFNIL) {
-      host->scm_provider_runtimes.push_back(ScmProviderRuntime{
-          .id = host->scm_providers.back().id,
+      registration.contributed = PluginHost::ContributedScmProvider{
+          .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
+          .label = std::string(luaL_checkstring(state, 2)),
           .plugin_id = plugin->id,
-          .state = state,
-          .snapshot_ref = snapshot_ref,
-      });
+      };
+    }
+    host->scm_providers.push_back(std::move(registration.contributed));
+    if (registration.has_runtime) {
+      host->scm_provider_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
@@ -1534,50 +1342,18 @@ struct PluginHost::Impl {
       return luaL_error(state, "annotation provider registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto label_opt = read_string("label");
-    auto type_opt = read_string("type");
-    auto language_id_opt = read_string("language_id");
-    if (!id_opt || !label_opt || !type_opt || !language_id_opt) {
-      return luaL_error(state, "annotation provider requires id, label, type, and language_id");
+    registration_parsers::AnnotationProviderRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseAnnotationProviderRegistration(
+            state, plugin->id, &registration, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty()
+                            ? "failed to parse annotation provider registration"
+                            : error_message.c_str());
     }
-
-    host->annotation_providers.push_back(PluginHost::ContributedAnnotationProvider{
-        .id = plugin->id + "." + *id_opt,
-        .label = std::move(*label_opt),
-        .type = std::move(*type_opt),
-        .language_id = std::move(*language_id_opt),
-        .plugin_id = plugin->id,
-    });
-    lua_getfield(state, 1, "provide");
-    const bool has_provide = lua_isfunction(state, -1);
-    int provide_ref = LUA_NOREF;
-    if (has_provide) {
-      provide_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    } else {
-      lua_pop(state, 1);
-    }
-    if (has_provide) {
-      const auto& contributed = host->annotation_providers.back();
-      host->annotation_provider_runtimes.push_back(AnnotationProviderRuntime{
-          .id = contributed.id,
-          .language_id = contributed.language_id,
-          .type = contributed.type,
-          .plugin_id = contributed.plugin_id,
-          .state = state,
-          .provide_ref = provide_ref,
-      });
+    host->annotation_providers.push_back(std::move(registration.contributed));
+    if (registration.has_runtime) {
+      host->annotation_provider_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
@@ -1589,67 +1365,26 @@ struct PluginHost::Impl {
       return luaL_error(state, "auth provider registration requires an active plugin state");
     }
 
-    std::string id;
-    std::string label;
-    int login_ref = LUA_NOREF;
-    int refresh_ref = LUA_NOREF;
-    int logout_ref = LUA_NOREF;
+    registration_parsers::AuthProviderRegistration registration;
+    std::string error_message;
     if (lua_istable(state, 1)) {
-      auto read_string = [&](const char* field) -> std::optional<std::string> {
-        lua_getfield(state, 1, field);
-        if (!lua_isstring(state, -1)) {
-          lua_pop(state, 1);
-          return std::nullopt;
-        }
-        std::string value = lua_tostring(state, -1);
-        lua_pop(state, 1);
-        return value;
-      };
-      auto id_opt = read_string("id");
-      auto label_opt = read_string("label");
-      if (!id_opt || !label_opt) {
-        return luaL_error(state, "auth provider requires id and label");
-      }
-      id = std::move(*id_opt);
-      label = std::move(*label_opt);
-
-      lua_getfield(state, 1, "login");
-      if (lua_isfunction(state, -1)) {
-        login_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-      } else {
-        lua_pop(state, 1);
-      }
-      lua_getfield(state, 1, "refresh");
-      if (lua_isfunction(state, -1)) {
-        refresh_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-      } else {
-        lua_pop(state, 1);
-      }
-      lua_getfield(state, 1, "logout");
-      if (lua_isfunction(state, -1)) {
-        logout_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-      } else {
-        lua_pop(state, 1);
+      if (!registration_parsers::ParseAuthProviderRegistration(state, plugin->id, &registration,
+                                                               &error_message)) {
+        return luaL_error(state, "%s",
+                          error_message.empty() ? "failed to parse auth provider registration"
+                                                : error_message.c_str());
       }
     } else {
-      id = luaL_checkstring(state, 1);
-      label = luaL_checkstring(state, 2);
+      registration.contributed = PluginHost::ContributedAuthProvider{
+          .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
+          .label = std::string(luaL_checkstring(state, 2)),
+          .plugin_id = plugin->id,
+      };
     }
 
-    host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
-        .id = plugin->id + "." + id,
-        .label = std::move(label),
-        .plugin_id = plugin->id,
-    });
-    if (login_ref != LUA_NOREF || refresh_ref != LUA_NOREF || logout_ref != LUA_NOREF) {
-      host->auth_provider_runtimes.push_back(AuthProviderRuntime{
-          .id = host->auth_providers.back().id,
-          .plugin_id = plugin->id,
-          .state = state,
-          .login_ref = login_ref,
-          .refresh_ref = refresh_ref,
-          .logout_ref = logout_ref,
-      });
+    host->auth_providers.push_back(std::move(registration.contributed));
+    if (registration.has_runtime) {
+      host->auth_provider_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
@@ -1662,48 +1397,15 @@ struct PluginHost::Impl {
       return luaL_error(state, "AI provider registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto label_opt = read_string("label");
-    auto type_opt = read_string("type");
-    if (!id_opt || !label_opt || !type_opt) {
-      return luaL_error(state, "AI provider requires id, label, and type");
+    registration_parsers::AiProviderRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseAiProviderRegistration(state, plugin->id, &registration,
+                                                           &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse AI provider registration"
+                                              : error_message.c_str());
     }
-
-    lua_getfield(state, 1, "models");
-    std::vector<std::string> models;
-    if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1; ; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
-        if (lua_isstring(state, -1)) {
-          models.push_back(lua_tostring(state, -1));
-        }
-        lua_pop(state, 1);
-      }
-    }
-    lua_pop(state, 1);
-
-    host->ai_providers.push_back(PluginHost::ContributedAiProvider{
-        .id = plugin->id + "." + *id_opt,
-        .label = std::move(*label_opt),
-        .type = std::move(*type_opt),
-        .models = std::move(models),
-        .plugin_id = plugin->id,
-    });
+    host->ai_providers.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -1715,75 +1417,16 @@ struct PluginHost::Impl {
       return luaL_error(state, "external agent registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto label_opt = read_string("label");
-    auto protocol_opt = read_string("protocol");
-    auto read_string_array = [&](const char* field) -> std::optional<std::vector<std::string>> {
-      lua_getfield(state, 1, field);
-      if (!lua_istable(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::vector<std::string> values;
-      for (lua_Integer i = 1;; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
-        if (!lua_isstring(state, -1)) {
-          lua_pop(state, 2);
-          return std::nullopt;
-        }
-        values.emplace_back(lua_tostring(state, -1));
-        lua_pop(state, 1);
-      }
-      lua_pop(state, 1);
-      return values;
-    };
-
-    auto command_opt = read_string_array("command");
-    if (!id_opt || !label_opt || !protocol_opt || !command_opt || command_opt->empty()) {
-      return luaL_error(state,
-                        "external agent requires id, label, protocol, and non-empty command");
+    registration_parsers::ExternalAgentRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseExternalAgentRegistration(state, plugin->id, &registration,
+                                                              &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty()
+                            ? "failed to parse external agent registration"
+                            : error_message.c_str());
     }
-
-    lua_getfield(state, 1, "capabilities");
-    std::vector<std::string> capabilities;
-    if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1; ; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
-        if (lua_isstring(state, -1)) {
-          capabilities.push_back(lua_tostring(state, -1));
-        }
-        lua_pop(state, 1);
-      }
-    }
-    lua_pop(state, 1);
-
-    PluginHost::ContributedExternalAgent contributed;
-    contributed.id = plugin->id + "." + *id_opt;
-    contributed.label = std::move(*label_opt);
-    contributed.protocol = std::move(*protocol_opt);
-    contributed.command = std::move(*command_opt);
-    contributed.capabilities = std::move(capabilities);
-    contributed.plugin_id = plugin->id;
-    host->external_agents.push_back(std::move(contributed));
+    host->external_agents.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -1795,48 +1438,17 @@ struct PluginHost::Impl {
       return luaL_error(state, "MCP tool registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto name_opt = read_string("name");
-    auto description_opt = read_string("description");
-    auto schema_opt = read_string("input_schema");
-    if (!id_opt || !name_opt || !description_opt || !schema_opt) {
-      return luaL_error(state,
-                        "MCP tool requires id, name, description, and input_schema");
+    registration_parsers::McpToolRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseMcpToolRegistration(state, plugin->id, &registration,
+                                                        &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse MCP tool registration"
+                                              : error_message.c_str());
     }
-
-    host->mcp_tools.push_back(PluginHost::ContributedMcpTool{
-        .id = plugin->id + "." + *id_opt,
-        .name = std::move(*name_opt),
-        .description = std::move(*description_opt),
-        .input_schema = std::move(*schema_opt),
-        .plugin_id = plugin->id,
-    });
-    lua_getfield(state, 1, "run");
-    const bool has_run = lua_isfunction(state, -1);
-    int run_ref = LUA_NOREF;
-    if (has_run) {
-      run_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    } else {
-      lua_pop(state, 1);
-    }
-    if (has_run) {
-      host->mcp_tool_runtimes.push_back(McpToolRuntime{
-          .id = host->mcp_tools.back().id,
-          .plugin_id = plugin->id,
-          .state = state,
-          .run_ref = run_ref,
-      });
+    host->mcp_tools.push_back(std::move(registration.contributed));
+    if (registration.has_runtime) {
+      host->mcp_tool_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
