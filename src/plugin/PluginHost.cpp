@@ -536,6 +536,17 @@ struct PluginHost::Impl {
     return it == plugins.end() ? nullptr : &(*it);
   }
 
+  const PluginInstance* FindPluginByState(lua_State* state) const {
+    if (active_plugin != nullptr && active_plugin->state == state) {
+      return active_plugin;
+    }
+    const auto it =
+        std::find_if(plugins.begin(), plugins.end(), [state](const PluginInstance& plugin) {
+          return plugin.state == state;
+        });
+    return it == plugins.end() ? nullptr : &(*it);
+  }
+
   std::string FormatPluginPrefix(const PluginInstance* plugin) const {
     return plugin == nullptr ? std::string("plugin")
                              : std::string("plugin ") + plugin->id;
@@ -2988,13 +2999,14 @@ struct PluginHost::Impl {
 
     items->clear();
     lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.snapshot_ref);
-    if (lua_pcall(provider.state, 0, 1, 0) != LUA_OK) {
+    const PluginInstance* plugin = FindPluginByState(provider.state);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(0, 1, &call_error)) {
       if (error_message != nullptr) {
         *error_message =
-            "plugin sidebar '" + provider.info.id + "' snapshot failed: " +
-            LuaErrorString(provider.state);
+            "plugin sidebar '" + provider.info.id + "' snapshot failed: " + call_error;
       }
-      lua_pop(provider.state, 1);
       return false;
     }
     if (!lua_istable(provider.state, -1)) {
@@ -3066,13 +3078,14 @@ struct PluginHost::Impl {
 
     lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.confirm_ref);
     PushSidebarItemTable(provider.state, item);
-    if (lua_pcall(provider.state, 1, 0, 0) != LUA_OK) {
+    const PluginInstance* plugin = FindPluginByState(provider.state);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(1, 0, &call_error)) {
       if (error_message != nullptr) {
         *error_message =
-            "plugin sidebar '" + provider.info.id + "' confirm failed: " +
-            LuaErrorString(provider.state);
+            "plugin sidebar '" + provider.info.id + "' confirm failed: " + call_error;
       }
-      lua_pop(provider.state, 1);
       return false;
     }
     if (error_message != nullptr) {
@@ -3097,12 +3110,13 @@ struct PluginHost::Impl {
     lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.provide_ref);
     PushBufferTable(provider.state, path);
     PushHoverPositionTable(provider.state, line, column);
-    if (lua_pcall(provider.state, 2, 1, 0) != LUA_OK) {
+    const PluginInstance* plugin = FindPluginByState(provider.state);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(2, 1, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = "plugin hover '" + provider.id + "' failed: " +
-                         LuaErrorString(provider.state);
+        *error_message = "plugin hover '" + provider.id + "' failed: " + call_error;
       }
-      lua_pop(provider.state, 1);
       return false;
     }
 
@@ -3889,6 +3903,7 @@ bool PluginHost::ExecuteCommand(std::string_view name,
 
 #if MICROIDE_HAS_LUA_PLUGINS
   lua_State* state = it->second.state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->second.function_ref);
   impl_->PushPluginContext(state);
   lua_createtable(state, static_cast<int>(args.size()), 0);
@@ -3897,12 +3912,11 @@ bool PluginHost::ExecuteCommand(std::string_view name,
     lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
   }
 
-  if (lua_pcall(state, 2, 0, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 0, &call_error)) {
     if (error_message != nullptr) {
-      *error_message =
-          "plugin command '" + std::string(name) + "' failed: " + Impl::LuaErrorString(state);
+      *error_message = "plugin command '" + std::string(name) + "' failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
 #else
