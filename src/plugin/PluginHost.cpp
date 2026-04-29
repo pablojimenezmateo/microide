@@ -23,6 +23,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
+#include "plugin/LuaRuntime.h"
 #include "util/TextFileIO.h"
 
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -148,6 +149,7 @@ struct PluginHost::Impl {
     std::filesystem::path root;
     bool project_local = false;
 #if MICROIDE_HAS_LUA_PLUGINS
+    std::unique_ptr<LuaRuntime> runtime;
     lua_State* state = nullptr;
     int setup_ref = LUA_NOREF;
     int on_project_open_ref = LUA_NOREF;
@@ -3151,7 +3153,7 @@ struct PluginHost::Impl {
     unref(&plugin->on_buffer_open_ref);
     unref(&plugin->on_buffer_save_ref);
     unref(&plugin->shutdown_ref);
-    lua_close(plugin->state);
+    plugin->runtime.reset();
     plugin->state = nullptr;
   }
 
@@ -3429,27 +3431,11 @@ struct PluginHost::Impl {
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {
-    plugin->state = luaL_newstate();
-    if (plugin->state == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "failed to create Lua state";
-      }
+    plugin->runtime = LuaRuntime::Create(error_message);
+    if (!plugin->runtime) {
       return false;
     }
-
-    luaL_requiref(plugin->state, "_G", luaopen_base, 1);
-    lua_pop(plugin->state, 1);
-    luaL_requiref(plugin->state, LUA_TABLIBNAME, luaopen_table, 1);
-    lua_pop(plugin->state, 1);
-    luaL_requiref(plugin->state, LUA_STRLIBNAME, luaopen_string, 1);
-    lua_pop(plugin->state, 1);
-    luaL_requiref(plugin->state, LUA_MATHLIBNAME, luaopen_math, 1);
-    lua_pop(plugin->state, 1);
-    luaL_requiref(plugin->state, LUA_UTF8LIBNAME, luaopen_utf8, 1);
-    lua_pop(plugin->state, 1);
-    luaL_requiref(plugin->state, LUA_LOADLIBNAME, luaopen_package, 1);
-    lua_pop(plugin->state, 1);
-
+    plugin->state = plugin->runtime->state();
     ConfigurePackage(plugin->state, plugin->root);
     return true;
   }
@@ -3659,6 +3645,7 @@ struct PluginHost::Impl {
         .id = {},
         .root = plugin_root.lexically_normal(),
         .project_local = project_local,
+        .runtime = nullptr,
         .state = nullptr,
         .setup_ref = LUA_NOREF,
         .on_project_open_ref = LUA_NOREF,
