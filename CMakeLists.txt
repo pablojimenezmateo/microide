@@ -172,6 +172,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginLifecycleResetInterop.cpp
   src/plugin/PluginPathInterop.cpp
   src/plugin/PluginProcessInterop.cpp
+  src/plugin/PluginProjectLifecycleInterop.cpp
   src/plugin/PluginProviderQueryInterop.cpp
   src/plugin/PluginRuntimeApiInterop.cpp
   src/plugin/PluginRegistryInterop.cpp

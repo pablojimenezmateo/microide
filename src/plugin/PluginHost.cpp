@@ -39,6 +39,7 @@
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginLuaProviderRegistrationInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
+#include "plugin/PluginProjectLifecycleInterop.h"
 #include "plugin/PluginRuntimeApiInterop.h"
 #include "plugin/PluginSidebarHoverInterop.h"
 #include "plugin/PluginStatusInterop.h"
@@ -907,9 +908,12 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
     }
   }
   if (!impl_->current_project_root.empty()) {
-    for (auto& plugin : impl_->plugins) {
-      impl_->CallProjectCallback(&plugin, plugin.on_project_open_ref, "on_project_open");
-    }
+    project_lifecycle_interop::DispatchProjectOpenCallbacks(
+        &impl_->plugins, [this](runtime_types::PluginInstance* plugin,
+                                int callback_ref,
+                                const char* callback_name) {
+          impl_->CallProjectCallback(plugin, callback_ref, callback_name);
+        });
   }
 #endif
 
