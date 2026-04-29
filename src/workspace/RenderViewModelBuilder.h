@@ -19,6 +19,7 @@ struct OverlaySurfaceViewModel {
   OverlayMode mode = OverlayMode::FileFinder;
   int scroll_row = 0;
   std::string buffer_search_query_text;
+  const OverlayState* state = nullptr;
 };
 
 struct TextInputSurfaceViewModel {
