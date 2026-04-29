@@ -3,6 +3,8 @@
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 
+#include <string>
+
 namespace microide::workspace {
 
 struct FrameSurfaceViewModel {
@@ -15,6 +17,7 @@ struct OverlaySurfaceViewModel {
   bool visible = false;
   OverlayMode mode = OverlayMode::FileFinder;
   int scroll_row = 0;
+  std::string buffer_search_query_text;
 };
 
 struct TextInputSurfaceViewModel {
