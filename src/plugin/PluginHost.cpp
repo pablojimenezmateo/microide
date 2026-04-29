@@ -29,6 +29,7 @@
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
+#include "plugin/PluginWorkspaceInterop.h"
 #include "plugin/PluginHostRuntimeTypes.h"
 #include "plugin/LuaRuntime.h"
 #include "util/TextFileIO.h"
@@ -918,114 +919,40 @@ struct PluginHost::Impl {
 
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    if (host == nullptr || host->current_project_root.empty()) {
-      lua_pushnil(state);
-      return 1;
-    }
-    lua_pushstring(state, host->current_project_root.generic_string().c_str());
-    return 1;
+    return workspace_interop::LuaWorkspaceProjectRoot(
+        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
   }
 
   static int LuaWorkspaceOpenFile(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* raw_path = luaL_checkstring(state, 1);
-    if (host == nullptr || !host->callbacks.open_file) {
-      lua_pushboolean(state, 0);
-      return 1;
-    }
-
-    const std::filesystem::path path =
-        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
-    if (path.empty()) {
-      lua_pushboolean(state, 0);
-      return 1;
-    }
-
-    const lua_Integer line = luaL_optinteger(state, 2, 0);
-    const lua_Integer column = luaL_optinteger(state, 3, 0);
-    lua_pushboolean(
-        state,
-        host->callbacks.open_file(OpenFileRequest{
-                                      .path = path,
-                                      .line = line > 0 ? static_cast<std::size_t>(line) : 0,
-                                      .column =
-                                          column > 0 ? static_cast<std::size_t>(column) : 0,
-                                  })
-            ? 1
-            : 0);
-    return 1;
+    return workspace_interop::LuaWorkspaceOpenFile(
+        state, host != nullptr ? host->current_project_root : std::filesystem::path{},
+        host != nullptr ? host->callbacks : PluginHost::Callbacks{});
   }
 
   static int LuaWorkspaceActiveBuffer(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    if (host == nullptr || !host->callbacks.active_buffer) {
-      lua_pushnil(state);
-      return 1;
-    }
-
-    const std::optional<PluginHost::ActiveBuffer> active_buffer = host->callbacks.active_buffer();
-    if (!active_buffer.has_value() || active_buffer->path.empty()) {
-      lua_pushnil(state);
-      return 1;
-    }
-
-    host->PushBufferTable(state, active_buffer->path);
-    lua_pushinteger(state, static_cast<lua_Integer>(active_buffer->line));
-    lua_setfield(state, -2, "line");
-    lua_pushinteger(state, static_cast<lua_Integer>(active_buffer->column));
-    lua_setfield(state, -2, "column");
-    return 1;
+    return workspace_interop::LuaWorkspaceActiveBuffer(
+        state, host != nullptr ? host->current_project_root : std::filesystem::path{},
+        host != nullptr ? host->callbacks : PluginHost::Callbacks{});
   }
 
   static int LuaFilesReadText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* raw_path = luaL_checkstring(state, 1);
-    if (host == nullptr) {
-      lua_pushnil(state);
-      return 1;
-    }
-
-    const std::filesystem::path path =
-        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
-    const std::optional<std::string> text = util::ReadTextFile(path);
-    if (!text.has_value()) {
-      lua_pushnil(state);
-      return 1;
-    }
-    lua_pushlstring(state, text->c_str(), text->size());
-    return 1;
+    return workspace_interop::LuaFilesReadText(
+        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
   }
 
   static int LuaFilesWriteText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* raw_path = luaL_checkstring(state, 1);
-    size_t text_length = 0;
-    const char* text = luaL_checklstring(state, 2, &text_length);
-    if (host == nullptr) {
-      lua_pushboolean(state, 0);
-      return 1;
-    }
-
-    const std::filesystem::path path =
-        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
-    lua_pushboolean(
-        state, util::WriteTextFileAtomically(path, std::string_view(text, text_length)) ? 1 : 0);
-    return 1;
+    return workspace_interop::LuaFilesWriteText(
+        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
   }
 
   static int LuaFilesExists(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* raw_path = luaL_checkstring(state, 1);
-    if (host == nullptr) {
-      lua_pushboolean(state, 0);
-      return 1;
-    }
-
-    std::error_code error;
-    const std::filesystem::path path =
-        ResolveRuntimePath(host->current_project_root, std::filesystem::path(raw_path));
-    lua_pushboolean(state, std::filesystem::exists(path, error) && !error ? 1 : 0);
-    return 1;
+    return workspace_interop::LuaFilesExists(
+        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
   }
 
   static int LuaProcessRun(lua_State* state) {
