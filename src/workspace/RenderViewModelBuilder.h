@@ -40,6 +40,7 @@ struct SidebarSurfaceViewModel {
   SidebarMode mode = SidebarMode::Tree;
   int scroll_row = 0;
   bool project_search_editing = false;
+  const ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct BottomPanelSurfaceViewModel {

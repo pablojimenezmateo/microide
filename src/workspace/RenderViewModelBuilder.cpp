@@ -79,6 +79,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .scroll_row = context_.current_project_state.sidebar.scroll_row,
       .project_search_editing =
           context_.current_project_state.overlay.workflow.project_search.editing,
+      .project_state = &context_.current_project_state,
   };
 }
 
