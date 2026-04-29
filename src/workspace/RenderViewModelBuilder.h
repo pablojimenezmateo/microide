@@ -3,6 +3,7 @@
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 
+#include <filesystem>
 #include <string>
 
 namespace microide::workspace {
@@ -35,6 +36,8 @@ struct BottomPanelSurfaceViewModel {
   bool command_mode = false;
   PanelContentKind content = PanelContentKind::None;
   float height = 0.0f;
+  std::string output_channel_id;
+  std::filesystem::path project_root;
 };
 
 struct HoverPopupViewModel {

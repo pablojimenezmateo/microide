@@ -190,7 +190,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     if (output_panel) {
       header_label = "Output";
       for (const auto& channel : output_channels_.Channels()) {
-        if (channel.id == context_.current_project_state.panel.output.channel_id) {
+        if (channel.id == panel_vm.output_channel_id) {
           header_label = channel.label.empty() ? channel.id : channel.label;
           break;
         }
@@ -201,7 +201,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   }
 
   const std::vector<std::string>* output_entries =
-      output_panel ? OutputChannelEntries(context_.current_project_state.panel.output.channel_id)
+      output_panel ? OutputChannelEntries(panel_vm.output_channel_id)
                    : nullptr;
   std::optional<std::filesystem::path> current_reference_path;
   const std::size_t panel_line_count =
@@ -250,18 +250,18 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       const std::size_t output_index = static_cast<std::size_t>(index);
       const std::string& output_line = (*output_entries)[output_index];
       if (const auto* parsed = output_channels_.ParsedEntryAt(
-              context_.current_project_state.panel.output.channel_id, output_index);
+              panel_vm.output_channel_id, output_index);
           parsed != nullptr) {
         if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ReferencePath) {
           std::filesystem::path resolved_path = parsed->reference_path;
-          if (resolved_path.is_relative() && !context_.current_project_state.root.empty()) {
-            resolved_path = context_.current_project_state.root / resolved_path;
+          if (resolved_path.is_relative() && !panel_vm.project_root.empty()) {
+            resolved_path = panel_vm.project_root / resolved_path;
           }
           current_reference_path = resolved_path.lexically_normal();
         } else if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet) {
           std::filesystem::path resolved_path = parsed->reference_path;
-          if (resolved_path.is_relative() && !context_.current_project_state.root.empty()) {
-            resolved_path = context_.current_project_state.root / resolved_path;
+          if (resolved_path.is_relative() && !panel_vm.project_root.empty()) {
+            resolved_path = panel_vm.project_root / resolved_path;
           }
           current_reference_path = resolved_path.lexically_normal();
 
@@ -278,7 +278,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                   text_renderer_.TruncateToWidth(parsed->code, remaining_width);
               const editor::HighlightedLine* highlighted =
                   output_channels_.HighlightedContextSnippet(
-                      context_.current_project_state.panel.output.channel_id, output_index,
+                      panel_vm.output_channel_id, output_index,
                       current_reference_path.value_or(std::filesystem::path{}));
               if (highlighted != nullptr && highlighted->tokens.size() >= visible_code.size()) {
                 float run_x = panel_layout.text_x + prefix_width;

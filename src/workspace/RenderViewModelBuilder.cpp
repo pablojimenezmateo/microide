@@ -74,6 +74,8 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       .command_mode = context_.current_project_state.panel.command_mode,
       .content = context_.current_project_state.panel.content,
       .height = context_.current_project_state.panel.height,
+      .output_channel_id = context_.current_project_state.panel.output.channel_id,
+      .project_root = context_.current_project_state.root,
   };
 }
 
