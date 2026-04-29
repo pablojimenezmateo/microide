@@ -253,6 +253,190 @@ bool RegisterHoverProvider(lua_State* state,
   return true;
 }
 
+bool RegisterMenuEntry(const runtime_types::PluginInstance* plugin,
+                       PluginHost::ContributedMenuEntry contributed,
+                       std::vector<PluginHost::ContributedMenuEntry>* menu_entries,
+                       std::string* error_message) {
+  if (plugin == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "menu contribution requires an active plugin state";
+    }
+    return false;
+  }
+  if (menu_entries == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "menu registry is unavailable";
+    }
+    return false;
+  }
+  if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
+    if (error_message != nullptr) {
+      *error_message = "invalid menu entry id: " + contributed.id;
+    }
+    return false;
+  }
+  for (const auto& existing : *menu_entries) {
+    if (existing.id == contributed.id) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate menu entry: " + contributed.id;
+      }
+      return false;
+    }
+  }
+  menu_entries->push_back(std::move(contributed));
+  return true;
+}
+
+bool RegisterKeybinding(const runtime_types::PluginInstance* plugin,
+                        PluginHost::ContributedKeybinding contributed,
+                        std::vector<PluginHost::ContributedKeybinding>* keybindings,
+                        std::string* error_message) {
+  if (plugin == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "keybinding registration requires an active plugin state";
+    }
+    return false;
+  }
+  if (keybindings == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "keybinding registry is unavailable";
+    }
+    return false;
+  }
+  if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
+    if (error_message != nullptr) {
+      *error_message = "invalid keybinding id: " + contributed.id;
+    }
+    return false;
+  }
+  for (const auto& existing : *keybindings) {
+    if (existing.id == contributed.id) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate keybinding: " + contributed.id;
+      }
+      return false;
+    }
+  }
+  keybindings->push_back(std::move(contributed));
+  return true;
+}
+
+bool RegisterSetting(const runtime_types::PluginInstance* plugin,
+                     PluginHost::ContributedSettingSpec contributed,
+                     std::vector<PluginHost::ContributedSettingSpec>* settings,
+                     std::string* error_message) {
+  if (plugin == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "setting declaration requires an active plugin state";
+    }
+    return false;
+  }
+  if (settings == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "setting registry is unavailable";
+    }
+    return false;
+  }
+  static const char* const kValidTypes[] = {"bool", "int", "float", "string", "enum"};
+  bool type_valid = false;
+  for (const char* t : kValidTypes) {
+    if (contributed.type == t) {
+      type_valid = true;
+      break;
+    }
+  }
+  if (!type_valid) {
+    if (error_message != nullptr) {
+      *error_message = "setting type must be one of: bool, int, float, string, enum";
+    }
+    return false;
+  }
+  if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
+    if (error_message != nullptr) {
+      *error_message = "invalid setting id: " + contributed.id;
+    }
+    return false;
+  }
+  for (const auto& existing : *settings) {
+    if (existing.id == contributed.id) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate setting: " + contributed.id;
+      }
+      return false;
+    }
+  }
+  settings->push_back(std::move(contributed));
+  return true;
+}
+
+bool RegisterStatusItem(
+    const runtime_types::PluginInstance* plugin,
+    PluginHost::ContributedStatusItem contributed,
+    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
+    std::vector<PluginHost::ContributedStatusItem>* status_item_order,
+    std::string* error_message) {
+  if (plugin == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "status item registration requires an active plugin state";
+    }
+    return false;
+  }
+  if (status_items == nullptr || status_item_order == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "status item registry is unavailable";
+    }
+    return false;
+  }
+  if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
+    if (error_message != nullptr) {
+      *error_message = "invalid status item id: " + contributed.id;
+    }
+    return false;
+  }
+  if (status_items->contains(contributed.id)) {
+    if (error_message != nullptr) {
+      *error_message = "duplicate status item: " + contributed.id;
+    }
+    return false;
+  }
+  status_item_order->push_back(contributed);
+  status_items->emplace(contributed.id, std::move(contributed));
+  return true;
+}
+
+bool UpdateStatusItem(lua_State* state,
+                      const runtime_types::PluginInstance* plugin,
+                      std::string_view id,
+                      std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
+                      std::vector<PluginHost::ContributedStatusItem>* status_item_order) {
+  if (plugin == nullptr || status_items == nullptr || status_item_order == nullptr) {
+    return false;
+  }
+  const std::string full_id = plugin->id + "." + std::string(id);
+  auto it = status_items->find(full_id);
+  if (it == status_items->end()) {
+    return false;
+  }
+  lua_getfield(state, 2, "text");
+  if (lua_isstring(state, -1)) {
+    it->second.text = lua_tostring(state, -1);
+  }
+  lua_pop(state, 1);
+  lua_getfield(state, 2, "tooltip");
+  if (lua_isstring(state, -1)) {
+    it->second.tooltip = lua_tostring(state, -1);
+  }
+  lua_pop(state, 1);
+  for (auto& order_item : *status_item_order) {
+    if (order_item.id == full_id) {
+      order_item.text = it->second.text;
+      order_item.tooltip = it->second.tooltip;
+      break;
+    }
+  }
+  return true;
+}
+
 }  // namespace microide::plugin::registry_interop
 
 #endif

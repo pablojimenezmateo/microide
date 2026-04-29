@@ -504,22 +504,8 @@ struct PluginHost::Impl {
       return false;
     }
 
-    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
-      if (error_message != nullptr) {
-        *error_message = "invalid menu entry id: " + registration.contributed.id;
-      }
-      return false;
-    }
-    for (const auto& existing : menu_entries) {
-      if (existing.id == registration.contributed.id) {
-        if (error_message != nullptr) {
-          *error_message = "duplicate menu entry: " + registration.contributed.id;
-        }
-        return false;
-      }
-    }
-    menu_entries.push_back(std::move(registration.contributed));
-    return true;
+    return registry_interop::RegisterMenuEntry(plugin, std::move(registration.contributed),
+                                               &menu_entries, error_message);
   }
 
   static int LuaMenusAdd(lua_State* state) {
@@ -553,22 +539,8 @@ struct PluginHost::Impl {
       }
       return false;
     }
-    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
-      if (error_message != nullptr) {
-        *error_message = "invalid keybinding id: " + registration.contributed.id;
-      }
-      return false;
-    }
-    for (const auto& existing : keybindings) {
-      if (existing.id == registration.contributed.id) {
-        if (error_message != nullptr) {
-          *error_message = "duplicate keybinding: " + registration.contributed.id;
-        }
-        return false;
-      }
-    }
-    keybindings.push_back(std::move(registration.contributed));
-    return true;
+    return registry_interop::RegisterKeybinding(plugin, std::move(registration.contributed),
+                                                &keybindings, error_message);
   }
 
   static int LuaKeybindingsAdd(lua_State* state) {
@@ -603,38 +575,8 @@ struct PluginHost::Impl {
       return false;
     }
 
-    const std::string& type = registration.contributed.type;
-    static const char* const kValidTypes[] = {"bool", "int", "float", "string", "enum"};
-    bool type_valid = false;
-    for (const char* t : kValidTypes) {
-      if (type == t) {
-        type_valid = true;
-        break;
-      }
-    }
-    if (!type_valid) {
-      if (error_message != nullptr) {
-        *error_message = "setting type must be one of: bool, int, float, string, enum";
-      }
-      return false;
-    }
-
-    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
-      if (error_message != nullptr) {
-        *error_message = "invalid setting id: " + registration.contributed.id;
-      }
-      return false;
-    }
-    for (const auto& existing : settings) {
-      if (existing.id == registration.contributed.id) {
-        if (error_message != nullptr) {
-          *error_message = "duplicate setting: " + registration.contributed.id;
-        }
-        return false;
-      }
-    }
-    settings.push_back(std::move(registration.contributed));
-    return true;
+    return registry_interop::RegisterSetting(plugin, std::move(registration.contributed),
+                                             &settings, error_message);
   }
 
   static int LuaSettingsDeclare(lua_State* state) {
@@ -684,22 +626,9 @@ struct PluginHost::Impl {
       }
       return false;
     }
-    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
-      if (error_message != nullptr) {
-        *error_message = "invalid status item id: " + registration.contributed.id;
-      }
-      return false;
-    }
-    if (status_items.contains(registration.contributed.id)) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate status item: " + registration.contributed.id;
-      }
-      return false;
-    }
-    PluginHost::ContributedStatusItem item = std::move(registration.contributed);
-    status_item_order.push_back(item);
-    status_items.emplace(item.id, std::move(item));
-    return true;
+    return registry_interop::RegisterStatusItem(plugin, std::move(registration.contributed),
+                                                &status_items, &status_item_order,
+                                                error_message);
   }
 
   static int LuaStatusAdd(lua_State* state) {
@@ -721,34 +650,9 @@ struct PluginHost::Impl {
     if (host == nullptr) {
       return 0;
     }
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return 0;
-    }
-    const std::string full_id = plugin->id + "." + std::string(id);
-    auto it = host->status_items.find(full_id);
-    if (it == host->status_items.end()) {
-      return 0;
-    }
-    lua_getfield(state, 2, "text");
-    if (lua_isstring(state, -1)) {
-      it->second.text = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-    lua_getfield(state, 2, "tooltip");
-    if (lua_isstring(state, -1)) {
-      it->second.tooltip = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-    // Sync order vector.
-    for (auto& order_item : host->status_item_order) {
-      if (order_item.id == full_id) {
-        order_item.text = it->second.text;
-        order_item.tooltip = it->second.tooltip;
-        break;
-      }
-    }
-    if (host->callbacks.request_status_redraw) {
+    if (registry_interop::UpdateStatusItem(state, host->FindPluginByState(state), id,
+                                           &host->status_items, &host->status_item_order) &&
+        host->callbacks.request_status_redraw) {
       host->callbacks.request_status_redraw();
     }
     return 0;
