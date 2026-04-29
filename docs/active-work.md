@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-25.
+Reviewed on 2026-04-29.
 
 This is the single source of truth for:
 
@@ -107,10 +107,10 @@ Current state:
   `Workspace*ActionExecutor.cpp` translation units instead of one monolithic
   `WorkspaceActionCoordinator.cpp`
 - the top-level action coordinator now routes project, sidebar, search, tab, edit, and global
-  execution through a dedicated `WorkspaceActionContext*` facade instead of keeping action
+  execution through a dedicated `WorkspaceActionServices*` facade instead of keeping action
   behavior on a nested shell-owned `WorkspaceShell::ActionCoordinator` with broad private access
-- `WorkspaceActionCoordinator` now executes from a value `WorkspaceActionContext` instead of
-  taking `WorkspaceShell&`
+- `WorkspaceActionCoordinator` now executes from a value `WorkspaceActionContext` in
+  `WorkspaceActionServices*` instead of taking `WorkspaceShell&`
 - project-catalog mutation, project or workspace session persistence, command-prompt feedback,
   and menu-surface transitions now use top-level `WorkspaceProjectCatalogCoordinator`,
   `WorkspacePersistenceCoordinator`, `WorkspaceCommandPromptCoordinator`, and
@@ -249,14 +249,14 @@ Current state:
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
   terminal selection, tree context menus, and redraw behavior instead of `WorkspaceShell&`
 - action-context dispatch, tab save or reopen or retarget flow, and editor or compare or merge
-  or tab-strip mouse routing now run through `WorkspaceActionContext`, `WorkspaceTabCoordinator`,
+  or tab-strip mouse routing now run through `WorkspaceActionServices`, `WorkspaceTabCoordinator`,
   `WorkspaceEditorMouseCoordinator`, `WorkspaceCompareMouseCoordinator`,
   `WorkspaceMergeMouseCoordinator`, and `WorkspaceTabMouseCoordinator` with explicit state plus
   callback dependencies instead of `WorkspaceShell&`
 - production `WorkspaceShell` friend-class access is now gone, and the old
   `WorkspaceShellTestAccess` friend path is gone too; shell tests now use the public
   `MICROIDE_TESTING`-gated `WorkspaceShell::TestAccess` API from
-  `workspace/WorkspaceShellTesting.h`
+  `workspace/WorkspaceShellTestAccess.h`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic

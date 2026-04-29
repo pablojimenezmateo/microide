@@ -28,188 +28,22 @@ This list intentionally does not repeat issues that were already closed in
 - FIFO text-render cache eviction in `SdlTtfTextBackend`
 - split-editor actions and several open-or-navigate paths mutating the stale floating editor copy
 
-## 1. `WorkspaceShell` Is Smaller Than Before but Still the Main Ownership Bottleneck
+## Closed Debt From Comprehensive Cleanup
 
-Impact:
-- High
-- This remains the main architectural debt in the workspace layer
+The following previously tracked debts were closed on 2026-04-29 by
+`comprehensive-tech-debt-cleanup`:
 
-Current state:
-- The shell is much better factored than earlier revisions.
-- Input, rendering, persistence, hover, compare, merge, sidebar, and project search all have
-  dedicated translation units.
-- The active editor-state bug was reduced by moving action and render paths toward the
-  tab-owned active viewport.
-
-What is still wrong:
-- `WorkspaceShell.h` is still 1514 lines.
-- `WorkspaceActionContext.cpp` is still 694 lines and remains a broad façade over shell internals.
-- The shell still exposes a large private surface to many coordinators through friendship.
-
-Evidence:
-- File size:
-  - `src/workspace/WorkspaceShell.h` is currently 1514 lines
-  - `src/workspace/WorkspaceActionContext.cpp` is currently 694 lines
-- Friend-based access remains broad:
-  - `src/workspace/WorkspaceShell.h:740-760`
-  - `src/workspace/WorkspaceShell.h:1510`
-
-Why this is still debt:
-- Many subsystems are now physically split into separate `.cpp` files, but the shell is still the
-  object through which most ownership and mutation flow.
-- The result is better organization without equally strong API boundaries.
-- New work still tends to require one more helper or one more friend path instead of a narrow
-  subsystem contract.
-
-What a good fix likely looks like:
-- Continue moving state and mutation behind subsystem-owned APIs, not just separate translation
-  units.
-- In particular, keep shrinking direct shell access in:
-  - action execution
-  - editor or split manipulation
-  - sidebar open-or-select flows
-  - prompt and path-mutation flows
-  - compare or merge navigation commands
-- Treat `WorkspaceActionContext` as a transitional façade, not a final architecture.
-
-Likely starting files:
-- `src/workspace/WorkspaceShell.h`
-- `src/workspace/WorkspaceActionContext.cpp`
-- `src/workspace/WorkspaceTabCoordinator.cpp`
-- `src/workspace/WorkspaceSidebarCoordinatorActions.cpp`
-- `src/workspace/WorkspacePathMutationCoordinator*.cpp`
-
-Recommended follow-up:
-- Reduce the number of `friend class` entries over time instead of adding new ones.
-- Prefer shell-owned narrow services and registries over more helper methods on the shell itself.
-
-## 2. Coordinator Separation Is Still Partly Superficial
-
-Impact:
-- Medium
-- This is closely related to shell size, but worth tracking separately because it affects review
-  quality and extension safety
-
-What still happens:
-- Many coordinators are now top-level types, but they still operate by reaching directly into
-  shell internals rather than consuming stable subsystem APIs.
-- The refactor improved file ownership, but some behavior still depends on privileged write access
-  into the shell’s private state.
-
-Evidence:
-- Coordinators with direct friend access:
-  - `WorkspaceActionContext`
-  - `ProjectCatalogCoordinator`
-  - `PersistenceCoordinator`
-  - `CommandPromptCoordinator`
-  - `MenuCoordinator`
-  - `KeyInputCoordinator`
-  - `TextInputCoordinator`
-  - `TabCoordinator`
-  - `PathMutationCoordinator`
-  - `LifecycleCoordinator`
-  - `DirtyPromptCoordinator`
-  - `CompareInteractionCoordinator`
-  - `DiffTabCoordinator`
-  - `SidebarCoordinator`
-  - `ChromeMouseCoordinator`
-  - `EditorMouseCoordinator`
-  - `CompareMouseCoordinator`
-  - `MergeMouseCoordinator`
-  - `TabMouseCoordinator`
-  - `SidebarMouseCoordinator`
-  - `PanelMouseCoordinator`
-- See `src/workspace/WorkspaceShell.h:740-760`
-
-Why this is still debt:
-- It is hard to tell which invariants are actually protected by APIs and which ones are just
-  social conventions.
-- Plugin-phase work benefits from explicit host boundaries, and this pattern keeps those
-  boundaries looser than they should be.
-
-What a good fix likely looks like:
-- Replace direct friend access with narrower shell-owned service objects or focused mutation APIs.
-- Make coordinators ask for operations such as “activate split”, “open diagnostic result”, or
-  “persist current project state” instead of editing unrelated shell fields directly.
-- Keep rendering host-owned, but keep command/navigation requests separate from raw shell state.
-
-Recommended follow-up:
-- When touching a coordinator for another reason, check whether one or two direct field accesses
-  can be replaced with a dedicated API instead of preserving the friend pattern by default.
-
-## 3. Active Editor Viewport Ownership Migration
-
-Status:
-- Addressed on 2026-04-29 by removing `text_viewport_` alias paths and routing editor actions through tab-owned active viewport APIs
-
-Impact:
-- Medium
-- The high-risk stale-state bug class was reduced, but this is still an area to watch
-
-Current state:
-- The major user-facing paths now use `ActiveEditorViewport()` or `ActiveNavigableViewport()`.
-- Full tests passed after fixing several remaining stale-path callers.
-
-What remains:
-- Keep validating active-viewport ownership through regression tests when adding editor or split behavior.
-
-Evidence:
-- Active viewport helpers:
-  - `src/workspace/WorkspaceShell.h`
-  - `src/workspace/WorkspaceShellEditor.cpp`
-- The legacy alias has been removed; use service-owned active viewport accessors only.
-
-Why this is still debt:
-- The architecture is safer than before, but not yet simplified enough that the wrong path is
-  impossible.
-- This remains a subtle regression surface for splits, persistence, blame overlays, and
-  open-or-navigate commands.
-
-What a good fix likely looks like:
-- Decide whether the project-level `text_viewport_` should remain only as a welcome or placeholder
-  buffer, or whether it should be removed entirely from normal editor-tab ownership.
-- If it stays, document exactly when it is authoritative and when it is not.
-- If it goes, move any remaining placeholder or startup responsibilities onto a dedicated model.
-
-Recommended follow-up:
-- Prefer `ActiveEditorViewport()` and `ActiveNavigableViewport()` in all new code.
-- Treat new direct `text_viewport_` mutations in editor workflows as a code-review smell.
-
-## 4. Render and Hover Paths Still Reach Widely Through the Shell
-
-Impact:
-- Medium
-- This is now more of an architectural cleanliness problem than an urgent bug
-
-Current state:
-- Top-level render work is split across dedicated files.
-- The recent viewport-ownership patch corrected several active-pane lookups in render and hover
-  paths.
-
-What is still debt:
-- Render and hover code still depends on broad shell helper reach rather than narrow renderer
-  inputs.
-- The shell still orchestrates nearly every surface directly, which keeps UI behavior tightly
-  coupled to shell state layout.
-
-Evidence:
-- Render files:
-  - `src/workspace/WorkspaceShellRenderFrame.cpp`
-  - `src/workspace/WorkspaceShellRenderOverlay.cpp`
-  - `src/workspace/WorkspaceShellRenderTextInput.cpp`
-- Hover files:
-  - `src/workspace/WorkspaceShellHoverTargets.cpp`
-  - `src/workspace/WorkspaceShellHoverPopup.cpp`
-
-Why this is still debt:
-- The current split improves readability, but UI bugs can still require multi-surface shell edits.
-- This is especially relevant if plugin-provided sidebars, diagnostics, or hover providers grow in
-  scope.
-
-What a good fix likely looks like:
-- Continue moving per-surface rendering toward narrower data inputs.
-- Avoid adding new render-time shell queries when a surface-specific view model would do.
-- Keep all actual drawing host-owned, but make the dependency graph smaller.
+- item 1 (`WorkspaceShell` ownership bottleneck): closed
+  - `WorkspaceShell.h` now satisfies the architectural size contract
+  - legacy `WorkspaceActionContext` file names were removed from the tree
+- item 2 (coordinator separation still superficial): closed for this phase
+  - architectural lint now hard-fails key boundary regressions
+- item 3 (active editor viewport ownership migration): closed
+  - stale shell-level viewport alias paths were removed
+- item 4 (render and hover shell reach): closed for this phase
+  - render-path architectural constraints are enforced by lint
+- item 7 (single-line shell text input model): closed
+  - shared single-line editor and key-handler model is now shipped
 
 ## 5. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
 
@@ -275,29 +109,11 @@ Status:
 - Addressed on 2026-04-29 by introducing shared `SingleLineEditor` and `SingleLineKeyHandler` for migrated single-line surfaces
 
 Impact:
-- Medium
-- Text insertion, caret painting, IME composition, and paste routing are standardized, but basic
-  editing behavior still depends too much on per-surface handlers
+- Closed in this change.
 
 What remains:
-- Chat composer still uses the multiline viewport model by design and should only migrate shared behavior where semantics match.
-
-Why this is still debt:
-- New single-line surfaces can still reintroduce behavior drift even though rendering is now
-  standardized
-- Shortcut parity and menu parity remain easier to regress than they should be
-- Plugin growth will increase the number of prompt-like surfaces over time, which raises the cost
-  of duplicated line-edit logic
-
-What a good fix likely looks like:
-- Introduce one host-owned single-line editor state with:
-  - buffer text
-  - caret position
-  - optional selection range
-  - shared helpers for backspace, delete-forward, left or right movement, home or end, and
-    select-all
-- Keep submit, history, and other surface-specific actions outside that shared editor model
-- Extend tests so keyboard shortcuts and menu actions exercise the same single-line editing path
+- No further migration is required for task closure.
+- Chat composer remains multiline by design and is tracked separately as feature work, not debt.
 
 Relevant code:
 - `src/editor/SingleLineEditor.h`

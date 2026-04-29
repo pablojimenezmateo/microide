@@ -78,7 +78,7 @@
 
 - [x] 12.1 Run `cmake --build build/microide` clean and `ctest --test-dir build/microide --output-on-failure`; resolve any flake.
 - [x] 12.2 Run startup-trace and runtime-profiling capture per `docs/startup-tracing.md` and `docs/runtime-profiling.md` end-to-end. Compare against the pre-cleanup baseline; verify all `performance-budgets` requirements still hold.
-- [ ] 12.3 Update `docs/active-work.md` to reflect the new architecture as the shipped baseline. Close items 1, 2, 3, 4, and 7 in `docs/known-tech-debt.md`.
+- [x] 12.3 Update `docs/active-work.md` to reflect the new architecture as the shipped baseline. Close items 1, 2, 3, 4, and 7 in `docs/known-tech-debt.md`.
 - [x] 12.4 Update `guidelines/architecture.md`, `guidelines/host-services.md`, `guidelines/cpp.md`, and `guidelines/plugins.md` to describe the service-oriented model, the single-line editor model, the persistence format, and the lint invariants.
 - [x] 12.5 Schedule the `.legacy`-file cleanup as a follow-up change for the release after next; do not delete `.legacy` files in this change.
 
