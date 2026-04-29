@@ -9,7 +9,6 @@
 
 #include "project/GitCompareService.h"
 #include "util/TextFileIO.h"
-#include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
 
@@ -301,108 +300,6 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
   ActivateMergeTab(state_.open_tabs.size() - 1);
   NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
   return true;
-}
-
-DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
-  return DiffTabCoordinator(
-      context_.current_project_state,
-      DiffTabCoordinator::Operations{
-          .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
-          .notify_plugin_buffer_open =
-              [this](const std::filesystem::path& path) { NotifyPluginBufferOpen(path); },
-          .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
-          .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
-          .ensure_active_tab_visible = [this]() { EnsureActiveTabVisible(); },
-          .dismiss_overlay = [this](bool restore_focus) { DismissOverlay(restore_focus); },
-          .request_active_tab_redraw =
-              [this](bool include_layout) { RequestActiveTabRedraw(include_layout); },
-          .build_compare_tab_entry =
-              [this](const std::filesystem::path& path,
-                     const project::GitCommitEntry& commit,
-                     std::size_t selected_row) {
-                return BuildCompareTabEntry(path, commit, selected_row);
-              },
-          .rebuild_compare_tab_entry =
-              [this](const std::filesystem::path& path, const CompareTabState& compare_state) {
-                return BuildCompareTabEntry(path, compare_state);
-              },
-          .build_compare_tab_from_buffers =
-              [this](const std::filesystem::path& path,
-                     const std::string& left_content,
-                     const std::string& right_content,
-                     const std::string& left_label,
-                     const std::string& right_label,
-                     std::size_t selected_row,
-                     bool persistable) {
-                return BuildCompareTabFromBuffers(path, left_content, right_content, left_label,
-                                                  right_label, selected_row, persistable);
-              },
-          .build_merge_tab_entry =
-              [this](const std::filesystem::path& base_path,
-                     const std::filesystem::path& incoming_path,
-                     const std::filesystem::path& current_path,
-                     const std::filesystem::path& output_path) {
-                return BuildMergeTabEntry(base_path, incoming_path, current_path, output_path);
-              },
-          .build_merge_tab_from_buffers =
-              [this](const std::filesystem::path& output_path,
-                     const std::string& base_content,
-                     const std::string& incoming_content,
-                     const std::string& current_content,
-                     const std::string& incoming_label,
-                     const std::string& result_label,
-                     const std::string& current_label,
-                     std::size_t selected_hunk,
-                     bool persistable) {
-                return BuildMergeTabFromBuffers(output_path, base_content, incoming_content,
-                                                current_content, incoming_label, result_label,
-                                                current_label, selected_hunk, persistable);
-              },
-      });
-}
-
-std::optional<std::size_t> WorkspaceShell::FindOpenCompareTabIndex(
-    const std::filesystem::path& path,
-    std::string_view left_ref,
-    std::string_view right_ref) const {
-  return const_cast<WorkspaceShell*>(this)->MakeDiffTabCoordinator()
-      .FindOpenCompareTabIndex(path, left_ref, right_ref);
-}
-
-std::optional<std::size_t> WorkspaceShell::FindOpenMergeTabIndex(
-    const std::filesystem::path& path) const {
-  return const_cast<WorkspaceShell*>(this)->MakeDiffTabCoordinator().FindOpenMergeTabIndex(path);
-}
-
-void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
-  MakeDiffTabCoordinator().OpenComparison(commit);
-}
-
-bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
-                                     const std::filesystem::path& incoming_path,
-                                     const std::filesystem::path& current_path,
-                                     const std::filesystem::path& output_path) {
-  return MakeDiffTabCoordinator().OpenMergeEditor(base_path, incoming_path, current_path,
-                                                  output_path);
-}
-
-bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path,
-                                               const std::string& left_ref,
-                                               const std::string& left_label) {
-  return MakeDiffTabCoordinator().OpenWorkingTreeComparison(path, left_ref, left_label);
-}
-
-bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
-                                              const std::string& left_ref,
-                                              const std::string& left_label,
-                                              const std::string& right_ref,
-                                              const std::string& right_label) {
-  return MakeDiffTabCoordinator().OpenBranchHeadComparison(path, left_ref, left_label, right_ref,
-                                                           right_label);
-}
-
-bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
-  return MakeDiffTabCoordinator().OpenGitConflictMerge(path);
 }
 
 }  // namespace microide::workspace

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <utility>
 
+#include "workspace/CompareMergeService.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -333,8 +334,10 @@ CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
                 RequestCompareRowRangeRedraw(start_row, end_row);
               },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
-          .scroll_compare_rows = [this](int delta) { ScrollCompareRows(delta); },
-          .scroll_compare_columns = [this](int delta) { ScrollCompareColumns(delta); },
+          .scroll_compare_rows =
+              [this](int delta) { MakeCompareMergeService().ScrollCompareRows(delta); },
+          .scroll_compare_columns =
+              [this](int delta) { MakeCompareMergeService().ScrollCompareColumns(delta); },
           .clear_drag_state = [this]() { ClearDragState(); },
       });
 }

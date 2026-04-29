@@ -92,6 +92,7 @@ class LifecycleCoordinator;
 class DirtyPromptCoordinator;
 class CompareInteractionCoordinator;
 class DiffTabCoordinator;
+class CompareMergeService;
 class SidebarCoordinator;
 class SidebarService;
 class ChromeMouseCoordinator;
@@ -666,6 +667,7 @@ class WorkspaceShell {
   DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs,
                                                     PromptSurfaceService& prompt_surfaces);
   CompareInteractionCoordinator MakeCompareInteractionCoordinator();
+  CompareMergeService MakeCompareMergeService();
   PathMutationCoordinator MakePathMutationCoordinator(EditorTabService& editor_tabs,
                                                       PromptSurfaceService& prompt_surfaces);
   DiffTabCoordinator MakeDiffTabCoordinator();

@@ -185,6 +185,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/TextFileIO.cpp
   src/util/WindowPresentation.cpp
   src/workspace/WorkspaceShellCompare.cpp
+  src/workspace/WorkspaceShellCompareMerge.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
   src/workspace/WorkspaceChromeMouseCoordinator.cpp
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
@@ -251,6 +252,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
+  src/workspace/CompareMergeService.cpp
   src/workspace/ProjectCatalogService.cpp
   src/workspace/WorkspacePathMutationCoordinatorDirty.cpp
   src/workspace/WorkspacePathMutationCoordinatorTabs.cpp
