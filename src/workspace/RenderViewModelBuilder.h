@@ -24,6 +24,14 @@ struct OverlaySurfaceViewModel {
 struct TextInputSurfaceViewModel {
   bool prompt_editing = false;
   bool command_mode = false;
+  const util::SingleLineTextState* command_input = nullptr;
+  const util::SingleLineTextState* prompt_input = nullptr;
+  const util::SingleLineTextState* buffer_search_query = nullptr;
+  const util::SingleLineTextState* buffer_search_replace = nullptr;
+  const util::SingleLineTextState* project_search_query = nullptr;
+  const util::SingleLineTextState* project_search_edit_buffer = nullptr;
+  const util::SingleLineTextState* commit_picker_query = nullptr;
+  const util::SingleLineTextState* file_finder_query = nullptr;
 };
 
 struct SidebarSurfaceViewModel {

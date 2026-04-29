@@ -149,6 +149,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
   const RenderViewModelBuilder view_model_builder(context_);
   const OverlaySurfaceViewModel overlay_vm = view_model_builder.BuildOverlaySurface();
   const SidebarSurfaceViewModel sidebar_vm = view_model_builder.BuildSidebarSurface();
+  const TextInputSurfaceViewModel text_input_vm = view_model_builder.BuildTextInputSurface();
   const TextInputSurface surface = CurrentTextInputSurface();
   const float line_height = text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
@@ -195,8 +196,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const float text_x = prompt_rect.x + 6.0f;
       const float text_y = prompt_rect.y + 4.0f;
       const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);
-      auto vm = ComputeSingleLineViewMetrics(
-          context_.current_project_state.panel.command.input, "> ", available_width);
+      auto vm = ComputeSingleLineViewMetrics(*text_input_vm.command_input, "> ", available_width);
       return TextInputVisual{
           .surface = surface,
           .area = MakeRect(text_x, text_y, available_width, line_height),
@@ -247,8 +247,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const float text_x = input_rect.x + 6.0f;
       const float text_y = input_rect.y + 4.0f;
       const float available_width = std::max(1.0f, input_rect.w - 12.0f);
-      auto vm = ComputeSingleLineViewMetrics(
-          context_.prompts.surface.input, "", available_width);
+      auto vm = ComputeSingleLineViewMetrics(*text_input_vm.prompt_input, "", available_width);
       return TextInputVisual{
           .surface = surface,
           .area = MakeRect(text_x, text_y, available_width, line_height),
@@ -278,37 +277,31 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       SingleLineViewMetrics vm;
       switch (surface) {
         case TextInputSurface::BufferSearch:
-          vm = ComputeSingleLineViewMetrics(
-              context_.current_project_state.overlay.workflow.buffer_search.query,
-              "> ", available_width);
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_query, "> ",
+                                            available_width);
           break;
         case TextInputSurface::BufferReplaceSearch:
-          vm = ComputeSingleLineViewMetrics(
-              context_.current_project_state.overlay.workflow.buffer_search.query,
-              "find: ", available_width);
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_query, "find: ",
+                                            available_width);
           break;
         case TextInputSurface::BufferReplaceReplace:
           text_y = overlay.y + 62.0f;
-          vm = ComputeSingleLineViewMetrics(
-              context_.current_project_state.overlay.workflow.buffer_search.replace_text,
-              "replace: ", available_width);
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_replace, "replace: ",
+                                            available_width);
           break;
         case TextInputSurface::ProjectSearchOverlay:
-          vm = ComputeSingleLineViewMetrics(
-              context_.current_project_state.overlay.workflow.project_search.query,
-              "> ", available_width);
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.project_search_query, "> ",
+                                            available_width);
           break;
         case TextInputSurface::CommitPicker:
           text_y = overlay.y + 62.0f;
-          vm = ComputeSingleLineViewMetrics(
-              context_.current_project_state.overlay.workflow.compare_picker.query,
-              "> ", available_width);
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.commit_picker_query, "> ",
+                                            available_width);
           break;
         case TextInputSurface::FileFinder:
         default:
-          vm = ComputeSingleLineViewMetrics(
-              context_.current_project_state.file_finder.query_state(),
-              "> ", available_width);
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.file_finder_query, "> ",
+                                            available_width);
           break;
       }
       return TextInputVisual{
@@ -339,7 +332,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const float available_width =
           std::max(1.0f, text_rect.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(
-          context_.current_project_state.overlay.workflow.project_search.edit_buffer,
+          *text_input_vm.project_search_edit_buffer,
           prefix, available_width);
       return TextInputVisual{
           .surface = surface,

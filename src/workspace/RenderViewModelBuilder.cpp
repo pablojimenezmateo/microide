@@ -58,6 +58,16 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
   return TextInputSurfaceViewModel{
       .prompt_editing = context_.prompts.surface_visible,
       .command_mode = context_.current_project_state.panel.command_mode,
+      .command_input = &context_.current_project_state.panel.command.input,
+      .prompt_input = &context_.prompts.surface.input,
+      .buffer_search_query = &context_.current_project_state.overlay.workflow.buffer_search.query,
+      .buffer_search_replace =
+          &context_.current_project_state.overlay.workflow.buffer_search.replace_text,
+      .project_search_query = &context_.current_project_state.overlay.workflow.project_search.query,
+      .project_search_edit_buffer =
+          &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
+      .commit_picker_query = &context_.current_project_state.overlay.workflow.compare_picker.query,
+      .file_finder_query = &context_.current_project_state.file_finder.query_state(),
   };
 }
 
