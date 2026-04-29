@@ -4123,14 +4123,15 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
 #if MICROIDE_HAS_LUA_PLUGINS
   for (const auto& participant : impl_->save_participant_runtimes) {
     lua_State* state = participant.state;
+    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, participant.function_ref);
     impl_->PushBufferContext(state, path, *text);
-    if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(1, 1, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = "save participant '" + participant.id +
-                         "' failed: " + Impl::LuaErrorString(state);
+        *error_message = "save participant '" + participant.id + "' failed: " + call_error;
       }
-      lua_pop(state, 1);
       return false;
     }
     if (lua_isstring(state, -1)) {
@@ -4182,12 +4183,13 @@ std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
     impl_->PushBufferContext(state, path);
     Impl::PushPosition(state, line, column);
     lua_pushlstring(state, trigger_character.data(), trigger_character.size());
-    if (lua_pcall(state, 3, 1, 0) != LUA_OK) {
+    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(3, 1, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = "completion provider '" + provider.id +
-                         "' failed: " + Impl::LuaErrorString(state);
+        *error_message = "completion provider '" + provider.id + "' failed: " + call_error;
       }
-      lua_pop(state, 1);
       return {};
     }
     if (lua_istable(state, -1)) {
@@ -4263,12 +4265,13 @@ std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
     impl_->PushBufferContext(state, path);
     Impl::PushRange(state, start_line, start_column, end_line, end_column);
-    if (lua_pcall(state, 2, 1, 0) != LUA_OK) {
+    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(2, 1, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = "code action provider '" + provider.id +
-                         "' failed: " + Impl::LuaErrorString(state);
+        *error_message = "code action provider '" + provider.id + "' failed: " + call_error;
       }
-      lua_pop(state, 1);
       return {};
     }
     if (lua_istable(state, -1)) {
@@ -4359,14 +4362,15 @@ bool PluginHost::DiscoverTests(std::string_view provider_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->discover_ref);
   impl_->PushBufferContext(state, path);
-  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "test discovery provider '" + it->id +
-                       "' failed: " + Impl::LuaErrorString(state);
+      *error_message = "test discovery provider '" + it->id + "' failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
   if (lua_istable(state, -1)) {
@@ -4453,18 +4457,19 @@ bool PluginHost::RunTests(std::string_view provider_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
   lua_createtable(state, static_cast<int>(test_ids.size()), 0);
   for (std::size_t i = 0; i < test_ids.size(); ++i) {
     lua_pushlstring(state, test_ids[i].c_str(), test_ids[i].size());
     lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
   }
-  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "test provider '" + it->id +
-                       "' run failed: " + Impl::LuaErrorString(state);
+      *error_message = "test provider '" + it->id + "' run failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
   if (lua_istable(state, -1)) {
@@ -4538,13 +4543,14 @@ bool PluginHost::SnapshotScm(std::string_view provider_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->snapshot_ref);
-  if (lua_pcall(state, 0, 1, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(0, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "scm provider '" + it->id +
-                       "' failed: " + Impl::LuaErrorString(state);
+      *error_message = "scm provider '" + it->id + "' failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
 
@@ -4644,12 +4650,13 @@ std::vector<PluginHost::AnnotationLine> PluginHost::QueryAnnotations(
     impl_->PushBufferContext(state, path);
     lua_pushinteger(state, static_cast<lua_Integer>(visible_start_line));
     lua_pushinteger(state, static_cast<lua_Integer>(visible_end_line));
-    if (lua_pcall(state, 3, 1, 0) != LUA_OK) {
+    const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
+    std::string call_error;
+    if (plugin == nullptr || !plugin->runtime ||
+        !plugin->runtime->PCall(3, 1, &call_error)) {
       if (error_message != nullptr) {
-        *error_message = "annotation provider '" + provider.id +
-                         "' failed: " + Impl::LuaErrorString(state);
+        *error_message = "annotation provider '" + provider.id + "' failed: " + call_error;
       }
-      lua_pop(state, 1);
       return {};
     }
     if (lua_istable(state, -1)) {
@@ -4738,18 +4745,19 @@ bool PluginHost::LoginAuthProvider(std::string_view provider_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->login_ref);
   lua_createtable(state, static_cast<int>(scopes.size()), 0);
   for (std::size_t i = 0; i < scopes.size(); ++i) {
     lua_pushlstring(state, scopes[i].c_str(), scopes[i].size());
     lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
   }
-  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + it->id +
-                       "' login failed: " + Impl::LuaErrorString(state);
+      *error_message = "auth provider '" + it->id + "' login failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
   if (lua_istable(state, -1)) {
@@ -4825,14 +4833,15 @@ bool PluginHost::RefreshAuthSession(std::string_view provider_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->refresh_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
-  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + it->id +
-                       "' refresh failed: " + Impl::LuaErrorString(state);
+      *error_message = "auth provider '" + it->id + "' refresh failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
   if (lua_istable(state, -1)) {
@@ -4903,14 +4912,15 @@ bool PluginHost::LogoutAuthSession(std::string_view provider_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->logout_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
-  if (lua_pcall(state, 1, 0, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 0, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + it->id +
-                       "' logout failed: " + Impl::LuaErrorString(state);
+      *error_message = "auth provider '" + it->id + "' logout failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
   return true;
@@ -4951,14 +4961,15 @@ bool PluginHost::InvokeMcpTool(std::string_view tool_id,
   }
 
   lua_State* state = it->state;
+  const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
   lua_pushlstring(state, input_json.data(), input_json.size());
-  if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 1, &call_error)) {
     if (error_message != nullptr) {
-      *error_message = "mcp tool '" + it->id +
-                       "' failed: " + Impl::LuaErrorString(state);
+      *error_message = "mcp tool '" + it->id + "' failed: " + call_error;
     }
-    lua_pop(state, 1);
     return false;
   }
   if (lua_isstring(state, -1)) {
