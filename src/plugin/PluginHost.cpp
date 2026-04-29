@@ -225,6 +225,26 @@ struct PluginHost::Impl {
     return static_cast<Impl*>(lua_touserdata(state, lua_upvalueindex(1)));
   }
 
+  template <typename RegisterFn>
+  static int RegisterTableContribution(lua_State* state,
+                                       const char* missing_plugin_message,
+                                       const char* default_error_message,
+                                       RegisterFn&& register_fn) {
+    Impl* host = HostFromUpvalue(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    if (plugin == nullptr) {
+      return luaL_error(state, "%s", missing_plugin_message);
+    }
+    std::string error_message;
+    if (!register_fn(host, plugin, &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? default_error_message
+                                              : error_message.c_str());
+    }
+    return 0;
+  }
+
   PluginInstance* FindPluginByState(lua_State* state) {
     if (active_plugin != nullptr && active_plugin->state == state) {
       return active_plugin;
@@ -394,76 +414,44 @@ struct PluginHost::Impl {
   }
 
   static int LuaFormattersAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "formatter registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterFormatter(
-            state, plugin->id, &host->formatters, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse formatter registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "formatter registration requires an active plugin state",
+        "failed to parse formatter registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterFormatter(
+              state, plugin->id, &host->formatters, error_message);
+        });
   }
 
   static int LuaSaveParticipantsAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "save participant registration requires an active plugin state");
-    }
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterSaveParticipant(
-            state, plugin->id, &host->save_participants, &host->save_participant_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty()
-                            ? "failed to parse save participant registration"
-                            : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "save participant registration requires an active plugin state",
+        "failed to parse save participant registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterSaveParticipant(
+              state, plugin->id, &host->save_participants, &host->save_participant_runtimes,
+              error_message);
+        });
   }
 
   static int LuaCompletionAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "completion registration requires an active plugin state");
-    }
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterCompletion(
-            state, plugin->id, &host->completions, &host->completion_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse completion registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "completion registration requires an active plugin state",
+        "failed to parse completion registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterCompletion(
+              state, plugin->id, &host->completions, &host->completion_runtimes, error_message);
+        });
   }
 
   static int LuaCodeActionAdd(lua_State* state) {
-    Impl* host = HostFromUpvalue(state);
-    luaL_checktype(state, 1, LUA_TTABLE);
-    const PluginInstance* plugin = host->FindPluginByState(state);
-    if (plugin == nullptr) {
-      return luaL_error(state, "code action registration requires an active plugin state");
-    }
-
-    std::string error_message;
-    if (!lua_provider_registration_interop::RegisterCodeAction(
-            state, plugin->id, &host->code_actions, &host->code_action_runtimes,
-            &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to parse code action registration"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return RegisterTableContribution(
+        state, "code action registration requires an active plugin state",
+        "failed to parse code action registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterCodeAction(
+              state, plugin->id, &host->code_actions, &host->code_action_runtimes, error_message);
+        });
   }
 
   static int LuaTaskAdd(lua_State* state) {
