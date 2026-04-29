@@ -162,6 +162,119 @@ bool RegisterTestProvider(lua_State* state,
   return true;
 }
 
+bool RegisterScmProvider(lua_State* state,
+                         std::string_view plugin_id,
+                         std::vector<PluginHost::ContributedScmProvider>* providers,
+                         std::vector<runtime_types::ScmProviderRuntime>* runtimes,
+                         std::string* error_message) {
+  if (providers == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  registration_parsers::ScmProviderRegistration registration;
+  if (!registration_parsers::ParseScmProviderRegistration(state, std::string(plugin_id),
+                                                          &registration, error_message)) {
+    return false;
+  }
+  providers->push_back(std::move(registration.contributed));
+  if (registration.has_runtime) {
+    runtimes->push_back(std::move(registration.runtime));
+  }
+  return true;
+}
+
+bool RegisterAnnotationProvider(
+    lua_State* state,
+    std::string_view plugin_id,
+    std::vector<PluginHost::ContributedAnnotationProvider>* providers,
+    std::vector<runtime_types::AnnotationProviderRuntime>* runtimes,
+    std::string* error_message) {
+  if (providers == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  registration_parsers::AnnotationProviderRegistration registration;
+  if (!registration_parsers::ParseAnnotationProviderRegistration(state, std::string(plugin_id),
+                                                                 &registration, error_message)) {
+    return false;
+  }
+  providers->push_back(std::move(registration.contributed));
+  if (registration.has_runtime) {
+    runtimes->push_back(std::move(registration.runtime));
+  }
+  return true;
+}
+
+bool RegisterAuthProvider(lua_State* state,
+                          std::string_view plugin_id,
+                          std::vector<PluginHost::ContributedAuthProvider>* providers,
+                          std::vector<runtime_types::AuthProviderRuntime>* runtimes,
+                          std::string* error_message) {
+  if (providers == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  registration_parsers::AuthProviderRegistration registration;
+  if (!registration_parsers::ParseAuthProviderRegistration(state, std::string(plugin_id),
+                                                           &registration, error_message)) {
+    return false;
+  }
+  providers->push_back(std::move(registration.contributed));
+  if (registration.has_runtime) {
+    runtimes->push_back(std::move(registration.runtime));
+  }
+  return true;
+}
+
+bool RegisterAiProvider(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedAiProvider>* providers,
+                        std::string* error_message) {
+  if (providers == nullptr) {
+    return false;
+  }
+  registration_parsers::AiProviderRegistration registration;
+  if (!registration_parsers::ParseAiProviderRegistration(state, std::string(plugin_id), &registration,
+                                                         error_message)) {
+    return false;
+  }
+  providers->push_back(std::move(registration.contributed));
+  return true;
+}
+
+bool RegisterExternalAgent(lua_State* state,
+                           std::string_view plugin_id,
+                           std::vector<PluginHost::ContributedExternalAgent>* agents,
+                           std::string* error_message) {
+  if (agents == nullptr) {
+    return false;
+  }
+  registration_parsers::ExternalAgentRegistration registration;
+  if (!registration_parsers::ParseExternalAgentRegistration(state, std::string(plugin_id),
+                                                            &registration, error_message)) {
+    return false;
+  }
+  agents->push_back(std::move(registration.contributed));
+  return true;
+}
+
+bool RegisterMcpTool(lua_State* state,
+                     std::string_view plugin_id,
+                     std::vector<PluginHost::ContributedMcpTool>* tools,
+                     std::vector<runtime_types::McpToolRuntime>* runtimes,
+                     std::string* error_message) {
+  if (tools == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  registration_parsers::McpToolRegistration registration;
+  if (!registration_parsers::ParseMcpToolRegistration(state, std::string(plugin_id), &registration,
+                                                      error_message)) {
+    return false;
+  }
+  tools->push_back(std::move(registration.contributed));
+  if (registration.has_runtime) {
+    runtimes->push_back(std::move(registration.runtime));
+  }
+  return true;
+}
+
 }  // namespace microide::plugin::contribution_interop
 
 #endif

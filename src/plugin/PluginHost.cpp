@@ -827,25 +827,21 @@ struct PluginHost::Impl {
       return luaL_error(state, "scm provider registration requires an active plugin state");
     }
 
-    registration_parsers::ScmProviderRegistration registration;
     std::string error_message;
     if (lua_istable(state, 1)) {
-      if (!registration_parsers::ParseScmProviderRegistration(state, plugin->id, &registration,
-                                                              &error_message)) {
+      if (!contribution_interop::RegisterScmProvider(state, plugin->id, &host->scm_providers,
+                                                     &host->scm_provider_runtimes,
+                                                     &error_message)) {
         return luaL_error(state, "%s",
                           error_message.empty() ? "failed to parse scm provider registration"
                                                 : error_message.c_str());
       }
     } else {
-      registration.contributed = PluginHost::ContributedScmProvider{
+      host->scm_providers.push_back(PluginHost::ContributedScmProvider{
           .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
           .label = std::string(luaL_checkstring(state, 2)),
           .plugin_id = plugin->id,
-      };
-    }
-    host->scm_providers.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->scm_provider_runtimes.push_back(std::move(registration.runtime));
+      });
     }
     return 0;
   }
@@ -858,18 +854,14 @@ struct PluginHost::Impl {
       return luaL_error(state, "annotation provider registration requires an active plugin state");
     }
 
-    registration_parsers::AnnotationProviderRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseAnnotationProviderRegistration(
-            state, plugin->id, &registration, &error_message)) {
+    if (!contribution_interop::RegisterAnnotationProvider(
+            state, plugin->id, &host->annotation_providers, &host->annotation_provider_runtimes,
+            &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty()
                             ? "failed to parse annotation provider registration"
                             : error_message.c_str());
-    }
-    host->annotation_providers.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->annotation_provider_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }
@@ -881,26 +873,21 @@ struct PluginHost::Impl {
       return luaL_error(state, "auth provider registration requires an active plugin state");
     }
 
-    registration_parsers::AuthProviderRegistration registration;
     std::string error_message;
     if (lua_istable(state, 1)) {
-      if (!registration_parsers::ParseAuthProviderRegistration(state, plugin->id, &registration,
-                                                               &error_message)) {
+      if (!contribution_interop::RegisterAuthProvider(state, plugin->id, &host->auth_providers,
+                                                      &host->auth_provider_runtimes,
+                                                      &error_message)) {
         return luaL_error(state, "%s",
                           error_message.empty() ? "failed to parse auth provider registration"
                                                 : error_message.c_str());
       }
     } else {
-      registration.contributed = PluginHost::ContributedAuthProvider{
+      host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
           .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
           .label = std::string(luaL_checkstring(state, 2)),
           .plugin_id = plugin->id,
-      };
-    }
-
-    host->auth_providers.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->auth_provider_runtimes.push_back(std::move(registration.runtime));
+      });
     }
     return 0;
   }
@@ -913,15 +900,13 @@ struct PluginHost::Impl {
       return luaL_error(state, "AI provider registration requires an active plugin state");
     }
 
-    registration_parsers::AiProviderRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseAiProviderRegistration(state, plugin->id, &registration,
-                                                           &error_message)) {
+    if (!contribution_interop::RegisterAiProvider(state, plugin->id, &host->ai_providers,
+                                                  &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse AI provider registration"
                                               : error_message.c_str());
     }
-    host->ai_providers.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -933,16 +918,14 @@ struct PluginHost::Impl {
       return luaL_error(state, "external agent registration requires an active plugin state");
     }
 
-    registration_parsers::ExternalAgentRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseExternalAgentRegistration(state, plugin->id, &registration,
-                                                              &error_message)) {
+    if (!contribution_interop::RegisterExternalAgent(state, plugin->id, &host->external_agents,
+                                                     &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty()
                             ? "failed to parse external agent registration"
                             : error_message.c_str());
     }
-    host->external_agents.push_back(std::move(registration.contributed));
     return 0;
   }
 
@@ -954,17 +937,12 @@ struct PluginHost::Impl {
       return luaL_error(state, "MCP tool registration requires an active plugin state");
     }
 
-    registration_parsers::McpToolRegistration registration;
     std::string error_message;
-    if (!registration_parsers::ParseMcpToolRegistration(state, plugin->id, &registration,
-                                                        &error_message)) {
+    if (!contribution_interop::RegisterMcpTool(state, plugin->id, &host->mcp_tools,
+                                               &host->mcp_tool_runtimes, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse MCP tool registration"
                                               : error_message.c_str());
-    }
-    host->mcp_tools.push_back(std::move(registration.contributed));
-    if (registration.has_runtime) {
-      host->mcp_tool_runtimes.push_back(std::move(registration.runtime));
     }
     return 0;
   }

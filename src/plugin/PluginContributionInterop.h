@@ -62,6 +62,41 @@ bool RegisterTestProvider(lua_State* state,
                           std::vector<PluginHost::ContributedTestProvider>* providers,
                           std::vector<runtime_types::TestProviderRuntime>* runtimes,
                           std::string* error_message);
+
+bool RegisterScmProvider(lua_State* state,
+                         std::string_view plugin_id,
+                         std::vector<PluginHost::ContributedScmProvider>* providers,
+                         std::vector<runtime_types::ScmProviderRuntime>* runtimes,
+                         std::string* error_message);
+
+bool RegisterAnnotationProvider(
+    lua_State* state,
+    std::string_view plugin_id,
+    std::vector<PluginHost::ContributedAnnotationProvider>* providers,
+    std::vector<runtime_types::AnnotationProviderRuntime>* runtimes,
+    std::string* error_message);
+
+bool RegisterAuthProvider(lua_State* state,
+                          std::string_view plugin_id,
+                          std::vector<PluginHost::ContributedAuthProvider>* providers,
+                          std::vector<runtime_types::AuthProviderRuntime>* runtimes,
+                          std::string* error_message);
+
+bool RegisterAiProvider(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedAiProvider>* providers,
+                        std::string* error_message);
+
+bool RegisterExternalAgent(lua_State* state,
+                           std::string_view plugin_id,
+                           std::vector<PluginHost::ContributedExternalAgent>* agents,
+                           std::string* error_message);
+
+bool RegisterMcpTool(lua_State* state,
+                     std::string_view plugin_id,
+                     std::vector<PluginHost::ContributedMcpTool>* tools,
+                     std::vector<runtime_types::McpToolRuntime>* runtimes,
+                     std::string* error_message);
 #endif
 
 }  // namespace microide::plugin::contribution_interop
