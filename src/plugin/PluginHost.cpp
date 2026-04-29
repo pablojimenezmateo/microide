@@ -27,6 +27,7 @@
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
+#include "plugin/PluginLifecycleCallbackInterop.h"
 #include "plugin/PluginLifecycleLoadInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginRegistryInterop.h"
@@ -1638,63 +1639,49 @@ struct PluginHost::Impl {
   }
 
   bool CallSetup(PluginInstance* plugin, std::string* error_message) {
-    if (plugin->setup_ref == LUA_NOREF) {
-      return true;
-    }
-    active_plugin = plugin;
-    lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, plugin->setup_ref);
-    PushPluginContext(plugin->state);
-    std::string call_error;
-    if (!plugin->runtime->PCall(1, 0, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = FormatPluginPrefix(plugin) + " setup failed: " + call_error;
-      }
-      active_plugin = nullptr;
-      return false;
-    }
-    active_plugin = nullptr;
-    return true;
+    return lifecycle_callback_interop::CallSetup(
+        plugin, &active_plugin,
+        [this](lua_State* state) { PushPluginContext(state); },
+        [this](const PluginInstance* plugin_instance) {
+          return FormatPluginPrefix(plugin_instance);
+        },
+        error_message);
   }
 
   void CallProjectCallback(PluginInstance* plugin, int ref, const char* callback_name) {
-    if (plugin == nullptr || ref == LUA_NOREF || current_project_root.empty()) {
-      return;
-    }
-    lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, ref);
-    PushPluginContext(plugin->state);
-    PushProjectTable(plugin->state, current_project_root);
-    std::string call_error;
-    if (!plugin->runtime->PCall(2, 0, &call_error)) {
-      RecordError(FormatPluginPrefix(plugin) + " " + callback_name + " failed: " + call_error);
-    }
+    lifecycle_callback_interop::CallProjectCallback(
+        plugin, ref, callback_name, !current_project_root.empty(),
+        [this](lua_State* state) { PushPluginContext(state); },
+        [this](lua_State* state) { PushProjectTable(state, current_project_root); },
+        [this](std::string error) { RecordError(std::move(error)); },
+        [this](const PluginInstance* plugin_instance) {
+          return FormatPluginPrefix(plugin_instance);
+        });
   }
 
   void CallBufferCallback(PluginInstance* plugin,
                           int ref,
                           const char* callback_name,
                           const std::filesystem::path& path) {
-    if (plugin == nullptr || ref == LUA_NOREF || path.empty()) {
-      return;
-    }
-    lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, ref);
-    PushPluginContext(plugin->state);
-    PushBufferTable(plugin->state, path);
-    std::string call_error;
-    if (!plugin->runtime->PCall(2, 0, &call_error)) {
-      RecordError(FormatPluginPrefix(plugin) + " " + callback_name + " failed: " + call_error);
-    }
+    lifecycle_callback_interop::CallBufferCallback(
+        plugin, ref, callback_name, path,
+        [this](lua_State* state) { PushPluginContext(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          PushBufferTable(state, buffer_path);
+        },
+        [this](std::string error) { RecordError(std::move(error)); },
+        [this](const PluginInstance* plugin_instance) {
+          return FormatPluginPrefix(plugin_instance);
+        });
   }
 
   void CallShutdown(PluginInstance* plugin) {
-    if (plugin == nullptr || plugin->shutdown_ref == LUA_NOREF) {
-      return;
-    }
-    lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, plugin->shutdown_ref);
-    PushPluginContext(plugin->state);
-    std::string call_error;
-    if (!plugin->runtime->PCall(1, 0, &call_error)) {
-      RecordError(FormatPluginPrefix(plugin) + " shutdown failed: " + call_error);
-    }
+    lifecycle_callback_interop::CallShutdown(
+        plugin, [this](lua_State* state) { PushPluginContext(state); },
+        [this](std::string error) { RecordError(std::move(error)); },
+        [this](const PluginInstance* plugin_instance) {
+          return FormatPluginPrefix(plugin_instance);
+        });
   }
 
   void TearDownPlugins() {
