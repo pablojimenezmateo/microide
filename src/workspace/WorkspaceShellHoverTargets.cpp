@@ -150,6 +150,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition(
     float x,
     float y) const {
+  const HoverTargetsViewModel hover_targets_vm = RenderViewModelBuilder(context_).BuildHoverTargets();
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
     return std::nullopt;
@@ -163,7 +164,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       return std::nullopt;
     }
 
-    const auto* diagnostics = context_.current_project_state.diagnostics_store.FindByPath(compare_tab->right_viewport.path());
+    const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(compare_tab->right_viewport.path());
     if (diagnostics == nullptr || diagnostics->empty()) {
       return std::nullopt;
     }
@@ -222,7 +223,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       return std::nullopt;
     }
 
-    const auto* diagnostics = context_.current_project_state.diagnostics_store.FindByPath(merge_tab->result_viewport.path());
+    const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(merge_tab->result_viewport.path());
     if (diagnostics == nullptr || diagnostics->empty()) {
       return std::nullopt;
     }
@@ -245,7 +246,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
-    const auto* diagnostics = context_.current_project_state.diagnostics_store.FindByPath(active_viewport->path());
+    const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(active_viewport->path());
     return diagnostics != nullptr
                ? DiagnosticHoverTargetForViewport(
                      *active_viewport,
@@ -263,7 +264,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       continue;
     }
 
-    const auto* diagnostics = context_.current_project_state.diagnostics_store.FindByPath(viewport->path());
+    const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(viewport->path());
     if (diagnostics == nullptr || diagnostics->empty()) {
       continue;
     }

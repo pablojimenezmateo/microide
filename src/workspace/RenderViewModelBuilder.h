@@ -58,6 +58,7 @@ struct HoverPopupViewModel {
 
 struct HoverTargetsViewModel {
   bool hover_enabled = false;
+  const editor::DiagnosticsStore* diagnostics_store = nullptr;
 };
 
 class RenderViewModelBuilder {

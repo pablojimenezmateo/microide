@@ -103,6 +103,7 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_targ
 HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets() const {
   return HoverTargetsViewModel{
       .hover_enabled = true,
+      .diagnostics_store = &context_.current_project_state.diagnostics_store,
   };
 }
 
