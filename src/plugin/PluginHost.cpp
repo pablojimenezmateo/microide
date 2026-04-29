@@ -890,42 +890,16 @@ struct PluginHost::Impl {
         state, current_project_root, host != nullptr ? host->async_process_state : nullptr);
   }
 
-  bool PublishDiagnostics(lua_State* state,
-                          std::string_view raw_path,
-                          int diagnostics_index,
-                          std::string* error_message) {
-    PluginInstance* plugin = FindPluginByState(state);
-    if (plugin == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "diagnostic publication requires an active plugin state";
-      }
-      return false;
-    }
-    return diagnostics_interop::PublishDiagnostics(state, plugin->id, current_project_root,
-                                                   raw_path, diagnostics_index, callbacks,
-                                                   error_message);
-  }
-
-  bool ClearDiagnostics(lua_State* state,
-                        const std::optional<std::filesystem::path>& path,
-                        std::string* error_message) {
-    PluginInstance* plugin = FindPluginByState(state);
-    if (plugin == nullptr) {
-      if (error_message != nullptr) {
-        *error_message = "diagnostic clearing requires an active plugin state";
-      }
-      return false;
-    }
-
-    return diagnostics_interop::ClearDiagnostics(plugin->id, path, callbacks, error_message);
-  }
-
   static int LuaDiagnosticsPublish(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const char* raw_path = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TTABLE);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     std::string error_message;
-    if (host == nullptr || !host->PublishDiagnostics(state, raw_path, 2, &error_message)) {
+    if (host == nullptr || plugin == nullptr ||
+        !diagnostics_interop::PublishDiagnostics(state, plugin->id, host->current_project_root,
+                                                 raw_path, 2, host->callbacks,
+                                                 &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to publish diagnostics"
                                               : error_message.c_str());
@@ -935,6 +909,7 @@ struct PluginHost::Impl {
 
   static int LuaDiagnosticsClear(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     std::optional<std::filesystem::path> path;
     if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
       path = ResolveRuntimePath(host != nullptr ? host->current_project_root : std::filesystem::path{},
@@ -942,7 +917,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (host == nullptr || !host->ClearDiagnostics(state, path, &error_message)) {
+    if (host == nullptr || plugin == nullptr ||
+        !diagnostics_interop::ClearDiagnostics(plugin->id, path, host->callbacks, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to clear diagnostics"
                                               : error_message.c_str());
