@@ -176,6 +176,34 @@ RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
   return result;
 }
 
+RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "render surface view-model-only access";
+  result.hard_fail = true;
+
+  const std::vector<std::filesystem::path> render_files = {
+      repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp",
+      repo_root / "src/workspace/WorkspaceShellRenderOverlay.cpp",
+      repo_root / "src/workspace/WorkspaceShellRenderTextInput.cpp",
+      repo_root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+      repo_root / "src/workspace/WorkspaceShellRenderBottomPanel.cpp",
+      repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp",
+      repo_root / "src/workspace/WorkspaceShellHoverTargets.cpp",
+  };
+
+  const std::regex direct_state_pattern(R"(context_\.current_project_state)");
+  const std::regex current_surface_pattern(R"(\bCurrentTextInputSurface\s*\()");
+  for (const auto& path : render_files) {
+    const std::string text = ReadText(path);
+    AppendViolations(result, path, text, direct_state_pattern,
+                     "render surface files should read project state through render view models");
+    AppendViolations(result, path, text, current_surface_pattern,
+                     "render surface files should use view-model-provided text-input surface");
+  }
+
+  return result;
+}
+
 void ReportRule(const RuleResult& result) {
   if (result.violations.empty()) {
     return;
@@ -196,6 +224,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckPluginTranslationUnitSize(repo_root));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.h", 400));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
+  results.push_back(CheckRenderSurfaceStateAccess(repo_root));
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {
