@@ -23,6 +23,7 @@
 #include "platform/AppDirectories.h"
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
+#include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
@@ -1945,27 +1946,9 @@ struct PluginHost::Impl {
 
 #if MICROIDE_HAS_LUA_PLUGINS
   void CancelAsyncProcessCallbacks() {
-    std::lock_guard lock(async_process_state->mutex);
-    for (auto& request : async_process_state->active_requests) {
-      if (!request) {
-        continue;
-      }
-      if (request->callback_ref != LUA_NOREF && request->lua_state != nullptr) {
-        luaL_unref(request->lua_state, LUA_REGISTRYINDEX, request->callback_ref);
-      }
-      request->lua_state = nullptr;
-      request->callback_ref = LUA_NOREF;
-      request->cancelled = true;
+    if (async_process_state) {
+      async_state_interop::CancelCallbacks(*async_process_state);
     }
-    async_process_state->active_requests.clear();
-    for (auto& callback : async_process_state->pending_callbacks) {
-      if (callback.callback_ref != LUA_NOREF && callback.lua_state != nullptr) {
-        luaL_unref(callback.lua_state, LUA_REGISTRYINDEX, callback.callback_ref);
-      }
-      callback.lua_state = nullptr;
-      callback.callback_ref = LUA_NOREF;
-    }
-    async_process_state->pending_callbacks.clear();
   }
 #endif
 
@@ -2053,17 +2036,13 @@ void PluginHost::Shutdown() {
 }
 
 void PluginHost::SetAsyncProcessEventType(std::uint32_t type) {
-  std::lock_guard lock(impl_->async_process_state->mutex);
-  impl_->async_process_state->event_type = static_cast<Uint32>(type);
+  async_state_interop::SetEventType(*impl_->async_process_state, type);
 }
 
 int PluginHost::ConsumeAsyncProcessCallbacks() {
 #if MICROIDE_HAS_LUA_PLUGINS
-  std::vector<Impl::AsyncProcessCallback> callbacks;
-  {
-    std::lock_guard lock(impl_->async_process_state->mutex);
-    callbacks.swap(impl_->async_process_state->pending_callbacks);
-  }
+  std::vector<Impl::AsyncProcessCallback> callbacks =
+      async_state_interop::TakePendingCallbacks(*impl_->async_process_state);
   for (auto& cb : callbacks) {
     lua_State* state = cb.lua_state;
     const Impl::PluginInstance* plugin = impl_->FindPluginByState(state);
@@ -2093,14 +2072,7 @@ int PluginHost::ConsumeAsyncProcessCallbacks() {
 }
 
 int PluginHost::PendingAsyncProcessCount() const {
-  std::lock_guard lock(impl_->async_process_state->mutex);
-  int active_count = 0;
-  for (const auto& request : impl_->async_process_state->active_requests) {
-    if (request != nullptr && !request->cancelled) {
-      ++active_count;
-    }
-  }
-  return active_count + static_cast<int>(impl_->async_process_state->pending_callbacks.size());
+  return async_state_interop::PendingCount(*impl_->async_process_state);
 }
 
 void PluginHost::OnBufferOpen(const std::filesystem::path& path) {
