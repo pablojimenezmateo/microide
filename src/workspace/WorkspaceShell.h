@@ -93,6 +93,7 @@ class DirtyPromptCoordinator;
 class CompareInteractionCoordinator;
 class DiffTabCoordinator;
 class CompareMergeService;
+class TerminalPanelService;
 class SidebarCoordinator;
 class SidebarService;
 class ChromeMouseCoordinator;
@@ -689,6 +690,7 @@ class WorkspaceShell {
   bool HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
   SidebarMouseCoordinator MakeSidebarMouseCoordinator();
   PanelMouseCoordinator MakePanelMouseCoordinator();
+  TerminalPanelService MakeTerminalPanelService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
   void DestroyLifecycleCursors();

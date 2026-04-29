@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "util/Parse.h"
+#include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 
@@ -407,6 +408,7 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
 }
 
 PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
+  auto terminal_panel = MakeTerminalPanelService();
   return PanelMouseCoordinator(
       context_.current_project_state, context_.menu_state, context_.interaction_state,
       PanelMouseCoordinator::Operations{
@@ -442,13 +444,22 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [this](const WorkspaceLayout& layout, bool command_mode) {
                 return BottomPanelContentRect(layout, command_mode);
               },
-          .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
-          .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
+          .read_primary_selection_text =
+              [terminal_panel]() mutable { return terminal_panel.ReadPrimarySelectionText(); },
+          .clear_terminal_selection =
+              [terminal_panel]() mutable { terminal_panel.ClearTerminalSelection(); },
           .append_terminal_pending_input =
-              [this](std::string_view input) { AppendTerminalPendingInput(input); },
+              [terminal_panel](std::string_view input) mutable {
+                terminal_panel.AppendTerminalPendingInput(input);
+              },
           .terminal_url_at_point =
-              [this](float x, float y) { return TerminalUrlAtPoint(x, y); },
-          .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
+              [terminal_panel](float x, float y) mutable {
+                return terminal_panel.TerminalUrlAtPoint(x, y);
+              },
+          .open_external_url =
+              [terminal_panel](std::string_view url) mutable {
+                return terminal_panel.OpenExternalUrl(url);
+              },
           .terminal_selection_position_for_point =
               [this](int x,
                      int y,
@@ -473,7 +484,9 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                 return ClampBottomPanelHeight(desired_height, window_height);
               },
           .sync_primary_selection_with_terminal_selection =
-              [this]() { SyncPrimarySelectionWithTerminalSelection(); },
+              [terminal_panel]() mutable {
+                terminal_panel.SyncPrimarySelectionWithTerminalSelection();
+              },
       });
 }
 

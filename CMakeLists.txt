@@ -259,6 +259,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp
   src/workspace/WorkspaceOutputChannels.cpp
+  src/workspace/TerminalPanelService.cpp
   src/workspace/WorkspaceTaskRuntime.cpp
   src/workspace/WorkspacePersistenceLegacyFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
@@ -293,6 +294,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellSidebarMouse.cpp
   src/workspace/WorkspaceChatTranscript.cpp
   src/workspace/WorkspaceShellTerminal.cpp
+  src/workspace/WorkspaceShellTerminalService.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <utility>
 
+#include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
@@ -301,6 +302,7 @@ void TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
 }
 
 TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
+  auto terminal_panel = MakeTerminalPanelService();
   return TabMouseCoordinator(
       context_.project_catalog,
       context_.current_project_state,
@@ -323,7 +325,10 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_terminal_new_tab_rect =
               [this](const SDL_FRect& rect) { return BottomPanelTerminalNewTabRect(rect); },
-          .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
+          .open_terminal =
+              [terminal_panel](std::string command) mutable {
+                terminal_panel.OpenTerminal(std::move(command));
+              },
           .compute_visible_bottom_panel_tabs =
               [this](const SDL_FRect& rect) { return ComputeVisibleBottomPanelTabs(rect); },
           .compute_visible_terminal_tabs =
@@ -335,13 +340,18 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
           .bottom_panel_tab_is_terminal =
               [this](std::size_t index) { return BottomPanelTabIsTerminal(index); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
-          .close_terminal_tab = [this](std::size_t index) { CloseTerminalTab(index); },
+          .close_terminal_tab =
+              [terminal_panel](std::size_t index) mutable {
+                terminal_panel.CloseTerminalTab(index);
+              },
           .clear_tab_drag = [this]() { ClearTabDrag(); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .move_active_project_to = [this](std::size_t index) { return MoveActiveProjectTo(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .move_active_terminal_tab_to =
-              [this](std::size_t index) { return MoveActiveTerminalTabTo(index); },
+              [terminal_panel](std::size_t index) mutable {
+                return terminal_panel.MoveActiveTerminalTabTo(index);
+              },
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
