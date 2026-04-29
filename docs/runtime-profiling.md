@@ -7,6 +7,24 @@ MicroIDE now has two complementary profiling surfaces for post-commit regression
 - command-line benchmarks for repeatable before/after runs
 - env-gated runtime tracing for live resize and redraw investigations
 
+Perf regression gating should prefer `docs/perf-harness.md` and scenario baselines first. Runtime
+profiling in this document is the fallback for root-cause analysis when a scenario regresses or a
+new hotspot appears.
+
+## TSAN Prerequisite (Linux)
+
+On some Linux hosts, ThreadSanitizer fails at startup with:
+
+`FATAL: ThreadSanitizer: unexpected memory mapping ...`
+
+Set a lower ASLR mmap entropy value before running TSAN binaries:
+
+```bash
+sudo sysctl vm.mmap_rnd_bits=28
+```
+
+Then run TSAN tests (for example `build/microide-tsan-make/microide/microide_tests`).
+
 ## 1. Diff Pipeline Benchmark
 
 Build and run:

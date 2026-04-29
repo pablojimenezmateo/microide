@@ -5,7 +5,6 @@
 #include <chrono>
 #include <ctime>
 
-#include "util/SingleLineText.h"
 
 namespace microide::workspace {
 
@@ -136,7 +135,7 @@ void WorkspaceShell::ShowPendingToolApprovalPrompt(ProjectWorkspaceState& projec
   context_.prompts.surface.kind = PromptSurfaceState::Kind::Confirm;
   context_.prompts.surface.action = PromptSurfaceState::Action::ApproveChatTool;
   context_.prompts.surface.path = project.root;
-  util::SetSingleLineText(&context_.prompts.surface.input, {});
+  context_.prompts.surface.input.SetText({});
   context_.prompts.surface.detail =
       JoinSummaryParts({pending.capability_scope.empty() ? pending.tool_id : pending.capability_scope,
                         "Args: " + args_detail, context_detail});

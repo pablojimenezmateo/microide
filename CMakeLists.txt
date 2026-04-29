@@ -11,6 +11,8 @@ enable_testing()
 option(MICROIDE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(MICROIDE_ENABLE_SDL3_TTF "Enable SDL3_ttf text backend when available" ON)
 option(MICROIDE_ENABLE_LUA_PLUGINS "Enable Lua-based manual plugins" ON)
+option(MICROIDE_PERF_HARNESS_BUILD "Enable perf harness instrumentation and targets" OFF)
+option(MICROIDE_FUZZ "Enable libFuzzer targets" OFF)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/microide")
 
@@ -190,6 +192,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitCommandUtil.cpp
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
+  src/project/GitBlameParser.cpp
   src/project/GitBlameService.cpp
   src/project/GitPorcelainParser.cpp
   src/project/GitRepository.cpp
@@ -205,7 +208,6 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalSession.cpp
   src/util/JsonValue.cpp
   src/util/Parse.cpp
-  src/util/SingleLineText.cpp
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
@@ -484,6 +486,8 @@ add_executable(microide_tests
   tests/Phase4Tests.cpp
   tests/Phase5Tests.cpp
   tests/SingleLineEditorTests.cpp
+  tests/AllocationCounterTests.cpp
+  tests/perf/AllocationCounter.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -501,6 +505,7 @@ target_compile_definitions(microide_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1
   MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
+  MICROIDE_PERF_HARNESS_BUILD=$<BOOL:${MICROIDE_PERF_HARNESS_BUILD}>
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -516,6 +521,100 @@ elseif(MSVC)
 endif()
 
 add_test(NAME microide_tests COMMAND microide_tests)
+
+if(MICROIDE_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "MICROIDE_FUZZ requires clang/clang++ with libFuzzer support.")
+  endif()
+
+  function(microide_configure_fuzz_target target_name)
+    target_include_directories(${target_name} PRIVATE src tests)
+    target_compile_options(${target_name} PRIVATE
+      -fsanitize=fuzzer,address
+      -fno-omit-frame-pointer
+    )
+    target_link_options(${target_name} PRIVATE
+      -fsanitize=fuzzer,address
+    )
+  endfunction()
+
+  add_executable(PersistedRecordReaderFuzz
+    src/persistence/PersistedRecord.cpp
+    src/persistence/PersistedRecordReader.cpp
+    src/persistence/PersistedRecordWriter.cpp
+    tests/fuzz/PersistedRecordReaderFuzz.cpp
+  )
+  microide_configure_fuzz_target(PersistedRecordReaderFuzz)
+
+  add_executable(LegacyImporterFuzz
+    src/util/Parse.cpp
+    src/util/StringUtil.cpp
+    src/workspace/WorkspaceCommandParsing.cpp
+    src/workspace/WorkspacePathUtils.cpp
+    src/workspace/WorkspaceProjectPresentation.cpp
+    src/workspace/WorkspacePersistenceLegacyFormat.cpp
+    src/workspace/WorkspaceTextSearch.cpp
+    tests/fuzz/LegacyImporterFuzz.cpp
+  )
+  microide_configure_fuzz_target(LegacyImporterFuzz)
+
+  add_executable(SearchRegexFuzz
+    tests/fuzz/SearchRegexFuzz.cpp
+  )
+  target_link_libraries(SearchRegexFuzz PRIVATE ${MICROIDE_PCRE2_TARGET})
+  microide_configure_fuzz_target(SearchRegexFuzz)
+
+  add_executable(GitBlameParserFuzz
+    src/util/Parse.cpp
+    src/project/GitBlameParser.cpp
+    tests/fuzz/GitBlameParserFuzz.cpp
+  )
+  microide_configure_fuzz_target(GitBlameParserFuzz)
+endif()
+
+if(MICROIDE_PERF_HARNESS_BUILD)
+  add_executable(microide_perf
+    src/app/DirtyRegionPolicy.cpp
+    $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+    ${MICROIDE_CORE_SOURCES}
+    tests/perf/AllocationCounter.cpp
+    tests/perf/PerfHarness.cpp
+    tests/perf/Baseline.cpp
+    tests/perf/PerfMain.cpp
+  )
+
+  if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
+    target_sources(microide_perf PRIVATE src/render/SdlTtfTextBackend.cpp)
+    target_compile_definitions(microide_perf PRIVATE MICROIDE_HAS_SDL3_TTF=1)
+    target_link_libraries(microide_perf PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
+  endif()
+
+  target_include_directories(microide_perf PRIVATE src tests)
+  target_link_libraries(microide_perf PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+  if(NOT MICROIDE_LUA_TARGET STREQUAL "")
+    target_link_libraries(microide_perf PRIVATE ${MICROIDE_LUA_TARGET})
+  endif()
+  target_compile_definitions(microide_perf PRIVATE
+    MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
+    MICROIDE_TESTING=1
+    MICROIDE_PERF_HARNESS_BUILD=1
+  )
+
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(microide_perf PRIVATE -Wall -Wextra -Wpedantic)
+    if(MICROIDE_WARNINGS_AS_ERRORS)
+      target_compile_options(microide_perf PRIVATE -Werror)
+    endif()
+  elseif(MSVC)
+    target_compile_options(microide_perf PRIVATE /W4)
+    if(MICROIDE_WARNINGS_AS_ERRORS)
+      target_compile_options(microide_perf PRIVATE /WX)
+    endif()
+  endif()
+
+  add_test(NAME microide_perf_tests
+           COMMAND microide_perf --smoke --iterations=1)
+endif()
 
 add_executable(microide_provider_bridge
   src/app/ProviderBridgeMain.cpp

@@ -2,6 +2,9 @@
 
 MicroIDE now has a lightweight startup tracer for measuring where launch time goes.
 
+Use the perf harness as the primary regression gate for startup and interactive performance.
+Use startup tracing as a developer fallback when you need scope-level diagnosis on a local run.
+
 The tracer is off by default. Enable it with the `MICROIDE_STARTUP_TRACE` environment variable.
 
 ## Why It Exists

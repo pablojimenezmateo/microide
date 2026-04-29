@@ -4,8 +4,6 @@
 #include <cctype>
 #include <limits>
 
-#include "util/SingleLineText.h"
-
 namespace microide::project {
 
 void FileFinder::SetIndex(const FileIndex* index) {
@@ -14,13 +12,13 @@ void FileFinder::SetIndex(const FileIndex* index) {
   cache_ready_ = false;
   results_.clear();
   selected_index_ = 0;
-  if (index_ != nullptr && !query_.text.empty()) {
+  if (index_ != nullptr && !query_.text().empty()) {
     Refresh();
   }
 }
 
 void FileFinder::SetQuery(std::string query) {
-  util::SetSingleLineText(&query_, std::move(query));
+  query_.SetText(std::move(query));
   Refresh();
 }
 
@@ -34,7 +32,7 @@ void FileFinder::Refresh() {
   }
   EnsureCacheBuilt();
 
-  const std::string lower_query = ToLower(query_.text);
+  const std::string lower_query = ToLower(query_.text());
   const auto& files = index_->files();
   for (std::size_t i = 0; i < cached_entries_.size() && i < files.size(); ++i) {
     const int score = RankMatchCached(cached_entries_[i], lower_query);

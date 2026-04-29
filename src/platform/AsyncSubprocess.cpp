@@ -1,7 +1,9 @@
 #include "platform/AsyncSubprocess.h"
 
+#include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -23,10 +25,11 @@ namespace microide::platform {
 #if defined(__unix__) || defined(__APPLE__)
 
 struct AsyncSubprocess::Impl {
-  pid_t pid = -1;
+  std::mutex state_mutex;
+  std::atomic<pid_t> pid{-1};
   int stdin_fd = -1;   // write end — parent writes here
   int stdout_fd = -1;  // read end  — parent reads here
-  bool running = false;
+  std::atomic<bool> running{false};
   std::optional<int> exit_code;
 
   void CloseStdin() {
@@ -52,6 +55,7 @@ struct AsyncSubprocess::Impl {
 #else
 
 struct AsyncSubprocess::Impl {
+  std::mutex state_mutex;
   bool running = false;
   DWORD pid_val = 0;
   HANDLE process = nullptr;
@@ -115,7 +119,8 @@ AsyncSubprocess& AsyncSubprocess::operator=(AsyncSubprocess&& other) noexcept {
 #if defined(__unix__) || defined(__APPLE__)
 
 bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd) {
-  if (argv.empty() || impl_->running) {
+  std::lock_guard lock(impl_->state_mutex);
+  if (argv.empty() || impl_->running.load(std::memory_order_acquire)) {
     return false;
   }
 
@@ -170,25 +175,27 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   close(stdin_pipe[0]);
   close(stdout_pipe[1]);
 
-  impl_->pid = pid;
+  impl_->pid.store(pid, std::memory_order_release);
   impl_->stdin_fd = stdin_pipe[1];
   impl_->stdout_fd = stdout_pipe[0];
-  impl_->running = true;
+  impl_->running.store(true, std::memory_order_release);
   impl_->exit_code.reset();
   return true;
 }
 
 bool AsyncSubprocess::IsRunning() const {
-  if (!impl_->running || impl_->pid < 0) {
+  std::lock_guard lock(impl_->state_mutex);
+  const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
+  if (!impl_->running.load(std::memory_order_acquire) || current_pid < 0) {
     return false;
   }
   // Non-blocking reap — updates running flag as a side effect.
   int status = 0;
-  const pid_t result = waitpid(impl_->pid, &status, WNOHANG);
-  if (result == impl_->pid) {
-    impl_->running = false;
+  const pid_t result = waitpid(current_pid, &status, WNOHANG);
+  if (result == current_pid) {
+    impl_->running.store(false, std::memory_order_release);
     impl_->Close();
-    impl_->pid = -1;
+    impl_->pid.store(-1, std::memory_order_release);
     if (WIFEXITED(status)) {
       impl_->exit_code = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
@@ -197,11 +204,12 @@ bool AsyncSubprocess::IsRunning() const {
       impl_->exit_code = std::nullopt;
     }
   }
-  return impl_->running;
+  return impl_->running.load(std::memory_order_acquire);
 }
 
 bool AsyncSubprocess::Write(std::string_view data) {
-  if (!impl_->running || impl_->stdin_fd < 0) {
+  std::lock_guard lock(impl_->state_mutex);
+  if (!impl_->running.load(std::memory_order_acquire) || impl_->stdin_fd < 0) {
     return false;
   }
   const char* ptr = data.data();
@@ -223,6 +231,7 @@ bool AsyncSubprocess::Write(std::string_view data) {
 }
 
 std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int timeout_ms) {
+  std::lock_guard lock(impl_->state_mutex);
   if (impl_->stdout_fd < 0) {
     return std::nullopt;
   }
@@ -237,8 +246,24 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
   }
 
   if ((pfd.revents & POLLIN) == 0) {
-    // HUP with no data
-    IsRunning();  // reap
+    // HUP with no data; reap and update running state.
+    const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
+    if (current_pid >= 0) {
+      int status = 0;
+      const pid_t result = waitpid(current_pid, &status, WNOHANG);
+      if (result == current_pid) {
+        impl_->running.store(false, std::memory_order_release);
+        impl_->Close();
+        impl_->pid.store(-1, std::memory_order_release);
+        if (WIFEXITED(status)) {
+          impl_->exit_code = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+          impl_->exit_code = 128 + WTERMSIG(status);
+        } else {
+          impl_->exit_code = std::nullopt;
+        }
+      }
+    }
     return std::nullopt;
   }
 
@@ -251,13 +276,30 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
   }
   if (n == 0 || (n < 0 && errno != EINTR)) {
     impl_->CloseStdout();
-    IsRunning();
+    const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
+    if (current_pid >= 0) {
+      int status = 0;
+      const pid_t result = waitpid(current_pid, &status, WNOHANG);
+      if (result == current_pid) {
+        impl_->running.store(false, std::memory_order_release);
+        impl_->Close();
+        impl_->pid.store(-1, std::memory_order_release);
+        if (WIFEXITED(status)) {
+          impl_->exit_code = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+          impl_->exit_code = 128 + WTERMSIG(status);
+        } else {
+          impl_->exit_code = std::nullopt;
+        }
+      }
+    }
     return std::nullopt;
   }
   return std::string{};
 }
 
 std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout_ms) {
+  std::lock_guard lock(impl_->state_mutex);
   if (impl_->stdout_fd < 0) {
     return std::nullopt;
   }
@@ -298,25 +340,28 @@ void AsyncSubprocess::CloseStdin() {
   if (impl_ == nullptr) {
     return;
   }
+  std::lock_guard lock(impl_->state_mutex);
   impl_->CloseStdin();
 }
 
 void AsyncSubprocess::Shutdown(int timeout_ms) {
-  if (!impl_->running || impl_->pid < 0) {
+  std::lock_guard lock(impl_->state_mutex);
+  pid_t pid = impl_->pid.load(std::memory_order_acquire);
+  if (!impl_->running.load(std::memory_order_acquire) || pid < 0) {
     impl_->Close();
     return;
   }
   impl_->Close();  // close pipes first so child sees EOF
-  kill(impl_->pid, SIGTERM);
+  kill(pid, SIGTERM);
 
   // Poll for exit up to timeout_ms.
   const int kSliceMs = 20;
   int elapsed = 0;
   while (elapsed < timeout_ms) {
     int status = 0;
-    if (waitpid(impl_->pid, &status, WNOHANG) == impl_->pid) {
-      impl_->pid = -1;
-      impl_->running = false;
+    if (waitpid(pid, &status, WNOHANG) == pid) {
+      impl_->pid.store(-1, std::memory_order_release);
+      impl_->running.store(false, std::memory_order_release);
       if (WIFEXITED(status)) {
         impl_->exit_code = WEXITSTATUS(status);
       } else if (WIFSIGNALED(status)) {
@@ -332,25 +377,28 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
   }
 
   // Still alive — SIGKILL.
-  if (impl_->pid >= 0) {
-    kill(impl_->pid, SIGKILL);
+  pid = impl_->pid.load(std::memory_order_acquire);
+  if (pid >= 0) {
+    kill(pid, SIGKILL);
     int status = 0;
-    while (waitpid(impl_->pid, &status, 0) < 0) {
+    while (waitpid(pid, &status, 0) < 0) {
       if (errno != EINTR) {
         break;
       }
     }
   }
-  impl_->pid = -1;
-  impl_->running = false;
+  impl_->pid.store(-1, std::memory_order_release);
+  impl_->running.store(false, std::memory_order_release);
   impl_->exit_code = 128 + SIGKILL;
 }
 
 int AsyncSubprocess::pid() const {
-  return impl_ != nullptr ? static_cast<int>(impl_->pid) : -1;
+  std::lock_guard lock(impl_->state_mutex);
+  return impl_ != nullptr ? static_cast<int>(impl_->pid.load(std::memory_order_acquire)) : -1;
 }
 
 std::optional<int> AsyncSubprocess::exit_code() const {
+  std::lock_guard lock(impl_->state_mutex);
   return impl_ != nullptr ? impl_->exit_code : std::nullopt;
 }
 

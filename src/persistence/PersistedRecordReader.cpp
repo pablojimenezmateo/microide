@@ -148,4 +148,18 @@ std::optional<PersistedRecordReadResult> PersistedRecordReader::ReadFile(
   return std::nullopt;
 }
 
+std::optional<PersistedRecordReadResult> PersistedRecordReader::Decode(
+    std::span<const std::byte> file_bytes,
+    PersistedRecordReaderError* error) {
+  PersistedRecordReadResult decoded;
+  PersistedRecordReaderError decode_error = PersistedRecordReaderError::None;
+  const std::vector<std::byte> owned_bytes(file_bytes.begin(), file_bytes.end());
+  if (!DecodeRecordFile(owned_bytes, &decoded, &decode_error)) {
+    SetError(error, decode_error);
+    return std::nullopt;
+  }
+  SetError(error, PersistedRecordReaderError::None);
+  return decoded;
+}
+
 }  // namespace microide::persistence

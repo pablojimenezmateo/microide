@@ -68,7 +68,19 @@ Run focused tests with one or more substring filters:
 ./build/microide/microide_tests "WorkspaceShell/EditorDirty"
 ```
 
-When a change affects performance-sensitive code, collect before-and-after evidence with the existing tracing and profiling docs.
+When a change affects performance-sensitive code, run relevant `docs/perf-harness.md` scenarios first, then use startup/runtime tracing docs for deeper diagnosis.
+
+Sanitizer and fuzz workflows expected for risky changes:
+
+```bash
+cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure
+cmake --preset microide-ubsan && cmake --build build/microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure
+sudo sysctl vm.mmap_rnd_bits=28
+cmake --preset microide-tsan && cmake --build build/microide-tsan && ctest --test-dir build/microide-tsan --output-on-failure
+cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build/microide-fuzz
+./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=60 tests/fuzz/corpora/PersistedRecordReaderFuzz
+```
 
 ## Architecture Stance
 
@@ -99,6 +111,8 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 
 - Every meaningful bug fix should add or tighten regression coverage.
 - Run targeted builds and tests for the changed area before considering work complete.
+- Run sanitizer presets for memory/thread-sensitive changes and keep ASAN/UBSAN/TSAN clean.
+- Extend and execute relevant fuzz targets when touching persistence and parser pipelines.
 - Keep redraw comparison tests serial under SDL dummy video when they share global SDL state.
 - Use focused fixtures for git, search, compare, merge, terminal, and plugin-adjacent workflows.
 - Update docs when a durable architecture decision, workflow, or shipped capability changes.

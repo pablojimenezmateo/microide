@@ -63,6 +63,8 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 - Speed is the main optimization target after correctness.
 - CPU comes before memory, especially idle CPU and redraw-path CPU.
 - Measure before and after performance-sensitive changes.
+- Use `docs/perf-harness.md` scenarios and baselines as the primary regression oracle.
+- Keep `microide_perf_tests` green locally for touched scenarios and treat `perf-runner-v1` baseline checks as the authoritative gate.
 - Use `docs/startup-tracing.md` and `docs/runtime-profiling.md` instead of guessing.
 - Preserve typing, scrolling, resize, and startup responsiveness even when adding features.
 - Prefer deleting redundant work over caching everything by default.
@@ -137,6 +139,9 @@ durable invariant moves.
 
 - Every meaningful bug fix should add or tighten regression coverage.
 - Run targeted builds and tests for the changed area before committing.
+- Run sanitizer variants (`microide-asan`, `microide-ubsan`, `microide-tsan`) for memory/thread-sensitive changes.
+- TSAN runs require `sudo sysctl vm.mmap_rnd_bits=28` on Linux before test execution.
+- Extend and run relevant fuzz targets in `tests/fuzz/` when changing persistence, parser, regex, or blame decode paths.
 - Redraw comparison tests under SDL dummy video should run serially.
 - Use focused fixtures for git, search, compare, merge, and plugin-adjacent workflows.
 - If a change is hard to test, treat that as a design smell and improve the seam.

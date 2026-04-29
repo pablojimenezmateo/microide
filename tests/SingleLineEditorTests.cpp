@@ -83,6 +83,21 @@ void TestSingleLineKeyHandlerDispatchesClipboardShortcuts() {
   ExpectEditorState(editor, "restored", 8, std::nullopt, "ctrl+v");
 }
 
+void TestSingleLineEditorSupportsSnapshotAndAppend() {
+  editor::SingleLineEditor editor("alpha");
+  editor.MoveLeft();
+  editor.MoveLeft(true);
+  const editor::SingleLineSnapshot snapshot = editor.Snapshot();
+  Expect(snapshot.text == "alpha", "snapshot should preserve text");
+  Expect(snapshot.caret == 3, "snapshot should preserve caret");
+  Expect(snapshot.selection_anchor.has_value() && *snapshot.selection_anchor == 4,
+         "snapshot should preserve selection anchor");
+
+  editor.Append("-omega");
+  ExpectEditorState(editor, "alpha-omega", 11, std::nullopt,
+                    "append should extend text and collapse selection");
+}
+
 }  // namespace
 
 void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
@@ -94,6 +109,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineEditorSupportsSelectAllCopyCutPaste);
   AddTest(tests, "SingleLineEditor/KeyHandlerDispatchesClipboardShortcuts",
           TestSingleLineKeyHandlerDispatchesClipboardShortcuts);
+  AddTest(tests, "SingleLineEditor/SupportsSnapshotAndAppend",
+          TestSingleLineEditorSupportsSnapshotAndAppend);
 }
 
 }  // namespace microide::tests

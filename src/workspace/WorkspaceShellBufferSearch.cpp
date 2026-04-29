@@ -14,7 +14,7 @@ void WorkspaceShell::RefreshBufferSearch() {
     return;
   }
   context_.current_project_state.overlay.workflow.buffer_search.matches =
-      FindLiteralSearchMatches(viewport->lines(), context_.current_project_state.overlay.workflow.buffer_search.query.text);
+      FindLiteralSearchMatches(viewport->lines(), context_.current_project_state.overlay.workflow.buffer_search.query.text());
   context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
 
   if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {
@@ -59,7 +59,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
       context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
   editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport == nullptr ||
-      !viewport->ReplaceRange(match, context_.current_project_state.overlay.workflow.buffer_search.replace_text.text)) {
+      !viewport->ReplaceRange(match, context_.current_project_state.overlay.workflow.buffer_search.replace_text.text())) {
     return;
   }
 
@@ -76,13 +76,13 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
-  if (context_.current_project_state.overlay.workflow.buffer_search.query.text.empty()) {
+  if (context_.current_project_state.overlay.workflow.buffer_search.query.text().empty()) {
     return;
   }
 
   if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-    viewport->ReplaceAll(context_.current_project_state.overlay.workflow.buffer_search.query.text,
-                         context_.current_project_state.overlay.workflow.buffer_search.replace_text.text);
+    viewport->ReplaceAll(context_.current_project_state.overlay.workflow.buffer_search.query.text(),
+                         context_.current_project_state.overlay.workflow.buffer_search.replace_text.text());
   }
   RefreshBufferSearch();
   RequestEditorSurfaceRedraw();

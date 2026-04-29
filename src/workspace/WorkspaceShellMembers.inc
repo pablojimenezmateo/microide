@@ -1230,7 +1230,7 @@
   std::optional<TextInputVisual> BuildActiveTextInputVisual(
       const WorkspaceLayout& layout,
       const std::optional<SDL_FRect>& active_editor_pane_rect) const;
-  SingleLineViewMetrics ComputeSingleLineViewMetrics(const util::SingleLineTextState& state,
+  SingleLineViewMetrics ComputeSingleLineViewMetrics(const editor::SingleLineEditor& state,
                                                      std::string_view prefix,
                                                      float available_width) const;
   float MeasureSingleLineTextTail(std::string_view text, float available_width) const;
@@ -1445,4 +1445,3 @@
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;
-

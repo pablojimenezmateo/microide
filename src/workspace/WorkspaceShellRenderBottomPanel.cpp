@@ -377,7 +377,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
                                            : std::nullopt;
     const std::string panel_fallback =
-        "> " + panel_vm.command_state->input.text;
+        "> " + panel_vm.command_state->input.text();
     const std::string_view panel_display_text =
         (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
                                                                 : std::string_view(panel_fallback);

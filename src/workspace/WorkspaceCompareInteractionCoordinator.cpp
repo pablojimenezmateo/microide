@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "project/GitCompareService.h"
-#include "util/SingleLineText.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -43,7 +42,7 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
   }
 
   state_.overlay.workflow.compare_picker.path = path.lexically_normal();
-  util::SetSingleLineText(&state_.overlay.workflow.compare_picker.query, "");
+  state_.overlay.workflow.compare_picker.query.SetText("");
   state_.overlay.workflow.compare_picker.commits =
       project::CollectGitFileHistory(state_.root, state_.overlay.workflow.compare_picker.path);
   RefreshPicker();
@@ -81,7 +80,7 @@ void CompareInteractionCoordinator::RefreshPicker() {
   state_.overlay.workflow.compare_picker.matches.clear();
   state_.overlay.workflow.compare_picker.selected_index = 0;
 
-  const std::string lowered_query = ToLower(state_.overlay.workflow.compare_picker.query.text);
+  const std::string lowered_query = ToLower(state_.overlay.workflow.compare_picker.query.text());
   for (const auto& commit : state_.overlay.workflow.compare_picker.commits) {
     if (!lowered_query.empty()) {
       const std::string text = ToLower(commit.short_hash + " " + commit.subject);

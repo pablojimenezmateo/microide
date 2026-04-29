@@ -1232,7 +1232,7 @@ struct WorkspaceShell::TestAccess {
     return ComputePromptSurfaceInputRect(ComputePromptSurfaceRect(layout.full));
   }
   static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
-    return shell.context_.prompts.surface.input.text;
+    return shell.context_.prompts.surface.input.text();
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
     return shell.PromptSurfaceTitle();
@@ -1375,13 +1375,13 @@ struct WorkspaceShell::TestAccess {
   }
   static bool CommandMode(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command_mode; }
   static const std::string& CommandInput(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.panel.command.input.text;
+    return shell.context_.current_project_state.panel.command.input.text();
   }
   static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
     return CommandPromptCoordinator::PromptStatusText(shell.context_.current_project_state.panel.command);
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.overlay.workflow.project_search.query.text;
+    return shell.context_.current_project_state.overlay.workflow.project_search.query.text();
   }
   static SDL_FRect ProjectSearchQueryRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

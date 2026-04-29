@@ -1,0 +1,5 @@
+version 5
+coin mon 5
+conv-begin c1
+msg-begin m1
+msgojv-end

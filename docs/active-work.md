@@ -54,6 +54,9 @@ These are implemented and should not be treated as open migration work:
 - manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, active-buffer metadata, argv-based process helpers, repo-owned dogfood plugins, and `plugins-reload`
 - plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, a built-in Problems sidebar, and host rename/delete cleanup for stale diagnostic paths
 - targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
+- deterministic performance harness scaffolding under `tests/perf/` with smoke and baseline-comparison workflows documented in `docs/perf-harness.md`
+- sanitizer build presets and CI variants for ASAN, UBSAN, and TSAN (TSAN now treated as a required signal)
+- libFuzzer harnesses and corpora for persisted-record decode, legacy importer, search regex compile-match, and git blame parsing with PR and nightly CI runs
 
 ## Active Phases
 

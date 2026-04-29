@@ -52,7 +52,7 @@ OverlaySurfaceViewModel RenderViewModelBuilder::BuildOverlaySurface() const {
       .scroll_row = context_.current_project_state.overlay.scroll_row,
       .current_surface = context_.text_input.active_surface,
       .buffer_search_query_text =
-          context_.current_project_state.overlay.workflow.buffer_search.query.text,
+          context_.current_project_state.overlay.workflow.buffer_search.query.text(),
       .state = &context_.current_project_state.overlay,
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };

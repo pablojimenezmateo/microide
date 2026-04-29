@@ -248,7 +248,7 @@ void PathMutationCoordinator::RefreshProjectViewsAfterMutation(
     state.directory_tree.SelectPath(state.root);
   }
   operations_.reveal_selected_tree_sidebar_line();
-  if (!state.overlay.workflow.project_search.query.text.empty()) {
+  if (!state.overlay.workflow.project_search.query.text().empty()) {
     operations_.refresh_project_search();
   }
 }

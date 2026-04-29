@@ -84,7 +84,8 @@ These are checked by the `ArchitectureInvariants/SoftChecks` test in `microide_t
 - Coordinator headers matching `src/workspace/Workspace*Coordinator*.h` must not take `WorkspaceShell&` or `WorkspaceShell*` in constructors. Inject the narrow service or callback dependency instead.
 - `src/workspace/WorkspaceShell.h` stays at or below 400 lines and `src/workspace/WorkspaceShell.cpp` at or below 600 lines.
 - The render translation units listed in `CheckRenderSurfaceStateAccess` (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, `WorkspaceShellHoverTargets`) must not read `context_.current_project_state` or call `CurrentTextInputSurface(...)`. They consume view models built by `RenderViewModelBuilder`.
-- No single `src/plugin/*.cpp` translation unit should exceed 800 lines (currently emitted as a soft warning; treat it as a hard rule and flip it in the test when adding new plugin code).
+- No single `src/plugin/*.cpp` translation unit may exceed 800 lines (hard-fail).
+- Workspace coordinator translation units matching `src/workspace/Workspace*Coordinator*.cpp` are capped at 800 lines; split by ownership seam instead of extending monoliths.
 
 When extending these rules, modify `tests/ArchitectureInvariantsTests.cpp` in the same change so the invariant is enforced by CI rather than by review alone.
 

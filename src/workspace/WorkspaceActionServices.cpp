@@ -5,7 +5,6 @@
 #include <utility>
 #include <vector>
 
-#include "util/SingleLineText.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
@@ -349,7 +348,7 @@ bool WorkspaceActionContext::ActiveTabIsMerge() const {
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
   operations_.open_buffer_search();
-  util::SetSingleLineText(&state_.overlay.workflow.buffer_search.query, std::move(query));
+  state_.overlay.workflow.buffer_search.query.SetText(std::move(query));
   operations_.refresh_buffer_search();
 }
 
@@ -795,7 +794,7 @@ void WorkspaceActionContext::OpenCommandPrompt(std::string input) {
       state_.panel.command_mode || operations_.active_terminal_tab() != nullptr;
   state_.panel.command_mode = true;
   state_.surface.focus = FocusTarget::Panel;
-  util::SetSingleLineText(&state_.panel.command.input, std::move(input));
+  state_.panel.command.input.SetText(std::move(input));
   operations_.reset_command_prompt_session();
   operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
 }

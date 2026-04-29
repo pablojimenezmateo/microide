@@ -39,7 +39,7 @@ void WorkspaceShell::RenderPromptSurface(
          active_text_input_visual->surface == TextInputSurface::PromptInput &&
          !active_text_input_visual->displayed_text.empty())
             ? std::string_view(active_text_input_visual->displayed_text)
-            : std::string_view(context_.prompts.surface.input.text);
+            : std::string_view(context_.prompts.surface.input.text());
     DrawSingleLineTextTail(renderer, input_rect.x + 6.0f, input_rect.y + 4.0f,
                            std::max(1.0f, input_rect.w - 12.0f), theme_.surface_text,
                            theme_.surface_background, prompt_text);

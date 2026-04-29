@@ -1,0 +1,5 @@
+ // save to trigger lint // save to trigger lint // save to trigger lint // save to trigger lint // save to trigger lint // save to trigger lintfunction add(a, b) {
+  return a + b
+}
+
+add(1, 2)

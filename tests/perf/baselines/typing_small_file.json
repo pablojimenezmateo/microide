@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":7342,"p50_allocations":7342,"p95_allocations":7342,"p95_wall_ms":31.066334999999999,"max_wall_ms":31.066334999999999,"p50_wall_ms":31.066334999999999},"scenario":"typing_small_file"}

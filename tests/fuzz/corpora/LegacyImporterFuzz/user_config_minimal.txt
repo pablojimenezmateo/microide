@@ -1,0 +1,3 @@
+version 1
+ui-scale 1.0
+setting a b

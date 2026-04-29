@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include "util/SingleLineText.h"
+#include "editor/SingleLineEditor.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
@@ -80,8 +80,8 @@ class TextInputCoordinator {
 
  private:
   void RequestCompositionRedraw(TextInputSurface surface);
-  util::SingleLineTextState* ActiveSingleLineTextState();
-  const util::SingleLineTextState* ActiveSingleLineTextState() const;
+  editor::SingleLineEditor* ActiveSingleLineTextState();
+  const editor::SingleLineEditor* ActiveSingleLineTextState() const;
   void RequestSingleLineTextRedraw(TextInputSurface surface, bool text_changed);
   void DidMutateCommandInputText();
 

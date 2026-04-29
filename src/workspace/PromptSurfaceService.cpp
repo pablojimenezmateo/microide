@@ -2,7 +2,6 @@
 
 #include <utility>
 
-#include "util/SingleLineText.h"
 #include "workspace/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -139,7 +138,7 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.kind = kind;
   prompts_.surface.action = action;
   prompts_.surface.path = path.lexically_normal();
-  util::SetSingleLineText(&prompts_.surface.input, std::move(input));
+  prompts_.surface.input.SetText(std::move(input));
   prompts_.surface.detail.clear();
   prompts_.surface.bridge_agent_id.clear();
   prompts_.surface.bridge_request_id.clear();
@@ -163,7 +162,7 @@ void PromptSurfaceService::OpenExternalUrlPrompt(std::string url) {
   prompts_.surface.kind = PromptSurfaceState::Kind::Confirm;
   prompts_.surface.action = PromptSurfaceState::Action::OpenExternalUrl;
   prompts_.surface.path.clear();
-  util::SetSingleLineText(&prompts_.surface.input, {});
+  prompts_.surface.input.SetText({});
   prompts_.surface.detail = std::move(url);
   prompts_.surface.bridge_agent_id.clear();
   prompts_.surface.bridge_request_id.clear();

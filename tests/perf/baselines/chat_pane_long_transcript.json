@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":5142,"p50_allocations":5142,"p95_allocations":5142,"p95_wall_ms":31.921927,"max_wall_ms":31.921927,"p50_wall_ms":31.921927},"scenario":"chat_pane_long_transcript"}

@@ -1,0 +1,3 @@
+# large fixture 0340
+name=fixture_0340
+value=340

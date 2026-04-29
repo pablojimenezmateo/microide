@@ -12,6 +12,12 @@ struct SingleLineSelection {
   std::size_t end = 0;
 };
 
+struct SingleLineSnapshot {
+  std::string text;
+  std::size_t caret = 0;
+  std::optional<std::size_t> selection_anchor;
+};
+
 class SingleLineEditor {
  public:
   SingleLineEditor() = default;
@@ -20,8 +26,10 @@ class SingleLineEditor {
   const std::string& text() const { return text_; }
   std::size_t caret() const { return caret_; }
   std::optional<std::size_t> selection_anchor() const { return selection_anchor_; }
+  SingleLineSnapshot Snapshot() const;
 
   void SetText(std::string text);
+  void Append(std::string text);
   void SetCaret(std::size_t caret);
   void SetSelectionAnchor(std::optional<std::size_t> selection_anchor);
 

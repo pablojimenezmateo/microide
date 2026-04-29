@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":7906,"p50_allocations":7906,"p95_allocations":7906,"p95_wall_ms":55.338354000000002,"max_wall_ms":55.338354000000002,"p50_wall_ms":55.338354000000002},"scenario":"cold_startup_large_project"}

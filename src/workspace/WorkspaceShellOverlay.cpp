@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-#include "util/SingleLineText.h"
 
 namespace microide::workspace {
 
@@ -29,8 +28,8 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
 void WorkspaceShell::OpenBufferSearch() {
   ShowOverlay(OverlayMode::BufferSearch);
   context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
-  util::SetSingleLineText(&context_.current_project_state.overlay.workflow.buffer_search.query, "");
-  util::SetSingleLineText(&context_.current_project_state.overlay.workflow.buffer_search.replace_text, "");
+  context_.current_project_state.overlay.workflow.buffer_search.query.SetText("");
+  context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText("");
   context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
   context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
 }
@@ -38,8 +37,8 @@ void WorkspaceShell::OpenBufferSearch() {
 void WorkspaceShell::OpenBufferReplace() {
   ShowOverlay(OverlayMode::BufferReplace);
   context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
-  util::SetSingleLineText(&context_.current_project_state.overlay.workflow.buffer_search.query, "");
-  util::SetSingleLineText(&context_.current_project_state.overlay.workflow.buffer_search.replace_text, "");
+  context_.current_project_state.overlay.workflow.buffer_search.query.SetText("");
+  context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText("");
   context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
   context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
 }
@@ -48,10 +47,10 @@ void WorkspaceShell::OpenProjectSearch() {
   if (context_.current_project_state.root.empty()) {
     return;
   }
-  util::SetSingleLineText(&context_.current_project_state.overlay.workflow.project_search.query, "");
+  context_.current_project_state.overlay.workflow.project_search.query.SetText("");
   context_.current_project_state.overlay.workflow.project_search.results.clear();
   context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
-  util::SetSingleLineText(&context_.current_project_state.overlay.workflow.project_search.replace_text, "");
+  context_.current_project_state.overlay.workflow.project_search.replace_text.SetText("");
   ResetOverlayScroll();
   ShowSearchSidebar("", true);
 }

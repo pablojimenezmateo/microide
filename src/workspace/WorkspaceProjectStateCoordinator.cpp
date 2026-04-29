@@ -268,7 +268,7 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
 
   if (ActiveSidebarMode() == SidebarMode::Search &&
-      !context_.current_project_state.overlay.workflow.project_search.query.text.empty()) {
+      !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
     RefreshProjectSearch();
   }
   return true;

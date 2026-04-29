@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "util/SingleLineText.h"
+#include "editor/SingleLineEditor.h"
 #include "workspace/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -55,7 +55,7 @@ struct PromptSurfaceState {
   Kind kind = Kind::None;
   Action action = Action::CreateFile;
   std::filesystem::path path;
-  util::SingleLineTextState input;
+  editor::SingleLineEditor input;
   std::string detail;
   std::string bridge_agent_id;
   std::string bridge_request_id;

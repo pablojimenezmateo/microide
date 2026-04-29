@@ -6,7 +6,6 @@
 #include <ctime>
 #include <limits>
 
-#include "util/SingleLineText.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {

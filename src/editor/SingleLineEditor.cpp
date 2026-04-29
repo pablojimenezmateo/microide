@@ -18,8 +18,26 @@ SingleLineEditor::SingleLineEditor(std::string text) {
   SetText(std::move(text));
 }
 
+SingleLineSnapshot SingleLineEditor::Snapshot() const {
+  return SingleLineSnapshot{
+      .text = text_,
+      .caret = caret_,
+      .selection_anchor = selection_anchor_,
+  };
+}
+
 void SingleLineEditor::SetText(std::string text) {
   text_ = std::move(text);
+  caret_ = text_.size();
+  selection_anchor_.reset();
+}
+
+void SingleLineEditor::Append(std::string text) {
+  if (text.empty()) {
+    return;
+  }
+  Normalize();
+  text_.append(text);
   caret_ = text_.size();
   selection_anchor_.reset();
 }

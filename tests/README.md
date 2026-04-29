@@ -12,6 +12,30 @@ The fixture set is intentionally biased toward current migration risks:
 - diff row and hunk mapping
 - temporary-git-repo setup for compare workflow tests
 
+## Ubuntu 24.04 Development/Test Dependencies
+
+Install the baseline toolchain and runtime dependencies with:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential gcc g++ clang lld llvm gdb \
+  git curl ca-certificates make cmake ninja-build pkg-config dpkg-dev \
+  autoconf automake libtool \
+  lua5.4 liblua5.4-dev \
+  xvfb xauth x11-utils mesa-utils \
+  libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
+  libfribidi-dev libthai-dev \
+  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+  libxi-dev libxss-dev libxtst-dev libxinerama-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev \
+  libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+  libdbus-1-dev libibus-1.0-dev libudev-dev \
+  libpipewire-0.3-dev libwayland-dev wayland-protocols libdecor-0-dev liburing-dev
+```
+
+Fuzz builds require `clang`/`clang++` (provided by the `clang` package above).
+
 Regenerate the corpus with:
 
 ```bash

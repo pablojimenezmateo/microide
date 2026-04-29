@@ -9,13 +9,13 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
-#include "util/SingleLineText.h"
 #include "workspace/WorkspaceConversation.h"
 #include "workspace/WorkspaceAiContext.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -64,7 +64,7 @@ struct ProjectSurfaceState {
 };
 
 struct CommandState {
-  util::SingleLineTextState input;
+  editor::SingleLineEditor input;
   std::vector<std::string> history;
   std::optional<std::size_t> history_index;
   std::string history_pending_input;
@@ -72,19 +72,19 @@ struct CommandState {
 };
 
 struct BufferSearchState {
-  util::SingleLineTextState query;
-  util::SingleLineTextState replace_text;
+  editor::SingleLineEditor query;
+  editor::SingleLineEditor replace_text;
   std::vector<editor::SelectionRange> matches;
   std::size_t selected_index = 0;
 };
 
 struct ProjectSearchState {
-  util::SingleLineTextState query;
+  editor::SingleLineEditor query;
   project::ProjectSearchOptions options;
-  util::SingleLineTextState edit_buffer;
+  editor::SingleLineEditor edit_buffer;
   bool editing = false;
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
-  util::SingleLineTextState replace_text;
+  editor::SingleLineEditor replace_text;
   std::vector<project::ProjectSearchResult> results;
   std::size_t selected_index = 0;
   bool running = false;
@@ -94,7 +94,7 @@ struct ProjectSearchState {
 
 struct ComparePickerState {
   std::filesystem::path path;
-  util::SingleLineTextState query;
+  editor::SingleLineEditor query;
   std::vector<project::GitCommitEntry> commits;
   std::vector<project::GitCommitEntry> matches;
   std::size_t selected_index = 0;

@@ -225,14 +225,69 @@ are good candidates for the next openspec tech-debt pass:
 4. `src/util/SingleLineText.{h,cpp}` still coexists with `editor/SingleLineEditor.{h,cpp}`. The
    shared model is the source of truth for new surfaces; the older type is retained because some
    workspace state still stores it. Future cleanup should collapse the two representations.
-5. The architectural-lint test (`tests/ArchitectureInvariantsTests.cpp`) does not currently cover
-   every render translation unit (e.g. `WorkspaceShellRenderChrome.cpp`,
-   `WorkspaceShellRenderMenus.cpp`, `WorkspaceShellRenderPrompts.cpp`,
-   `WorkspaceShellRender.cpp`) and the plugin-translation-unit-size rule is still soft-fail.
-   Tightening these should accompany any new pass.
+5. The architectural-lint test now covers discovered render translation units and plugin
+   translation-unit size is hard-fail. Remaining gap is execution on every local build path:
+   when iterating with non-default build directories, ensure `ArchitectureInvariants` is run in
+   that build tree before merge.
 6. Larger coordinator translation units (`WorkspaceTabCoordinator.cpp`,
    `WorkspaceActionServices.cpp`, `WorkspaceChatTranscript.cpp`,
    `WorkspaceKeyInputCoordinatorSurfaces.cpp`) have grown well past the ~800-line threshold the
    plugin-host rule uses; consider an analogous guard for workspace coordinators.
 7. Project-content and indexing architecture (item 5) still consumes a point-in-time file list;
    only revisit if profiling shows meaningful search or refresh cost after the recent fixes.
+
+## 12. 2026-04-29 Sanitizer/Fuzz Triage Snapshot
+
+Status:
+- In progress for this change; current non-blocking findings below are triaged with reproduction
+  notes and severity.
+
+### 12.1 TSAN Linux Prerequisite
+
+Impact:
+- Medium process risk (false negatives if skipped)
+
+Reproduction:
+- Run TSAN tests without setting Linux mmap randomization to the expected value.
+- Command sequence:
+  - `sudo sysctl vm.mmap_rnd_bits=28`
+  - `cmake --preset microide-tsan`
+  - `cmake --build build/microide-tsan`
+  - `ctest --test-dir build/microide-tsan --output-on-failure`
+
+Notes:
+- This is an environment prerequisite, not an app bug.
+- Documented in `docs/runtime-profiling.md`, `guidelines/testing.md`, `AGENTS.md`, and
+  `CLAUDE.md`.
+
+### 12.2 UBSAN Intermittent FileWatcher Assertion Under Heavy Mixed Runs
+
+Impact:
+- Low to medium (intermittent in stressy mixed runs, not consistently reproducible in focused reruns)
+
+Reproduction:
+- Run broader sanitizer slices in quick succession; one run observed a transient FileWatcher
+  assertion failure.
+- Focused reruns for the affected area passed.
+
+Notes:
+- Keep as watchlist until it reproduces deterministically with a minimized command.
+- If it reproduces again, capture exact command and stack and promote to a dedicated debt item.
+
+### 12.3 Fuzz Harness Results (PR-style Short Runs)
+
+Impact:
+- No memory-safety findings observed in current short runs.
+
+Reproduction:
+- `cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`
+- `cmake --build build/microide-fuzz`
+- `./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=10 tests/fuzz/corpora/PersistedRecordReaderFuzz`
+- `./build/microide-fuzz/microide/LegacyImporterFuzz -max_total_time=10 tests/fuzz/corpora/LegacyImporterFuzz`
+- `./build/microide-fuzz/microide/SearchRegexFuzz -max_total_time=10 tests/fuzz/corpora/SearchRegexFuzz`
+- `./build/microide-fuzz/microide/GitBlameParserFuzz -max_total_time=10 tests/fuzz/corpora/GitBlameParserFuzz`
+
+Notes:
+- Initial clang/fuzz build surfaced integration defects (sized-delete portability in tests and
+  missing object linkage in `LegacyImporterFuzz`), both fixed in-tree.
+- No additional deferred fuzz finding is open from this triage pass.

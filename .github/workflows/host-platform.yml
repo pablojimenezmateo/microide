@@ -58,3 +58,36 @@ jobs:
 
       - name: Host-Facing Regression Slice
         run: ./build/microide/microide_tests AppDirectories RuntimePaths FileOperationService Subprocess TerminalSession FileWatcher
+
+  sanitizer-matrix:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: microide-asan
+            binary_dir: build/microide-asan-make
+            soft_fail: false
+          - preset: microide-ubsan
+            binary_dir: build/microide-ubsan-make
+            soft_fail: false
+          - preset: microide-tsan
+            binary_dir: build/microide-tsan-make
+            soft_fail: false
+    continue-on-error: ${{ matrix.soft_fail }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev libpcre2-dev libcurl4-openssl-dev
+
+      - name: Configure (${{ matrix.preset }})
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build (${{ matrix.preset }})
+        run: cmake --build ${{ matrix.binary_dir }} --target microide_tests -j8
+
+      - name: Run Tests (${{ matrix.preset }})
+        run: env SDL_VIDEODRIVER=dummy ./${{ matrix.binary_dir }}/microide/microide_tests

@@ -26,6 +26,18 @@ ctest --test-dir build/microide --output-on-failure
 ./build/microide/microide_tests TextViewport
 ```
 
+Sanitizer and fuzzing commands:
+
+```bash
+cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure
+cmake --preset microide-ubsan && cmake --build build/microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure
+sudo sysctl vm.mmap_rnd_bits=28
+cmake --preset microide-tsan && cmake --build build/microide-tsan && ctest --test-dir build/microide-tsan --output-on-failure
+cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build/microide-fuzz
+./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=60 tests/fuzz/corpora/PersistedRecordReaderFuzz
+```
+
 ## Coverage Expectations
 
 Add or update tests when work changes:
@@ -62,3 +74,6 @@ For meaningful work:
 3. update docs if the change altered a durable contract
 
 If a change is hard to test, treat that as a design smell and improve the seam.
+
+When modifying parser or persistence paths, extend at least one relevant fuzz target under
+`tests/fuzz/` and add or refresh seed corpus entries under `tests/fuzz/corpora/<target>/`.

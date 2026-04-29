@@ -114,9 +114,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     };
 
     const std::string_view query_text =
-        editing_query ? ps.edit_buffer.text : ps.query.text;
+        editing_query ? ps.edit_buffer.text() : ps.query.text();
     const std::string_view replace_text =
-        editing_replace ? ps.edit_buffer.text : ps.replace_text.text;
+        editing_replace ? ps.edit_buffer.text() : ps.replace_text.text();
     const std::string query_fallback = "search> " + std::string(query_text);
     const std::string replace_fallback = "replace> " + std::string(replace_text);
 
@@ -178,7 +178,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                       project_state.overlay.workflow.project_search.results.size(),
                       " matches")
             : project_state.overlay.workflow.project_search.results.empty()
-                ? (project_state.overlay.workflow.project_search.query.text.empty()
+                ? (project_state.overlay.workflow.project_search.query.text().empty()
                        ? JoinHintSegments(
                              {"/ query", "= replace", "buttons change mode, case, hidden"})
                        : FormatEmptyState("matches") + "  |  " + match_actions)
@@ -249,7 +249,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               ? "Error: " + project_state.overlay.workflow.project_search.error
           : project_state.overlay.workflow.project_search.running
               ? "Searching..."
-          : project_state.overlay.workflow.project_search.query.text.empty()
+          : project_state.overlay.workflow.project_search.query.text().empty()
               ? "Project Search is idle"
               : FormatEmptyState("matches");
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,

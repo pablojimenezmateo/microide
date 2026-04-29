@@ -1,0 +1,8 @@
+version 5
+conv-begin c0
+msg-begin m1
+msg-role user
+msg-contentm1
+msg-role und
+in c0
+msg-begin m

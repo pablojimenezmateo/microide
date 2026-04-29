@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <charconv>
+#include <atomic>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,9 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
 
 #include "util/StartupTrace.h"
 
@@ -89,6 +93,7 @@ struct LspClient::Impl {
   std::atomic<bool> shutdown_started{false};
   std::atomic<bool> shutdown_complete{false};
   std::atomic<bool> shutting_down{false};
+  std::atomic<bool> process_shutdown_started{false};
   std::condition_variable shutdown_cv;
   bool shutdown_response_received = false;
   int shutdown_request_id = 0;
@@ -108,9 +113,20 @@ struct LspClient::Impl {
   std::string root_uri;
   std::string language_id;
   std::string last_error;
+  std::string last_error_snapshot;
   std::atomic<bool> initialized{false};
-  bool supports_incremental_sync = false;
-  Uint32 wake_event_type = 0;
+  std::atomic<bool> supports_incremental_sync{false};
+  std::atomic<Uint32> wake_event_type{0};
+
+  void SetLastError(std::string message) {
+    std::lock_guard lock(mutex);
+    last_error = std::move(message);
+  }
+
+  std::string GetLastErrorCopy() {
+    std::lock_guard lock(mutex);
+    return last_error;
+  }
 
   int GetNextId() {
     std::lock_guard lock(mutex);
@@ -193,6 +209,15 @@ struct LspClient::Impl {
     shutdown_request_id = 0;
   }
 
+  void ShutdownProcessOnce(int timeout_ms = 3000) {
+    bool expected = false;
+    if (!process_shutdown_started.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+      return;
+    }
+    proc.Shutdown(timeout_ms);
+  }
+
   // -------------------------------------------------------------------------
   // Blocking read of one JSON-RPC message (used only during Start() on the
   // calling thread before the reader thread is launched).
@@ -251,9 +276,10 @@ struct LspClient::Impl {
   // Wake the main SDL event loop.
   // -------------------------------------------------------------------------
   void PushWakeEvent() const {
-    if (wake_event_type == 0) return;
+    const Uint32 event_type = wake_event_type.load(std::memory_order_acquire);
+    if (event_type == 0) return;
     SDL_Event ev{};
-    ev.type = wake_event_type;
+    ev.type = event_type;
     SDL_PushEvent(&ev);
   }
 
@@ -467,7 +493,11 @@ struct LspClient::Impl {
     caps["textDocument"] = JsonValue(std::move(text_document_caps));
 
     JsonObject init_params;
-    init_params["processId"] = JsonValue(static_cast<std::int64_t>(proc.pid()));
+#if defined(__unix__) || defined(__APPLE__)
+    init_params["processId"] = JsonValue(static_cast<std::int64_t>(::getpid()));
+#else
+    init_params["processId"] = JsonValue(static_cast<std::int64_t>(0));
+#endif
     init_params["rootUri"] = JsonValue(root_uri);
     init_params["capabilities"] = JsonValue(std::move(caps));
 
@@ -477,8 +507,8 @@ struct LspClient::Impl {
     }();
     const auto req = MakeRequest(init_id, "initialize", JsonValue(std::move(init_params)));
     if (!SendMessageImmediate(req)) {
-      last_error = "failed to send initialize request to language server";
-      proc.Shutdown();
+      SetLastError("failed to send initialize request to language server");
+      ShutdownProcessOnce();
       ClearDeferredMessages();
       initializing.store(false, std::memory_order_release);
       return;
@@ -491,7 +521,7 @@ struct LspClient::Impl {
       util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
       for (int attempts = 0; attempts < 60; ++attempts) {
         if (stop_init.load(std::memory_order_acquire)) {
-          proc.Shutdown();
+          ShutdownProcessOnce();
           ClearDeferredMessages();
           initializing.store(false, std::memory_order_release);
           return;
@@ -519,7 +549,7 @@ struct LspClient::Impl {
             } else if (sync.HasKey("change")) {
               sync_kind = sync["change"].AsInt(1);
             }
-            supports_incremental_sync = (sync_kind == 2);
+            supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
           }
           got_init = true;
         }
@@ -531,13 +561,12 @@ struct LspClient::Impl {
       (void)proc.IsRunning();
       const std::optional<int> exit_code = proc.exit_code();
       if (exit_code.has_value()) {
-        last_error =
-            "language server exited before initialize response (exit code " +
-            std::to_string(*exit_code) + ")";
+        SetLastError("language server exited before initialize response (exit code " +
+                     std::to_string(*exit_code) + ")");
       } else {
-        last_error = "timed out waiting for initialize response from language server";
+        SetLastError("timed out waiting for initialize response from language server");
       }
-      proc.Shutdown();
+      ShutdownProcessOnce();
       ClearDeferredMessages();
       initializing.store(false, std::memory_order_release);
       return;
@@ -548,18 +577,18 @@ struct LspClient::Impl {
       std::lock_guard lock(send_mutex);
       if (!SendSerializedMessageUnlocked(
               SerializeMessage(MakeNotification("initialized", JsonValue(JsonObject{}))))) {
-        last_error = "failed to send initialized notification to language server";
+        SetLastError("failed to send initialized notification to language server");
         deferred_messages.clear();
-        proc.Shutdown();
+        ShutdownProcessOnce();
         initializing.store(false, std::memory_order_release);
         return;
       }
       initialized.store(true, std::memory_order_release);
       for (const std::string& message : deferred_messages) {
         if (!SendSerializedMessageUnlocked(message)) {
-          last_error = "failed to flush deferred language server messages";
+          SetLastError("failed to flush deferred language server messages");
           deferred_messages.clear();
-          proc.Shutdown();
+          ShutdownProcessOnce();
           initializing.store(false, std::memory_order_release);
           return;
         }
@@ -580,7 +609,7 @@ struct LspClient::Impl {
     stop_init.store(true);
     if (!initialized.load(std::memory_order_acquire)) {
       TraceLspLifecycle(language_id, proc.pid(), "preinit-cancel");
-      proc.Shutdown(0);
+      ShutdownProcessOnce(0);
       if (init_thread.joinable()) {
         init_thread.join();
       }
@@ -589,7 +618,7 @@ struct LspClient::Impl {
       ResetProtocolState();
       initialized.store(false, std::memory_order_release);
       initializing.store(false, std::memory_order_release);
-      supports_incremental_sync = false;
+      supports_incremental_sync.store(false, std::memory_order_release);
       shutting_down.store(false, std::memory_order_release);
       shutdown_complete.store(true, std::memory_order_release);
       PushWakeEvent();
@@ -640,7 +669,7 @@ struct LspClient::Impl {
     stop_reader.store(true, std::memory_order_release);
     if (proc.IsRunning()) {
       TraceLspLifecycle(language_id, proc.pid(), "forced-shutdown");
-      proc.Shutdown(1000);
+      ShutdownProcessOnce(1000);
     }
 
     if (reader_thread.joinable()) {
@@ -650,7 +679,7 @@ struct LspClient::Impl {
     ResetProtocolState();
     initialized.store(false, std::memory_order_release);
     initializing.store(false, std::memory_order_release);
-    supports_incremental_sync = false;
+    supports_incremental_sync.store(false, std::memory_order_release);
     shutting_down.store(false, std::memory_order_release);
     shutdown_complete.store(true, std::memory_order_release);
     const std::optional<int> code = proc.exit_code();
@@ -692,7 +721,7 @@ LspClient::~LspClient() {
 }
 
 void LspClient::SetWakeEventType(Uint32 event_type) {
-  impl_->wake_event_type = event_type;
+  impl_->wake_event_type.store(event_type, std::memory_order_release);
 }
 
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
@@ -713,6 +742,7 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
   impl_->shutdown_started.store(false, std::memory_order_release);
   impl_->shutdown_complete.store(false, std::memory_order_release);
   impl_->shutting_down.store(false, std::memory_order_release);
+  impl_->process_shutdown_started.store(false, std::memory_order_release);
 
   // Launch initialization on a background thread to avoid blocking the main thread.
   // The reader thread will be started by the initialization thread after initialization completes.
@@ -733,15 +763,18 @@ bool LspClient::IsInitialized() const {
 }
 
 bool LspClient::SupportsIncrementalSync() const {
-  return impl_->supports_incremental_sync;
+  return impl_->supports_incremental_sync.load(std::memory_order_acquire);
 }
 
 bool LspClient::HasOpenDocument(const std::string& uri) const {
+  std::lock_guard lock(impl_->mutex);
   return impl_->document_versions.contains(uri);
 }
 
 const std::string& LspClient::LastError() const {
-  return impl_->last_error;
+  std::lock_guard lock(impl_->mutex);
+  impl_->last_error_snapshot = impl_->last_error;
+  return impl_->last_error_snapshot;
 }
 
 void LspClient::SetDiagnosticsCallback(OnPublishDiagnostics callback) {
@@ -764,7 +797,10 @@ void LspClient::DrainCallbacks() {
 bool LspClient::DidOpen(const std::string& uri, const std::string& language_id,
                         const std::string& text) {
   using namespace util;
-  impl_->document_versions[uri] = 1;
+  {
+    std::lock_guard lock(impl_->mutex);
+    impl_->document_versions[uri] = 1;
+  }
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   text_doc["languageId"] = JsonValue(language_id);
@@ -778,7 +814,11 @@ bool LspClient::DidOpen(const std::string& uri, const std::string& language_id,
 
 bool LspClient::DidChange(const std::string& uri, const std::string& text) {
   using namespace util;
-  const int version = ++impl_->document_versions[uri];
+  int version = 0;
+  {
+    std::lock_guard lock(impl_->mutex);
+    version = ++impl_->document_versions[uri];
+  }
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
@@ -800,7 +840,11 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
     return false;
   }
   using namespace util;
-  const int version = ++impl_->document_versions[uri];
+  int version = 0;
+  {
+    std::lock_guard lock(impl_->mutex);
+    version = ++impl_->document_versions[uri];
+  }
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
@@ -841,7 +885,10 @@ bool LspClient::DidSave(const std::string& uri) {
 
 bool LspClient::DidClose(const std::string& uri) {
   using namespace util;
-  impl_->document_versions.erase(uri);
+  {
+    std::lock_guard lock(impl_->mutex);
+    impl_->document_versions.erase(uri);
+  }
   JsonObject text_doc;
   text_doc["uri"] = JsonValue(uri);
   JsonObject params;

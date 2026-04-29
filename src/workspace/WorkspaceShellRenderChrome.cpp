@@ -103,7 +103,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   std::vector<VisibleStripTab> visible_tabs;
-  if (!context_.current_project_state.root.empty() && context_.current_project_state.open_tabs.empty()) {
+  if (HasActiveProjectCatalogEntry()) {
+    visible_tabs = ComputeVisibleTabs(layout.tab_strip);
+  }
+  if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
     const SDL_FRect placeholder_tab =
         MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
                  std::max(22.0f, layout.tab_strip.h - 2.0f));
@@ -114,8 +117,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                      .accent_edge = StripAccentEdge::Top,
                  },
                  chrome_tab_palette);
-  } else if (!context_.current_project_state.root.empty()) {
-    visible_tabs = ComputeVisibleTabs(layout.tab_strip);
+  } else if (HasActiveProjectCatalogEntry()) {
     for (const VisibleStripTab& tab : visible_tabs) {
       DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
                    tab.badge_color, tab.show_badge, tab.active,
@@ -159,7 +161,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 }
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLayout& layout) const {
-  if (!last_mouse_position_valid_ || context_.current_project_state.root.empty()) {
+  if (!last_mouse_position_valid_) {
     return std::nullopt;
   }
 

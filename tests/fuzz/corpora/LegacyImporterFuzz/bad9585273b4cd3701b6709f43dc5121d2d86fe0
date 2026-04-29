@@ -1,0 +1,12 @@
+version 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+on 5
+conv-begin c1
+msg-begin m2
+g-
+n 5
+msg-status’c2
+msg-begin m2
+g-rend

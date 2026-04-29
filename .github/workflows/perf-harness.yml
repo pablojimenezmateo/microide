@@ -1,0 +1,59 @@
+name: perf-harness
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  perf-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config xvfb libsdl3-dev libsdl3-ttf-dev libpcre2-dev libcurl4-openssl-dev
+
+      - name: Configure
+        run: cmake --preset microide-perf
+
+      - name: Build
+        run: cmake --build build/microide-perf-make --target microide_perf -j8
+
+      - name: Run smoke subset
+        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --smoke --iterations=1
+
+  perf-baseline-tag:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce perf-baseline tag
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          base_ref="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          commit_messages="$(git log --format=%B "${base_ref}..HEAD")"
+          ./tools/check_perf_baseline_tag.sh "${base_ref}" HEAD "${PR_BODY}" "${commit_messages}"
+
+  perf-gate:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on:
+      - self-hosted
+      - perf-runner-v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset microide-perf
+
+      - name: Build
+        run: cmake --build build/microide-perf-make --target microide_perf -j8
+
+      - name: Run full perf suite
+        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --iterations=10 --reference-runner=perf-runner-v1

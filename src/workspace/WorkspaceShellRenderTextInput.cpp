@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "editor/DiagnosticsRender.h"
-#include "util/SingleLineText.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -72,12 +71,12 @@ void WorkspaceShell::DrawSingleLineTextTail(SDL_Renderer* renderer,
 }
 
 WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetrics(
-    const util::SingleLineTextState& state,
+    const editor::SingleLineEditor& state,
     std::string_view prefix,
     float available_width) const {
-  const std::string full_text = std::string(prefix) + state.text;
+  const std::string full_text = std::string(prefix) + state.text();
   const std::size_t cursor_byte =
-      std::min(prefix.size() + state.cursor, full_text.size());
+      std::min(prefix.size() + state.caret(), full_text.size());
 
   // Measure each codepoint from 0..cursor_byte exactly once, storing (start, width).
   // Walking backward through this array to find view_start avoids re-measuring.
@@ -123,7 +122,7 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
   }
 
   std::optional<std::pair<std::size_t, std::size_t>> selection_bytes;
-  if (const auto sel = util::SingleLineSelection(state); sel.has_value()) {
+  if (const auto sel = state.Selection(); sel.has_value()) {
     const std::size_t sel_start_full = prefix.size() + sel->start;
     const std::size_t sel_end_full = prefix.size() + sel->end;
     if (sel_start_full < view_end && sel_end_full > view_start) {

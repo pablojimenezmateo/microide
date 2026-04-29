@@ -1,5 +1,6 @@
 #include "platform/TerminalBackend.h"
 
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -16,6 +17,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
+#include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -216,7 +218,7 @@ class PosixTerminalBackend final : public TerminalBackend {
   void Stop() override {
     const int master_fd = master_fd_;
     const int child_pid = child_pid_;
-    stop_requested_ = true;
+    stop_requested_.store(true, std::memory_order_release);
     master_fd_ = -1;
     child_pid_ = -1;
 
@@ -229,8 +231,8 @@ class PosixTerminalBackend final : public TerminalBackend {
       reader_thread_.join();
     }
 
-    running_ = false;
-    stop_requested_ = false;
+    running_.store(false, std::memory_order_release);
+    stop_requested_.store(false, std::memory_order_release);
   }
 
   void Resize(std::size_t rows, std::size_t columns) override {
@@ -263,12 +265,26 @@ class PosixTerminalBackend final : public TerminalBackend {
     }
   }
 
-  bool running() const override { return running_; }
+  bool running() const override { return running_.load(std::memory_order_acquire); }
 
  private:
   void ReaderMain(int master_fd, int child_pid) {
     std::array<char, 4096> buffer{};
-    while (true) {
+    while (!stop_requested_.load(std::memory_order_acquire)) {
+      pollfd pfd{.fd = master_fd, .events = POLLIN | POLLHUP, .revents = 0};
+      const int ready = poll(&pfd, 1, 100);
+      if (ready < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        break;
+      }
+      if (ready == 0) {
+        continue;
+      }
+      if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+        break;
+      }
       const ssize_t count = read(master_fd, buffer.data(), buffer.size());
       if (count > 0) {
         if (callbacks_.on_output) {
@@ -286,8 +302,8 @@ class PosixTerminalBackend final : public TerminalBackend {
     while (waitpid(child_pid, &status, 0) < 0 && errno == EINTR) {
     }
 
-    running_ = false;
-    if (!stop_requested_ && callbacks_.on_exit) {
+    running_.store(false, std::memory_order_release);
+    if (!stop_requested_.load(std::memory_order_acquire) && callbacks_.on_exit) {
       callbacks_.on_exit();
     }
   }
@@ -296,8 +312,8 @@ class PosixTerminalBackend final : public TerminalBackend {
   std::thread reader_thread_;
   int master_fd_ = -1;
   int child_pid_ = -1;
-  bool running_ = false;
-  bool stop_requested_ = false;
+  std::atomic<bool> running_{false};
+  std::atomic<bool> stop_requested_{false};
 };
 
 #elif defined(_WIN32)

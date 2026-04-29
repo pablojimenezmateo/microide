@@ -52,6 +52,7 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests);
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests);
+void RegisterAllocationCounterTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPersistedRecordIoTests(tests);
   microide::tests::RegisterPersistedStateRecordTests(tests);
   microide::tests::RegisterPersistedRecordDumpTests(tests);
+  microide::tests::RegisterAllocationCounterTests(tests);
   microide::tests::RegisterProjectSearchServiceTests(tests);
   microide::tests::RegisterGitBlameServiceTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);
