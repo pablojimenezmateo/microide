@@ -62,13 +62,17 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
+  const SidebarSurfaceViewModel sidebar_vm = RenderViewModelBuilder(context_).BuildSidebarSurface();
+  const BottomPanelSurfaceViewModel panel_vm =
+      RenderViewModelBuilder(context_).BuildBottomPanelSurface();
   context_.current_project_state.sidebar.width = ClampSidebarWidth(context_.current_project_state.sidebar.width, static_cast<float>(width));
   context_.current_project_state.panel.height =
       ClampBottomPanelHeight(context_.current_project_state.panel.height, static_cast<float>(height));
 
   const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(width), static_cast<float>(height), context_.current_project_state.sidebar.visible,
-                    BottomPanelVisible(), context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
+      ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
+                    panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
+                    context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {
@@ -76,7 +80,7 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
       NormalizeEditorSplitTree(*editor_tab);
     }
   }
-  if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
+  if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
   float mouse_x = last_mouse_x_;
@@ -158,6 +162,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const WorkspaceLayout& layout,
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect) {
+  const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
   const bool render_editor_surface = !ActiveTabIsCompare() && !ActiveTabIsMerge();
   const std::vector<EditorPaneLayout> editor_panes =
       render_editor_surface ? ComputeEditorPaneLayouts(layout.editor_surface)
@@ -237,8 +242,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active &&
-                                           (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
-                                            context_.current_project_state.overlay.mode == OverlayMode::BufferReplace)
+                                           (overlay_vm.mode == OverlayMode::BufferSearch ||
+                                            overlay_vm.mode == OverlayMode::BufferReplace)
                                        ? context_.current_project_state.overlay.workflow.buffer_search.query.text
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,

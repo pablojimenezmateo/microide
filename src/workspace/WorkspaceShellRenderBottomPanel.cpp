@@ -32,7 +32,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                               const WorkspaceLayout& layout,
                                               std::size_t terminal_line_count) {
   const BottomPanelSurfaceViewModel panel_vm = RenderViewModelBuilder(context_).BuildBottomPanelSurface();
-  if (!BottomPanelVisible()) {
+  if (!panel_vm.command_mode && panel_vm.content == PanelContentKind::None) {
     return;
   }
 
@@ -40,8 +40,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const SDL_FRect panel_header =
       MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                kWorkspaceBottomPanelHeaderHeight);
-  const bool terminal_panel = BottomPanelShowsTerminal();
-  const bool output_panel = BottomPanelShowsOutput();
+  const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
+  const bool output_panel = panel_vm.content == PanelContentKind::Output;
   const std::vector<VisibleStripTab> visible_panel_tabs =
       ComputeVisibleBottomPanelTabs(panel_header);
 
