@@ -77,6 +77,37 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     const std::function<void(lua_State*, const std::filesystem::path&)>& push_buffer_context,
     std::string* error_message);
+
+bool LoginAuthProvider(
+    std::string_view provider_id,
+    const std::vector<std::string>& scopes,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    PluginHost::AuthSessionData* session,
+    std::string* error_message);
+
+bool RefreshAuthSession(
+    std::string_view provider_id,
+    std::string_view session_id,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    PluginHost::AuthSessionData* session,
+    std::string* error_message);
+
+bool LogoutAuthSession(
+    std::string_view provider_id,
+    std::string_view session_id,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::string* error_message);
+
+bool InvokeMcpTool(
+    std::string_view tool_id,
+    std::string_view input_json,
+    const std::vector<runtime_types::McpToolRuntime>& mcp_tool_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::string* output_json,
+    std::string* error_message);
 #endif
 
 }  // namespace microide::plugin::provider_query_interop

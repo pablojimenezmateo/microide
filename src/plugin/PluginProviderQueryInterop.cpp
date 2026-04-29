@@ -472,6 +472,220 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
   return lines;
 }
 
+bool LoginAuthProvider(
+    std::string_view provider_id,
+    const std::vector<std::string>& scopes,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    PluginHost::AuthSessionData* session,
+    std::string* error_message) {
+  const auto it =
+      std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == auth_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown auth provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->login_ref == LUA_NOREF || it->login_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + std::string(provider_id) + "' does not support login";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->login_ref);
+  lua_createtable(state, static_cast<int>(scopes.size()), 0);
+  for (std::size_t i = 0; i < scopes.size(); ++i) {
+    lua_pushlstring(state, scopes[i].c_str(), scopes[i].size());
+    lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
+  }
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + it->id + "' login failed: " + call_error;
+    }
+    return false;
+  }
+  if (lua_istable(state, -1)) {
+    auto read_string = [&](const char* field) -> std::string {
+      lua_getfield(state, -1, field);
+      std::string value =
+          lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
+      lua_pop(state, 1);
+      return value;
+    };
+    session->id = read_string("id");
+    session->account = read_string("account");
+    session->access_token = read_string("access_token");
+    lua_getfield(state, -1, "scopes");
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1;; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (lua_isstring(state, -1)) {
+          session->scopes.emplace_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return !session->id.empty();
+}
+
+bool RefreshAuthSession(
+    std::string_view provider_id,
+    std::string_view session_id,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    PluginHost::AuthSessionData* session,
+    std::string* error_message) {
+  const auto it =
+      std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == auth_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown auth provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->refresh_ref == LUA_NOREF || it->refresh_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message =
+          "auth provider '" + std::string(provider_id) + "' does not support refresh";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->refresh_ref);
+  lua_pushlstring(state, session_id.data(), session_id.size());
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + it->id + "' refresh failed: " + call_error;
+    }
+    return false;
+  }
+  if (lua_istable(state, -1)) {
+    auto read_string = [&](const char* field) -> std::string {
+      lua_getfield(state, -1, field);
+      std::string value =
+          lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
+      lua_pop(state, 1);
+      return value;
+    };
+    session->id = read_string("id");
+    if (session->id.empty()) {
+      session->id = std::string(session_id);
+    }
+    session->account = read_string("account");
+    session->access_token = read_string("access_token");
+    lua_getfield(state, -1, "scopes");
+    if (lua_istable(state, -1)) {
+      for (lua_Integer i = 1;; ++i) {
+        lua_geti(state, -1, i);
+        if (lua_isnil(state, -1)) {
+          lua_pop(state, 1);
+          break;
+        }
+        if (lua_isstring(state, -1)) {
+          session->scopes.emplace_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return !session->id.empty();
+}
+
+bool LogoutAuthSession(
+    std::string_view provider_id,
+    std::string_view session_id,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::string* error_message) {
+  const auto it =
+      std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
+                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
+  if (it == auth_provider_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown auth provider: " + std::string(provider_id);
+    }
+    return false;
+  }
+  if (it->logout_ref == LUA_NOREF || it->logout_ref == LUA_REFNIL) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + std::string(provider_id) + "' does not support logout";
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->logout_ref);
+  lua_pushlstring(state, session_id.data(), session_id.size());
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 0, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + it->id + "' logout failed: " + call_error;
+    }
+    return false;
+  }
+  return true;
+}
+
+bool InvokeMcpTool(
+    std::string_view tool_id,
+    std::string_view input_json,
+    const std::vector<runtime_types::McpToolRuntime>& mcp_tool_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::string* output_json,
+    std::string* error_message) {
+  const auto it = std::find_if(mcp_tool_runtimes.begin(), mcp_tool_runtimes.end(),
+                               [tool_id](const auto& runtime) { return runtime.id == tool_id; });
+  if (it == mcp_tool_runtimes.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown mcp tool: " + std::string(tool_id);
+    }
+    return false;
+  }
+
+  lua_State* state = it->state;
+  const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
+  lua_pushlstring(state, input_json.data(), input_json.size());
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message = "mcp tool '" + it->id + "' failed: " + call_error;
+    }
+    return false;
+  }
+  if (lua_isstring(state, -1)) {
+    *output_json = lua_tostring(state, -1);
+  } else if (lua_istable(state, -1)) {
+    lua_getfield(state, -1, "output");
+    if (lua_isstring(state, -1)) {
+      *output_json = lua_tostring(state, -1);
+    }
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return true;
+}
+
 }  // namespace microide::plugin::provider_query_interop
 
 #endif
