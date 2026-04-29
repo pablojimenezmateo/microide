@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
+#include "workspace/RenderViewModelBuilder.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -144,6 +146,9 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
 std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextInputVisual(
     const WorkspaceLayout& layout,
     const std::optional<SDL_FRect>& active_editor_pane_rect) const {
+  const RenderViewModelBuilder view_model_builder(context_);
+  const OverlaySurfaceViewModel overlay_vm = view_model_builder.BuildOverlaySurface();
+  const SidebarSurfaceViewModel sidebar_vm = view_model_builder.BuildSidebarSurface();
   const TextInputSurface surface = CurrentTextInputSurface();
   const float line_height = text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
@@ -206,7 +211,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     }
     case TextInputSurface::ChatComposer: {
       const SDL_FRect prompt_rect =
-          context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Chat
+          sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Chat
               ? ChatSidebarComposerRect(layout.sidebar)
               : BottomPanelCommandPromptRect(layout);
       auto& composer =
@@ -262,7 +267,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker: {
-      if (!context_.current_project_state.overlay.visible) {
+      if (!overlay_vm.visible) {
         return std::nullopt;
       }
       const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
@@ -320,7 +325,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     }
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
-      if (!context_.current_project_state.sidebar.visible || ActiveSidebarMode() != SidebarMode::Search ||
+      if (!sidebar_vm.visible || sidebar_vm.mode != SidebarMode::Search ||
           !context_.current_project_state.overlay.workflow.project_search.editing) {
         return std::nullopt;
       }

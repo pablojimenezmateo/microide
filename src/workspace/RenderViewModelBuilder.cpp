@@ -84,7 +84,7 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup() const {
 
 HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets() const {
   return HoverTargetsViewModel{
-      .hover_enabled = context_.current_project_state.overlay.visible,
+      .hover_enabled = true,
   };
 }
 

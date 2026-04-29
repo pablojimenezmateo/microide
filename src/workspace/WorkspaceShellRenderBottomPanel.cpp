@@ -11,6 +11,7 @@
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -30,6 +31,7 @@ const std::vector<terminal::TerminalLine>& EmptyTerminalLines() {
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                               const WorkspaceLayout& layout,
                                               std::size_t terminal_line_count) {
+  const BottomPanelSurfaceViewModel panel_vm = RenderViewModelBuilder(context_).BuildBottomPanelSurface();
   if (!BottomPanelVisible()) {
     return;
   }
@@ -351,7 +353,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
-  if (context_.current_project_state.panel.command_mode) {
+  if (panel_vm.command_mode) {
     const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
     DrawFilledRect(renderer, command_area, theme_.surface_raised);
     DrawFilledRect(renderer,

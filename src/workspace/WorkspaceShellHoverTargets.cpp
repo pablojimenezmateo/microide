@@ -7,6 +7,7 @@
 
 #include "editor/DiagnosticsRender.h"
 #include "editor/TextLayout.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -373,6 +374,11 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
     float x,
     float y) const {
+  const HoverTargetsViewModel hover_targets_vm = RenderViewModelBuilder(context_).BuildHoverTargets();
+  if (!hover_targets_vm.hover_enabled) {
+    return std::nullopt;
+  }
+
   if (const editor::EditorBlameLine* blame_line = EditorBlameLineAtPosition(x, y);
       blame_line != nullptr && blame_line->interactive) {
     return EditorHoverTarget{

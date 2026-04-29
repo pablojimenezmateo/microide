@@ -5,6 +5,7 @@
 #include <string>
 
 #include "editor/DiagnosticsRender.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::workspace {
@@ -33,7 +34,8 @@ std::string BuildProjectSearchResultLabel(std::size_t line,
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  if (!context_.current_project_state.sidebar.visible) {
+  const SidebarSurfaceViewModel sidebar_vm = RenderViewModelBuilder(context_).BuildSidebarSurface();
+  if (!sidebar_vm.visible) {
     return;
   }
 
@@ -86,7 +88,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               sidebar_mode_rect.y + sidebar_mode_rect.h * 0.5f, true,
               sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary : theme_.text_muted);
 
-  const SidebarMode sidebar_mode = ActiveSidebarMode();
+  const SidebarMode sidebar_mode = sidebar_vm.mode;
   if (sidebar_mode == SidebarMode::Search) {
     const auto& ps = context_.current_project_state.overlay.workflow.project_search;
     const bool editing_query =
