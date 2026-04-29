@@ -52,7 +52,7 @@ class RenderViewModelBuilder {
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
-  HoverPopupViewModel BuildHoverPopup() const;
+  HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
   HoverTargetsViewModel BuildHoverTargets() const;
 
  private:

@@ -75,10 +75,10 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
   };
 }
 
-HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup() const {
+HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_target) const {
   return HoverPopupViewModel{
-      .visible = context_.current_project_state.overlay.visible,
-      .has_active_target = false,
+      .visible = has_active_target,
+      .has_active_target = has_active_target,
   };
 }
 

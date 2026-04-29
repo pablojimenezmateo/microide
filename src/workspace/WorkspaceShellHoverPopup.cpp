@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "editor/DiagnosticsRender.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -110,7 +111,10 @@ void DrawHoverPopupLines(const render::TextRenderer& text_renderer,
 
 std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
     const {
-  if (!active_editor_hover_target_.has_value()) {
+  const HoverPopupViewModel hover_popup_vm =
+      RenderViewModelBuilder(context_).BuildHoverPopup(active_editor_hover_target_.has_value());
+  if (!hover_popup_vm.visible || !hover_popup_vm.has_active_target ||
+      !active_editor_hover_target_.has_value()) {
     return std::nullopt;
   }
 
