@@ -162,6 +162,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginContributionInterop.cpp
   src/plugin/PluginAsyncCallbackInterop.cpp
   src/plugin/PluginAsyncStateInterop.cpp
+  src/plugin/PluginBufferLifecycleInterop.cpp
   src/plugin/PluginDiscoveryInterop.cpp
   src/plugin/PluginDataDirectoryInterop.cpp
   src/plugin/PluginHoverQueryInterop.cpp

@@ -26,6 +26,7 @@
 #include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginAsyncCallbackInterop.h"
 #include "plugin/PluginDataDirectoryInterop.h"
+#include "plugin/PluginBufferLifecycleInterop.h"
 #include "plugin/PluginHoverQueryInterop.h"
 #include "plugin/PluginLuaBufferProjectInterop.h"
 #include "plugin/PluginLuaInterop.h"
@@ -961,9 +962,14 @@ void PluginHost::OnBufferOpen(const std::filesystem::path& path) {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (auto& plugin : impl_->plugins) {
-    impl_->CallBufferCallback(&plugin, plugin.on_buffer_open_ref, "on_buffer_open", path);
-  }
+  buffer_lifecycle_interop::DispatchBufferCallbacks(
+      &impl_->plugins, &runtime_types::PluginInstance::on_buffer_open_ref, "on_buffer_open", path,
+      [this](runtime_types::PluginInstance* plugin,
+             int callback_ref,
+             const char* callback_name,
+             const std::filesystem::path& callback_path) {
+        impl_->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
+      });
 #endif
 }
 
@@ -973,9 +979,14 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (auto& plugin : impl_->plugins) {
-    impl_->CallBufferCallback(&plugin, plugin.on_buffer_save_ref, "on_buffer_save", path);
-  }
+  buffer_lifecycle_interop::DispatchBufferCallbacks(
+      &impl_->plugins, &runtime_types::PluginInstance::on_buffer_save_ref, "on_buffer_save", path,
+      [this](runtime_types::PluginInstance* plugin,
+             int callback_ref,
+             const char* callback_name,
+             const std::filesystem::path& callback_path) {
+        impl_->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
+      });
 #endif
 }
 
