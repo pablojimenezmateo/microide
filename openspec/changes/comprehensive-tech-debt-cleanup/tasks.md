@@ -69,10 +69,10 @@
 
 ## 11. WorkspaceShell Final Slim And God-Class Removal
 
-- [ ] 11.1 Move all remaining state and behavior off `WorkspaceShell` into the appropriate service. The shell's final responsibility is to own service instances and route input events.
-- [ ] 11.2 Delete `WorkspaceShellTooling.cpp`, `WorkspaceShellTooling.h`, and `WorkspaceActionContext.{h,cpp}` once their contents are absorbed into services. Rewrite `WorkspaceActionCoordinator` against the service interfaces directly.
-- [ ] 11.3 Delete `WorkspaceShellTesting.h`; rewrite test fixtures to drive services directly.
-- [ ] 11.4 Verify `WorkspaceShell.h` ≤ 400 lines, `WorkspaceShell.cpp` ≤ 600 lines, zero `friend` declarations. Flip the corresponding lint rules to hard-fail.
+- [x] 11.1 Move all remaining state and behavior off `WorkspaceShell` into the appropriate service. The shell's final responsibility is to own service instances and route input events.
+- [x] 11.2 Delete `WorkspaceShellTooling.cpp`, `WorkspaceShellTooling.h`, and `WorkspaceActionContext.{h,cpp}` once their contents are absorbed into services. Rewrite `WorkspaceActionCoordinator` against the service interfaces directly.
+- [x] 11.3 Delete `WorkspaceShellTesting.h`; rewrite test fixtures to drive services directly.
+- [x] 11.4 Verify `WorkspaceShell.h` ≤ 400 lines, `WorkspaceShell.cpp` ≤ 600 lines, zero `friend` declarations. Flip the corresponding lint rules to hard-fail.
 
 ## 12. Full-Tree Validation And Documentation
 

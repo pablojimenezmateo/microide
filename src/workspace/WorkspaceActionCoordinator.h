@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "workspace/WorkspaceActionContext.h"
+#include "workspace/WorkspaceActionServices.h"
 
 namespace microide::workspace {
 

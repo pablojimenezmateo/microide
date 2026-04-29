@@ -220,7 +220,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
   src/workspace/WorkspaceActionCoordinator.cpp
   src/workspace/WorkspaceActionAvailability.cpp
-  src/workspace/WorkspaceActionContext.cpp
+  src/workspace/WorkspaceActionServices.cpp
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
@@ -282,11 +282,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellAssist.cpp
   src/workspace/WorkspaceShellAuthDebug.cpp
-  src/workspace/WorkspaceShellTesting.cpp
+  src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
   src/workspace/WorkspaceShellProviderAuth.cpp
   src/workspace/WorkspaceShellTasks.cpp
-  src/workspace/WorkspaceShellTooling.cpp
+  src/workspace/WorkspaceShellMcp.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp

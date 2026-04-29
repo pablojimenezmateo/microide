@@ -2,7 +2,7 @@
 
 #include "TerminalSessionTestAccess.h"
 #include "render/Theme.h"
-#include "workspace/WorkspaceShellTesting.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <cmath>

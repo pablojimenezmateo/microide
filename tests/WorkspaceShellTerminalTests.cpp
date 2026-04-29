@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "TerminalSessionTestAccess.h"
-#include "workspace/WorkspaceShellTesting.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 
 #include "render/TextRenderer.h"
 #include "render/Theme.h"

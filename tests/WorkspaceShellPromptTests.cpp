@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/GitCompareService.h"
-#include "workspace/WorkspaceShellTesting.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <cmath>

@@ -3,7 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
-#include "workspace/WorkspaceShellTesting.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
 #include <string_view>

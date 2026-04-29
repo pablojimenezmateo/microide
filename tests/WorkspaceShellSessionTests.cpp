@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "platform/AppDirectories.h"
-#include "workspace/WorkspaceShellTesting.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 #include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "project/GitCompareService.h"

@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceShellTesting.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <chrono>

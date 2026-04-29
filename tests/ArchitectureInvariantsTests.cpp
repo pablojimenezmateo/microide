@@ -63,6 +63,7 @@ void AppendViolations(RuleResult& result,
 RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace friend declarations";
+  result.hard_fail = true;
   const std::regex pattern(R"(\bfriend\s+(class|struct)\b)");
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
@@ -158,6 +159,7 @@ RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
                               std::size_t limit) {
   RuleResult result;
   result.label = std::string(relative_path) + " size";
+  result.hard_fail = true;
   const std::filesystem::path path = repo_root / relative_path;
   std::ifstream stream(path);
   std::size_t lines = 0;
