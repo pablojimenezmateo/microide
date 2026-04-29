@@ -79,6 +79,7 @@ RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root) {
 RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "coordinator constructors taking WorkspaceShell";
+  result.hard_fail = true;
   for (const auto& entry :
        std::filesystem::directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".h") {

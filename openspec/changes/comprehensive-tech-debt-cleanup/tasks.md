@@ -51,7 +51,7 @@
 - [x] 8.1 Add `CompareMergeService` owning compare/merge tab orchestration and navigation commands. Migrate `WorkspaceCompareInteractionCoordinator`, `WorkspaceCompareMouseCoordinator`, `WorkspaceMergeMouseCoordinator`, and `WorkspaceDiffTabCoordinator` against it.
 - [x] 8.2 Add `TerminalPanelService` owning terminal tabs, focus, and panel layout requests. Migrate `WorkspacePanelMouseCoordinator` and the terminal-side bits of `WorkspaceLayout` consumers.
 - [ ] 8.3 Migrate the remaining mouse coordinators (`WorkspaceChromeMouseCoordinator`, `WorkspaceEditorMouseCoordinator`, `WorkspaceTabMouseCoordinator`, `WorkspaceSidebarMouseCoordinator`) to consume only the relevant services; remove `WorkspaceShell&` from every coordinator constructor.
-- [ ] 8.4 Flip the lint rule for `WorkspaceShell&` in coordinator constructors from soft-fail to hard-fail.
+- [x] 8.4 Flip the lint rule for `WorkspaceShell&` in coordinator constructors from soft-fail to hard-fail.
 
 ## 9. Render View Models
 
