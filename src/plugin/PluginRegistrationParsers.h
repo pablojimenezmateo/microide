@@ -33,6 +33,31 @@ struct TaskRegistration {
   PluginHost::ContributedTask contributed;
 };
 
+struct MenuEntryRegistration {
+  PluginHost::ContributedMenuEntry contributed;
+};
+
+struct KeybindingRegistration {
+  PluginHost::ContributedKeybinding contributed;
+};
+
+struct SettingRegistration {
+  PluginHost::ContributedSettingSpec contributed;
+};
+
+struct StatusItemRegistration {
+  PluginHost::ContributedStatusItem contributed;
+};
+
+struct FormatterRegistration {
+  PluginHost::ContributedFormatter contributed;
+};
+
+struct SaveParticipantRegistration {
+  PluginHost::ContributedSaveParticipant contributed;
+  runtime_types::SaveParticipantRuntime runtime;
+};
+
 struct LanguageServerRegistration {
   PluginHost::ContributedLanguageServer contributed;
 };
@@ -97,6 +122,36 @@ bool ParseTaskRegistration(lua_State* state,
                            const std::string& plugin_id,
                            TaskRegistration* out,
                            std::string* error_message);
+
+bool ParseMenuEntryRegistration(lua_State* state,
+                                const std::string& plugin_id,
+                                MenuEntryRegistration* out,
+                                std::string* error_message);
+
+bool ParseKeybindingRegistration(lua_State* state,
+                                 const std::string& plugin_id,
+                                 KeybindingRegistration* out,
+                                 std::string* error_message);
+
+bool ParseSettingRegistration(lua_State* state,
+                              const std::string& plugin_id,
+                              SettingRegistration* out,
+                              std::string* error_message);
+
+bool ParseStatusItemRegistration(lua_State* state,
+                                 const std::string& plugin_id,
+                                 StatusItemRegistration* out,
+                                 std::string* error_message);
+
+bool ParseFormatterRegistration(lua_State* state,
+                                const std::string& plugin_id,
+                                FormatterRegistration* out,
+                                std::string* error_message);
+
+bool ParseSaveParticipantRegistration(lua_State* state,
+                                      const std::string& plugin_id,
+                                      SaveParticipantRegistration* out,
+                                      std::string* error_message);
 
 bool ParseLanguageServerRegistration(lua_State* state,
                                      const std::string& plugin_id,

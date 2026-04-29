@@ -251,6 +251,283 @@ bool ParseTaskRegistration(lua_State* state,
   return true;
 }
 
+bool ParseMenuEntryRegistration(lua_State* state,
+                                const std::string& plugin_id,
+                                MenuEntryRegistration* out,
+                                std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "menu entry registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  auto menu_opt = ReadStringField(state, table_index, "menu");
+  auto action_opt = ReadStringField(state, table_index, "action");
+  auto label_opt = ReadStringField(state, table_index, "label");
+  if (!id_opt || !menu_opt || !action_opt || !label_opt) {
+    if (error_message != nullptr) {
+      *error_message = "menu entry requires id, menu, action, and label";
+    }
+    return false;
+  }
+  std::string accelerator;
+  if (auto accel_opt = ReadStringField(state, table_index, "accelerator")) {
+    accelerator = std::move(*accel_opt);
+  }
+  bool separator_before = false;
+  lua_getfield(state, table_index, "separator_before");
+  if (lua_isboolean(state, -1)) {
+    separator_before = lua_toboolean(state, -1) != 0;
+  }
+  lua_pop(state, 1);
+  out->contributed = PluginHost::ContributedMenuEntry{
+      .id = plugin_id + "." + *id_opt,
+      .menu = std::move(*menu_opt),
+      .action = std::move(*action_opt),
+      .label = std::move(*label_opt),
+      .accelerator = std::move(accelerator),
+      .separator_before = separator_before,
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseKeybindingRegistration(lua_State* state,
+                                 const std::string& plugin_id,
+                                 KeybindingRegistration* out,
+                                 std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "keybinding registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  auto action_opt = ReadStringField(state, table_index, "action");
+  auto key_opt = ReadStringField(state, table_index, "key");
+  if (!id_opt || !action_opt || !key_opt) {
+    if (error_message != nullptr) {
+      *error_message = "keybinding requires id, action, and key";
+    }
+    return false;
+  }
+  std::string context;
+  if (auto context_opt = ReadStringField(state, table_index, "context")) {
+    context = std::move(*context_opt);
+  }
+  out->contributed = PluginHost::ContributedKeybinding{
+      .id = plugin_id + "." + *id_opt,
+      .action = std::move(*action_opt),
+      .key_chord = std::move(*key_opt),
+      .context = std::move(context),
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseSettingRegistration(lua_State* state,
+                              const std::string& plugin_id,
+                              SettingRegistration* out,
+                              std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "setting registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  auto type_opt = ReadStringField(state, table_index, "type");
+  if (!id_opt || !type_opt) {
+    if (error_message != nullptr) {
+      *error_message = "setting requires id and type";
+    }
+    return false;
+  }
+  std::string label;
+  if (auto label_opt = ReadStringField(state, table_index, "label")) {
+    label = std::move(*label_opt);
+  }
+  std::string description;
+  if (auto desc_opt = ReadStringField(state, table_index, "description")) {
+    description = std::move(*desc_opt);
+  }
+  std::string scope;
+  if (auto scope_opt = ReadStringField(state, table_index, "scope")) {
+    scope = std::move(*scope_opt);
+  }
+  std::string default_value;
+  if (auto default_opt = ReadStringField(state, table_index, "default")) {
+    default_value = std::move(*default_opt);
+  }
+
+  std::vector<std::string> enum_values;
+  if (*type_opt == "enum") {
+    lua_getfield(state, table_index, "enum_values");
+    if (lua_istable(state, -1)) {
+      const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      for (lua_Integer i = 1; i <= n; ++i) {
+        lua_rawgeti(state, -1, i);
+        if (lua_isstring(state, -1)) {
+          enum_values.emplace_back(lua_tostring(state, -1));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);
+  }
+
+  out->contributed = PluginHost::ContributedSettingSpec{
+      .id = plugin_id + "." + *id_opt,
+      .label = std::move(label),
+      .description = std::move(description),
+      .type = std::move(*type_opt),
+      .scope = std::move(scope),
+      .default_value = std::move(default_value),
+      .enum_values = std::move(enum_values),
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseStatusItemRegistration(lua_State* state,
+                                 const std::string& plugin_id,
+                                 StatusItemRegistration* out,
+                                 std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "status item registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  if (!id_opt) {
+    if (error_message != nullptr) {
+      *error_message = "status item requires id";
+    }
+    return false;
+  }
+  std::string text;
+  if (auto text_opt = ReadStringField(state, table_index, "text")) {
+    text = std::move(*text_opt);
+  }
+  std::string tooltip;
+  if (auto tooltip_opt = ReadStringField(state, table_index, "tooltip")) {
+    tooltip = std::move(*tooltip_opt);
+  }
+  std::string alignment;
+  if (auto align_opt = ReadStringField(state, table_index, "alignment")) {
+    alignment = std::move(*align_opt);
+  }
+  int priority = 0;
+  lua_getfield(state, table_index, "priority");
+  if (lua_isinteger(state, -1)) {
+    priority = static_cast<int>(lua_tointeger(state, -1));
+  }
+  lua_pop(state, 1);
+  out->contributed = PluginHost::ContributedStatusItem{
+      .id = plugin_id + "." + *id_opt,
+      .text = std::move(text),
+      .tooltip = std::move(tooltip),
+      .alignment = std::move(alignment),
+      .priority = priority,
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseFormatterRegistration(lua_State* state,
+                                const std::string& plugin_id,
+                                FormatterRegistration* out,
+                                std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "formatter registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  auto language_id_opt = ReadStringField(state, table_index, "language_id");
+  auto label_opt = ReadStringField(state, table_index, "label");
+  if (!id_opt || !language_id_opt || !label_opt) {
+    if (error_message != nullptr) {
+      *error_message = "formatter requires id, language_id, and label";
+    }
+    return false;
+  }
+  auto command_opt = ReadStringArrayField(state, table_index, "command");
+  if (!command_opt) {
+    if (error_message != nullptr) {
+      *error_message = "formatter command must be a string array";
+    }
+    return false;
+  }
+  if (command_opt->empty()) {
+    if (error_message != nullptr) {
+      *error_message = "formatter command cannot be empty";
+    }
+    return false;
+  }
+  out->contributed = PluginHost::ContributedFormatter{
+      .id = plugin_id + "." + *id_opt,
+      .language_id = std::move(*language_id_opt),
+      .label = std::move(*label_opt),
+      .command = std::move(*command_opt),
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseSaveParticipantRegistration(lua_State* state,
+                                      const std::string& plugin_id,
+                                      SaveParticipantRegistration* out,
+                                      std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "save participant registration output is required";
+    }
+    return false;
+  }
+  const char* id = luaL_checkstring(state, 1);
+  luaL_checktype(state, 2, LUA_TFUNCTION);
+  lua_pushvalue(state, 2);
+  const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+  out->contributed = PluginHost::ContributedSaveParticipant{
+      .id = plugin_id + "." + std::string(id),
+      .plugin_id = plugin_id,
+  };
+  out->runtime = runtime_types::SaveParticipantRuntime{
+      .id = out->contributed.id,
+      .plugin_id = plugin_id,
+      .state = state,
+      .function_ref = function_ref,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
 bool ParseLanguageServerRegistration(lua_State* state,
                                      const std::string& plugin_id,
                                      LanguageServerRegistration* out,

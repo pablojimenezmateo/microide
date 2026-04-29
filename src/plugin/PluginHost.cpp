@@ -642,6 +642,7 @@ struct PluginHost::Impl {
   }
 
   bool RegisterMenuEntry(lua_State* state, int table_index, std::string* error_message) {
+    (void)table_index;
     PluginInstance* plugin = FindPluginByState(state);
     if (plugin == nullptr) {
       if (error_message != nullptr) {
@@ -650,75 +651,31 @@ struct PluginHost::Impl {
       return false;
     }
 
-    const int abs = lua_absindex(state, table_index);
-
-    auto read_string_field = [&](const char* field, bool required) -> std::optional<std::string> {
-      lua_getfield(state, abs, field);
-      if (lua_isstring(state, -1)) {
-        std::string val = lua_tostring(state, -1);
-        lua_pop(state, 1);
-        return val;
-      }
-      lua_pop(state, 1);
-      if (required) {
-        if (error_message != nullptr) {
-          *error_message = std::string("menu entry '") + field + "' must be a string";
-        }
-        return std::nullopt;
-      }
-      return std::string{};
-    };
-
-    auto id_opt = read_string_field("id", true);
-    if (!id_opt.has_value()) {
-      return false;
-    }
-    auto menu_opt = read_string_field("menu", true);
-    if (!menu_opt.has_value()) {
-      return false;
-    }
-    auto action_opt = read_string_field("action", true);
-    if (!action_opt.has_value()) {
-      return false;
-    }
-    auto label_opt = read_string_field("label", true);
-    if (!label_opt.has_value()) {
-      return false;
-    }
-    auto accel_opt = read_string_field("accelerator", false);
-    bool sep_before = false;
-    lua_getfield(state, abs, "separator_before");
-    if (lua_isboolean(state, -1)) {
-      sep_before = lua_toboolean(state, -1) != 0;
-    }
-    lua_pop(state, 1);
-
-    if (!IsValidIdentifier(*id_opt)) {
+    registration_parsers::MenuEntryRegistration registration;
+    std::string parse_error;
+    if (!registration_parsers::ParseMenuEntryRegistration(state, plugin->id, &registration,
+                                                          &parse_error)) {
       if (error_message != nullptr) {
-        *error_message = "invalid menu entry id: " + *id_opt;
+        *error_message = parse_error.empty() ? "failed to parse menu entry" : parse_error;
       }
       return false;
     }
 
-    const std::string full_id = plugin->id + "." + *id_opt;
+    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
+      if (error_message != nullptr) {
+        *error_message = "invalid menu entry id: " + registration.contributed.id;
+      }
+      return false;
+    }
     for (const auto& existing : menu_entries) {
-      if (existing.id == full_id) {
+      if (existing.id == registration.contributed.id) {
         if (error_message != nullptr) {
-          *error_message = "duplicate menu entry: " + full_id;
+          *error_message = "duplicate menu entry: " + registration.contributed.id;
         }
         return false;
       }
     }
-
-    menu_entries.push_back(PluginHost::ContributedMenuEntry{
-        .id = full_id,
-        .menu = std::move(*menu_opt),
-        .action = std::move(*action_opt),
-        .label = std::move(*label_opt),
-        .accelerator = std::move(*accel_opt),
-        .separator_before = sep_before,
-        .plugin_id = plugin->id,
-    });
+    menu_entries.push_back(std::move(registration.contributed));
     return true;
   }
 
@@ -735,6 +692,7 @@ struct PluginHost::Impl {
   }
 
   bool RegisterKeybinding(lua_State* state, int table_index, std::string* error_message) {
+    (void)table_index;
     PluginInstance* plugin = FindPluginByState(state);
     if (plugin == nullptr) {
       if (error_message != nullptr) {
@@ -743,65 +701,30 @@ struct PluginHost::Impl {
       return false;
     }
 
-    const int abs = lua_absindex(state, table_index);
-
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, abs, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        if (error_message != nullptr) {
-          *error_message = std::string("keybinding '") + field + "' must be a string";
-        }
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    if (!id_opt.has_value()) {
-      return false;
-    }
-    auto action_opt = read_string("action");
-    if (!action_opt.has_value()) {
-      return false;
-    }
-    auto key_opt = read_string("key");
-    if (!key_opt.has_value()) {
-      return false;
-    }
-    std::string context;
-    lua_getfield(state, abs, "context");
-    if (lua_isstring(state, -1)) {
-      context = lua_tostring(state, -1);
-    }
-    lua_pop(state, 1);
-
-    if (!IsValidIdentifier(*id_opt)) {
+    registration_parsers::KeybindingRegistration registration;
+    std::string parse_error;
+    if (!registration_parsers::ParseKeybindingRegistration(state, plugin->id, &registration,
+                                                           &parse_error)) {
       if (error_message != nullptr) {
-        *error_message = "invalid keybinding id: " + *id_opt;
+        *error_message = parse_error.empty() ? "failed to parse keybinding" : parse_error;
       }
       return false;
     }
-
-    const std::string full_id = plugin->id + "." + *id_opt;
+    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
+      if (error_message != nullptr) {
+        *error_message = "invalid keybinding id: " + registration.contributed.id;
+      }
+      return false;
+    }
     for (const auto& existing : keybindings) {
-      if (existing.id == full_id) {
+      if (existing.id == registration.contributed.id) {
         if (error_message != nullptr) {
-          *error_message = "duplicate keybinding: " + full_id;
+          *error_message = "duplicate keybinding: " + registration.contributed.id;
         }
         return false;
       }
     }
-
-    keybindings.push_back(PluginHost::ContributedKeybinding{
-        .id = full_id,
-        .action = std::move(*action_opt),
-        .key_chord = std::move(*key_opt),
-        .context = std::move(context),
-        .plugin_id = plugin->id,
-    });
+    keybindings.push_back(std::move(registration.contributed));
     return true;
   }
 
@@ -818,6 +741,7 @@ struct PluginHost::Impl {
   }
 
   bool RegisterSetting(lua_State* state, int table_index, std::string* error_message) {
+    (void)table_index;
     PluginInstance* plugin = FindPluginByState(state);
     if (plugin == nullptr) {
       if (error_message != nullptr) {
@@ -826,35 +750,17 @@ struct PluginHost::Impl {
       return false;
     }
 
-    const int abs = lua_absindex(state, table_index);
-
-    auto read_string = [&](const char* field, bool required) -> std::optional<std::string> {
-      lua_getfield(state, abs, field);
-      if (lua_isstring(state, -1)) {
-        std::string val = lua_tostring(state, -1);
-        lua_pop(state, 1);
-        return val;
+    registration_parsers::SettingRegistration registration;
+    std::string parse_error;
+    if (!registration_parsers::ParseSettingRegistration(state, plugin->id, &registration,
+                                                        &parse_error)) {
+      if (error_message != nullptr) {
+        *error_message = parse_error.empty() ? "failed to parse setting" : parse_error;
       }
-      lua_pop(state, 1);
-      if (required) {
-        if (error_message != nullptr) {
-          *error_message = std::string("setting '") + field + "' must be a string";
-        }
-        return std::nullopt;
-      }
-      return std::string{};
-    };
-
-    auto id_opt = read_string("id", true);
-    if (!id_opt.has_value()) {
-      return false;
-    }
-    auto type_opt = read_string("type", true);
-    if (!type_opt.has_value()) {
       return false;
     }
 
-    const std::string& type = *type_opt;
+    const std::string& type = registration.contributed.type;
     static const char* const kValidTypes[] = {"bool", "int", "float", "string", "enum"};
     bool type_valid = false;
     for (const char* t : kValidTypes) {
@@ -870,54 +776,21 @@ struct PluginHost::Impl {
       return false;
     }
 
-    auto label_opt = read_string("label", false);
-    auto desc_opt = read_string("description", false);
-    auto scope_opt = read_string("scope", false);
-    auto default_opt = read_string("default", false);
-
-    if (!IsValidIdentifier(*id_opt)) {
+    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
       if (error_message != nullptr) {
-        *error_message = "invalid setting id: " + *id_opt;
+        *error_message = "invalid setting id: " + registration.contributed.id;
       }
       return false;
     }
-
-    const std::string full_id = plugin->id + "." + *id_opt;
     for (const auto& existing : settings) {
-      if (existing.id == full_id) {
+      if (existing.id == registration.contributed.id) {
         if (error_message != nullptr) {
-          *error_message = "duplicate setting: " + full_id;
+          *error_message = "duplicate setting: " + registration.contributed.id;
         }
         return false;
       }
     }
-
-    std::vector<std::string> enum_values;
-    if (type == "enum") {
-      lua_getfield(state, abs, "enum_values");
-      if (lua_istable(state, -1)) {
-        const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(state, -1));
-        for (lua_Integer i = 1; i <= n; ++i) {
-          lua_rawgeti(state, -1, i);
-          if (lua_isstring(state, -1)) {
-            enum_values.emplace_back(lua_tostring(state, -1));
-          }
-          lua_pop(state, 1);
-        }
-      }
-      lua_pop(state, 1);
-    }
-
-    settings.push_back(PluginHost::ContributedSettingSpec{
-        .id = full_id,
-        .label = std::move(*label_opt),
-        .description = std::move(*desc_opt),
-        .type = type,
-        .scope = std::move(*scope_opt),
-        .default_value = std::move(*default_opt),
-        .enum_values = std::move(enum_values),
-        .plugin_id = plugin->id,
-    });
+    settings.push_back(std::move(registration.contributed));
     return true;
   }
 
@@ -950,6 +823,7 @@ struct PluginHost::Impl {
   }
 
   bool RegisterStatusItem(lua_State* state, int table_index, std::string* error_message) {
+    (void)table_index;
     PluginInstance* plugin = FindPluginByState(state);
     if (plugin == nullptr) {
       if (error_message != nullptr) {
@@ -958,65 +832,30 @@ struct PluginHost::Impl {
       return false;
     }
 
-    const int abs = lua_absindex(state, table_index);
-
-    auto read_string = [&](const char* field, bool required) -> std::optional<std::string> {
-      lua_getfield(state, abs, field);
-      if (lua_isstring(state, -1)) {
-        std::string val = lua_tostring(state, -1);
-        lua_pop(state, 1);
-        return val;
-      }
-      lua_pop(state, 1);
-      if (required) {
-        if (error_message != nullptr) {
-          *error_message = std::string("status item '") + field + "' must be a string";
-        }
-        return std::nullopt;
-      }
-      return std::string{};
-    };
-
-    auto id_opt = read_string("id", true);
-    if (!id_opt.has_value()) {
-      return false;
-    }
-    auto text_opt = read_string("text", false);
-    auto tooltip_opt = read_string("tooltip", false);
-    auto align_opt = read_string("alignment", false);
-
-    int priority = 0;
-    lua_getfield(state, abs, "priority");
-    if (lua_isinteger(state, -1)) {
-      priority = static_cast<int>(lua_tointeger(state, -1));
-    }
-    lua_pop(state, 1);
-
-    if (!IsValidIdentifier(*id_opt)) {
+    registration_parsers::StatusItemRegistration registration;
+    std::string parse_error;
+    if (!registration_parsers::ParseStatusItemRegistration(state, plugin->id, &registration,
+                                                           &parse_error)) {
       if (error_message != nullptr) {
-        *error_message = "invalid status item id: " + *id_opt;
+        *error_message = parse_error.empty() ? "failed to parse status item" : parse_error;
       }
       return false;
     }
-
-    const std::string full_id = plugin->id + "." + *id_opt;
-    if (status_items.contains(full_id)) {
+    if (!IsValidIdentifier(registration.contributed.id.substr(plugin->id.size() + 1))) {
       if (error_message != nullptr) {
-        *error_message = "duplicate status item: " + full_id;
+        *error_message = "invalid status item id: " + registration.contributed.id;
       }
       return false;
     }
-
-    PluginHost::ContributedStatusItem item{
-        .id = full_id,
-        .text = std::move(*text_opt),
-        .tooltip = std::move(*tooltip_opt),
-        .alignment = std::move(*align_opt),
-        .priority = priority,
-        .plugin_id = plugin->id,
-    };
+    if (status_items.contains(registration.contributed.id)) {
+      if (error_message != nullptr) {
+        *error_message = "duplicate status item: " + registration.contributed.id;
+      }
+      return false;
+    }
+    PluginHost::ContributedStatusItem item = std::move(registration.contributed);
     status_item_order.push_back(item);
-    status_items.emplace(full_id, std::move(item));
+    status_items.emplace(item.id, std::move(item));
     return true;
   }
 
@@ -1080,79 +919,35 @@ struct PluginHost::Impl {
       return luaL_error(state, "formatter registration requires an active plugin state");
     }
 
-    auto read_string = [&](const char* field) -> std::optional<std::string> {
-      lua_getfield(state, 1, field);
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 1);
-        return std::nullopt;
-      }
-      std::string val = lua_tostring(state, -1);
-      lua_pop(state, 1);
-      return val;
-    };
-
-    auto id_opt = read_string("id");
-    auto language_id_opt = read_string("language_id");
-    auto label_opt = read_string("label");
-    if (!id_opt || !language_id_opt || !label_opt) {
-      return luaL_error(state, "formatter requires id, language_id, and label");
+    registration_parsers::FormatterRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseFormatterRegistration(state, plugin->id, &registration,
+                                                          &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse formatter registration"
+                                              : error_message.c_str());
     }
-
-    lua_getfield(state, 1, "command");
-    if (!lua_istable(state, -1)) {
-      lua_pop(state, 1);
-      return luaL_error(state, "formatter command must be an array");
-    }
-    std::vector<std::string> command;
-    for (lua_Integer i = 1; ; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
-      if (!lua_isstring(state, -1)) {
-        lua_pop(state, 2);
-        return luaL_error(state, "formatter command must be a string array");
-      }
-      command.push_back(lua_tostring(state, -1));
-      lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
-
-    if (command.empty()) {
-      return luaL_error(state, "formatter command cannot be empty");
-    }
-
-    host->formatters.push_back(PluginHost::ContributedFormatter{
-        .id = plugin->id + "." + *id_opt,
-        .language_id = std::move(*language_id_opt),
-        .label = std::move(*label_opt),
-        .command = std::move(command),
-        .plugin_id = plugin->id,
-    });
+    host->formatters.push_back(std::move(registration.contributed));
     return 0;
   }
 
   static int LuaSaveParticipantsAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* id = luaL_checkstring(state, 1);
-    luaL_checktype(state, 2, LUA_TFUNCTION);
     const PluginInstance* plugin = host->FindPluginByState(state);
     if (plugin == nullptr) {
       return luaL_error(state, "save participant registration requires an active plugin state");
     }
-    lua_pushvalue(state, 2);
-    const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-    host->save_participants.push_back(PluginHost::ContributedSaveParticipant{
-        .id = plugin->id + "." + std::string(id),
-        .plugin_id = plugin->id,
-    });
-    host->save_participant_runtimes.push_back(SaveParticipantRuntime{
-        .id = plugin->id + "." + std::string(id),
-        .plugin_id = plugin->id,
-        .state = state,
-        .function_ref = function_ref,
-    });
+    registration_parsers::SaveParticipantRegistration registration;
+    std::string error_message;
+    if (!registration_parsers::ParseSaveParticipantRegistration(state, plugin->id, &registration,
+                                                               &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty()
+                            ? "failed to parse save participant registration"
+                            : error_message.c_str());
+    }
+    host->save_participants.push_back(std::move(registration.contributed));
+    host->save_participant_runtimes.push_back(std::move(registration.runtime));
     return 0;
   }
 
