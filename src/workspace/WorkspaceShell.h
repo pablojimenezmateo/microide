@@ -80,7 +80,6 @@ namespace microide::workspace {
 class WorkspaceActionContext;
 class PromptSurfaceService;
 class ProjectCatalogService;
-class ProjectCatalogCoordinator;
 class PersistenceCoordinator;
 class CommandPromptCoordinator;
 class MenuCoordinator;
@@ -659,7 +658,6 @@ class WorkspaceShell {
   bool SetProjectRoot(const std::filesystem::path& project_root);
   static bool ConfigureProjectState(ProjectWorkspaceState& state,
                                     const std::filesystem::path& project_root);
-  ProjectCatalogCoordinator MakeProjectCatalogCoordinator();
   ProjectCatalogService MakeProjectCatalogService();
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
@@ -725,9 +723,6 @@ class WorkspaceShell {
                                 bool restore_persistence,
                                 bool log_feedback,
                                 bool activate_restored_tab = true);
-  bool ActivateProjectState(ProjectWorkspaceState& state, bool activate_restored_tab);
-  void StoreCurrentProjectState(ProjectWorkspaceState& state);
-  void LoadProjectState(ProjectWorkspaceState& state);
   bool OpenProjectTab(const std::filesystem::path& project_root,
                       bool restore_persistence,
                       bool log_feedback);

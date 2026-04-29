@@ -1,31 +1,73 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
-#include "workspace/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/ProjectCatalogService.h"
 
 namespace microide::workspace {
 
-ProjectCatalogCoordinator WorkspaceShell::MakeProjectCatalogCoordinator() {
-  return ProjectCatalogCoordinator(
+ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
+  return ProjectCatalogService(
       context_,
-      ProjectCatalogCoordinator::Operations{
+      ProjectCatalogService::Operations{
           .initialize_current_project =
               [this](const std::filesystem::path& project_root,
                      bool restore_persistence,
-                     bool log_feedback) {
-                return InitializeCurrentProject(project_root, restore_persistence, log_feedback);
+                     bool log_feedback,
+                     bool activate_restored_tab) {
+                return InitializeCurrentProject(project_root,
+                                                restore_persistence,
+                                                log_feedback,
+                                                activate_restored_tab);
               },
-          .activate_project_state =
-              [this](ProjectWorkspaceState& state, bool activate_restored_tab) {
-                return ActivateProjectState(state, activate_restored_tab);
+          .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
+          .stop_project_search = [this]() { StopProjectSearch(); },
+          .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
+          .clear_editor_blame = [this]() { ClearEditorBlame(); },
+          .rebind_project_state = [this](ProjectWorkspaceState& state) { RebindProjectState(state); },
+          .reset_current_project_state_storage =
+              [this]() { ResetCurrentProjectStateStorage(); },
+          .reset_transient_interaction_state = [this]() { ResetTransientInteractionState(); },
+          .set_project_file_monitor_root =
+              [this](const std::filesystem::path& root) {
+                project_file_monitor_.SetDeferredArming(true);
+                project_file_monitor_.SetProjectRoot(root);
+                project_file_monitor_.SetDeferredArming(false);
+                project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
               },
-          .store_current_project_state =
-              [this](ProjectWorkspaceState& state) { StoreCurrentProjectState(state); },
-          .load_project_state = [this](ProjectWorkspaceState& state) { LoadProjectState(state); },
+          .apply_colorscheme =
+              [this]() {
+                MakePersistenceCoordinator().ApplyColorscheme(
+                    context_.current_project_state.active_colorscheme_name, false, false);
+              },
+          .apply_editor_preferences_to_all_tabs =
+              [this]() { ApplyEditorPreferencesToAllTabs(); },
+          .apply_welcome_editor_preferences_if_placeholder =
+              [this]() {
+                if (context_.current_project_state.welcome_surface.viewport.is_placeholder()) {
+                  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
+                }
+              },
+          .ensure_terminal_tab_open =
+              [this]() {
+                if (!context_.current_project_state.root.empty() &&
+                    context_.current_project_state.terminal_tabs.empty()) {
+                  OpenTerminal({}, false, false);
+                }
+              },
+          .activate_current_tab_after_state_load =
+              [this]() { return ActivateCurrentTabAfterStateLoad(); },
+          .reload_plugins_for_current_project =
+              [this](bool reload_syntax_definitions,
+                     bool replay_plugin_buffer_opens,
+                     bool open_lsp_documents) {
+                ReloadPluginsForCurrentProject(reload_syntax_definitions,
+                                               replay_plugin_buffer_opens,
+                                               open_lsp_documents);
+              },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .save_workspace_session =
@@ -36,10 +78,6 @@ ProjectCatalogCoordinator WorkspaceShell::MakeProjectCatalogCoordinator() {
           .ensure_active_project_visible = [this]() { EnsureActiveProjectVisible(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
       });
-}
-
-ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
-  return ProjectCatalogService(MakeProjectCatalogCoordinator());
 }
 
 bool WorkspaceShell::HasActiveProjectCatalogEntry() const {
