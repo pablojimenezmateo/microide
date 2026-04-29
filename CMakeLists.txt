@@ -167,6 +167,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginPathInterop.cpp
   src/plugin/PluginProcessInterop.cpp
   src/plugin/PluginProviderQueryInterop.cpp
+  src/plugin/PluginRuntimeApiInterop.cpp
   src/plugin/PluginRegistryInterop.cpp
   src/plugin/PluginProviderRegistrationParsers.cpp
   src/plugin/PluginRegistrationParsers.cpp

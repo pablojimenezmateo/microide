@@ -27,13 +27,13 @@
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginLuaContextInterop.h"
 #include "plugin/PluginDiscoveryInterop.h"
-#include "plugin/PluginDiagnosticsInterop.h"
 #include "plugin/PluginLifecycleCallbackInterop.h"
 #include "plugin/PluginLifecycleLoadInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginLuaProviderRegistrationInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
+#include "plugin/PluginRuntimeApiInterop.h"
 #include "plugin/PluginSidebarHoverInterop.h"
 #include "plugin/PluginStateTeardownInterop.h"
 #include "plugin/PluginWorkspaceInterop.h"
@@ -622,19 +622,10 @@ struct PluginHost::Impl {
 
   static int LuaDiagnosticsPublish(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* raw_path = luaL_checkstring(state, 1);
-    luaL_checktype(state, 2, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    std::string error_message;
-    if (host == nullptr || plugin == nullptr ||
-        !diagnostics_interop::PublishDiagnostics(state, plugin->id, host->current_project_root,
-                                                 raw_path, 2, host->callbacks,
-                                                 &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to publish diagnostics"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return runtime_api_interop::LuaDiagnosticsPublish(
+        state, plugin, host != nullptr ? host->current_project_root : std::filesystem::path{},
+        host != nullptr ? host->callbacks : PluginHost::Callbacks{});
   }
 
   static int LuaDiagnosticsClear(lua_State* state) {
@@ -646,25 +637,14 @@ struct PluginHost::Impl {
                                 std::filesystem::path(luaL_checkstring(state, 1)));
     }
 
-    std::string error_message;
-    if (host == nullptr || plugin == nullptr ||
-        !diagnostics_interop::ClearDiagnostics(plugin->id, path, host->callbacks, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to clear diagnostics"
-                                              : error_message.c_str());
-    }
-    return 0;
+    return runtime_api_interop::LuaDiagnosticsClear(
+        state, plugin, path, host != nullptr ? host->callbacks : PluginHost::Callbacks{});
   }
 
   static int LuaSidebarShow(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const char* id = luaL_checkstring(state, 1);
-    if (host == nullptr || !host->callbacks.show_sidebar) {
-      lua_pushboolean(state, 0);
-      return 1;
-    }
-    lua_pushboolean(state, host->callbacks.show_sidebar(id) ? 1 : 0);
-    return 1;
+    return runtime_api_interop::LuaSidebarShow(
+        state, host != nullptr ? host->callbacks : PluginHost::Callbacks{});
   }
 
   void PushPluginContext(lua_State* state) {
