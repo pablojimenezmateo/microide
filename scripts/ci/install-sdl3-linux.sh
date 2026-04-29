@@ -26,11 +26,13 @@ cmake --build SDL/build -j "${JOBS}"
 sudo cmake --install SDL/build
 
 if [ ! -d SDL_ttf ]; then
-  git clone --depth 1 --branch "${SDL_TTF_TAG}" https://github.com/libsdl-org/SDL_ttf.git
+  git clone --depth 1 --branch "${SDL_TTF_TAG}" --recurse-submodules --shallow-submodules \
+    https://github.com/libsdl-org/SDL_ttf.git
 fi
 cmake -S SDL_ttf -B SDL_ttf/build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DSDLTTF_VENDORED=ON \
+  -DSDLTTF_VENDORED=OFF \
+  -DSDLTTF_HARFBUZZ=ON \
   -DSDLTTF_SAMPLES=OFF \
   -DBUILD_SHARED_LIBS=ON
 cmake --build SDL_ttf/build -j "${JOBS}"
