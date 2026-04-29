@@ -25,6 +25,7 @@
 #include "platform/Subprocess.h"
 #include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginLuaInterop.h"
+#include "plugin/PluginLuaContextInterop.h"
 #include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginDiscoveryInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
@@ -771,194 +772,46 @@ struct PluginHost::Impl {
   }
 
   void PushPluginContext(lua_State* state) {
-    lua_createtable(state, 0, 11);
-
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaLog, 1);
-    lua_setfield(state, -2, "log");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaCommandsAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "commands");
-
-    lua_createtable(state, 0, 3);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaWorkspaceProjectRoot, 1);
-    lua_setfield(state, -2, "project_root");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaWorkspaceOpenFile, 1);
-    lua_setfield(state, -2, "open_file");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaWorkspaceActiveBuffer, 1);
-    lua_setfield(state, -2, "active_buffer");
-    lua_setfield(state, -2, "workspace");
-
-    lua_createtable(state, 0, 3);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaFilesReadText, 1);
-    lua_setfield(state, -2, "read_text");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaFilesWriteText, 1);
-    lua_setfield(state, -2, "write_text");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaFilesExists, 1);
-    lua_setfield(state, -2, "exists");
-    lua_setfield(state, -2, "files");
-
-    lua_createtable(state, 0, 2);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaProcessRun, 1);
-    lua_setfield(state, -2, "run");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaProcessRunAsync, 1);
-    lua_setfield(state, -2, "run_async");
-    lua_setfield(state, -2, "process");
-
-    lua_createtable(state, 0, 2);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaDiagnosticsPublish, 1);
-    lua_setfield(state, -2, "publish");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaDiagnosticsClear, 1);
-    lua_setfield(state, -2, "clear");
-    lua_setfield(state, -2, "diagnostics");
-
-    lua_createtable(state, 0, 2);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaSidebarAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaSidebarShow, 1);
-    lua_setfield(state, -2, "show");
-    lua_setfield(state, -2, "sidebar");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaHoverAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "hover");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaMenusAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "menus");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaKeybindingsAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "keybindings");
-
-    lua_createtable(state, 0, 2);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaSettingsDeclare, 1);
-    lua_setfield(state, -2, "declare");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaSettingsGet, 1);
-    lua_setfield(state, -2, "get");
-    lua_setfield(state, -2, "settings");
-
-    lua_createtable(state, 0, 2);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaStatusAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaStatusUpdate, 1);
-    lua_setfield(state, -2, "update");
-    lua_setfield(state, -2, "status");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaFormattersAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "formatters");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaSaveParticipantsAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "save_participants");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaCompletionAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "completion");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaCodeActionAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "code_actions");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaLspAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "lsp");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaTaskAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "tasks");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaToolAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "tools");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaDebuggerAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "debuggers");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaTestProviderAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "tests");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaScmProviderAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "scm");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaAnnotationProviderAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "annotations");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaAuthProviderAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "auth");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaAiProviderAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "ai_providers");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaExternalAgentAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "external_agents");
-
-    lua_createtable(state, 0, 1);
-    lua_pushlightuserdata(state, this);
-    lua_pushcclosure(state, &LuaMcpToolAdd, 1);
-    lua_setfield(state, -2, "add");
-    lua_setfield(state, -2, "mcp_tools");
+    lua_context_interop::PushPluginContext(
+        state, this,
+        lua_context_interop::ApiFns{
+            .log = &LuaLog,
+            .commands_add = &LuaCommandsAdd,
+            .workspace_project_root = &LuaWorkspaceProjectRoot,
+            .workspace_open_file = &LuaWorkspaceOpenFile,
+            .workspace_active_buffer = &LuaWorkspaceActiveBuffer,
+            .files_read_text = &LuaFilesReadText,
+            .files_write_text = &LuaFilesWriteText,
+            .files_exists = &LuaFilesExists,
+            .process_run = &LuaProcessRun,
+            .process_run_async = &LuaProcessRunAsync,
+            .diagnostics_publish = &LuaDiagnosticsPublish,
+            .diagnostics_clear = &LuaDiagnosticsClear,
+            .sidebar_add = &LuaSidebarAdd,
+            .sidebar_show = &LuaSidebarShow,
+            .hover_add = &LuaHoverAdd,
+            .menus_add = &LuaMenusAdd,
+            .keybindings_add = &LuaKeybindingsAdd,
+            .settings_declare = &LuaSettingsDeclare,
+            .settings_get = &LuaSettingsGet,
+            .status_add = &LuaStatusAdd,
+            .status_update = &LuaStatusUpdate,
+            .formatters_add = &LuaFormattersAdd,
+            .save_participants_add = &LuaSaveParticipantsAdd,
+            .completion_add = &LuaCompletionAdd,
+            .code_action_add = &LuaCodeActionAdd,
+            .lsp_add = &LuaLspAdd,
+            .task_add = &LuaTaskAdd,
+            .tool_add = &LuaToolAdd,
+            .debugger_add = &LuaDebuggerAdd,
+            .test_provider_add = &LuaTestProviderAdd,
+            .scm_provider_add = &LuaScmProviderAdd,
+            .annotation_provider_add = &LuaAnnotationProviderAdd,
+            .auth_provider_add = &LuaAuthProviderAdd,
+            .ai_provider_add = &LuaAiProviderAdd,
+            .external_agent_add = &LuaExternalAgentAdd,
+            .mcp_tool_add = &LuaMcpToolAdd,
+        });
   }
 
   void PushProjectTable(lua_State* state, const std::filesystem::path& project_root) {
