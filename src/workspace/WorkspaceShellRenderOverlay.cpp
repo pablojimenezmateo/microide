@@ -16,7 +16,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     return;
   }
 
-  const TextInputSurface current_surface = CurrentTextInputSurface();
+  const TextInputSurface current_surface = overlay_vm.current_surface;
   const bool overlay_needs_visual =
       current_surface == TextInputSurface::BufferSearch ||
       current_surface == TextInputSurface::BufferReplaceSearch ||

@@ -50,6 +50,7 @@ OverlaySurfaceViewModel RenderViewModelBuilder::BuildOverlaySurface() const {
       .visible = context_.current_project_state.overlay.visible,
       .mode = context_.current_project_state.overlay.mode,
       .scroll_row = context_.current_project_state.overlay.scroll_row,
+      .current_surface = context_.text_input.active_surface,
       .buffer_search_query_text =
           context_.current_project_state.overlay.workflow.buffer_search.query.text,
       .state = &context_.current_project_state.overlay,
@@ -59,6 +60,7 @@ OverlaySurfaceViewModel RenderViewModelBuilder::BuildOverlaySurface() const {
 
 TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const {
   return TextInputSurfaceViewModel{
+      .current_surface = context_.text_input.active_surface,
       .prompt_editing = context_.prompts.surface_visible,
       .command_mode = context_.current_project_state.panel.command_mode,
       .command_input = &context_.current_project_state.panel.command.input,

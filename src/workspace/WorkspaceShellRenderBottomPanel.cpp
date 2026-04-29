@@ -31,7 +31,9 @@ const std::vector<terminal::TerminalLine>& EmptyTerminalLines() {
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                               const WorkspaceLayout& layout,
                                               std::size_t terminal_line_count) {
-  const BottomPanelSurfaceViewModel panel_vm = RenderViewModelBuilder(context_).BuildBottomPanelSurface();
+  const RenderViewModelBuilder view_model_builder(context_);
+  const BottomPanelSurfaceViewModel panel_vm = view_model_builder.BuildBottomPanelSurface();
+  const TextInputSurfaceViewModel text_input_vm = view_model_builder.BuildTextInputSurface();
   if (!panel_vm.command_mode && panel_vm.content == PanelContentKind::None) {
     return;
   }
@@ -368,7 +370,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                theme_.surface_raised, TruncateLabel(status_text, command_area.w - 24.0f));
 
     const TextInputSurface panel_surface = TextInputSurface::Command;
-    const TextInputSurface current_surface = CurrentTextInputSurface();
+    const TextInputSurface current_surface = text_input_vm.current_surface;
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
     DrawTextFieldFrame(renderer, theme_, prompt_rect, current_surface == panel_surface);
     const auto visual =

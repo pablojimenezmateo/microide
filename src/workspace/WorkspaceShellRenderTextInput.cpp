@@ -150,7 +150,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
   const OverlaySurfaceViewModel overlay_vm = view_model_builder.BuildOverlaySurface();
   const SidebarSurfaceViewModel sidebar_vm = view_model_builder.BuildSidebarSurface();
   const TextInputSurfaceViewModel text_input_vm = view_model_builder.BuildTextInputSurface();
-  const TextInputSurface surface = CurrentTextInputSurface();
+  const TextInputSurface surface = text_input_vm.current_surface;
   const float line_height = text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
 

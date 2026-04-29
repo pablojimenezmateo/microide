@@ -19,12 +19,14 @@ struct OverlaySurfaceViewModel {
   bool visible = false;
   OverlayMode mode = OverlayMode::FileFinder;
   int scroll_row = 0;
+  TextInputSurface current_surface = TextInputSurface::None;
   std::string buffer_search_query_text;
   const OverlayState* state = nullptr;
   ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct TextInputSurfaceViewModel {
+  TextInputSurface current_surface = TextInputSurface::None;
   bool prompt_editing = false;
   bool command_mode = false;
   const util::SingleLineTextState* command_input = nullptr;

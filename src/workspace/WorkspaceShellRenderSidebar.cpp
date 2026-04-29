@@ -34,7 +34,9 @@ std::string BuildProjectSearchResultLabel(std::size_t line,
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  const SidebarSurfaceViewModel sidebar_vm = RenderViewModelBuilder(context_).BuildSidebarSurface();
+  const RenderViewModelBuilder view_model_builder(context_);
+  const SidebarSurfaceViewModel sidebar_vm = view_model_builder.BuildSidebarSurface();
+  const TextInputSurfaceViewModel text_input_vm = view_model_builder.BuildTextInputSurface();
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
   if (!sidebar_vm.visible) {
     return;
@@ -97,7 +99,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const bool editing_replace =
         ps.editing && ps.edit_field == ProjectSearchEditField::Replace;
 
-    const TextInputSurface current_surface = CurrentTextInputSurface();
+    const TextInputSurface current_surface = text_input_vm.current_surface;
     const bool sidebar_needs_visual =
         current_surface == TextInputSurface::SidebarSearchQuery ||
         current_surface == TextInputSurface::SidebarSearchReplace;
@@ -431,7 +433,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
     }
 
-    const TextInputSurface current_surface = CurrentTextInputSurface();
+    const TextInputSurface current_surface = text_input_vm.current_surface;
     const bool chat_input_active = current_surface == TextInputSurface::ChatComposer;
     const auto visual = chat_input_active ? BuildActiveTextInputVisual(layout, std::nullopt)
                                           : std::nullopt;
