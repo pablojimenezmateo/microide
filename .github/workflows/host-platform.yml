@@ -11,11 +11,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
+            artifact: microide-linux-x86_64
+            package_script: ./scripts/ci/package-linux.sh
+            dist_dir: dist/microide-linux
             shell: bash
             deps: |
               sudo apt-get update
               sudo apt-get install -y \
-                cmake ninja-build pkg-config git \
+                cmake ninja-build pkg-config git patchelf \
                 libpcre2-dev libcurl4-openssl-dev \
                 libfreetype-dev libharfbuzz-dev \
                 libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
@@ -25,10 +28,16 @@ jobs:
                 libpulse-dev libasound2-dev libdbus-1-dev libudev-dev
               ./scripts/ci/install-sdl3-linux.sh
           - os: macos-15
+            artifact: microide-macos-arm64
+            package_script: ./scripts/ci/package-macos.sh
+            dist_dir: dist/microide-macos
             shell: bash
             deps: |
-              brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl
+              brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl dylibbundler
           - os: windows-2022
+            artifact: microide-windows-x86_64
+            package_script: ./scripts/ci/package-windows.sh
+            dist_dir: dist/microide-windows
             shell: msys2 {0}
             deps: |
               pacman -S --needed --noconfirm \
@@ -67,6 +76,17 @@ jobs:
 
       - name: Host-Facing Regression Slice
         run: ./build/microide/microide_tests AppDirectories RuntimePaths FileOperationService Subprocess TerminalSession FileWatcher
+
+      - name: Package Distribution
+        run: ${{ matrix.package_script }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.dist_dir }}
+          if-no-files-found: error
+          retention-days: 30
 
   sanitizer-matrix:
     runs-on: ubuntu-24.04
