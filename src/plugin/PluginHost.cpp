@@ -32,6 +32,7 @@
 #include "plugin/PluginLifecycleLoadInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "plugin/PluginProcessInterop.h"
+#include "plugin/PluginLuaProviderRegistrationInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
 #include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
@@ -497,7 +498,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterTask(state, plugin->id, &host->tasks, &error_message)) {
+    if (!lua_provider_registration_interop::RegisterTask(state, plugin->id, &host->tasks,
+                                                         &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse task registration"
                                               : error_message.c_str());
@@ -514,8 +516,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterLanguageServer(state, plugin->id, &host->language_servers,
-                                                      &error_message)) {
+    if (!lua_provider_registration_interop::RegisterLanguageServer(
+            state, plugin->id, &host->language_servers, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse language server registration"
                                               : error_message.c_str());
@@ -532,7 +534,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterTool(state, plugin->id, &host->tools, &error_message)) {
+    if (!lua_provider_registration_interop::RegisterTool(state, plugin->id, &host->tools,
+                                                         &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse tool registration"
                                               : error_message.c_str());
@@ -549,8 +552,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterDebugger(state, plugin->id, &host->debuggers,
-                                                &error_message)) {
+    if (!lua_provider_registration_interop::RegisterDebugger(state, plugin->id, &host->debuggers,
+                                                             &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse debugger registration"
                                               : error_message.c_str());
@@ -567,9 +570,9 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterTestProvider(state, plugin->id, &host->test_providers,
-                                                    &host->test_provider_runtimes,
-                                                    &error_message)) {
+    if (!lua_provider_registration_interop::RegisterTestProvider(
+            state, plugin->id, &host->test_providers, &host->test_provider_runtimes,
+            &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse test provider registration"
                                               : error_message.c_str());
@@ -585,20 +588,12 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (lua_istable(state, 1)) {
-      if (!contribution_interop::RegisterScmProvider(state, plugin->id, &host->scm_providers,
-                                                     &host->scm_provider_runtimes,
-                                                     &error_message)) {
-        return luaL_error(state, "%s",
-                          error_message.empty() ? "failed to parse scm provider registration"
-                                                : error_message.c_str());
-      }
-    } else {
-      host->scm_providers.push_back(PluginHost::ContributedScmProvider{
-          .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
-          .label = std::string(luaL_checkstring(state, 2)),
-          .plugin_id = plugin->id,
-      });
+    if (!lua_provider_registration_interop::RegisterScmProvider(
+            state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
+            &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse scm provider registration"
+                                              : error_message.c_str());
     }
     return 0;
   }
@@ -612,7 +607,7 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterAnnotationProvider(
+    if (!lua_provider_registration_interop::RegisterAnnotationProvider(
             state, plugin->id, &host->annotation_providers, &host->annotation_provider_runtimes,
             &error_message)) {
       return luaL_error(state, "%s",
@@ -631,20 +626,12 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (lua_istable(state, 1)) {
-      if (!contribution_interop::RegisterAuthProvider(state, plugin->id, &host->auth_providers,
-                                                      &host->auth_provider_runtimes,
-                                                      &error_message)) {
-        return luaL_error(state, "%s",
-                          error_message.empty() ? "failed to parse auth provider registration"
-                                                : error_message.c_str());
-      }
-    } else {
-      host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
-          .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
-          .label = std::string(luaL_checkstring(state, 2)),
-          .plugin_id = plugin->id,
-      });
+    if (!lua_provider_registration_interop::RegisterAuthProvider(
+            state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
+            &error_message)) {
+      return luaL_error(state, "%s",
+                        error_message.empty() ? "failed to parse auth provider registration"
+                                              : error_message.c_str());
     }
     return 0;
   }
@@ -658,8 +645,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterAiProvider(state, plugin->id, &host->ai_providers,
-                                                  &error_message)) {
+    if (!lua_provider_registration_interop::RegisterAiProvider(
+            state, plugin->id, &host->ai_providers, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse AI provider registration"
                                               : error_message.c_str());
@@ -676,8 +663,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterExternalAgent(state, plugin->id, &host->external_agents,
-                                                     &error_message)) {
+    if (!lua_provider_registration_interop::RegisterExternalAgent(
+            state, plugin->id, &host->external_agents, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty()
                             ? "failed to parse external agent registration"
@@ -695,8 +682,8 @@ struct PluginHost::Impl {
     }
 
     std::string error_message;
-    if (!contribution_interop::RegisterMcpTool(state, plugin->id, &host->mcp_tools,
-                                               &host->mcp_tool_runtimes, &error_message)) {
+    if (!lua_provider_registration_interop::RegisterMcpTool(
+            state, plugin->id, &host->mcp_tools, &host->mcp_tool_runtimes, &error_message)) {
       return luaL_error(state, "%s",
                         error_message.empty() ? "failed to parse MCP tool registration"
                                               : error_message.c_str());
