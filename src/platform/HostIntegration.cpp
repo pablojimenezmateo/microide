@@ -8,8 +8,8 @@
 #include "platform/Subprocess.h"
 
 #if defined(_WIN32)
-#include <shellapi.h>
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 namespace microide::platform {

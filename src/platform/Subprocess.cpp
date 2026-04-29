@@ -1,5 +1,6 @@
 #include "platform/Subprocess.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 
