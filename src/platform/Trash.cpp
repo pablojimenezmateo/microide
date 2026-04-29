@@ -9,6 +9,7 @@
 #include <system_error>
 
 #if defined(_WIN32)
+#include <windows.h>
 #include <shellapi.h>
 #endif
 
