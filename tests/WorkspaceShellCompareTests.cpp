@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -156,12 +157,12 @@ void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
 
   Expect(compare.right_view_active,
          "compare click fixture should start with the editable pane active");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, left_x, row_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, left_x, row_y, SDL_BUTTON_LEFT),
          "clicking the compare left pane should be handled");
   Expect(!compare.right_view_active,
          "clicking the compare left pane should leave the editable pane inactive");
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
          "clicking the compare right pane should be handled");
   Expect(compare.right_view_active,
          "clicking the compare right pane should reactivate the editable pane");
@@ -191,7 +192,7 @@ void TestWorkspaceShellReadOnlyCompareRightPaneSupportsSelectAllAndCopy() {
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   const float row_y = surface.rows_y + surface.line_height * 0.5f;
   const float right_x = surface.right_x + 24.0f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
          "clicking the read-only compare right pane should be handled");
   Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_view_active,
          "clicking the read-only compare right pane should make it the active navigable surface");
@@ -235,7 +236,7 @@ void TestWorkspaceShellReadOnlyCompareShortcutCopyUsesNavigableViewport() {
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   const float row_y = surface.rows_y + surface.line_height * 0.5f;
   const float right_x = surface.right_x + 24.0f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT),
          "clicking the read-only compare right pane should be handled");
 
   std::string clipboard_text;
@@ -245,9 +246,9 @@ void TestWorkspaceShellReadOnlyCompareShortcutCopyUsesNavigableViewport() {
         return true;
       });
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_A, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL),
          "Ctrl+A should be handled on the read-only compare pane");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_C, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_C, SDL_KMOD_CTRL),
          "Ctrl+C should be handled on the read-only compare pane");
   Expect(clipboard_text.find("head line") != std::string::npos,
          "compare shortcut copy should use the active read-only navigable viewport");
@@ -285,7 +286,7 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
   const int before_scroll = compare.scroll_row;
   const float wheel_x = surface.right_x + 24.0f;
   const float wheel_y = surface.rows_y + surface.line_height * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -1),
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling the compare surface should be handled");
   Expect(compare.scroll_row > before_scroll,
          "scrolling the compare surface should advance the visible row");
@@ -306,7 +307,7 @@ void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "compare invalidation fixture should open");
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
   const SDL_FRect editable_rect = WorkspaceShellTestAccess::ActiveCompareEditableRect(shell);
@@ -345,7 +346,7 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "compare row invalidation fixture should open");
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   const auto previous_row_rect = WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, 0, 1);
   SDL_Event event{};

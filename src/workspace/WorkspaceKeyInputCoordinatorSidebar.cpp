@@ -1,0 +1,485 @@
+#include "workspace/WorkspaceKeyInputCoordinator.h"
+
+#include <algorithm>
+#include <array>
+#include <limits>
+
+namespace microide::workspace {
+bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
+                                               SDL_Keymod modifiers) {
+  const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
+  if (sidebar_mode == SidebarMode::Search) {
+    const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
+    if (state_.overlay.workflow.project_search.editing) {
+      switch (event.key) {
+        case SDLK_ESCAPE:
+          operations_.cancel_project_search_edit();
+          return true;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          operations_.commit_project_search_edit();
+          return true;
+        default:
+          return operations_.text_input_handle_single_line_key_down(event, modifiers);
+      }
+    }
+
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
+          return true;
+        }
+        return false;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+      case SDLK_RIGHT:
+        if (!state_.overlay.workflow.project_search.results.empty() &&
+            state_.overlay.workflow.project_search.selected_index <
+                state_.overlay.workflow.project_search.results.size()) {
+          const auto& result =
+              state_.overlay.workflow.project_search.results[state_.overlay.workflow.project_search.selected_index];
+          operations_.open_file(state_.root / result.relative_path);
+          if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+              viewport != nullptr) {
+            viewport->MoveCursorTo(result.line, result.column);
+          }
+          if (state_.sidebar.temporary) {
+            operations_.restore_previous_sidebar();
+          }
+          state_.surface.focus = FocusTarget::Editor;
+        }
+        return true;
+      case SDLK_UP:
+        operations_.move_project_search_selection(-1);
+        return true;
+      case SDLK_DOWN:
+        operations_.move_project_search_selection(1);
+        return true;
+      case SDLK_HOME:
+        if (!state_.overlay.workflow.project_search.results.empty()) {
+          state_.overlay.workflow.project_search.selected_index = 0;
+        }
+        return true;
+      case SDLK_END:
+        if (!state_.overlay.workflow.project_search.results.empty()) {
+          state_.overlay.workflow.project_search.selected_index =
+              state_.overlay.workflow.project_search.results.size() - 1;
+        }
+        return true;
+      case SDLK_PAGEUP:
+        operations_.move_project_search_selection(-8);
+        return true;
+      case SDLK_PAGEDOWN:
+        operations_.move_project_search_selection(8);
+        return true;
+      case SDLK_R:
+        if (input_character == 'R') {
+          operations_.replace_all_project_search_matches();
+        } else {
+          operations_.refresh_project_search();
+        }
+        return true;
+      case SDLK_EQUALS:
+        operations_.begin_project_search_edit(ProjectSearchEditField::Replace);
+        return true;
+      case SDLK_SLASH:
+        operations_.begin_project_search_edit(ProjectSearchEditField::Query);
+        return true;
+      default:
+        if (event.key == SDLK_J && input_character == 'j') {
+          operations_.move_project_search_selection(1);
+          return true;
+        }
+        if (event.key == SDLK_K && input_character == 'k') {
+          operations_.move_project_search_selection(-1);
+          return true;
+        }
+        return false;
+    }
+  }
+
+  if (sidebar_mode == SidebarMode::Chat) {
+    auto cycle_chat_focus = [&](int delta) {
+      constexpr std::array<ChatPaneFocusRegion, 4> kOrder = {
+          ChatPaneFocusRegion::Rail,
+          ChatPaneFocusRegion::Header,
+          ChatPaneFocusRegion::Transcript,
+          ChatPaneFocusRegion::Composer,
+      };
+      auto it = std::find(kOrder.begin(), kOrder.end(), state_.panel.chat.focus_region);
+      int index = it == kOrder.end() ? 0 : static_cast<int>(it - kOrder.begin());
+      index = (index + delta + static_cast<int>(kOrder.size()) * 2) %
+              static_cast<int>(kOrder.size());
+      state_.panel.chat.focus_region = kOrder[static_cast<std::size_t>(index)];
+      operations_.request_sidebar_redraw();
+    };
+    auto activate_header_control = [&]() -> bool {
+      switch (state_.panel.chat.header_focus_index) {
+        case 0:
+          if (state_.panel.chat.request_in_flight &&
+              state_.panel.chat.request_conversation_id == state_.panel.chat.conversation_id) {
+            return operations_.cancel_active_chat_request();
+          }
+          if (const Conversation* conversation =
+                  state_.conversations.GetConversation(state_.panel.chat.conversation_id);
+              conversation != nullptr &&
+              (conversation->status == RequestStatus::Failed ||
+               conversation->status == RequestStatus::Cancelled)) {
+            return operations_.retry_active_chat_request(nullptr);
+          }
+          return operations_.create_chat_conversation();
+        case 1:
+          return operations_.delete_active_chat_conversation();
+        case 2:
+          operations_.cycle_active_chat_provider(1);
+          return true;
+        case 3:
+          operations_.cycle_active_chat_model(1);
+          return true;
+        case 4:
+          operations_.cycle_active_chat_tool_mode(1);
+          return true;
+        default:
+          return false;
+      }
+    };
+
+    switch (event.key) {
+      case SDLK_TAB:
+        cycle_chat_focus((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+        return true;
+      case SDLK_ESCAPE:
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
+        } else {
+          state_.surface.focus = FocusTarget::Editor;
+        }
+        return true;
+      default:
+        break;
+    }
+
+    if (state_.panel.chat.focus_region == ChatPaneFocusRegion::Rail) {
+      const auto& conversations = state_.conversations.conversations();
+      if (conversations.empty()) {
+        return event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER
+                   ? operations_.create_chat_conversation()
+                   : false;
+      }
+      auto current_it = std::find_if(conversations.begin(), conversations.end(),
+                                     [&](const Conversation& conversation) {
+                                       return conversation.id == state_.panel.chat.conversation_id;
+                                     });
+      std::size_t index = current_it == conversations.end()
+                              ? 0
+                              : static_cast<std::size_t>(current_it - conversations.begin());
+      switch (event.key) {
+        case SDLK_UP:
+          if (index > 0) {
+            return operations_.activate_chat_conversation(conversations[index - 1].id);
+          }
+          return true;
+        case SDLK_DOWN:
+          if (index + 1 < conversations.size()) {
+            return operations_.activate_chat_conversation(conversations[index + 1].id);
+          }
+          return true;
+        case SDLK_DELETE:
+        case SDLK_BACKSPACE:
+          return operations_.delete_active_chat_conversation();
+        case SDLK_N:
+          if ((modifiers & SDL_KMOD_CTRL) != 0 ||
+              operations_.keycode_to_ascii(event.key, modifiers) == 'n') {
+            return operations_.create_chat_conversation();
+          }
+          return false;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          return operations_.activate_chat_conversation(conversations[index].id);
+        default:
+          return false;
+      }
+    }
+
+    if (state_.panel.chat.focus_region == ChatPaneFocusRegion::Header) {
+      switch (event.key) {
+        case SDLK_LEFT:
+          if (state_.panel.chat.header_focus_index > 0) {
+            --state_.panel.chat.header_focus_index;
+            operations_.request_sidebar_redraw();
+          }
+          return true;
+        case SDLK_RIGHT:
+          state_.panel.chat.header_focus_index =
+              std::min<std::size_t>(4, state_.panel.chat.header_focus_index + 1);
+          operations_.request_sidebar_redraw();
+          return true;
+        case SDLK_HOME:
+          state_.panel.chat.header_focus_index = 0;
+          operations_.request_sidebar_redraw();
+          return true;
+        case SDLK_END:
+          state_.panel.chat.header_focus_index = 4;
+          operations_.request_sidebar_redraw();
+          return true;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          return activate_header_control();
+        default:
+          return false;
+      }
+    }
+
+    if (state_.panel.chat.focus_region == ChatPaneFocusRegion::Transcript) {
+      switch (event.key) {
+        case SDLK_UP:
+          state_.panel.chat.scroll_row = std::max(0, state_.panel.chat.scroll_row - 1);
+          return true;
+        case SDLK_DOWN:
+          state_.panel.chat.scroll_row += 1;
+          return true;
+        case SDLK_PAGEUP:
+          state_.panel.chat.scroll_row = std::max(0, state_.panel.chat.scroll_row - 8);
+          return true;
+        case SDLK_PAGEDOWN:
+          state_.panel.chat.scroll_row += 8;
+          return true;
+        case SDLK_HOME:
+          state_.panel.chat.scroll_row = 0;
+          return true;
+        case SDLK_END:
+          state_.panel.chat.scroll_row = std::numeric_limits<int>::max();
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
+        (modifiers & SDL_KMOD_CTRL) != 0) {
+      return operations_.start_chat_request({});
+    }
+    return operations_.text_input_handle_single_line_key_down(event, modifiers);
+  }
+
+  if (sidebar_mode == SidebarMode::Git) {
+    switch (event.key) {
+      case SDLK_UP:
+        operations_.move_git_sidebar_selection(-1);
+        return true;
+      case SDLK_DOWN:
+        operations_.move_git_sidebar_selection(1);
+        return true;
+      case SDLK_HOME:
+        if (!state_.sidebar.git.entries.empty()) {
+          state_.sidebar.git.selected_index = 0;
+          operations_.reveal_selected_git_sidebar_line();
+        }
+        return true;
+      case SDLK_END:
+        if (!state_.sidebar.git.entries.empty()) {
+          state_.sidebar.git.selected_index = state_.sidebar.git.entries.size() - 1;
+          operations_.reveal_selected_git_sidebar_line();
+        }
+        return true;
+      case SDLK_PAGEUP:
+        operations_.move_git_sidebar_selection(-8);
+        return true;
+      case SDLK_PAGEDOWN:
+        operations_.move_git_sidebar_selection(8);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        return operations_.open_git_sidebar_entry(state_.sidebar.git.selected_index);
+      case SDLK_R:
+        return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+      default: {
+        const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
+        if (input_character == 's') {
+          return operations_.stage_git_sidebar_entry(state_.sidebar.git.selected_index);
+        }
+        if (input_character == 'u') {
+          return operations_.unstage_git_sidebar_entry(state_.sidebar.git.selected_index);
+        }
+        if (input_character == 'x') {
+          return operations_.discard_git_sidebar_entry(state_.sidebar.git.selected_index);
+        }
+        return false;
+      }
+    }
+  }
+
+  if (sidebar_mode == SidebarMode::Problems) {
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
+          return true;
+        }
+        return false;
+      case SDLK_UP:
+        operations_.move_problems_sidebar_selection(-1);
+        return true;
+      case SDLK_DOWN:
+        operations_.move_problems_sidebar_selection(1);
+        return true;
+      case SDLK_HOME:
+        if (!state_.sidebar.problems.entries.empty()) {
+          state_.sidebar.problems.selected_index = 0;
+          operations_.reveal_selected_problems_sidebar_line();
+        }
+        return true;
+      case SDLK_END:
+        if (!state_.sidebar.problems.entries.empty()) {
+          state_.sidebar.problems.selected_index = state_.sidebar.problems.entries.size() - 1;
+          operations_.reveal_selected_problems_sidebar_line();
+        }
+        return true;
+      case SDLK_PAGEUP:
+        operations_.move_problems_sidebar_selection(-8);
+        return true;
+      case SDLK_PAGEDOWN:
+        operations_.move_problems_sidebar_selection(8);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+      case SDLK_RIGHT:
+        return operations_.open_selected_problem_sidebar_item();
+      case SDLK_R:
+        return operations_.refresh_problems_sidebar();
+      default:
+        return false;
+    }
+  }
+
+  if (sidebar_mode == SidebarMode::Tests) {
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
+          return true;
+        }
+        return false;
+      case SDLK_UP:
+        operations_.move_tests_sidebar_selection(-1);
+        return true;
+      case SDLK_DOWN:
+        operations_.move_tests_sidebar_selection(1);
+        return true;
+      case SDLK_HOME:
+        if (!state_.sidebar.tests.entries.empty()) {
+          state_.sidebar.tests.selected_index = 0;
+          operations_.reveal_selected_tests_sidebar_line();
+        }
+        return true;
+      case SDLK_END:
+        if (!state_.sidebar.tests.entries.empty()) {
+          state_.sidebar.tests.selected_index = state_.sidebar.tests.entries.size() - 1;
+          operations_.reveal_selected_tests_sidebar_line();
+        }
+        return true;
+      case SDLK_PAGEUP:
+        operations_.move_tests_sidebar_selection(-8);
+        return true;
+      case SDLK_PAGEDOWN:
+        operations_.move_tests_sidebar_selection(8);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+      case SDLK_RIGHT:
+        return operations_.open_selected_test_sidebar_item();
+      case SDLK_R: {
+        const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
+        if (input_character == 'r') {
+          return operations_.run_selected_test_sidebar_item();
+        }
+        return operations_.refresh_tests_sidebar();
+      }
+      default:
+        return false;
+    }
+  }
+
+  if (sidebar_mode == SidebarMode::Plugin) {
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        if (state_.sidebar.temporary) {
+          operations_.close_sidebar();
+          return true;
+        }
+        return false;
+      case SDLK_UP:
+        operations_.move_plugin_sidebar_selection(-1);
+        return true;
+      case SDLK_DOWN:
+        operations_.move_plugin_sidebar_selection(1);
+        return true;
+      case SDLK_HOME:
+        if (!state_.sidebar.plugin.items.empty()) {
+          state_.sidebar.plugin.selected_index = 0;
+          operations_.reveal_selected_plugin_sidebar_line();
+        }
+        return true;
+      case SDLK_END:
+        if (!state_.sidebar.plugin.items.empty()) {
+          state_.sidebar.plugin.selected_index = state_.sidebar.plugin.items.size() - 1;
+          operations_.reveal_selected_plugin_sidebar_line();
+        }
+        return true;
+      case SDLK_PAGEUP:
+        operations_.move_plugin_sidebar_selection(-8);
+        return true;
+      case SDLK_PAGEDOWN:
+        operations_.move_plugin_sidebar_selection(8);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+      case SDLK_RIGHT:
+        return operations_.open_selected_plugin_sidebar_item();
+      case SDLK_R:
+        return operations_.refresh_plugin_sidebar();
+      default:
+        return false;
+    }
+  }
+
+  switch (event.key) {
+    case SDLK_UP:
+      state_.directory_tree.MoveSelection(-1);
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    case SDLK_DOWN:
+      state_.directory_tree.MoveSelection(1);
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    case SDLK_LEFT:
+      state_.directory_tree.CollapseSelection();
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    case SDLK_RIGHT:
+      state_.directory_tree.ExpandSelection();
+      operations_.reveal_selected_tree_sidebar_line();
+      return true;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER: {
+      const auto opened = state_.directory_tree.ActivateSelection();
+      operations_.reveal_selected_tree_sidebar_line();
+      if (opened.has_value()) {
+        operations_.open_file(*opened);
+      }
+      return true;
+    }
+    case SDLK_R:
+      operations_.refresh_project_files();
+      return true;
+    case SDLK_D:
+      operations_.open_compare_picker();
+      return true;
+    default:
+      return false;
+  }
+}
+
+
+}  // namespace microide::workspace

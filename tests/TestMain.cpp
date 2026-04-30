@@ -1,7 +1,11 @@
 #include "TestSupport.h"
 
+#include <SDL3/SDL.h>
+
 #include <exception>
+#include <cstdlib>
 #include <iostream>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -53,10 +57,26 @@ void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests);
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests);
 void RegisterAllocationCounterTests(std::vector<TestCase>& tests);
+void RegisterPerfBaselineTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
 int main(int argc, char** argv) {
+  const auto shutdown_sdl = []() { SDL_Quit(); };
+  bool verbose = false;
+  std::vector<std::string_view> filters;
+  filters.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i] != nullptr ? std::string_view(argv[i]) : std::string_view{};
+    if (arg == "--verbose") {
+      verbose = true;
+      continue;
+    }
+    if (!arg.empty()) {
+      filters.push_back(arg);
+    }
+  }
+
   std::vector<microide::tests::TestCase> tests;
   microide::tests::RegisterAppDirectoriesTests(tests);
   microide::tests::RegisterCompareModelTests(tests);
@@ -75,6 +95,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPersistedStateRecordTests(tests);
   microide::tests::RegisterPersistedRecordDumpTests(tests);
   microide::tests::RegisterAllocationCounterTests(tests);
+  microide::tests::RegisterPerfBaselineTests(tests);
   microide::tests::RegisterProjectSearchServiceTests(tests);
   microide::tests::RegisterGitBlameServiceTests(tests);
   microide::tests::RegisterTerminalSessionTests(tests);
@@ -106,13 +127,29 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPhase5Tests(tests);
 
   bool ran_any = false;
+  std::size_t selected_count = 0;
   for (const auto& test : tests) {
-    if (argc > 1) {
+    if (!filters.empty()) {
       bool selected = false;
-      for (int i = 1; i < argc; ++i) {
-        const std::string_view filter =
-            argv[i] != nullptr ? std::string_view(argv[i]) : std::string_view{};
-        if (!filter.empty() && test.name.find(filter) != std::string::npos) {
+      for (const std::string_view filter : filters) {
+        if (test.name.find(filter) != std::string::npos) {
+          selected = true;
+          break;
+        }
+      }
+      if (!selected) {
+        continue;
+      }
+    }
+    ++selected_count;
+  }
+
+  std::size_t current_index = 0;
+  for (const auto& test : tests) {
+    if (!filters.empty()) {
+      bool selected = false;
+      for (const std::string_view filter : filters) {
+        if (test.name.find(filter) != std::string::npos) {
           selected = true;
           break;
         }
@@ -122,21 +159,29 @@ int main(int argc, char** argv) {
       }
     }
     ran_any = true;
+    ++current_index;
+    if (verbose) {
+      std::cerr << "[" << current_index << "/" << selected_count << "] " << test.name << '\n';
+    }
     try {
       test.run();
     } catch (const std::exception& error) {
+      shutdown_sdl();
       std::cerr << "microide_tests failed in " << test.name << ": " << error.what() << '\n';
       return 1;
     } catch (...) {
+      shutdown_sdl();
       std::cerr << "microide_tests failed in " << test.name << ": unknown exception\n";
       return 1;
     }
   }
 
   if (!ran_any) {
+    shutdown_sdl();
     std::cerr << "microide_tests: no tests matched the provided filters\n";
     return 1;
   }
 
+  shutdown_sdl();
   return 0;
 }

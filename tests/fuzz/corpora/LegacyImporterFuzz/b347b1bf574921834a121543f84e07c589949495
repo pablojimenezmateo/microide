@@ -1,0 +1,19 @@
+version 5
+conv-begin '
+mgsver31
+ÿÿÿÿÿÿÿÿ 5
+conv-begin '
+mgversion
+conv-begin er1
+ÿÿÿÿÿÿÿconÿÿ 5
+conv-begin '
+mgversion
+conv-begin '
+2gver5
+conv-begin c1
+msg-begin 1
+on 5
+conv-begin c1
+msg-begin m1
+g-rend
+ 

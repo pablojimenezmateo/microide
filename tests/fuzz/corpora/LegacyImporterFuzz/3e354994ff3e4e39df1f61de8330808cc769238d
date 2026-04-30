@@ -1,0 +1,22 @@
+version 5
+conv-begin c1
+msg-begin m0
+on 5
+
+msg-begin c1
+msa-besid!bconv-begin c1
+msg-begin mc1
+msg-begin m0sg-bc1
+msg-begin m0
+on 5
+
+msg-begin c1
+msa-besid!bar-widtbegin c1
+msg-begin m0
+d
+tbegin c1
+msg-begin m0
+on 5
+
+msg-begin cm1:sa5
+conv-besidhd

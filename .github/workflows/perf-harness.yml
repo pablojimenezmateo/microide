@@ -3,6 +3,8 @@ name: perf-harness
 on:
   pull_request:
   push:
+  schedule:
+    - cron: "0 2 * * *"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -69,3 +71,22 @@ jobs:
 
       - name: Run full perf suite
         run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --iterations=10 --reference-runner=perf-runner-v1
+
+  long-soak-nightly:
+    if: github.event_name == 'schedule'
+    runs-on:
+      - self-hosted
+      - perf-runner-v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset microide-perf
+
+      - name: Build
+        run: cmake --build build/microide-perf-make --target microide_perf -j8
+
+      - name: Run long soak scenario
+        env:
+          MICROIDE_PERF_LONG_SOAK_SECONDS: "3600"
+        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --scenarios=long_soak_8h --iterations=1 --reference-runner=perf-runner-v1

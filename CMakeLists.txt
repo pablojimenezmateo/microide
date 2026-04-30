@@ -223,6 +223,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceActionCoordinator.cpp
   src/workspace/WorkspaceActionAvailability.cpp
   src/workspace/WorkspaceActionServices.cpp
+  src/workspace/WorkspaceActionServicesContextFactory.cpp
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
@@ -234,6 +235,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceKeyInputCoordinator.cpp
   src/workspace/WorkspaceKeyInputCoordinatorModal.cpp
   src/workspace/WorkspaceKeyInputCoordinatorSurfaces.cpp
+  src/workspace/WorkspaceKeyInputCoordinatorSidebar.cpp
   src/workspace/WorkspaceKeyInputCoordinatorEditor.cpp
   src/workspace/WorkspaceMergeMouseCoordinator.cpp
   src/workspace/WorkspaceMenuCoordinator.cpp
@@ -243,7 +245,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSearchActionExecutor.cpp
   src/workspace/WorkspaceSidebarActionExecutor.cpp
   src/workspace/WorkspaceTextInputCoordinator.cpp
+  src/workspace/WorkspaceTextInputCoordinatorTerminal.cpp
   src/workspace/WorkspaceTabActionExecutor.cpp
+  src/workspace/WorkspaceChatTranscriptLayout.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
   src/workspace/WorkspaceShellCursor.cpp
@@ -301,11 +305,13 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePathMutationCoordinatorTabs.cpp
   src/workspace/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp
+  src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/TerminalPanelService.cpp
   src/workspace/WorkspaceTaskRuntime.cpp
   src/workspace/WorkspacePersistenceLegacyFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
+  src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/PersistenceService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
@@ -327,6 +333,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabMouseCoordinator.cpp
   src/workspace/EditorTabService.cpp
   src/workspace/WorkspaceTabCoordinator.cpp
+  src/workspace/WorkspaceTabCoordinatorSplits.cpp
+  src/workspace/WorkspaceTabCoordinatorShellBridge.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceProjectStateCoordinator.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
@@ -344,6 +352,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceLspClient.cpp
+  src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
   src/workspace/WorkspaceDapManager.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
@@ -487,7 +496,9 @@ add_executable(microide_tests
   tests/Phase5Tests.cpp
   tests/SingleLineEditorTests.cpp
   tests/AllocationCounterTests.cpp
+  tests/PerfBaselineTests.cpp
   tests/perf/AllocationCounter.cpp
+  tests/perf/Baseline.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -496,7 +507,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
 endif()
 
-target_include_directories(microide_tests PRIVATE src)
+target_include_directories(microide_tests PRIVATE src tests)
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})

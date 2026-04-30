@@ -1,0 +1,285 @@
+  static bool RestoreSessionState(WorkspaceShell& shell) {
+    return shell.MakePersistenceCoordinator().RestoreSessionState();
+  }
+  static bool RestoreUserConfig(WorkspaceShell& shell) {
+    return shell.MakePersistenceCoordinator().RestoreUserConfig();
+  }
+  static bool RestoreConfigState(WorkspaceShell& shell) {
+    return shell.MakePersistenceCoordinator().RestoreConfigState();
+  }
+  static void SaveSessionState(WorkspaceShell& shell) {
+    shell.MakePersistenceCoordinator().SaveSessionState();
+  }
+  static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
+    return shell.MakePersistenceCoordinator().RestoreWorkspaceSession();
+  }
+  static void SaveWorkspaceSession(WorkspaceShell& shell) {
+    shell.MakePersistenceCoordinator().SaveWorkspaceSession();
+  }
+  static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
+    shell.context_.prompts.dirty.selected_action = selected_action;
+    shell.ConfirmDirtyPrompt();
+  }
+  static bool StageAllGitSidebarEntries(WorkspaceShell& shell) {
+    return shell.StageAllGitSidebarEntries();
+  }
+  static bool DirtyPromptVisible(const WorkspaceShell& shell) { return shell.context_.prompts.dirty_visible; }
+  static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
+    return shell.DirtyPromptMessage();
+  }
+  static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface_visible;
+  }
+  static SDL_FRect PromptSurfaceInputRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return ComputePromptSurfaceInputRect(ComputePromptSurfaceRect(layout.full));
+  }
+  static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.input.text();
+  }
+  static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceTitle();
+  }
+  static std::string PromptSurfaceMessage(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceMessage();
+  }
+  static std::string PromptSurfaceDetail(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceDetail();
+  }
+  static int PromptSurfaceButtonCount(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.button_count;
+  }
+  static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.open_tabs;
+  }
+  static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.active_tab_index; }
+  static std::size_t ActiveTerminalTabIndex(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.active_terminal_tab_index;
+  }
+  static std::vector<std::filesystem::path> ProjectRoots(const WorkspaceShell& shell) {
+    std::vector<std::filesystem::path> roots;
+    roots.reserve(shell.context_.project_catalog.entries.size());
+    for (std::size_t i = 0; i < shell.context_.project_catalog.entries.size(); ++i) {
+      roots.push_back(shell.ProjectCatalogRoot(i));
+    }
+    return roots;
+  }
+  static std::vector<std::string> TerminalLaunchLabels(WorkspaceShell& shell) {
+    std::vector<std::string> labels;
+    labels.reserve(shell.context_.current_project_state.terminal_tabs.size());
+    for (const auto& terminal_tab : shell.context_.current_project_state.terminal_tabs) {
+      labels.push_back(terminal_tab == nullptr ? std::string{} : terminal_tab->session.LaunchLabel());
+    }
+    return labels;
+  }
+  static std::vector<std::string> VisibleMenuBarLabels(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    std::vector<std::string> labels;
+    for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (const auto* menu = shell.FindMenuSpec(item.id); menu != nullptr) {
+        labels.emplace_back(menu->label);
+      }
+    }
+    return labels;
+  }
+  static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell, std::string_view label) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (const auto* menu = shell.FindMenuSpec(item.id);
+          menu != nullptr && menu->label == label) {
+        return item.rect;
+      }
+    }
+    return std::nullopt;
+  }
+  static std::vector<std::string> VisiblePopupMenuLabels(WorkspaceShell& shell,
+                                                         WorkspaceShell::MenuId id) {
+    std::vector<std::string> labels;
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto popup_rect = shell.ComputePopupMenuRect(layout.menu_bar, id);
+    if (!popup_rect.has_value()) {
+      return labels;
+    }
+    const auto items = shell.MenuItems(id);
+    for (const auto& visible_item : shell.ComputeVisiblePopupMenuItems(id, *popup_rect)) {
+      if (visible_item.separator) {
+        continue;
+      }
+      labels.push_back(shell.MenuItemLabel(items[visible_item.index]));
+    }
+    return labels;
+  }
+  static std::optional<SDL_FRect> PopupMenuItemRect(WorkspaceShell& shell,
+                                                    WorkspaceShell::MenuId id,
+                                                    std::string_view label) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto popup_rect = shell.ComputePopupMenuRect(layout.menu_bar, id);
+    if (!popup_rect.has_value()) {
+      return std::nullopt;
+    }
+    const auto items = shell.MenuItems(id);
+    for (const auto& visible_item : shell.ComputeVisiblePopupMenuItems(id, *popup_rect)) {
+      if (visible_item.separator) {
+        continue;
+      }
+      if (shell.MenuItemLabel(items[visible_item.index]) == label) {
+        return visible_item.rect;
+      }
+    }
+    return std::nullopt;
+  }
+  static std::vector<std::string> SidebarModeMenuLabels(WorkspaceShell& shell) {
+    return VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::SidebarMode);
+  }
+  static std::optional<SDL_FRect> SidebarModeMenuItemRect(WorkspaceShell& shell,
+                                                          std::string_view label) {
+    return PopupMenuItemRect(shell, WorkspaceShell::MenuId::SidebarMode, label);
+  }
+  static SDL_FRect SidebarModeButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.SidebarModeControlRect(layout.sidebar);
+  }
+  static SDL_FRect TreeSidebarCollapseButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.TreeSidebarCollapseButtonRect(layout.sidebar);
+  }
+  static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
+  static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.directory_tree.entries();
+  }
+  static std::filesystem::path SelectedTreePath(const WorkspaceShell& shell) {
+    return shell.SelectedTreePath();
+  }
+  static int SidebarScrollRow(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.scroll_row;
+  }
+  static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.context_.project_catalog.entries.size(); }
+  static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {
+    return shell.context_.project_catalog.active_index;
+  }
+  static const std::filesystem::path& ProjectRoot(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.root;
+  }
+  static const std::vector<project::ProjectSearchResult>& ProjectSearchResults(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.results;
+  }
+  static bool ProjectSearchRunning(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.running;
+  }
+  static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.truncated;
+  }
+  static const std::string& ProjectSearchError(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.error;
+  }
+  static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
+    return shell.project_dialog_state_.active;
+  }
+  static bool CommandMode(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command_mode; }
+  static const std::string& CommandInput(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.command.input.text();
+  }
+  static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
+    return CommandPromptCoordinator::PromptStatusText(shell.context_.current_project_state.panel.command);
+  }
+  static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.query.text();
+  }
+  static bool OverlayVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.overlay.visible; }
+  static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.mode == WorkspaceShell::OverlayMode::FileFinder;
+  }
+  static bool TextInputSurfaceIsEditor(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::Editor;
+  }
+  static bool TextInputSurfaceIsFileFinder(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::FileFinder;
+  }
+  static bool TextInputSurfaceIsPromptInput(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::PromptInput;
+  }
+  static bool SidebarVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.visible; }
+  static WorkspaceShell::SidebarMode SidebarMode(const WorkspaceShell& shell) {
+    return shell.ActiveSidebarMode();
+  }
+  static const std::string& SidebarViewId(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.view_id;
+  }  static const std::vector<plugin::PluginHost::SidebarItem>& PluginSidebarItems(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.plugin.items;
+  }
+  static const std::string& PluginSidebarError(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.plugin.error;
+  }
+  static float SidebarWidth(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.width; }
+  static bool SoftTabsEnabled(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_preferences.soft_tabs;
+  }
+  static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
+    shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::SidebarDivider;
+  }
+  static void SetTransientDragTargetBottomPanelScrollbar(WorkspaceShell& shell) {
+    shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::BottomPanelScrollbar;
+  }
+  static bool TransientDragTargetIsNone(const WorkspaceShell& shell) {
+    return shell.context_.interaction_state.drag_target == WorkspaceShell::DragTarget::None;
+  }
+  static void SetTransientMouseSelecting(WorkspaceShell& shell, bool selecting) {
+    shell.context_.interaction_state.mouse_selecting = selecting;
+  }
+  static bool TransientMouseSelecting(const WorkspaceShell& shell) {
+    return shell.context_.interaction_state.mouse_selecting;
+  }
+  static bool FocusIsEditor(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Editor;
+  }
+  static bool FocusIsSidebar(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Sidebar;
+  }
+  static bool FocusIsPanel(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Panel;
+  }
+  static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
+  static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
+    shell.caret_blink_epoch_ms_ = epoch_ms;
+  }
+  static bool CaretVisibleNow(const WorkspaceShell& shell) { return shell.CaretVisibleNow(); }
+  static std::optional<std::chrono::milliseconds> ProjectFileMonitorNextPollDelay(
+      const WorkspaceShell& shell) {
+    return shell.project_file_monitor_.NextPollDelay();
+  }
+  static void MoveMergeSelection(WorkspaceShell& shell, int delta) { shell.MoveMergeSelection(delta); }
+  static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
+  static bool FocusIsOverlay(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Overlay;
+  }
+  static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.context_.menu_state.menu_bar_open; }
+  static bool EditMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::Edit;
+  }
+  static bool EditorContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::EditorContext;
+  }
+  static bool FileMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::File;
+  }
+  static bool EditorTabContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::EditorTabContext;
+  }
+  static bool SidebarModeMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::SidebarMode;
+  }
+  static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
+  }
+  static bool TerminalContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::TerminalContext;
+  }

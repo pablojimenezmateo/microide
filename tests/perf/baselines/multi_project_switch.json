@@ -1,1 +1,1 @@
-{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":33437,"p50_allocations":33437,"p95_allocations":33437,"p95_wall_ms":111.33253499999999,"max_wall_ms":111.33253499999999,"p50_wall_ms":111.33253499999999},"scenario":"multi_project_switch"}
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":43981,"p50_allocations":38057,"p95_allocations":41315.199999999997,"p95_wall_ms":255.62950459999999,"max_wall_ms":257.84249299999999,"p50_wall_ms":247.1147335},"scenario":"multi_project_switch"}

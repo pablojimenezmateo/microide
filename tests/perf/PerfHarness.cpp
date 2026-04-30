@@ -7,11 +7,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <thread>
 
 #include "perf/AllocationCounter.h"
+#include "WorkspaceShellEventHelpers.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
@@ -118,12 +120,11 @@ void ScenarioContext::Type(std::string_view text) {
 }
 
 void ScenarioContext::Scroll(int vertical_ticks) {
-  (void)workspace::WorkspaceShell::TestAccess::HandleMouseWheel(
-      shell_, 960.0f, 540.0f, vertical_ticks, 0);
+  (void)SendMouseWheel(shell_, 960.0f, 540.0f, vertical_ticks, 0);
 }
 
 void ScenarioContext::KeyDown(SDL_Keycode key, SDL_Keymod modifiers) {
-  (void)workspace::WorkspaceShell::TestAccess::HandleKeyEvent(shell_, key, modifiers);
+  (void)SendKeyDown(shell_, key, modifiers);
 }
 
 bool ScenarioContext::ExecuteCommand(std::string_view command_line) {
@@ -138,15 +139,18 @@ void ScenarioContext::ConsumeProjectSearchUpdates() {
   workspace::WorkspaceShell::TestAccess::ConsumeProjectSearchUpdates(shell_);
 }
 
-void ScenarioContext::Wait(std::chrono::milliseconds duration) {
+std::uint64_t ScenarioContext::Wait(std::chrono::milliseconds duration) {
   const auto end = std::chrono::steady_clock::now() + duration;
+  std::uint64_t wake_count = 0;
   while (std::chrono::steady_clock::now() < end) {
     const auto wake = shell_.HandleScheduledWake();
     if (wake.handled) {
+      ++wake_count;
       PumpFrames(1);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
+  return wake_count;
 }
 
 bool ScenarioContext::WaitForDiagnostics(const std::filesystem::path& path,
@@ -205,10 +209,22 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
   aggregate.smoke = scenario.smoke;
   aggregate.iterations.reserve(options.iterations);
   for (std::size_t i = 0; i < options.iterations; ++i) {
+    std::cerr << "[perf] scenario=" << scenario.name << " iteration=" << (i + 1) << "/"
+              << options.iterations << '\n';
     ScenarioContext context(driver.shell, driver.window, driver.renderer);
     const AllocationSnapshot before = Allocations::Snapshot();
     const auto start = std::chrono::steady_clock::now();
-    scenario.run(context);
+    try {
+      scenario.run(context);
+    } catch (const std::exception& ex) {
+      HarnessError() = std::string("scenario threw exception: ") + ex.what();
+      ShutdownDriver(&driver);
+      return std::nullopt;
+    } catch (...) {
+      HarnessError() = "scenario threw unknown exception";
+      ShutdownDriver(&driver);
+      return std::nullopt;
+    }
     const auto end = std::chrono::steady_clock::now();
     const AllocationDelta delta = Allocations::DeltaSince(before);
     aggregate.iterations.push_back(Iteration{
@@ -261,6 +277,7 @@ bool PerfHarness::InitializeDriver(Driver* driver, std::optional<std::uint64_t> 
     ShutdownDriver(driver);
     return false;
   }
+  SDL_SetRenderVSync(driver->renderer, 0);
 
   if (!driver->shell.Initialize(std::filesystem::current_path())) {
     HarnessError() = "WorkspaceShell initialize failed";

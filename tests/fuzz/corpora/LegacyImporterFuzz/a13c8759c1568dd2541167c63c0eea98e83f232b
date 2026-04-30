@@ -1,0 +1,20 @@
+version 5
+conv-begin c1
+msg-begin m0
+on 5
+
+msg-begin c1
+msa-b m0
+on 5
+
+msg-begin c1
+msad!bar-widtbegin c1
+msg-begin m0
+on 5
+
+msg-beginc1
+msg-begin m0
+on 5
+
+msg-begin c1
+me-hd

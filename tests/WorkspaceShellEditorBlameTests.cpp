@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -165,7 +166,7 @@ void TestWorkspaceShellEditorDirtyTransitionRedrawsBlameNeighborhood() {
   const auto overlay = WaitForActiveEditorBlameOverlay(shell, 3);
   Expect(overlay.has_value() && overlay->lines.size() == 3,
          "clean tracked editor should expose three blame lines before editing");
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
@@ -225,7 +226,7 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
   const auto& blame_line = overlay->lines[1];
   const float hover_x = blame_line.rect.x + 4.0f;
   const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering blame text should request a redraw for the popup");
 
   const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell);
@@ -236,7 +237,7 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
   const float gap_x = std::max(blame_line.rect.x + 4.0f, popup_rect->x + 4.0f);
   const float gap_y = blame_line.rect.y + blame_line.rect.h +
                       (popup_rect->y - (blame_line.rect.y + blame_line.rect.h)) * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, gap_x, gap_y, 0),
+  Expect(SendMouseMotion(shell, gap_x, gap_y, 0),
          "moving from blame text toward the popup should keep the UI dirty for hover updates");
   Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
          "moving from blame text toward the popup should keep the popup visible");
@@ -250,11 +251,11 @@ void TestWorkspaceShellEditorBlameHoverPopupCopiesCommitSha() {
 
   const float copy_x = copy_rect->x + copy_rect->w * 0.5f;
   const float copy_y = copy_rect->y + copy_rect->h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, copy_x, copy_y, 0),
+  Expect(SendMouseMotion(shell, copy_x, copy_y, 0),
          "moving onto the blame popup button should request a redraw for button hover");
   Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
          "moving onto the blame popup button should keep the popup visible");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, copy_x, copy_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, copy_x, copy_y, SDL_BUTTON_LEFT),
          "clicking the blame popup copy button should be handled");
 
   Expect(copied_text == blame_line.commit_id,
@@ -286,7 +287,7 @@ void TestWorkspaceShellEditorBlamePopupWrapsLongSummary() {
   const auto& blame_line = overlay->lines[1];
   const float hover_x = blame_line.rect.x + 4.0f;
   const float hover_y = blame_line.rect.y + blame_line.rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering long-summary blame text should open the popup");
 
   const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell);

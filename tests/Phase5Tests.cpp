@@ -9,6 +9,7 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -843,7 +844,7 @@ return ide.plugin({
       }),
       "find-references should route output to the output panel");
   const SDL_FRect terminal_tab = WorkspaceShellTestAccess::ActiveTerminalTabRect(shell);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, terminal_tab.x + terminal_tab.w * 0.5f,
              terminal_tab.y + terminal_tab.h * 0.5f, SDL_BUTTON_LEFT),
          "clicking a terminal tab while output is visible should be handled");
@@ -854,7 +855,7 @@ return ide.plugin({
   const auto references_tab = WorkspaceShellTestAccess::BottomPanelTabRectByTitle(
       shell, "LSP References");
   Expect(references_tab.has_value() &&
-             WorkspaceShellTestAccess::HandleMouseButtonDown(
+             SendMouseDown(
                  shell, references_tab->x + references_tab->w * 0.5f,
                  references_tab->y + references_tab->h * 0.5f, SDL_BUTTON_LEFT),
          "clicking the references tab should be handled");
@@ -889,7 +890,7 @@ return ide.plugin({
           ? static_cast<std::size_t>(
                 std::distance(clickable_references_channel->begin(), refs_anchor))
           : 0;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, output_origin.x + 8.0f,
              output_origin.y + line_height * (static_cast<float>(refs_anchor_row) + 0.5f),
              SDL_BUTTON_LEFT),

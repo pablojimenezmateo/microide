@@ -159,14 +159,16 @@ bool WorkspaceProjectFileMonitor::PollForChanges() {
 }
 
 bool WorkspaceProjectFileMonitor::ConsumePendingChanges() {
-  if (EnsureWatching()) {
-    if (HasVisibleChangesSinceDeferredArming()) {
-      deferred_arm_baseline_.reset();
-      return true;
-    }
+  EnsureWatching();
+  if (HasVisibleChangesSinceDeferredArming()) {
+    deferred_arm_baseline_.reset();
+    return true;
+  }
+  const bool changed = watcher_.Poll();
+  if (changed) {
     deferred_arm_baseline_.reset();
   }
-  return watcher_.Poll();
+  return changed;
 }
 
 bool WorkspaceProjectFileMonitor::EnsureWatching() {

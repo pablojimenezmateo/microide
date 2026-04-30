@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -244,11 +245,11 @@ void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
 
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I",
          "focused terminal tabs should receive an initial focus-in notification when focus mode is enabled");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL),
          "Ctrl+Tab should move focus away from the terminal panel");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL),
          "Ctrl+Tab should keep cycling focus targets");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL),
          "Ctrl+Tab should return focus to the terminal panel");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O\x1b[I",
          "terminal focus mode should emit focus-out and focus-in notifications as panel focus changes");
@@ -264,9 +265,9 @@ void TestWorkspaceShellTerminalFocusModeTracksWindowFocus() {
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1004h");
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
 
-  Expect(WorkspaceShellTestAccess::HandleWindowFocusEvent(shell, false),
+  Expect(SendWindowFocus(shell, false),
          "window focus loss should be handled");
-  Expect(WorkspaceShellTestAccess::HandleWindowFocusEvent(shell, true),
+  Expect(SendWindowFocus(shell, true),
          "window focus gain should be handled");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O\x1b[I",
          "terminal focus mode should emit focus notifications when the IDE window focus changes");
@@ -294,7 +295,7 @@ void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "prompt");
 
-  const std::optional<SDL_FRect> caret_rect = WorkspaceShellTestAccess::CurrentCaretDirtyRect(shell);
+  const std::optional<SDL_FRect> caret_rect = shell.CurrentCaretDirtyRect();
   Expect(caret_rect.has_value(),
          "focused terminal panels should expose a caret dirty rect for partial redraws");
   Expect(caret_rect->w > 0.0f && caret_rect->h > 0.0f,
@@ -445,7 +446,7 @@ void TestWorkspaceShellTerminalCaretBlinkRetainedRedrawPreservesGlyphEdges() {
   retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
 
   const std::optional<SDL_FRect> caret_rect =
-      WorkspaceShellTestAccess::CurrentCaretDirtyRect(retained_shell);
+      retained_shell.CurrentCaretDirtyRect();
   Expect(caret_rect.has_value(),
          "caret redraw regression test should have a terminal caret dirty rect");
 
@@ -509,7 +510,7 @@ void TestWorkspaceShellHandleEventPassesEscapeToTerminal() {
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "top-level key handling should deliver Escape to the terminal");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b",
          "Escape should reach terminal apps instead of being dropped early");
@@ -710,7 +711,7 @@ void TestWorkspaceShellTerminalTabsDragReorderToStart() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect source_rect = WorkspaceShellTestAccess::TerminalTabRect(shell, 2);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, source_rect.x + source_rect.w * 0.5f, source_rect.y + source_rect.h * 0.5f,
              SDL_BUTTON_LEFT),
          "dragging should start from a terminal tab press");
@@ -718,9 +719,9 @@ void TestWorkspaceShellTerminalTabsDragReorderToStart() {
   const SDL_FRect first_rect = WorkspaceShellTestAccess::TerminalTabRect(shell, 0);
   const float drop_x = first_rect.x - 8.0f;
   const float drop_y = first_rect.y + first_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
          "dragging across terminal tabs should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
          "releasing a dragged terminal tab should be handled");
 
   Expect(WorkspaceShellTestAccess::TerminalLaunchLabels(shell) ==
@@ -746,7 +747,7 @@ void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
   WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
 
   const SDL_FRect panel_rect = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
-  Expect(WorkspaceShellTestAccess::HandleMouseWheel(
+  Expect(SendMouseWheel(
              shell, panel_rect.x + 12.0f, panel_rect.y + 12.0f, -3),
          "mouse wheel over the bottom panel should be handled");
   Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == 3,
@@ -765,12 +766,12 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
 
   const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
   const SDL_FPoint end = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start.x, start.y,
+  Expect(SendMouseDown(shell, start.x, start.y,
                                                          SDL_BUTTON_LEFT),
          "pressing inside the terminal panel should start transcript selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK),
          "dragging inside the terminal panel should update transcript selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end.x, end.y,
+  Expect(SendMouseUp(shell, end.x, end.y,
                                                        SDL_BUTTON_LEFT),
          "releasing inside the terminal panel should end transcript selection");
 
@@ -799,19 +800,19 @@ void TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes(
 
   const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
   const SDL_FPoint end = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start.x, start.y,
+  Expect(SendMouseDown(shell, start.x, start.y,
                                                          SDL_BUTTON_LEFT),
          "pressing inside the terminal panel should start transcript selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK),
          "dragging inside the terminal panel should update transcript selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end.x, end.y,
+  Expect(SendMouseUp(shell, end.x, end.y,
                                                        SDL_BUTTON_LEFT),
          "releasing inside the terminal panel should end transcript selection");
   Expect(primary_selection == "select",
          "terminal drag selection should update the primary selection buffer");
 
   const SDL_FPoint paste_point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 8);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, paste_point.x, paste_point.y,
+  Expect(SendMouseDown(shell, paste_point.x, paste_point.y,
                                                          SDL_BUTTON_MIDDLE),
          "middle-clicking the terminal panel should be handled");
   Expect(TerminalSessionTestAccess::SentBytes(session).find("select") != std::string::npos,
@@ -834,7 +835,7 @@ void TestWorkspaceShellTerminalLeftClickOpensUrls() {
       });
 
   const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 10);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point.x, point.y,
+  Expect(SendMouseDown(shell, point.x, point.y,
                                                          SDL_BUTTON_LEFT),
          "left-clicking a terminal URL should be handled");
   Expect(opened_url == "https://example.com/path?a=1",
@@ -852,7 +853,7 @@ void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point.x, point.y,
+  Expect(SendMouseDown(shell, point.x, point.y,
                                                          SDL_BUTTON_LEFT),
          "mouse presses should be handled when the terminal requests mouse capture");
   Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),
@@ -860,7 +861,7 @@ void TestWorkspaceShellTerminalMouseCaptureSendsButtonEvents() {
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
          "mouse-captured presses should keep panel focus");
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, point.x, point.y,
+  Expect(SendMouseUp(shell, point.x, point.y,
                                                        SDL_BUTTON_LEFT),
          "mouse releases should be handled when the terminal requests mouse capture");
   Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell),

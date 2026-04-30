@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -18,9 +19,9 @@ using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
-  return WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL) &&
+  return SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL) &&
          WorkspaceShellTestAccess::HandleTextInput(shell, command) &&
-         WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE);
+         SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
 }
 
 void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
@@ -143,11 +144,11 @@ void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "bogus-command"),
          "text input should populate the command prompt");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should attempt to execute the typed command");
 
   Expect(WorkspaceShellTestAccess::CommandMode(shell),
@@ -160,7 +161,7 @@ void TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_LCTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_LCTRL),
          "left-control Ctrl+E should open the command prompt");
   Expect(WorkspaceShellTestAccess::CommandMode(shell),
          "left-control Ctrl+E should enter command mode");
@@ -170,11 +171,11 @@ void TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt before the missing-project test");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "search"),
          "text input should populate the missing-project command");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should attempt the missing-project command");
 
   Expect(WorkspaceShellTestAccess::CommandMode(shell),
@@ -191,11 +192,11 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt before the open-path test");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "open"),
          "text input should populate the open command");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should attempt the open command");
 
   Expect(WorkspaceShellTestAccess::CommandMode(shell),
@@ -221,20 +222,20 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
          "third project should open");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt before cycling projects");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-prev"),
          "text input should populate the project-prev command");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should execute the project-prev command");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
          "project-prev should activate the previous project tab");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should reopen the command prompt for project-next");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-next"),
          "text input should populate the project-next command");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should execute the project-next command");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
          "project-next should activate the next project tab");
@@ -268,22 +269,22 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
          "switching back to the first project should succeed");
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching back should restore the first project's editor preferences");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt after switching back");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_UP, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
          "up should recall command history for the restored first project");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
          "switching back should restore the first project's command history");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "escape should dismiss the recalled first-project command prompt");
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
          "switching to the second project should succeed");
   Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching forward should restore the second project's editor preferences");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt after switching forward");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_UP, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
          "up should recall command history for the restored second project");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs off",
          "switching forward should restore the second project's command history");
@@ -553,7 +554,7 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
 
   Expect(ExecuteCommand(shell, "ui-scale 125%"),
          "ui-scale should execute with a parsed numeric scale");
-  Expect(std::fabs(WorkspaceShellTestAccess::UiScale(shell) - 1.25f) < 0.001f,
+  Expect(std::fabs(shell.UiScale() - 1.25f) < 0.001f,
          "ui-scale should apply the parsed scale");
 
   Expect(ExecuteCommand(shell, "soft-tabs on"),
@@ -570,11 +571,11 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
 void TestWorkspaceShellCommandPromptCompletionAndHistory() {
   WorkspaceShell shell;
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should open the command prompt before completion");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "soft"),
          "text input should populate the command prompt before completion");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_TAB, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "tab should trigger command completion");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs ",
          "tab completion should expand the unique built-in command name");
@@ -583,14 +584,14 @@ void TestWorkspaceShellCommandPromptCompletionAndHistory() {
 
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "on"),
          "completion fixture should allow finishing the completed command");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "enter should execute the completed command");
   Expect(!WorkspaceShellTestAccess::CommandMode(shell),
          "successful command execution should close the command prompt");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "Ctrl+E should reopen the command prompt before history recall");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_UP, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
          "up should recall the previous command from history");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
          "history recall should restore the last executed command");
@@ -598,7 +599,7 @@ void TestWorkspaceShellCommandPromptCompletionAndHistory() {
              std::string::npos,
          "history recall should report the active history position");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_DOWN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
          "down should restore the pending empty command input");
   Expect(WorkspaceShellTestAccess::CommandInput(shell).empty(),
          "history navigation back to the pending input should restore an empty prompt");
@@ -612,7 +613,7 @@ void TestWorkspaceShellCtrlNOpensUntitledTab() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_N, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_N, SDL_KMOD_CTRL),
          "Ctrl+N should be handled globally");
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
          "Ctrl+N should open a single untitled editor tab");
@@ -640,7 +641,7 @@ void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {
   Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
          "files shortcut should focus the overlay");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "Escape should close the overlay when it is visible");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
          "Escape should dismiss the visible overlay");
@@ -659,7 +660,7 @@ void TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome() {
   Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
          "welcome files shortcut should focus the overlay");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "Escape should close the welcome overlay");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
          "Escape should dismiss the welcome overlay");
@@ -682,7 +683,7 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
          "files shortcut should open the file finder overlay");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target-match"),
          "typing in the file finder should be handled");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing enter in the file finder should open the selected match");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == target.lexically_normal(),
          "file finder should still open matches after deferred index cache build");
@@ -702,7 +703,7 @@ void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
   const auto layout = microide::workspace::ComputeLayout(1280.0f, 720.0f, true, false, 288.0f, 184.0f);
   const float click_x = layout.editor_area.x + 12.0f;
   const float click_y = layout.editor_area.y + 12.0f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "clicking outside the overlay should be handled");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
          "outside clicks should dismiss the overlay");
@@ -773,7 +774,7 @@ void TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender() {
 
   Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == root.lexically_normal(),
          "tree scroll fixture should start with the root selected");
-  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -8),
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -8),
          "scrolling the tree sidebar should be handled");
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
          "tree scrolling should move the sidebar away from the selected root row");
@@ -806,7 +807,7 @@ void TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories() {
   Expect(tree_contains_path(source),
          "opening a nested file should expand its ancestors before collapsing all");
   const SDL_FRect button_rect = WorkspaceShellTestAccess::TreeSidebarCollapseButtonRect(shell);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, button_rect.x + button_rect.w * 0.5f, button_rect.y + button_rect.h * 0.5f,
              SDL_BUTTON_LEFT),
          "clicking the collapse button should be handled");
@@ -922,7 +923,7 @@ void TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit() {
 
   const float click_x = right_rect.x + right_rect.w * 0.5f;
   const float click_y = right_rect.y + right_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "clicking an inactive editor pane should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
          "clicking an inactive editor pane should activate that split");
@@ -947,7 +948,7 @@ void TestWorkspaceShellEditorWheelActivatesHoveredSplit() {
 
   const float wheel_x = right_rect.x + right_rect.w * 0.5f;
   const float wheel_y = right_rect.y + right_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -1),
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling over an inactive editor pane should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
          "scrolling over an inactive editor pane should activate that split first");
@@ -970,11 +971,11 @@ void TestWorkspaceShellEditorDragSelectionTracksPointer() {
   const float start_x = metrics.text_x + char_width * 0.1f;
   const float end_x = metrics.text_x + char_width * 5.1f;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, start_x, y, SDL_BUTTON_LEFT),
          "pressing inside the editor should start mouse selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
          "dragging inside the editor should update mouse selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseUp(shell, end_x, y, SDL_BUTTON_LEFT),
          "releasing after an editor drag should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditorHasSelection(shell),
          "dragging across editor text should create a selection");
@@ -994,7 +995,7 @@ void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
-  WorkspaceShellTestAccess::HandleMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
+  SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
                                               tab_rect.y + tab_rect.h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
          "hovering a tab should expose the full relative path tooltip");
@@ -1012,12 +1013,12 @@ void TestWorkspaceShellWindowMouseLeaveClearsTabTooltip() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
-  WorkspaceShellTestAccess::HandleMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
+  SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
                                               tab_rect.y + tab_rect.h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
          "tab tooltip fixture should start with a hovered tab label");
 
-  Expect(WorkspaceShellTestAccess::HandleWindowMouseLeave(shell),
+  Expect(SendWindowMouseLeave(shell),
          "window mouse leave should be handled");
   Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
          "window mouse leave should clear stale tab tooltip hover state");
@@ -1049,17 +1050,17 @@ void TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes() 
   const float end_x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 5.0f + 1.0f;
   const float y = metrics.first_line_y + std::min(4.0f, pane.h * 0.25f);
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, start_x, y, SDL_BUTTON_LEFT),
          "starting an editor drag selection should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
          "dragging an editor selection should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseUp(shell, end_x, y, SDL_BUTTON_LEFT),
          "releasing an editor selection should be handled");
   Expect(primary_selection == "hello",
          "editor drag selection should update the primary selection buffer");
 
   const float paste_x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 11.0f + 1.0f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, paste_x, y, SDL_BUTTON_MIDDLE),
+  Expect(SendMouseDown(shell, paste_x, y, SDL_BUTTON_MIDDLE),
          "middle-clicking the editor should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "hello worldhello",
          "middle-clicking the editor should paste the primary selection at the click location");
@@ -1104,14 +1105,14 @@ void TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu() {
   const float click_x = button_rect.x + button_rect.w * 0.5f;
   const float click_y = button_rect.y + button_rect.h * 0.5f;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "clicking the sidebar mode control should be handled");
   Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
          "clicking the sidebar mode control should open its anchored menu");
   Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
          "opening the sidebar mode menu should keep sidebar focus");
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "clicking the active sidebar mode control again should be handled");
   Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell),
          "clicking the active sidebar mode control again should close the anchored menu");
@@ -1136,7 +1137,7 @@ void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect source_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 0);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, source_rect.x + source_rect.w * 0.5f, source_rect.y + source_rect.h * 0.5f,
              SDL_BUTTON_LEFT),
          "dragging should start from a project tab press");
@@ -1144,9 +1145,9 @@ void TestWorkspaceShellProjectTabsDragReorderToEnd() {
   const SDL_FRect last_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 2);
   const float drop_x = last_rect.x + last_rect.w + 12.0f;
   const float drop_y = last_rect.y + last_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
          "dragging across the project tab strip should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
          "releasing a dragged project tab should be handled");
 
   Expect(WorkspaceShellTestAccess::ProjectRoots(shell) ==
@@ -1258,7 +1259,7 @@ void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, source_rect.x + source_rect.w * 0.5f, source_rect.y + source_rect.h * 0.5f,
              SDL_BUTTON_LEFT),
          "dragging should start from an editor tab press");
@@ -1266,9 +1267,9 @@ void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
   const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
   const float drop_x = third_rect.x + 1.0f;
   const float drop_y = third_rect.y + third_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
          "dragging across editor tabs should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT),
          "releasing a dragged editor tab should be handled");
 
   const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
@@ -1351,7 +1352,7 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "project watcher fixture should open the project");
-  const auto idle_delay_before = WorkspaceShellTestAccess::NextAnimationDelayMs(shell);
+  const auto idle_delay_before = shell.NextAnimationDelayMs();
   Expect(!idle_delay_before.has_value() || *idle_delay_before > 0,
          "idle project watchers should not schedule a zero-delay wake when no change is pending");
 
@@ -1360,7 +1361,7 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
          "project watcher reload should detect filesystem changes");
   Expect(!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
          "project watcher reload should not continuously rearm after consuming a change");
-  const auto idle_delay_after = WorkspaceShellTestAccess::NextAnimationDelayMs(shell);
+  const auto idle_delay_after = shell.NextAnimationDelayMs();
   Expect(!idle_delay_after.has_value() || *idle_delay_after > 0,
          "project watcher reload should settle without a zero-delay wake after refresh");
 }

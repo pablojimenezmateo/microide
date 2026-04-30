@@ -44,6 +44,8 @@ The following previously tracked debts were closed on 2026-04-29 by
   - render-path architectural constraints are enforced by lint
 - item 7 (single-line shell text input model): closed
   - shared single-line editor and key-handler model is now shipped
+- `WorkspaceLspClient` TSAN race (reported during sanitizer bring-up): closed
+  - request/callback ownership synchronization was fixed and verified with TSAN runs in the sanitizer matrix
 
 ## 5. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
 
@@ -213,27 +215,24 @@ The cleanup change closed items 1–4 and 7 above and shipped the durable contra
 `openspec/specs/shared-edit-primitives/spec.md`. These follow-ups are still worth tracking and
 are good candidates for the next openspec tech-debt pass:
 
-1. `WorkspaceShellTestAccess.h` (~1500 lines) is now the largest single workspace header. Its
-   contents should be re-evaluated against the service interfaces and trimmed; tests that drive
-   services directly do not need a giant test-access surface.
+1. `WorkspaceShellTestAccess.h` trim follow-up:
+   - Closed in the comprehensive tech-debt and perf-harness pass.
+   - The top-level header is now a small scoped aggregator with a hard architectural size gate,
+     and category-(a) wrappers were migrated to direct shell APIs / event helpers.
+   - Keep the remaining scoped methods focused on genuinely test-only seams.
 2. The `WorkspaceShell*.cpp` companion files (~70 translation units defined against
    `WorkspaceShellMembers.inc`) keep behavior on the shell namespace even though the header was
    slimmed. Any new behavior should land on a service, not a new `WorkspaceShell*.cpp` companion.
 3. `WorkspacePersistenceLegacyFormat.cpp` and the surrounding one-shot importer should be deleted
    in the scheduled `legacy-persistence-cleanup` follow-up (release +2). Do not extend the legacy
    parser; only the structured format gets new fields.
-4. `src/util/SingleLineText.{h,cpp}` still coexists with `editor/SingleLineEditor.{h,cpp}`. The
-   shared model is the source of truth for new surfaces; the older type is retained because some
-   workspace state still stores it. Future cleanup should collapse the two representations.
-5. The architectural-lint test now covers discovered render translation units and plugin
-   translation-unit size is hard-fail. Remaining gap is execution on every local build path:
-   when iterating with non-default build directories, ensure `ArchitectureInvariants` is run in
-   that build tree before merge.
-6. Larger coordinator translation units (`WorkspaceTabCoordinator.cpp`,
-   `WorkspaceActionServices.cpp`, `WorkspaceChatTranscript.cpp`,
-   `WorkspaceKeyInputCoordinatorSurfaces.cpp`) have grown well past the ~800-line threshold the
-   plugin-host rule uses; consider an analogous guard for workspace coordinators.
-7. Project-content and indexing architecture (item 5) still consumes a point-in-time file list;
+4. Architectural-lint coverage gap:
+   - Closed in this change: discovered render-unit scanning is active, plugin/coordinator size
+     checks are hard-fail, and the shell test-access header now has an explicit cap check.
+5. Oversized coordinator translation units:
+   - Closed in this change: coordinator units were decomposed and the coordinator TU-size rule is
+     hard-fail.
+6. Project-content and indexing architecture (item 5) still consumes a point-in-time file list;
    only revisit if profiling shows meaningful search or refresh cost after the recent fixes.
 
 ## 12. 2026-04-29 Sanitizer/Fuzz Triage Snapshot

@@ -2,14 +2,22 @@
 #include "perf/PerfHarness.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 
 #include "util/JsonValue.h"
 #include "util/Parse.h"
@@ -26,6 +34,78 @@ struct CliOptions {
   std::optional<std::filesystem::path> report_text;
   std::optional<std::string> reference_runner;
 };
+
+struct ProcessSample {
+  std::uint64_t rss_bytes = 0;
+  std::uint64_t cpu_ticks = 0;
+};
+
+ProcessSample ReadProcessSample() {
+#if defined(__linux__)
+  ProcessSample sample{};
+  {
+    std::ifstream statm("/proc/self/statm");
+    std::uint64_t total_pages = 0;
+    std::uint64_t rss_pages = 0;
+    statm >> total_pages >> rss_pages;
+    if (!statm) {
+      throw std::runtime_error("failed to read /proc/self/statm");
+    }
+    const long page_size = sysconf(_SC_PAGESIZE);
+    sample.rss_bytes = rss_pages * static_cast<std::uint64_t>(page_size > 0 ? page_size : 4096);
+  }
+  {
+    std::ifstream stat("/proc/self/stat");
+    std::string line;
+    std::getline(stat, line);
+    if (!stat || line.empty()) {
+      throw std::runtime_error("failed to read /proc/self/stat");
+    }
+    const std::size_t tail_pos = line.rfind(')');
+    if (tail_pos == std::string::npos || tail_pos + 2 >= line.size()) {
+      throw std::runtime_error("unexpected /proc/self/stat format");
+    }
+    std::istringstream fields(line.substr(tail_pos + 2));
+    std::vector<std::string> tokens;
+    std::string token;
+    while (fields >> token) {
+      tokens.push_back(token);
+    }
+    if (tokens.size() < 15) {
+      throw std::runtime_error("insufficient /proc/self/stat fields");
+    }
+    const std::uint64_t utime = std::stoull(tokens[11]);
+    const std::uint64_t stime = std::stoull(tokens[12]);
+    sample.cpu_ticks = utime + stime;
+  }
+  return sample;
+#else
+  return {};
+#endif
+}
+
+double CpuPercentFromSamples(const ProcessSample& before,
+                             const ProcessSample& after,
+                             std::chrono::milliseconds elapsed) {
+#if defined(__linux__)
+  if (after.cpu_ticks < before.cpu_ticks || elapsed.count() <= 0) {
+    return 0.0;
+  }
+  const long ticks_per_sec = sysconf(_SC_CLK_TCK);
+  if (ticks_per_sec <= 0) {
+    return 0.0;
+  }
+  const double cpu_seconds =
+      static_cast<double>(after.cpu_ticks - before.cpu_ticks) / static_cast<double>(ticks_per_sec);
+  const double wall_seconds = static_cast<double>(elapsed.count()) / 1000.0;
+  return wall_seconds > 0.0 ? (cpu_seconds / wall_seconds) * 100.0 : 0.0;
+#else
+  (void)before;
+  (void)after;
+  (void)elapsed;
+  return 0.0;
+#endif
+}
 
 std::vector<std::string> SplitComma(std::string_view text) {
   std::vector<std::string> out;
@@ -256,6 +336,61 @@ void RegisterBuiltInScenarios() {
           },
   });
   PerfHarness::RegisterScenario(Scenario{
+      .name = "long_soak_8h",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            // Keep default runs practical; CI/nightly can override this via env.
+            const std::uint64_t default_seconds = 3ULL;
+            std::uint64_t soak_seconds = default_seconds;
+            if (const char* env = std::getenv("MICROIDE_PERF_LONG_SOAK_SECONDS")) {
+              const auto parsed = util::ParseSize(env);
+              if (parsed.has_value() && *parsed > 0) {
+                soak_seconds = static_cast<std::uint64_t>(*parsed);
+              }
+            }
+            const std::uint64_t wake_budget_per_hour = 7200;
+            const std::uint64_t sample_period_seconds = 1;
+            const std::uint64_t midpoint_second = soak_seconds / 2;
+
+            context.PumpFrames(2);
+            const ProcessSample start_sample = ReadProcessSample();
+            ProcessSample prev_cpu_sample = start_sample;
+            ProcessSample mid_sample = start_sample;
+            ProcessSample end_sample = start_sample;
+            double max_cpu_percent = 0.0;
+            std::uint64_t wakeups_current_hour = 0;
+
+            for (std::uint64_t second = 1; second <= soak_seconds; ++second) {
+              wakeups_current_hour += context.Wait(std::chrono::seconds(sample_period_seconds));
+              const ProcessSample now = ReadProcessSample();
+              max_cpu_percent =
+                  std::max(max_cpu_percent, CpuPercentFromSamples(prev_cpu_sample, now, std::chrono::seconds(1)));
+              prev_cpu_sample = now;
+
+              if (second == midpoint_second) {
+                mid_sample = now;
+              }
+              if (second % 3600 == 0) {
+                if (wakeups_current_hour > wake_budget_per_hour) {
+                  throw std::runtime_error("wake-up budget exceeded in long_soak_8h");
+                }
+                wakeups_current_hour = 0;
+              }
+              end_sample = now;
+            }
+            if (wakeups_current_hour > wake_budget_per_hour) {
+              throw std::runtime_error("wake-up budget exceeded in final partial hour");
+            }
+
+            std::cerr << "long_soak_8h rss_start=" << start_sample.rss_bytes
+                      << " rss_mid=" << mid_sample.rss_bytes
+                      << " rss_end=" << end_sample.rss_bytes
+                      << " max_cpu_percent=" << max_cpu_percent << "\n";
+            context.PumpFrames(1);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
       .name = "idle_soak_30s",
       .smoke = false,
       .run =
@@ -344,14 +479,21 @@ int main(int argc, char** argv) {
     }
   }
 
+  std::size_t run_index = 0;
   for (const Scenario& scenario : PerfHarness::RegisteredScenarios()) {
     PerfHarness::RunOptions probe = run_options;
-    const bool selected =
+    const bool name_selected =
         probe.scenario_names.empty() ||
         std::find(probe.scenario_names.begin(), probe.scenario_names.end(), scenario.name) !=
             probe.scenario_names.end();
-    if (selected && (!probe.smoke_only || scenario.smoke)) {
+    const bool selected = name_selected && (!probe.smoke_only || scenario.smoke);
+    if (selected) {
       ++selected_count;
+    }
+    if (selected) {
+      ++run_index;
+      std::cerr << "[perf] running scenario " << run_index << "/" << selected_count << ": "
+                << scenario.name << '\n';
     }
     const auto aggregate = PerfHarness::RunScenario(scenario, run_options);
     if (!aggregate.has_value()) {

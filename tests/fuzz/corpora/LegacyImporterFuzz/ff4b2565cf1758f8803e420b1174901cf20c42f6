@@ -1,0 +1,27 @@
+version 5
+conv-begin c1
+msg
+msg-be0
+on 5
+
+conv-schema  m0
+on 5
+
+conv-schema c1
+msa-besid!bar-widionin c1ar-widtbegim c0
+msg-begin m0
+on -begin m0
+on 5
+
+conv-schema c1
+msa-besid!bar-widionin -begin m0
+on 5
+
+conv-schema c1
+msg-begin m0
+on 5
+egin c1:megin m0
+on 5
+egin c1:msa-bn 5
+
+ms

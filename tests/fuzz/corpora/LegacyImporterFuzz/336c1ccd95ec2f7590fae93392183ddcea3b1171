@@ -1,0 +1,12 @@
+version 5
+caftn 5
+conv-begin c1
+msg-begin n c1
+msg c1
+msg-begin n c1
+msg-begin
+msg-begin n c1
+msg-5
+con 5
+conv-begin c1`msg-begin 1
+msg-begin

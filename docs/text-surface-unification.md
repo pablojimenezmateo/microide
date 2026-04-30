@@ -13,7 +13,7 @@ These surfaces own a mutable string plus a caret:
 
 - prompt inputs such as rename, create, and delete confirmations
 - the command prompt
-- the chat composer
+- the chat composer (single-line-equivalent shortcuts only; multiline storage remains)
 - centered overlays such as file finder and commit picker
 - buffer-search and buffer-replace fields
 - project-search sidebar query fields
@@ -29,6 +29,21 @@ Rules:
 
 If a new surface needs custom styling, keep the styling local but keep insertion, caret
 measurement, composition, and paste routing on the shared path.
+
+### Chat composer multiline exception
+
+The chat composer is still stored as a multiline `TextViewport`, but behavior that is
+single-line-equivalent now routes through the shared `SingleLineKeyHandler` model:
+
+- horizontal caret movement (`Left`/`Right`/`Home`/`End`)
+- single-line edit operations (`Backspace`/`Delete`)
+- line-scoped `Select All` and `Cut` when focused in chat
+
+Multiline-only behavior stays on the viewport path:
+
+- newline insertion (`Enter`)
+- vertical motion (`Up`/`Down`)
+- paging (`PageUp`/`PageDown`)
 
 ## 2. Navigable text viewports
 

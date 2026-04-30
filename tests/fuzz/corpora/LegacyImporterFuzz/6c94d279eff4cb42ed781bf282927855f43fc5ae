@@ -1,0 +1,13 @@
+version 5
+conv-begin c1
+mon 5
+co c1
+msg-begin m1
+msg-role user
+msg-content begibegin m1
+msg-role usez
+msg-content begin m1
+msg-role user
+ms1
+msg-role user
+msg-content 

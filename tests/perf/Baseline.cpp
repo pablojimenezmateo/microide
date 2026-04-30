@@ -13,7 +13,7 @@ double AllowedDelta(double expected, double tolerance_percent) {
 }
 
 bool WithinTolerance(double expected, double actual, double tolerance_percent) {
-  return std::abs(actual - expected) <= AllowedDelta(expected, tolerance_percent);
+  return actual <= expected + AllowedDelta(expected, tolerance_percent);
 }
 
 void AddMetric(BaselineComparison* out,

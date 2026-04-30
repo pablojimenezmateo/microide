@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -366,7 +367,7 @@ return ide.plugin({
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(
+  Expect(SendKeyDown(
              shell, SDLK_L, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
          "pressing a contributed editor keybinding should be handled");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
@@ -419,20 +420,20 @@ return ide.plugin({
   const auto initial_items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
   Expect(initial_items.size() == 1 && initial_items.front().item.text == "0",
          "status items should render contributed status text in the breadcrumb row");
-  (void)WorkspaceShellTestAccess::HandleMouseMotion(
+  (void)SendMouseMotion(
       shell, initial_items.front().rect.x + initial_items.front().rect.w * 0.5f,
       initial_items.front().rect.y + initial_items.front().rect.h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredStatusTooltipLabel(shell) == "Counter is 0",
          "hovering a contributed status item should expose its tooltip");
 
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "status.tick"),
          "status update command should execute");
 
   const auto updated_items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
   Expect(updated_items.size() == 1 && updated_items.front().item.text == "1",
          "status item updates should be reflected in the live breadcrumb row");
-  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  const auto redraw = shell.ConsumePendingRenderInvalidation();
   Expect(redraw.full || !redraw.rects.empty(),
          "status updates should request a visible redraw");
 }
@@ -586,24 +587,24 @@ void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
          "copying from a read-only virtual document should write the selected text");
 
   clipboard_text.clear();
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_A, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL),
          "Ctrl+A should be handled on a read-only virtual document");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_C, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_C, SDL_KMOD_CTRL),
          "Ctrl+C should be handled on a read-only virtual document");
   Expect(clipboard_text == "alpha",
          "read-only virtual document shortcuts should use the shared navigable viewport path");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
          "edit keys on a read-only virtual document should be consumed without mutating the buffer");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "alpha",
          "edit keys should leave read-only virtual document text unchanged");
 
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::UpdateVirtualDocumentContent(shell, "virtual://preview/README.todo",
                                                          "beta");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "beta",
          "updating a virtual document should refresh any open tab backed by that URI");
-  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  const auto redraw = shell.ConsumePendingRenderInvalidation();
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   Expect(AnyRectIntersects(redraw.rects, layout.editor_surface),
          "virtual document updates should redraw the editor surface");
@@ -1058,7 +1059,7 @@ return ide.plugin({
          "plugin sidebar should load without runtime errors");
 
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing Enter in a plugin sidebar should confirm the selected item");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
              WorkspaceShellTestAccess::PluginMessages(shell).back() ==
@@ -1171,7 +1172,7 @@ return ide.plugin({
   const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
   const float click_x = button_rect.x + button_rect.w * 0.5f;
   const float click_y = button_rect.y + button_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "clicking the sidebar mode control should open the sidebar menu");
   Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
          "clicking the sidebar mode control should open the anchored sidebar menu");
@@ -1184,7 +1185,7 @@ return ide.plugin({
       WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Example Sidebar");
   Expect(example_rect.has_value(),
          "sidebar mode menu should expose a clickable menu row for the plugin sidebar");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, example_rect->x + example_rect->w * 0.5f,
              example_rect->y + example_rect->h * 0.5f, SDL_BUTTON_LEFT),
          "clicking the plugin sidebar menu row should be handled");
@@ -1286,7 +1287,7 @@ void TestWorkspaceShellDiagnosticHoverPopupShowsMessages() {
   const float hover_x =
       metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
   const float hover_y = metrics.first_line_y + metrics.line_height - 1.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering a diagnostic underline should be handled");
 
   const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell);
@@ -1342,7 +1343,7 @@ return ide.plugin({
   const float hover_x =
       metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
   const float hover_y = metrics.first_line_y + metrics.line_height * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering a provider-backed editor position should be handled");
 
   const auto popup_rect = WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell);
@@ -1402,7 +1403,7 @@ return ide.plugin({
   const float hover_x =
       surface.right_x + surface.gutter_width + WorkspaceShellTestAccess::TextCharWidth(shell) * 0.5f;
   const float hover_y = surface.rows_y + surface.line_height * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering the compare editable pane should be handled");
 
   Expect(WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell).has_value(),
@@ -1458,7 +1459,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   const float hover_x =
       metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 1.0f;
   const float hover_y = metrics.first_line_y + metrics.line_height - 1.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering the saved ESLint diagnostic should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell).has_value() &&
              *WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell) ==
@@ -2096,7 +2097,7 @@ void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
              "src/main.txt:2:2 | diagnostics",
          "problems sidebar should expose the project-relative location and owner");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing Enter in the problems sidebar should open the selected diagnostic");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
          "opening a problem should load the diagnostic's file");
@@ -2203,12 +2204,12 @@ return ide.plugin({
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
          "async switch fixture should open the first project");
-  Expect(WorkspaceShellTestAccess::NextAnimationDelayMs(shell) == 10,
+  Expect(shell.NextAnimationDelayMs() == 10,
          "the first project should schedule plugin async polling while its callback is pending");
 
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
          "async switch fixture should open the second project");
-  const auto next_delay = WorkspaceShellTestAccess::NextAnimationDelayMs(shell);
+  const auto next_delay = shell.NextAnimationDelayMs();
   Expect(!next_delay.has_value() || *next_delay != 10,
          "switching projects should stop polling cancelled async callbacks from the prior project");
 

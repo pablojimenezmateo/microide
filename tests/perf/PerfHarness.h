@@ -58,7 +58,7 @@ class ScenarioContext {
   bool ExecuteCommand(std::string_view command_line);
   void ToggleProjectSearchPatternMode();
   void ConsumeProjectSearchUpdates();
-  void Wait(std::chrono::milliseconds duration);
+  std::uint64_t Wait(std::chrono::milliseconds duration);
   bool WaitForDiagnostics(const std::filesystem::path& path,
                           std::chrono::milliseconds timeout);
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);

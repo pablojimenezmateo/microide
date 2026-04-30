@@ -1,0 +1,200 @@
+#include "workspace/WorkspacePersistenceBinaryInternal.h"
+
+namespace microide::workspace {
+
+bool EncodeConversationRegistryRecord(const PersistedChatState& state,
+                                      std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  if (!AppendRecord(ConversationRegistryTag::Schema,
+                    [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out) ||
+      !AppendRecord(ConversationRegistryTag::ActiveConversationId,
+                    [&](PrimitiveWriter& w) { return w.WriteString(state.active_conversation_id); },
+                    out)) {
+    return false;
+  }
+  for (const auto& conversation : state.conversations) {
+    std::vector<std::byte> payload;
+    if (!EncodeConversation(conversation, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(ConversationRegistryTag::Conversation), payload,
+                            out)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool DecodeConversationRegistryRecord(std::span<const std::byte> input,
+                                      PersistedChatState* state) {
+  if (state == nullptr) {
+    return false;
+  }
+  *state = PersistedChatState{};
+  bool seen_schema = false;
+  return ParseRecordStream<ConversationRegistryTag>(
+             input, [&](ConversationRegistryTag tag, std::span<const std::byte> payload) {
+               PrimitiveReader reader(payload);
+               switch (tag) {
+                 case ConversationRegistryTag::Schema: {
+                   std::uint32_t schema = 0;
+                   if (!reader.ReadU32(&schema) || reader.remaining() != 0 || schema != kSchemaVersion) {
+                     return false;
+                   }
+                   seen_schema = true;
+                   return true;
+                 }
+                 case ConversationRegistryTag::ActiveConversationId:
+                   return reader.ReadString(&state->active_conversation_id) && reader.remaining() == 0;
+                 case ConversationRegistryTag::Conversation: {
+                   PersistedConversationState conversation;
+                   if (!DecodeConversation(payload, &conversation)) {
+                     return false;
+                   }
+                   state->conversations.push_back(std::move(conversation));
+                   return true;
+                 }
+               }
+               return true;
+             }) &&
+         seen_schema;
+}
+
+bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
+                                std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  if (!AppendRecord(ProjectSessionTag::Schema,
+                    [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out) ||
+      !AppendRecord(ProjectSessionTag::SidebarVisible,
+                    [&](PrimitiveWriter& w) { return w.WriteBool(state.sidebar_visible); }, out) ||
+      !AppendRecord(ProjectSessionTag::SidebarWidth,
+                    [&](PrimitiveWriter& w) { return w.WriteF32(state.sidebar_width); }, out) ||
+      !AppendRecord(ProjectSessionTag::BottomPanelHeight,
+                    [&](PrimitiveWriter& w) { return w.WriteF32(state.bottom_panel_height); }, out) ||
+      !AppendRecord(ProjectSessionTag::ActiveTabIndex,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, state.active_tab_index); }, out)) {
+    return false;
+  }
+
+  for (const auto& tab : state.tabs) {
+    std::vector<std::byte> payload;
+    if (!EncodeEditorTab(tab, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectSessionTag::Tab), payload, out)) {
+      return false;
+    }
+  }
+
+  std::vector<std::byte> chat_payload;
+  if (!EncodeConversationRegistryRecord(state.chat, &chat_payload) ||
+      !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectSessionTag::ChatRegistry), chat_payload,
+                          out)) {
+    return false;
+  }
+  return true;
+}
+
+bool DecodeProjectSessionRecord(std::span<const std::byte> input,
+                                PersistedProjectSessionState* state) {
+  if (state == nullptr) {
+    return false;
+  }
+  *state = PersistedProjectSessionState{};
+  bool seen_schema = false;
+  return ParseRecordStream<ProjectSessionTag>(
+             input, [&](ProjectSessionTag tag, std::span<const std::byte> payload) {
+               PrimitiveReader reader(payload);
+               switch (tag) {
+                 case ProjectSessionTag::Schema: {
+                   std::uint32_t schema = 0;
+                   if (!reader.ReadU32(&schema) || reader.remaining() != 0 || schema != kSchemaVersion) {
+                     return false;
+                   }
+                   seen_schema = true;
+                   return true;
+                 }
+                 case ProjectSessionTag::SidebarVisible:
+                   return reader.ReadBool(&state->sidebar_visible) && reader.remaining() == 0;
+                 case ProjectSessionTag::SidebarWidth:
+                   return reader.ReadF32(&state->sidebar_width) && reader.remaining() == 0;
+                 case ProjectSessionTag::BottomPanelHeight:
+                   return reader.ReadF32(&state->bottom_panel_height) && reader.remaining() == 0;
+                 case ProjectSessionTag::ActiveTabIndex:
+                   return ReadSize(reader, &state->active_tab_index) && reader.remaining() == 0;
+                 case ProjectSessionTag::Tab: {
+                   PersistedEditorTabState tab;
+                   if (!DecodeEditorTab(payload, &tab)) {
+                     return false;
+                   }
+                   state->tabs.push_back(std::move(tab));
+                   return true;
+                 }
+                 case ProjectSessionTag::ChatRegistry:
+                   return DecodeConversationRegistryRecord(payload, &state->chat);
+               }
+               return true;
+             }) &&
+         seen_schema;
+}
+
+bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
+                                  std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  if (!AppendRecord(WorkspaceSessionTag::Schema,
+                    [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out) ||
+      !AppendRecord(WorkspaceSessionTag::ActiveProjectIndex,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, state.active_project_index); },
+                    out)) {
+    return false;
+  }
+  for (const auto& root : state.project_roots) {
+    if (!AppendRecord(WorkspaceSessionTag::ProjectRoot,
+                      [&](PrimitiveWriter& w) { return w.WritePath(root); }, out)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
+                                  PersistedWorkspaceSessionState* state) {
+  if (state == nullptr) {
+    return false;
+  }
+  *state = PersistedWorkspaceSessionState{};
+  bool seen_schema = false;
+  return ParseRecordStream<WorkspaceSessionTag>(
+             input, [&](WorkspaceSessionTag tag, std::span<const std::byte> payload) {
+               PrimitiveReader reader(payload);
+               switch (tag) {
+                 case WorkspaceSessionTag::Schema: {
+                   std::uint32_t schema = 0;
+                   if (!reader.ReadU32(&schema) || reader.remaining() != 0 || schema != kSchemaVersion) {
+                     return false;
+                   }
+                   seen_schema = true;
+                   return true;
+                 }
+                 case WorkspaceSessionTag::ProjectRoot: {
+                   std::filesystem::path root;
+                   if (!reader.ReadPath(&root) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->project_roots.push_back(std::move(root));
+                   return true;
+                 }
+                 case WorkspaceSessionTag::ActiveProjectIndex:
+                   return ReadSize(reader, &state->active_project_index) && reader.remaining() == 0;
+               }
+               return true;
+             }) &&
+         seen_schema;
+}
+
+}  // namespace microide::workspace

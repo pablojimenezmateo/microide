@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -166,7 +167,7 @@ void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
          "search click fixture should expose one result");
   const SDL_FRect result_rect = WorkspaceShellTestAccess::ProjectSearchResultRect(shell, 0);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, result_rect.x + result_rect.w * 0.5f,
              result_rect.y + result_rect.h * 0.5f, SDL_BUTTON_LEFT),
          "clicking a project search result should be handled");

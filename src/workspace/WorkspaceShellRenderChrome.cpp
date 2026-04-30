@@ -164,6 +164,9 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLa
   if (!last_mouse_position_valid_) {
     return std::nullopt;
   }
+  if (!Contains(layout.tab_strip, last_mouse_x_, last_mouse_y_)) {
+    return std::nullopt;
+  }
 
   const auto visible_tabs = ComputeVisibleTabs(layout.tab_strip);
   const auto hovered_tab = std::find_if(
@@ -186,6 +189,12 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLa
 }
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredStatusTooltipRect(const WorkspaceLayout& layout) const {
+  if (!last_mouse_position_valid_) {
+    return std::nullopt;
+  }
+  if (!Contains(layout.breadcrumb, last_mouse_x_, last_mouse_y_)) {
+    return std::nullopt;
+  }
   const std::string status_tooltip = HoveredStatusTooltip(layout.breadcrumb);
   if (status_tooltip.empty()) {
     return std::nullopt;

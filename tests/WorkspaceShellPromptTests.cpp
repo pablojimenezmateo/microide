@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -201,7 +202,7 @@ void TestWorkspaceShellRenamePromptPasteShortcutUsesSharedTextInputPath() {
   WorkspaceShellTestAccess::SetClipboardTextReader(
       shell, []() -> std::optional<std::string> { return std::string("renamed.txt"); });
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_V, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_V, SDL_KMOD_CTRL),
          "Ctrl+V should be handled by the rename prompt");
   Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "renamed.txt",
          "Ctrl+V should route clipboard text through the shared prompt text-input path");
@@ -716,7 +717,7 @@ void TestWorkspaceShellQuitDoesNotPromptForDirtyTabs() {
   WorkspaceShellTestAccess::OpenFile(shell, file_b);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
 
-  WorkspaceShellTestAccess::RequestQuit(shell);
+  shell.RequestQuit();
 
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "quit with dirty tabs should not show the dirty prompt");
@@ -724,7 +725,7 @@ void TestWorkspaceShellQuitDoesNotPromptForDirtyTabs() {
          "quit should not flush unsaved file-backed changes to disk");
   Expect(ReadFile(file_b) == "beta\n",
          "quit should leave file-backed dirty tabs unsaved on disk");
-  Expect(WorkspaceShellTestAccess::ConsumeQuitRequested(shell),
+  Expect(shell.ConsumeQuitRequested(),
          "quit should set the pending quit request immediately");
 }
 

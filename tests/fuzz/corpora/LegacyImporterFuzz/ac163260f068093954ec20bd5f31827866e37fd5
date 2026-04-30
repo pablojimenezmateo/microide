@@ -1,0 +1,10 @@
+version 5
+conv-begin c0
+mschemac1
+msg-begin m1
+msg-role u{erontent 
+msg-content begin msg-role use user
+msg-content 
+msg-content begin m2
+msg-role user
+msg-content 

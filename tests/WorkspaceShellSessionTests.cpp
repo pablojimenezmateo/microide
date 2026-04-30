@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -136,7 +137,7 @@ void TestWorkspaceShellImportsLegacyUserConfigAndArchivesSource() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::RestoreUserConfig(shell),
          "legacy user config should import successfully");
-  Expect(std::fabs(WorkspaceShellTestAccess::UiScale(shell) - 1.6f) < 0.0001f,
+  Expect(std::fabs(shell.UiScale() - 1.6f) < 0.0001f,
          "imported user config should update ui scale");
   Expect(std::filesystem::exists(legacy_path.string() + ".legacy"),
          "legacy user config should be archived");
@@ -422,7 +423,7 @@ void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge invalidation fixture should open");
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
   const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
@@ -468,11 +469,11 @@ void TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge conflict invalidation fixture should open");
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   const auto previous_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 0);
   WorkspaceShellTestAccess::MoveMergeSelection(shell, 1);
-  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  const auto redraw = shell.ConsumePendingRenderInvalidation();
   const auto next_conflict_rect = WorkspaceShellTestAccess::ActiveMergeConflictRect(shell, 1);
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
 
@@ -757,10 +758,10 @@ void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "scratch buffer"),
          "quit session fixture should dirty the untitled editor");
 
-  WorkspaceShellTestAccess::RequestQuit(shell);
+  shell.RequestQuit();
   Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
          "quit should not show the dirty prompt for dirty editors");
-  Expect(WorkspaceShellTestAccess::ConsumeQuitRequested(shell),
+  Expect(shell.ConsumeQuitRequested(),
          "quit should signal shutdown immediately");
 
   shell.Shutdown();
@@ -1104,7 +1105,7 @@ void TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion() {
 
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
   merge.result_viewport.MoveCursorTo(2, 0);
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "merge result should support inserting lines");
 
   merge.selected_hunk = 1;
@@ -1154,7 +1155,7 @@ void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
       (static_cast<float>(conflict.incoming_start_line) - static_cast<float>(merge.scroll_row) + 0.5f) *
           surface.line_height;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, x, y, 0),
+  Expect(SendMouseMotion(shell, x, y, 0),
          "merge hover fixture should register pointer motion");
 
   const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
@@ -1244,7 +1245,7 @@ void TestWorkspaceShellMergeHoverPrefersIncomingAcceptButton() {
   const float hover_x = accept_rect.x + accept_rect.w * 0.5f;
   const float hover_y = accept_rect.y + accept_rect.h * 0.5f;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering the incoming accept button should request a redraw");
 
   const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
@@ -1268,7 +1269,7 @@ void TestWorkspaceShellMergeHoverPrefersResultActionButton() {
   const float hover_x = action_rects[3].x + action_rects[3].w * 0.5f;
   const float hover_y = action_rects[3].y + action_rects[3].h * 0.5f;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, hover_x, hover_y, 0),
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
          "hovering a merge result action button should request a redraw");
 
   const auto& hover = WorkspaceShellTestAccess::ActiveMergeHoverState(shell);
@@ -1292,11 +1293,11 @@ void TestWorkspaceShellMergeResultDragSelectionTracksPointer() {
   const float end_x = interaction.result.text.text_x +
                       interaction.result.text.char_width * 3.1f;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, start_x, y, SDL_BUTTON_LEFT),
          "pressing inside the merge result pane should start selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
+  Expect(SendMouseMotion(shell, end_x, y, SDL_BUTTON_LMASK),
          "dragging inside the merge result pane should update selection");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, end_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseUp(shell, end_x, y, SDL_BUTTON_LEFT),
          "releasing after a merge result drag should be handled");
   Expect(WorkspaceShellTestAccess::ActiveMergeHasSelection(shell),
          "dragging across merge result text should create a selection");
@@ -1315,12 +1316,12 @@ void TestWorkspaceShellMergeDividerDragUpdatesPaneFractions() {
   const float start_x = divider_rects[0].x + divider_rects[0].w * 0.5f;
   const float y = divider_rects[0].y + divider_rects[0].h * 0.5f;
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, start_x, y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, start_x, y, SDL_BUTTON_LEFT),
          "pressing the merge divider should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(shell, start_x + 80.0f, y,
+  Expect(SendMouseMotion(shell, start_x + 80.0f, y,
                                                      SDL_BUTTON_LMASK),
          "dragging the merge divider should be handled");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonUp(shell, start_x + 80.0f, y,
+  Expect(SendMouseUp(shell, start_x + 80.0f, y,
                                                        SDL_BUTTON_LEFT),
          "releasing the merge divider drag should be handled");
   Expect(merge.left_divider_fraction > before_fraction,
@@ -1341,7 +1342,7 @@ void TestWorkspaceShellMergeWheelScrollsRows() {
   const SDL_FRect result_rect = WorkspaceShellTestAccess::ActiveMergeResultRect(shell);
   const float wheel_x = result_rect.x + 24.0f;
   const float wheel_y = result_rect.y + 24.0f;
-  Expect(WorkspaceShellTestAccess::HandleMouseWheel(shell, wheel_x, wheel_y, -1),
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
          "scrolling the merge result pane should be handled");
   Expect(merge.scroll_row > before_scroll,
          "scrolling the merge result pane should advance the visible row");
@@ -1372,14 +1373,14 @@ void TestWorkspaceShellMergeToolbarButtonsNavigateConflicts() {
   const auto nav_rects = WorkspaceShellTestAccess::MergeToolbarNavigationRects(shell);
   const float next_x = nav_rects[1].x + nav_rects[1].w * 0.5f;
   const float next_y = nav_rects[1].y + nav_rects[1].h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, next_x, next_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, next_x, next_y, SDL_BUTTON_LEFT),
          "clicking the merge next button should be handled");
   Expect(merge.selected_hunk == 1,
          "clicking the merge next button should select the next conflict");
 
   const float prev_x = nav_rects[0].x + nav_rects[0].w * 0.5f;
   const float prev_y = nav_rects[0].y + nav_rects[0].h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, prev_x, prev_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, prev_x, prev_y, SDL_BUTTON_LEFT),
          "clicking the merge prev button should be handled");
   Expect(merge.selected_hunk == 0,
          "clicking the merge prev button should select the previous conflict");

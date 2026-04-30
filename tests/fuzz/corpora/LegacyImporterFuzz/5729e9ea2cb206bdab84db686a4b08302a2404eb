@@ -1,0 +1,12 @@
+version 5
+conv-begin c1
+msg-m0 c1
+msg-begin m0
+on 5
+
+msg-begin cå
+ms
+
+
+msg-begin c1
+msa-beginend

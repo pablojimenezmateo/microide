@@ -373,7 +373,7 @@ RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root)
 RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace coordinator translation unit size";
-  result.hard_fail = false;
+  result.hard_fail = true;
   for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
@@ -505,6 +505,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckPersistenceFileIoBoundary(repo_root));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.h", 400));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
+  results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShellTestAccess.h", 600));
   results.push_back(CheckRenderSurfaceStateAccess(repo_root));
 
   bool hard_failure = false;

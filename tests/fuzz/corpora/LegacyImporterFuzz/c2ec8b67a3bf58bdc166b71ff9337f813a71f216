@@ -1,0 +1,70 @@
+version 5
+conv-begin c1
+msg-begin m2
+g-
+on 5
+con
+msg-begin m2
+g-
+on 5
+con 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+on 5
+conv-begin c1
+msg-begin m2
+g-
+on 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+g-begin m2
+g-
+on 5
+con 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+on 5
+conv-begin c1
+msg-begin m2
+g-
+on 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+on 5
+convon 5
+conv-begin c1sg-begi5
+conv-begin c1
+msg-begin m2
+g 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+on 52
+g-
+on 5
+con 5
+conv-begin c1
+msg-begin 1
+msg-begin 1
+on 5
+conv-begin c1
+msg-begin m2
+g-
+on 5
+conv-beg
+conv-begin c1
+msg-begin m2
+g-
+on 5
+conv-begin c1
+msg-begin 1
+msg-begin 2
+on 5
+conv-begin c1sg-begi5
+conv-begin c1
+msg-begin m2
+g-rend

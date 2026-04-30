@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "WorkspaceShellEventHelpers.h"
 
 namespace microide::tests {
 namespace {
@@ -196,13 +197,13 @@ void TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
 
-  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 640.0f, 10.0f) == SDL_HITTEST_DRAGGABLE,
+  Expect(shell.WindowHitTest(640.0f, 10.0f) == SDL_HITTEST_DRAGGABLE,
          "empty title-bar hit testing should hand borderless dragging back to the window manager");
-  Expect(WorkspaceShellTestAccess::WindowDragRegionContains(shell, 640.0f, 10.0f),
+  Expect(shell.WindowDragRegionContains(640.0f, 10.0f),
          "empty title-bar space should still be eligible for window dragging");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, 640.0f, 10.0f, SDL_BUTTON_LEFT, 2),
+  Expect(SendMouseDown(shell, 640.0f, 10.0f, SDL_BUTTON_LEFT, 2),
          "double-clicking an empty title-bar region should be handled");
-  Expect(WorkspaceShellTestAccess::ConsumeWindowAction(shell) ==
+  Expect(shell.ConsumeWindowAction() ==
              WorkspaceShell::WindowAction::ToggleMaximize,
          "double-clicking the title bar should request the same maximize toggle as the chrome button");
 }
@@ -212,7 +213,7 @@ void TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true, false, true);
 
-  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 1.0f, 1.0f) == SDL_HITTEST_NORMAL,
+  Expect(shell.WindowHitTest(1.0f, 1.0f) == SDL_HITTEST_NORMAL,
          "fullscreen chrome state should not expose resize hit targets");
 }
 
@@ -231,9 +232,9 @@ void TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize() {
           },
   });
 
-  Expect(WorkspaceShellTestAccess::WindowHitTest(shell, 1.0f, 1.0f) == SDL_HITTEST_DRAGGABLE,
+  Expect(shell.WindowHitTest(1.0f, 1.0f) == SDL_HITTEST_DRAGGABLE,
          "maximized presentation state should keep the title bar draggable without exposing resize hit targets");
-  Expect(WorkspaceShellTestAccess::WindowDragRegionContains(shell, 640.0f, 10.0f),
+  Expect(shell.WindowDragRegionContains(640.0f, 10.0f),
          "presentation state should keep the title bar draggable");
 }
 
@@ -246,14 +247,14 @@ void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
   Expect(file_rect.has_value(), "menu hover fixture should expose a File menu item");
   Expect(edit_rect.has_value(), "menu hover fixture should expose an Edit menu item");
 
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, file_rect->x + file_rect->w * 0.5f, file_rect->y + file_rect->h * 0.5f,
              SDL_BUTTON_LEFT),
          "clicking the File menu should be handled");
   Expect(WorkspaceShellTestAccess::FileMenuOpen(shell),
          "clicking the File menu should open the File popup");
 
-  Expect(WorkspaceShellTestAccess::HandleMouseMotion(
+  Expect(SendMouseMotion(
              shell, edit_rect->x + edit_rect->w * 0.5f, edit_rect->y + edit_rect->h * 0.5f, 0),
          "hovering another menu while the menu bar is open should be handled");
   Expect(WorkspaceShellTestAccess::EditMenuOpen(shell),
@@ -306,7 +307,7 @@ void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
 
-  const std::optional<SDL_FRect> caret_rect = WorkspaceShellTestAccess::CurrentCaretDirtyRect(shell);
+  const std::optional<SDL_FRect> caret_rect = shell.CurrentCaretDirtyRect();
   Expect(caret_rect.has_value(),
          "focused editors should expose a caret dirty rect for partial redraws");
   Expect(caret_rect->w > 0.0f && caret_rect->h > 0.0f,
@@ -331,7 +332,7 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "editor invalidation fixture should populate the active split");
   Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
          "editor invalidation fixture should activate the left split");
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
@@ -390,12 +391,12 @@ void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_E, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
          "command paste fixture should open the command prompt");
   WorkspaceShellTestAccess::SetClipboardTextReader(
       shell, []() -> std::optional<std::string> { return std::string("palette"); });
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_V, SDL_KMOD_CTRL),
+  Expect(SendKeyDown(shell, SDLK_V, SDL_KMOD_CTRL),
          "Ctrl+V should be handled by the command prompt");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "palette",
          "Ctrl+V should route clipboard text through the shared command text-input path");
@@ -425,12 +426,12 @@ void TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor() {
   Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hello",
          "chat typing should populate the chat composer");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
          "Backspace should be handled while the chat composer is focused");
   Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "hell",
          "Backspace should edit the chat composer text");
 
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_LEFT, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_NONE),
          "navigation keys should be consumed while the chat composer is focused");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines() == original_lines,
          "chat key handling should not mutate the underlying editor buffer");
@@ -452,7 +453,7 @@ void TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation() {
 
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "hello"),
          "multiline chat draft fixture should type the first line");
-  Expect(WorkspaceShellTestAccess::HandleKeyEvent(shell, SDLK_RETURN, SDL_KMOD_NONE),
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "plain Enter in the chat composer should insert a newline");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "world"),
          "multiline chat draft fixture should type the second line");
@@ -480,6 +481,44 @@ void TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation() {
          "switching back to the second conversation should succeed");
   Expect(WorkspaceShellTestAccess::ChatComposerInput(shell) == "second draft",
          "each conversation should retain its own draft buffer");
+}
+
+void TestWorkspaceShellChatComposerSelectAllAndCutAffectCurrentLineOnly() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ShowChatPanel(shell);
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "hello"),
+         "chat line-select fixture should type first line");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "chat line-select fixture should insert newline");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "world"),
+         "chat line-select fixture should type second line");
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
+         "chat line-select fixture should move cursor to first line");
+
+  std::string clipboard;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard = std::string(text);
+        return true;
+      });
+  WorkspaceShellTestAccess::SetPrimarySelectionTextWriter(shell, [](std::string_view) { return true; });
+
+  Expect(SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL),
+         "Ctrl+A should be handled in chat composer");
+  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_CTRL),
+         "Ctrl+X should cut selected chat composer text");
+  const std::string input_after_cut = WorkspaceShellTestAccess::ChatComposerInput(shell);
+  Expect(input_after_cut == "\nworld" || input_after_cut == "world",
+         "chat composer cut should preserve non-active lines");
 }
 
 void TestWorkspaceShellProjectTabsExposeChatStatusSummary() {
@@ -658,7 +697,7 @@ void TestWorkspaceShellChatTranscriptLocalLinksOpenFiles() {
 
   const auto point = WorkspaceShellTestAccess::ChatTranscriptLinkPoint(shell, "src/main.cpp:2:3");
   Expect(point.has_value(), "local chat links should expose a clickable hit region");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point->x, point->y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, point->x, point->y, SDL_BUTTON_LEFT),
          "clicking a local chat link should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() ==
              target.lexically_normal(),
@@ -703,7 +742,7 @@ void TestWorkspaceShellChatTranscriptRemoteLinksRequireConfirmation() {
   const auto point =
       WorkspaceShellTestAccess::ChatTranscriptLinkPoint(shell, "https://example.com/docs");
   Expect(point.has_value(), "remote chat links should expose a clickable hit region");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, point->x, point->y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, point->x, point->y, SDL_BUTTON_LEFT),
          "clicking a remote chat link should be handled");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "remote chat links should require explicit host confirmation");
@@ -731,7 +770,7 @@ void TestWorkspaceShellSidebarDropdownOffersChatView() {
   const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
   const float click_x = button_rect.x + button_rect.w * 0.5f;
   const float click_y = button_rect.y + button_rect.h * 0.5f;
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
          "clicking the sidebar mode control should open the sidebar menu");
   Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
          "clicking the sidebar mode control should open the sidebar menu");
@@ -743,7 +782,7 @@ void TestWorkspaceShellSidebarDropdownOffersChatView() {
   const auto chat_rect = WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Chat");
   Expect(chat_rect.has_value(),
          "the sidebar dropdown should expose a clickable chat row");
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, chat_rect->x + chat_rect->w * 0.5f, chat_rect->y + chat_rect->h * 0.5f,
              SDL_BUTTON_LEFT),
          "clicking the built-in chat sidebar row should be handled");
@@ -777,7 +816,7 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
-  (void)WorkspaceShellTestAccess::HandleMouseMotion(shell, tab_rect.x + tab_rect.w * 0.25f,
+  (void)SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.25f,
                                                     tab_rect.y + tab_rect.h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
          "tooltip layering fixture should produce the hovered tab tooltip");
@@ -837,7 +876,7 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
 
   const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
-  (void)WorkspaceShellTestAccess::HandleMouseMotion(
+  (void)SendMouseMotion(
       shell, action_rects[0].x + action_rects[0].w * 0.5f,
       action_rects[0].y + action_rects[0].h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
@@ -923,7 +962,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
     WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
     WorkspaceShellTestAccess::OpenFile(shell, source);
-    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+    (void)shell.ConsumePendingRenderInvalidation();
   };
   const auto handle_shortcut = [](WorkspaceShell& shell, SDL_Keycode key) {
     SDL_Event event{};
@@ -976,7 +1015,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
 
   configure_shell(copy_line_shell);
   WorkspaceShellTestAccess::OpenFile(copy_line_shell, line_source);
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(copy_line_shell);
+  (void)copy_line_shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::ActiveEditor(copy_line_shell).MoveCursorTo(1, 2);
   clipboard_text.clear();
   WorkspaceShellTestAccess::SetClipboardTextWriter(
@@ -993,7 +1032,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
 
   configure_shell(cut_line_shell);
   WorkspaceShellTestAccess::OpenFile(cut_line_shell, line_source);
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(cut_line_shell);
+  (void)cut_line_shell.ConsumePendingRenderInvalidation();
   WorkspaceShellTestAccess::ActiveEditor(cut_line_shell).MoveCursorTo(1, 2);
   clipboard_text.clear();
   WorkspaceShellTestAccess::SetClipboardTextWriter(
@@ -1049,7 +1088,7 @@ void TestWorkspaceShellEditorTabRightClickOpensContextMenu() {
   WorkspaceShellTestAccess::ActivateTab(shell, 1);
 
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f,
              SDL_BUTTON_RIGHT),
          "right-clicking an editor tab should be handled");
@@ -1075,7 +1114,7 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
   WorkspaceShellTestAccess::ActivateTab(shell, 1);
 
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
-  Expect(WorkspaceShellTestAccess::HandleMouseButtonDown(
+  Expect(SendMouseDown(
              shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f,
              SDL_BUTTON_RIGHT),
          "right-clicking a tab should open the editor tab context menu");
@@ -1176,7 +1215,7 @@ void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
 
   Expect(WorkspaceShellTestAccess::ExecuteShowGitSidebar(retained_shell),
          "sidebar redraw regression fixture should switch to the git sidebar");
-  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(retained_shell);
+  const auto redraw = retained_shell.ConsumePendingRenderInvalidation();
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
   Expect(!redraw.full && !redraw.rects.empty(),
          "switching sidebar modes without geometry changes should stay on partial redraws");
@@ -1225,7 +1264,7 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
     WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
     WorkspaceShellTestAccess::OpenFile(shell, alpha);
-    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+    (void)shell.ConsumePendingRenderInvalidation();
   };
 
   WorkspaceShell retained_shell;
@@ -1236,7 +1275,7 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
 
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(retained_shell, beta),
          "tab redraw regression fixture should open a second file");
-  const auto redraw = WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(retained_shell);
+  const auto redraw = retained_shell.ConsumePendingRenderInvalidation();
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
   Expect(!redraw.full && !redraw.rects.empty(),
          "opening a file in a new tab should stay on partial redraws");
@@ -1282,7 +1321,7 @@ void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
 
   const SDL_FRect editor_surface = WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface;
   const std::size_t before_line_count =
@@ -1323,7 +1362,7 @@ void TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender() {
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
     WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
     WorkspaceShellTestAccess::OpenFile(shell, source);
-    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+    (void)shell.ConsumePendingRenderInvalidation();
   };
 
   WorkspaceShell retained_shell;
@@ -1401,7 +1440,7 @@ void TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender() {
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
     WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
     WorkspaceShellTestAccess::OpenFile(shell, source);
-    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+    (void)shell.ConsumePendingRenderInvalidation();
   };
 
   const auto handle_divider_press = [&](WorkspaceShell& shell, float x, float y) {
@@ -1509,7 +1548,7 @@ void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
     TerminalSessionTestAccess::SetCursorVisible(session, false);
     TerminalSessionTestAccess::AppendOutput(
         session, "terminal resize\nkeeps stale pixels away\nthird line\n");
-    (void)WorkspaceShellTestAccess::ConsumePendingRenderInvalidation(shell);
+    (void)shell.ConsumePendingRenderInvalidation();
   };
 
   const auto handle_divider_press = [&](WorkspaceShell& shell, float x, float y) {
@@ -1589,6 +1628,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor);
   AddTest(tests, "WorkspaceShell/ChatComposerSupportsMultilineDraftsPerConversation",
           TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation);
+  AddTest(tests, "WorkspaceShell/ChatComposerSelectAllAndCutAffectCurrentLineOnly",
+          TestWorkspaceShellChatComposerSelectAllAndCutAffectCurrentLineOnly);
   AddTest(tests, "WorkspaceShell/ProjectTabsExposeChatStatusSummary",
           TestWorkspaceShellProjectTabsExposeChatStatusSummary);
   AddTest(tests, "WorkspaceShell/ProjectTabsShowBadges",

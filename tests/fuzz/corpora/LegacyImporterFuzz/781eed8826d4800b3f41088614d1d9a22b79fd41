@@ -1,0 +1,15 @@
+version 5
+co-beginbegin msg-begin n m2
+g-
+oconv-draftn 5
+conv-begin c1
+msg-begin n c1
+msg c1
+msg-begin n c1
+msg-begin
+msg-begin n c1
+msg-5
+con 5
+conv-begin c1
+msg-begin 1
+msg-begin
