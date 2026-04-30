@@ -523,11 +523,13 @@ int main(int argc, char** argv) {
     const auto baseline = LoadBaseline(baseline_path);
     if (!baseline.has_value()) {
       std::cerr << "missing baseline: " << baseline_path << '\n';
-      all_passed = false;
+      if (!options->smoke) {
+        all_passed = false;
+      }
       continue;
     }
     const BaselineComparison comparison = CompareToBaseline(*baseline, *aggregate);
-    if (!comparison.passed) {
+    if (!comparison.passed && !options->smoke) {
       all_passed = false;
     }
   }

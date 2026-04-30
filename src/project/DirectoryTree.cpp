@@ -103,7 +103,9 @@ bool DirectoryTree::SelectPath(const std::filesystem::path& path) {
   }
 
   const auto relative = std::filesystem::relative(normalized_path, root_, error);
-  if (error || relative.empty() || relative.native().rfind("..", 0) == 0) {
+  if (error || relative.empty() ||
+      (relative.begin() != relative.end() &&
+       *relative.begin() == std::filesystem::path(".."))) {
     return false;
   }
 

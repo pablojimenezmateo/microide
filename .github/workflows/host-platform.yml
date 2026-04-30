@@ -131,4 +131,7 @@ jobs:
         run: cmake --build ${{ matrix.binary_dir }} --target microide_tests -j8
 
       - name: Run Tests (${{ matrix.preset }})
-        run: env SDL_VIDEODRIVER=dummy ./${{ matrix.binary_dir }}/microide/microide_tests
+        env:
+          SDL_VIDEODRIVER: dummy
+          TSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/tsan.supp:second_deadlock_stack=1
+        run: ./${{ matrix.binary_dir }}/microide/microide_tests

@@ -10,7 +10,10 @@ std::string RelativePathLabel(const std::filesystem::path& root,
 
   std::error_code error;
   const auto relative = std::filesystem::relative(path, root, error);
-  if (!error && !relative.empty() && relative.native().rfind("..", 0) != 0) {
+  const bool starts_with_parent =
+      relative.begin() != relative.end() &&
+      *relative.begin() == std::filesystem::path("..");
+  if (!error && !relative.empty() && !starts_with_parent) {
     return relative.lexically_normal().string();
   }
   return path.lexically_normal().string();

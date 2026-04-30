@@ -35,7 +35,10 @@ void PushBufferTable(lua_State* state,
     std::error_code error;
     const std::filesystem::path relative =
         std::filesystem::relative(normalized_path, current_project_root, error);
-    if (!error && !relative.empty() && relative.native().find("..") != 0) {
+    const bool starts_with_parent =
+        relative.begin() != relative.end() &&
+        *relative.begin() == std::filesystem::path("..");
+    if (!error && !relative.empty() && !starts_with_parent) {
       lua_pushstring(state, relative.generic_string().c_str());
       lua_setfield(state, -2, "relative_path");
     }

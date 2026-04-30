@@ -18,7 +18,9 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
   std::error_code error;
   const std::filesystem::path relative = std::filesystem::relative(
       absolute_path.lexically_normal(), root.lexically_normal(), error);
-  if (error || relative.empty() || relative.native().rfind("..", 0) == 0) {
+  if (error || relative.empty() ||
+      (relative.begin() != relative.end() &&
+       *relative.begin() == std::filesystem::path(".."))) {
     return std::nullopt;
   }
   return relative.lexically_normal();

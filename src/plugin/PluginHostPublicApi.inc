@@ -119,7 +119,7 @@ bool PluginHost::ExecuteCommand(std::string_view name,
                                 std::string* error_message) {
   if (!impl_->enabled()) {
     if (error_message != nullptr) {
-      *error_message = "Lua plugin runtime unavailable";
+      error_message->clear();
     }
     return false;
   }
@@ -130,13 +130,13 @@ bool PluginHost::ExecuteCommand(std::string_view name,
       [this](lua_State* state) { return impl_->FindPluginByState(state); },
       [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message);
 #else
+  (void)name;
   (void)args;
-#endif
-
   if (error_message != nullptr) {
     error_message->clear();
   }
-  return true;
+  return false;
+#endif
 }
 
 const std::vector<std::string>& PluginHost::CommandNames() const {
@@ -295,8 +295,11 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
         impl_->PushBufferContext(state, buffer_path, value);
       },
       error_message);
-#endif
+#else
+  (void)path;
+  (void)text;
   return true;
+#endif
 }
 
 std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(

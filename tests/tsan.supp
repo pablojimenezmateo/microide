@@ -1,0 +1,6 @@
+# TSan suppressions for microide_tests.
+# Lock-order-inversion warnings inside libdbus's internal mutexes are reported
+# when SDL initializes/teardowns dbus integration across threads. The locking
+# is internal to libdbus (not microide code), so we suppress the warning here
+# rather than leaving a flake in the sanitizer matrix.
+deadlock:libdbus-1

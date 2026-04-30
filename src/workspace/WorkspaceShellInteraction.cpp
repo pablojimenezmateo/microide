@@ -182,7 +182,10 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
   if (!context_.current_project_state.root.empty() && !path.empty()) {
     std::error_code error;
     const std::filesystem::path relative = std::filesystem::relative(path, context_.current_project_state.root, error);
-    if (!error && !relative.empty() && relative.native().rfind("..", 0) != 0) {
+    const bool starts_with_parent =
+        relative.begin() != relative.end() &&
+        *relative.begin() == std::filesystem::path("..");
+    if (!error && !relative.empty() && !starts_with_parent) {
       path_label = relative.generic_string();
     }
   }
