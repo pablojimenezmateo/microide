@@ -10,7 +10,23 @@ local function read_string(ctx, suffix, fallback)
   return v ~= "" and v or fallback
 end
 
-local function make_command(ctx, setting_binary, tsserver_path)
+local function project_root(ctx)
+  local root = ctx.workspace.project_root()
+  if type(root) == "string" and root ~= "" then
+    return root
+  end
+  return nil
+end
+
+local function project_relative_path(ctx, relative_path)
+  local root = project_root(ctx)
+  if root == nil then
+    return relative_path
+  end
+  return root .. "/" .. relative_path
+end
+
+local function make_command(ctx, setting_binary)
   local command
   local description
 
@@ -18,8 +34,8 @@ local function make_command(ctx, setting_binary, tsserver_path)
     command = { setting_binary, "--stdio" }
     description = setting_binary
   elseif ctx.files.exists("node_modules/.bin/typescript-language-server") then
-    command = { "node_modules/.bin/typescript-language-server", "--stdio" }
-    description = "node_modules/.bin/typescript-language-server"
+    command = { project_relative_path(ctx, "node_modules/.bin/typescript-language-server"), "--stdio" }
+    description = "project node_modules/.bin/typescript-language-server"
   else
     command = {
       "sh",
@@ -44,11 +60,6 @@ exec npx --yes typescript-language-server "$@"
     description = "deferred resolver (PATH, npm global, yarn global, npx fallback)"
   end
 
-  if tsserver_path ~= "" then
-    table.insert(command, "--tsserver-path")
-    table.insert(command, tsserver_path)
-  end
-
   return command, description
 end
 
@@ -61,14 +72,6 @@ local function declare_settings(ctx)
     label = "TypeScript LSP Binary",
     description = "Path to typescript-language-server. Defaults to node_modules/.bin/typescript-language-server when present, otherwise typescript-language-server from PATH.",
   })
-  ctx.settings.declare({
-    id = "tsserver_path",
-    type = "string",
-    default = "",
-    scope = "project",
-    label = "TypeScript TSServer Path",
-    description = "Optional path passed to --tsserver-path for typescript-language-server.",
-  })
 end
 
 return ide.plugin({
@@ -78,8 +81,7 @@ return ide.plugin({
     declare_settings(ctx)
 
     local binary = read_string(ctx, "binary", "typescript-language-server")
-    local tsserver_path = read_string(ctx, "tsserver_path", "")
-    local command, description = make_command(ctx, binary, tsserver_path)
+    local command, description = make_command(ctx, binary)
     ctx.log("typescript-lsp: using command: " .. description)
 
     ctx.lsp.add({

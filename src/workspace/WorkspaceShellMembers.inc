@@ -598,7 +598,7 @@
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject(bool reload_syntax_definitions = true,
                                       bool replay_plugin_buffer_opens = true,
-                                      bool open_lsp_documents = true);
+                                      bool open_lsp_documents = false);
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();

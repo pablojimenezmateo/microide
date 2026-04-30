@@ -25,11 +25,14 @@ class LspManager {
   // Register a server command for a language.
   // If eager_start is true, the server will be started in the background immediately.
   void RegisterServer(const std::string& language_id, const std::vector<std::string>& command,
-                      const std::string& root_uri, bool eager_start = true);
+                      const std::string& root_uri,
+                      const std::string& cwd = {},
+                      bool eager_start = true);
   void BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids);
 
   // Get or start server for language; returns nullptr if not registered or failed to start.
   LspClient* GetServer(const std::string& language_id);
+  LspClient* FindStartedServer(const std::string& language_id);
 
   // True if a server is registered for language, regardless of running state.
   bool HasServer(const std::string& language_id) const;
@@ -54,6 +57,7 @@ class LspManager {
   struct ServerEntry {
     std::vector<std::string> command;
     std::string root_uri;
+    std::string cwd;
     std::string last_error;
     std::unique_ptr<LspClient> client;
   };

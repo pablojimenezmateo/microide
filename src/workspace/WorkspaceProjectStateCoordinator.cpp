@@ -172,7 +172,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
-      ReloadPluginsForCurrentProject(false, false, true);
+      ReloadPluginsForCurrentProject(false, false, false);
     }
     return true;
   }
@@ -225,7 +225,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
-    ReloadPluginsForCurrentProject(true, false, true);
+    ReloadPluginsForCurrentProject(true, false, false);
   }
   return true;
 }

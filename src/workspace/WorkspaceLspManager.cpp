@@ -28,12 +28,14 @@ void LspManager::SetWakeEventType(Uint32 event_type) {
 }
 
 void LspManager::RegisterServer(const std::string& language_id,
-                                 const std::vector<std::string>& command,
-                                 const std::string& root_uri, bool eager_start) {
+                                const std::vector<std::string>& command,
+                                const std::string& root_uri,
+                                const std::string& cwd,
+                                bool eager_start) {
   auto it = servers_.find(language_id);
   if (it != servers_.end()) {
     ServerEntry& existing = it->second;
-    if (existing.command == command && existing.root_uri == root_uri) {
+    if (existing.command == command && existing.root_uri == root_uri && existing.cwd == cwd) {
       if (eager_start) {
         (void)GetServer(language_id);
       }
@@ -43,9 +45,9 @@ void LspManager::RegisterServer(const std::string& language_id,
       existing.client->BeginShutdown();
       retiring_clients_.push_back(std::move(existing.client));
     }
-    existing = ServerEntry{command, root_uri, {}, nullptr};
+    existing = ServerEntry{command, root_uri, cwd, {}, nullptr};
   } else {
-    servers_[language_id] = ServerEntry{command, root_uri, {}, nullptr};
+    servers_[language_id] = ServerEntry{command, root_uri, cwd, {}, nullptr};
   }
   if (eager_start) {
     (void)GetServer(language_id);
@@ -79,7 +81,7 @@ LspClient* LspManager::GetServer(const std::string& language_id) {
     entry.last_error.clear();
     entry.client = std::make_unique<LspClient>();
     entry.client->SetWakeEventType(wake_event_type_);
-    if (!entry.client->Start(entry.command, entry.root_uri, language_id)) {
+    if (!entry.client->Start(entry.command, entry.root_uri, language_id, entry.cwd)) {
       entry.last_error = entry.client->LastError();
       if (entry.last_error.empty()) {
         entry.last_error = "language server failed to start";
@@ -98,6 +100,14 @@ LspClient* LspManager::GetServer(const std::string& language_id) {
   }
   entry.client = nullptr;
   return nullptr;
+}
+
+LspClient* LspManager::FindStartedServer(const std::string& language_id) {
+  auto it = servers_.find(language_id);
+  if (it == servers_.end() || it->second.client == nullptr) {
+    return nullptr;
+  }
+  return it->second.client->IsRunning() ? it->second.client.get() : nullptr;
 }
 
 bool LspManager::HasServer(const std::string& language_id) const {

@@ -181,7 +181,9 @@ void WorkspaceShell::RebuildPhase3Registries() {
     }
     active_language_servers.insert(language_server.language_id);
     CurrentLspManager().RegisterServer(language_server.language_id, language_server.command,
-                                       "file://" + context_.current_project_state.root.generic_string());
+                                       "file://" + context_.current_project_state.root.generic_string(),
+                                       context_.current_project_state.root.generic_string(),
+                                       false);
   }
   CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
   for (const auto& task : host.ContributedTasks()) {
@@ -451,19 +453,6 @@ void WorkspaceShell::NotifyPluginBufferOpen(const std::filesystem::path& path) {
   if (plugin_runtime_.enabled() && !normalized_path.empty()) {
     plugin_runtime_.Host().OnBufferOpen(normalized_path);
   }
-  if (normalized_path.empty()) {
-    return;
-  }
-  editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
-    return;
-  }
-  std::string language_id;
-  LspClient* client = LspClientForViewport(*viewport, &language_id);
-  if (client == nullptr) {
-    return;
-  }
-  EnsureLspDocumentOpen(*viewport, *client, language_id);
 }
 
 void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
@@ -478,11 +467,19 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
     return;
   }
-  std::string language_id;
-  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  const std::string language_id = editor::runtime_syntax::DetectFiletype(viewport->path(), viewport->lines());
+  if (language_id.empty()) {
+    return;
+  }
+  LspClient* client = CurrentLspManager().FindStartedServer(language_id);
   if (client == nullptr) {
     return;
   }
+  client->SetDiagnosticsCallback([this, project = &context_.current_project_state](
+                                     std::string uri,
+                                     std::vector<LspClient::Diagnostic> diagnostics) {
+    PublishLspDiagnostics(*project, std::move(uri), std::move(diagnostics));
+  });
   EnsureLspDocumentOpen(*viewport, *client, language_id);
   client->DidSave("file://" + normalized_path.generic_string());
 }
@@ -492,12 +489,11 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (normalized_path.empty()) {
     return;
   }
-  editor::TextViewport viewport;
-  if (!viewport.OpenFile(normalized_path)) {
+  const std::string language_id = editor::runtime_syntax::DetectFiletype(normalized_path, {});
+  if (language_id.empty()) {
     return;
   }
-  std::string language_id;
-  LspClient* client = LspClientForViewport(viewport, &language_id);
+  LspClient* client = CurrentLspManager().FindStartedServer(language_id);
   if (client == nullptr) {
     return;
   }

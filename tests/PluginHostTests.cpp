@@ -20,6 +20,14 @@ void WritePluginInit(const std::filesystem::path& root,
   WriteFile(root / directory_name / "init.lua", std::string(content));
 }
 
+std::filesystem::path RepoPluginsRoot() {
+  return TestRoot().parent_path() / "plugins";
+}
+
+void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
+  CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
+}
+
 PluginHost::Callbacks MakePluginHostCallbacks() {
   return PluginHost::Callbacks{
       .is_command_name_available = [](std::string_view) { return true; },
@@ -880,6 +888,38 @@ return ide.plugin({
          "language server contributions should preserve ids, language ids, and commands");
 }
 
+void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "typescript plugin fixture\n");
+  WriteFile(project_root / "node_modules" / ".bin" / "typescript-language-server", "#!/bin/sh\n");
+
+  CopyRepoPlugin(global_plugins, "typescript-lsp");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "repo typescript-lsp plugin should reload successfully");
+  Expect(host.ContributedLanguageServers().size() == 1,
+         "repo typescript-lsp plugin should contribute one language server");
+
+  const auto& server = host.ContributedLanguageServers().front();
+  Expect(server.id == "typescript-lsp.typescript" && server.language_id == "typescript",
+         "repo typescript-lsp plugin should preserve its ids");
+  Expect(server.command.size() == 2 &&
+             server.command.front() ==
+                 (project_root / "node_modules" / ".bin" / "typescript-language-server").generic_string() &&
+             server.command.back() == "--stdio",
+         "repo typescript-lsp plugin should use an absolute project-local language server path");
+}
+
 void TestPluginHostCancelsAsyncCallbacksOnReload() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1011,6 +1051,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
+  AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
+          TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary);
 }
 
 }  // namespace microide::tests

@@ -83,7 +83,7 @@ class LspClient {
 
   // Start the server and begin asynchronous initialization.
   bool Start(const std::vector<std::string>& command, const std::string& root_uri,
-             const std::string& language_id);
+             const std::string& language_id, const std::string& cwd = {});
 
   // True while the server process is running.
   bool IsRunning() const;

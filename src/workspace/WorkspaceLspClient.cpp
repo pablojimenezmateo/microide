@@ -16,13 +16,13 @@ void LspClient::SetWakeEventType(Uint32 event_type) {
 }
 
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
-                      const std::string& language_id) {
+                      const std::string& language_id, const std::string& cwd) {
   util::StartupTrace::Scope trace_scope("LspClient::Start");
   impl_->last_error.clear();
 
   {
     util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
-    if (!impl_->proc.Start(command)) {
+    if (!impl_->proc.Start(command, cwd)) {
       impl_->last_error = "failed to start language server process";
       return false;
     }
