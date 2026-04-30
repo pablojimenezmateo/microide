@@ -453,6 +453,57 @@ RuleResult CheckViewModelBackReferences(const std::filesystem::path& repo_root) 
   return result;
 }
 
+RuleResult CheckPluginDrainBeforeTeardown(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "plugin drain-before-teardown";
+  result.hard_fail = true;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/plugin")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".inc") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    // Target only the public-API teardown call sites (`impl_->TearDownPlugins(...)`),
+    // not the definition or the inner leaf helper. Those leaf calls are reached
+    // exclusively through these call sites, so guarding here is sufficient.
+    const std::regex teardown_pattern(R"(impl_->\s*TearDownPlugins\s*\()");
+    for (std::sregex_iterator it(text.begin(), text.end(), teardown_pattern), end; it != end;
+         ++it) {
+      const auto teardown_pos = static_cast<std::size_t>(it->position());
+      if (teardown_pos < is_code.size() && !is_code[teardown_pos]) {
+        continue;
+      }
+      // Drain seam call must appear within the previous 12 lines and after any
+      // earlier teardown call in the same translation unit. The window is small
+      // enough to keep the check tight without parsing function boundaries.
+      std::size_t scan_start = teardown_pos;
+      std::size_t lines_back = 0;
+      while (scan_start > 0 && lines_back < 12) {
+        --scan_start;
+        if (text[scan_start] == '\n') {
+          ++lines_back;
+        }
+      }
+      const std::string_view window(text.data() + scan_start, teardown_pos - scan_start);
+      const bool drain_seen = window.find("DrainAsyncProcessWorkers") != std::string_view::npos ||
+                              window.find("DrainAndJoinWorkers") != std::string_view::npos;
+      if (!drain_seen) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, teardown_pos),
+            .message = "TearDownPlugins must be preceded by a drain seam call "
+                       "(DrainAsyncProcessWorkers / DrainAndJoinWorkers) within the same path",
+        });
+      }
+    }
+  }
+  return result;
+}
+
 RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "persistence file-io boundary";
@@ -503,6 +554,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckCoordinatorTuSize(repo_root));
   results.push_back(CheckViewModelBackReferences(repo_root));
   results.push_back(CheckPersistenceFileIoBoundary(repo_root));
+  results.push_back(CheckPluginDrainBeforeTeardown(repo_root));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.h", 400));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShellTestAccess.h", 600));

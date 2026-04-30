@@ -1030,6 +1030,80 @@ return ide.plugin({
          "shutting down with pending async callbacks should not report callback errors");
 }
 
+void TestPluginHostRapidReloadDrainsAsyncWorkers() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "rapid reload fixture\n");
+  WriteFile(source, "console.log('hello');\n");
+
+  WritePluginInit(
+      global_plugins, "rapid-reload",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "rapid.reload",
+  on_buffer_open = function(ctx, buffer)
+    ctx.process.run_async({"sh", "-lc", "sleep 0.3; printf done"}, nil, function(result)
+      ctx.log("async-complete:" .. tostring(result.exit_code))
+    end)
+  end
+})
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "rapid reload fixture should load");
+
+  // Drive the reload-while-inflight pattern that previously crashed: schedule an
+  // async subprocess, reload before it finishes, repeat. The drain seam in
+  // Reload must observe the cancellation and let the still-running detached
+  // worker thread complete safely on its own. Under TSAN this exercises the
+  // worker fetch_sub + cv notify path against the drain seam wait_for path.
+  for (int i = 0; i < 8; ++i) {
+    host.OnBufferOpen(source);
+    Expect(host.PendingAsyncProcessCount() > 0,
+           "buffer open should leave an async process in flight before reload");
+    const auto reload_start = std::chrono::steady_clock::now();
+    Expect(host.Reload(project_root),
+           "rapid reload should succeed even with workers still in flight");
+    const auto reload_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - reload_start);
+    Expect(reload_elapsed < std::chrono::milliseconds(250),
+           "rapid reload should bound on the drain deadline, not on the subprocess");
+  }
+
+  // Final shutdown after the rapid sequence must also drain cleanly.
+  host.OnBufferOpen(source);
+  const auto shutdown_start = std::chrono::steady_clock::now();
+  host.Shutdown();
+  const auto shutdown_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - shutdown_start);
+  Expect(shutdown_elapsed < std::chrono::milliseconds(250),
+         "shutdown after rapid reload should bound on the drain deadline");
+
+  // Wait for any still-detached subprocess workers to retire, then confirm no
+  // callback fired after Shutdown returned.
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  host.ConsumeAsyncProcessCallbacks();
+  Expect(host.PendingAsyncProcessCount() == 0,
+         "shutdown should leave no async work pending after workers retire");
+  Expect(std::none_of(host.Messages().begin(), host.Messages().end(),
+                      [](const std::string& entry) {
+                        return entry == "rapid.reload: async-complete:0";
+                      }),
+         "no callback from a torn-down plugin should fire after shutdown");
+  Expect(host.Errors().empty(),
+         "rapid reload-and-shutdown sequence should not surface callback errors");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -1048,6 +1122,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostCancelsAsyncCallbacksOnReload);
   AddTest(tests, "PluginHost/CancelsAsyncCallbacksOnShutdown",
           TestPluginHostCancelsAsyncCallbacksOnShutdown);
+  AddTest(tests, "PluginHost/RapidReloadDrainsAsyncWorkers",
+          TestPluginHostRapidReloadDrainsAsyncWorkers);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);

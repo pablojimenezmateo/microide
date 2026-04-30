@@ -3,6 +3,8 @@
 #include <SDL3/SDL.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -161,9 +163,12 @@ struct AsyncProcessRequest {
 struct AsyncProcessState {
   Uint32 event_type = 0;
   std::mutex mutex;
+  std::condition_variable in_flight_cv;
   std::atomic<int> in_flight{0};
   std::vector<std::shared_ptr<AsyncProcessRequest>> active_requests;
   std::vector<AsyncProcessCallback> pending_callbacks;
 };
+
+inline constexpr std::chrono::milliseconds kPluginHostDrainDeadline{100};
 
 }  // namespace microide::plugin::runtime_types

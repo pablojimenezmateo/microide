@@ -16,7 +16,7 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 #if MICROIDE_HAS_LUA_PLUGINS
   const std::filesystem::path next_project_root =
       project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
-  impl_->CancelAsyncProcessCallbacks();
+  impl_->DrainAsyncProcessWorkers();
   impl_->TearDownPlugins();
   impl_->current_project_root = next_project_root;
 
@@ -51,7 +51,7 @@ void PluginHost::Shutdown() {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  impl_->CancelAsyncProcessCallbacks();
+  impl_->DrainAsyncProcessWorkers();
   impl_->TearDownPlugins();
 #endif
   impl_->current_project_root.clear();

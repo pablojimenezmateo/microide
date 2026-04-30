@@ -73,4 +73,27 @@ int PendingCount(runtime_types::AsyncProcessState& state) {
 #endif
 }
 
+void NotifyWorkerCompleted(runtime_types::AsyncProcessState& state) {
+#if MICROIDE_HAS_LUA_PLUGINS
+  state.in_flight_cv.notify_all();
+#else
+  (void)state;
+#endif
+}
+
+bool DrainAndJoinWorkers(runtime_types::AsyncProcessState& state,
+                         std::chrono::milliseconds deadline) {
+#if MICROIDE_HAS_LUA_PLUGINS
+  CancelCallbacks(state);
+  std::unique_lock lock(state.mutex);
+  return state.in_flight_cv.wait_for(lock, deadline, [&state] {
+    return state.in_flight.load(std::memory_order_acquire) == 0;
+  });
+#else
+  (void)state;
+  (void)deadline;
+  return true;
+#endif
+}
+
 }  // namespace microide::plugin::async_state_interop

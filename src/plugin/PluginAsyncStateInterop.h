@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -15,5 +16,10 @@ std::vector<runtime_types::AsyncProcessCallback> TakePendingCallbacks(
     runtime_types::AsyncProcessState& state);
 
 int PendingCount(runtime_types::AsyncProcessState& state);
+
+void NotifyWorkerCompleted(runtime_types::AsyncProcessState& state);
+
+bool DrainAndJoinWorkers(runtime_types::AsyncProcessState& state,
+                         std::chrono::milliseconds deadline);
 
 }  // namespace microide::plugin::async_state_interop

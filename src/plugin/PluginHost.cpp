@@ -224,6 +224,20 @@ struct PluginHost::Impl {
       async_state_interop::CancelCallbacks(*async_process_state);
     }
   }
+
+  void DrainAsyncProcessWorkers() {
+    if (!async_process_state) {
+      return;
+    }
+    const bool drained = async_state_interop::DrainAndJoinWorkers(
+        *async_process_state, runtime_types::kPluginHostDrainDeadline);
+    if (!drained) {
+      SDL_Log(
+          "PluginHost: async worker drain exceeded %lld ms deadline; proceeding "
+          "with teardown (cancelled callbacks remain inert)",
+          static_cast<long long>(runtime_types::kPluginHostDrainDeadline.count()));
+    }
+  }
 #endif
 
 };

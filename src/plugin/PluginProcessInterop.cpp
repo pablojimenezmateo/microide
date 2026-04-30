@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include "platform/Subprocess.h"
+#include "plugin/PluginAsyncStateInterop.h"
 
 namespace microide::plugin::process_interop {
 namespace {
@@ -219,6 +220,7 @@ int LuaProcessRunAsync(lua_State* state,
       }
     }
     async_process_state->in_flight.fetch_sub(1, std::memory_order_release);
+    async_state_interop::NotifyWorkerCompleted(*async_process_state);
     if (should_push_event && event_type != 0) {
       SDL_Event event{};
       event.type = event_type;
