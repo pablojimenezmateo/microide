@@ -243,7 +243,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", temp.path() / "config");
+  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedSettings().empty(),
          "plugin should have contributed at least one setting");
@@ -280,7 +280,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", temp.path() / "config");
+  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedMenuEntries().empty(), "plugin should contribute menu entries");
   Expect(host.ContributedMenuEntries().front().menu == "file",
@@ -317,7 +317,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", temp.path() / "config");
+  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedKeybindings().empty(), "plugin should contribute keybindings");
   Expect(host.ContributedKeybindings().front().key_chord == "Ctrl+Shift+S",
