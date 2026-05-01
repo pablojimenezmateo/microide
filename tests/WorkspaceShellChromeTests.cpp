@@ -1311,6 +1311,40 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
          "retained tab-open redraws should match a full redraw");
 }
 
+void TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.cpp";
+  const std::filesystem::path beta = root / "beta.cpp";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  SoftwareCanvas canvas(kCanvasWidth, kCanvasHeight);
+  shell.Render(canvas.renderer(), kCanvasWidth, kCanvasHeight);
+  WorkspaceShellTestAccess::ResetRenderCompareSurfaceInvocationCount(shell);
+
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
+         "compare-gate redraw fixture should open a second editor tab");
+  const auto redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(!redraw.full && !redraw.rects.empty(),
+         "compare-gate redraw fixture should produce a partial redraw");
+
+  RenderRetainedInvalidation(shell, canvas, kCanvasWidth, kCanvasHeight, redraw);
+  Expect(WorkspaceShellTestAccess::RenderCompareSurfaceInvocationCount(shell) == 0,
+         "partial redraw with no compare tab active should not call RenderCompareSurface");
+}
+
 void TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1661,6 +1695,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenFileInNewTabRetainedRedrawMatchesFullRender",
           TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/PartialRedrawWithoutCompareTabSkipsCompareSurfaceRender",
+          TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender);
   AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsEditorPartialRedraw",
           TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw);
   AddTest(tests, "WorkspaceShell/BottomEdgeNewlineRetainedRedrawMatchesFullRender",

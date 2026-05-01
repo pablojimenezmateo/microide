@@ -51,12 +51,14 @@ std::string WorkspaceShell::TruncateLabel(std::string_view text, float max_width
   return text_renderer_.TruncateToWidth(text, max_width);
 }
 
-void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int height) {
+WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* renderer,
+                                                            int width,
+                                                            int height) {
   if (renderer == nullptr || width <= 0 || height <= 0) {
-    return;
+    return FrameToken{};
   }
 
-  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareRenderFrame");
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
@@ -84,6 +86,12 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
     ResizeTerminalToPanel(layout.bottom_panel);
   }
+  prepared_frame_layout_ = layout;
+  prepared_frame_draw_editor_caret_ =
+      CaretVisibleNow() &&
+      !(context_.text_input.active_surface == TextInputSurface::Editor &&
+        !context_.text_input.composition.text.empty());
+  ++prepared_frame_id_;
   float mouse_x = last_mouse_x_;
   float mouse_y = last_mouse_y_;
   if (!last_mouse_position_valid_) {
@@ -91,6 +99,11 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
     SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
   }
   UpdateMouseCursor(mouse_x, mouse_y);
+  return FrameToken{prepared_frame_id_};
+}
+
+void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int height) {
+  (void)PrepareFrameOnce(renderer, width, height);
 }
 
 void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const {
@@ -166,13 +179,31 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
   const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
-  const bool render_editor_surface = !ActiveTabIsCompare() && !ActiveTabIsMerge();
+  CompareTabState* active_compare_tab = nullptr;
+  MergeTabState* active_merge_tab = nullptr;
+  if (frame_vm.compare_surface.has_value() &&
+      project_state.active_tab_index < project_state.open_tabs.size()) {
+    TabEntry& active_tab = project_state.open_tabs[project_state.active_tab_index];
+    if (frame_vm.compare_surface->kind == TabEntry::Kind::Compare && active_tab.compare.has_value()) {
+      active_compare_tab = &active_tab.compare.value();
+    } else if (frame_vm.compare_surface->kind == TabEntry::Kind::Merge &&
+               active_tab.merge.has_value()) {
+      active_merge_tab = &active_tab.merge.value();
+    }
+  }
+  const bool render_editor_surface = active_compare_tab == nullptr && active_merge_tab == nullptr;
   const std::vector<EditorPaneLayout> editor_panes =
       render_editor_surface ? ComputeEditorPaneLayouts(layout.editor_surface)
                             : std::vector<EditorPaneLayout>{};
-  if (ActiveTabIsCompare()) {
-    RenderCompareSurface(renderer, layout.editor_surface);
-  } else if (ActiveTabIsMerge()) {
+  if (active_compare_tab != nullptr) {
+    const bool draw_compare_caret =
+        project_state.surface.focus == FocusTarget::Editor && active_compare_tab->right_view_active &&
+        CaretVisibleNow() &&
+        !(overlay_vm.current_surface == TextInputSurface::Editor &&
+          !context_.text_input.composition.text.empty());
+    RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, draw_compare_caret,
+                         project_state.diagnostics_store);
+  } else if (active_merge_tab != nullptr) {
     RenderMergeSurface(renderer, layout.editor_surface);
   } else {
     const auto diagnostics_for_viewport =
@@ -288,9 +319,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
   }
 
-  if (ActiveTabIsCompare()) {
-    RenderCompareScrollbars(renderer, layout.editor_surface);
-  } else if (ActiveTabIsMerge()) {
+  if (active_compare_tab != nullptr) {
+    RenderCompareScrollbars(renderer, layout.editor_surface, *active_compare_tab);
+  } else if (active_merge_tab != nullptr) {
     RenderMergeScrollbars(renderer, layout.editor_surface);
   } else {
     const std::vector<EditorPaneLayout>& panes = editor_panes;

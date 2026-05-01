@@ -129,6 +129,15 @@ Policy invariants (no automated lint, but reviewers will reject):
   `PluginHost.cpp`. Each `src/plugin/*.cpp` translation unit stays at or below 800 lines.
 - View models do not hold pointers or references to `WorkspaceShell`, coordinators, or services.
   They are POD-like structs populated by the builder.
+- Project reactivation paths do not reload plugins. Reactivation refresh uses
+  `refresh_plugin_surfaces_for_reactivation` and must not call
+  `ReloadPluginsForCurrentProject`.
+- Compare-surface rendering is structurally gated by `RenderViewModelBuilder` output. Render units
+  must not inspect shell or project state to decide whether compare content renders.
+- Per-frame preparation work executes once per frame. Per-clip entry points must not rebuild frame
+  layout, normalize state, or rebuild render view models.
+- Plugin reload/shutdown must drain async process workers before plugin teardown using the bounded
+  drain seam; do not call teardown directly without the drain step.
 
 The durable contracts these rules implement live in
 `openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`,

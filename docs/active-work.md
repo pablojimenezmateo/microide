@@ -1,6 +1,7 @@
 # MicroIDE Active Work
 
 Reviewed on 2026-04-29.
+Updated on 2026-05-01 for `address-render-and-plugin-reload-hotspots`.
 
 This is the single source of truth for:
 
@@ -235,6 +236,28 @@ Current state:
 - `WorkspaceShell` still acts as the app-facing facade, but the shell-breakdown plan is now
   implemented: event routing, wake routing, action enablement, render composition, and test hooks
   all live behind explicit seams instead of direct shell-owned monoliths
+
+### 3. Render + Reload Regression Recovery (Completed 2026-05-01)
+
+Status:
+
+- Completed in `openspec/changes/address-render-and-plugin-reload-hotspots`
+
+Delivered outcomes:
+
+- plugin reload path now drains async workers before teardown via a bounded drain seam
+- project reactivation refreshes plugin surfaces without reloading Lua plugins
+- runtime syntax cache invalidation is scoped to changed languages
+- compare-surface rendering is structurally gated by render view model data
+- frame prep executes once per frame (not once per clip) on partial redraw paths
+- session restore now supports deferred tab hydration for inactive clean tabs
+- perf harness now includes `switch_and_idle` with committed baseline
+
+Measured budgets recovered in this slice:
+
+- median `Application::Render(partial)` for 1 dirty rect / 1 coalesced clip: `2.49 ms`
+- `WorkspaceShell::RestoreSessionState::RebuildTabs` on 20-tab restore: `26.33 ms` median
+- `switch_and_idle` baseline committed under `tests/perf/baselines/switch_and_idle.json`
 
 ### 2. Cross-Platform Host Support
 

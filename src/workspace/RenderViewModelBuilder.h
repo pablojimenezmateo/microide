@@ -2,16 +2,23 @@
 
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceTabState.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace microide::workspace {
 
 struct FrameSurfaceViewModel {
+  struct CompareSurfaceViewModel {
+    TabEntry::Kind kind = TabEntry::Kind::Editor;
+  };
+
   WorkspaceLayout layout{};
   bool sidebar_visible = false;
   bool bottom_panel_visible = false;
+  std::optional<CompareSurfaceViewModel> compare_surface;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

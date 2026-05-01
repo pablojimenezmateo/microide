@@ -316,8 +316,11 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
     util::PerformanceTrace::Scope perf_syntax_scope(
         "WorkspaceShell::ReloadPluginsForCurrentProject::InvalidateSyntaxCaches");
-    if (request.syntax_definitions && plugin_runtime_.syntax_definitions_changed()) {
-      InvalidateRuntimeSyntaxStateCaches();
+    const std::span<const std::string_view> changed_languages =
+        request.syntax_definitions ? plugin_runtime_.ChangedSyntaxLanguages()
+                                   : std::span<const std::string_view>{};
+    if (!changed_languages.empty()) {
+      InvalidateRuntimeSyntaxStateCaches(changed_languages);
     }
   }
   {
@@ -393,28 +396,55 @@ bool WorkspaceShell::ReloadPluginsIfPluginAssetsChanged(bool force_check) {
   return true;
 }
 
-void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches() {
-  if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
+    std::span<const std::string_view> changed_languages) {
+  if (changed_languages.empty()) {
+    return;
+  }
+
+  std::unordered_set<std::string_view> changed_language_set(changed_languages.begin(),
+                                                             changed_languages.end());
+  const auto should_invalidate_viewport = [&changed_language_set](const editor::TextViewport& viewport) {
+    const std::string language =
+        editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
+    return !language.empty() &&
+           changed_language_set.contains(std::string_view(language));
+  };
+
+  if (editor::TextViewport* viewport = ActiveEditorViewport();
+      viewport != nullptr && should_invalidate_viewport(*viewport)) {
     viewport->InvalidateSyntaxHighlighting();
   }
 
   for (auto& tab : context_.current_project_state.open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       for (auto& view : tab.editor_state->views) {
-        if (!view.needs_restore) {
+        if (!view.needs_restore && should_invalidate_viewport(view.viewport)) {
           view.viewport.InvalidateSyntaxHighlighting();
         }
       }
       continue;
     }
 
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        !tab.compare->right_viewport.path().empty()) {
+      const std::string language = editor::runtime_syntax::DetectFiletype(
+          tab.compare->right_viewport.path(), tab.compare->right_viewport.lines());
+      if (language.empty() || !changed_language_set.contains(std::string_view(language))) {
+        continue;
+      }
       RefreshCompareTabDerivedState(*tab.compare);
       continue;
     }
 
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
       auto& merge_tab = *tab.merge;
+      const std::string language =
+          editor::runtime_syntax::DetectFiletype(merge_tab.result_viewport.path(),
+                                                 merge_tab.result_viewport.lines());
+      if (language.empty() || !changed_language_set.contains(std::string_view(language))) {
+        continue;
+      }
       merge_tab.incoming_initial_syntax_state =
           editor::SyntaxHighlighter::InitialState(merge_tab.output_path, merge_tab.model.incoming_lines);
       merge_tab.current_initial_syntax_state =

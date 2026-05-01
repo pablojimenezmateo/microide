@@ -418,6 +418,34 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(5);
           },
   });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "switch_and_idle",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            const std::filesystem::path project_a = "tests/perf/fixtures/switch_project_a";
+            const std::filesystem::path project_b = "tests/perf/fixtures/switch_project_b";
+
+            (void)context.Open(project_a);
+            for (int i = 1; i <= 20; ++i) {
+              const std::string index = i < 10 ? "0" + std::to_string(i) : std::to_string(i);
+              context.OpenTab(project_a / "src" / ("file_" + index + ".cpp"));
+            }
+            context.PumpFrames(3);
+
+            (void)context.Open(project_b);
+            for (int i = 1; i <= 15; ++i) {
+              const std::string index = i < 10 ? "0" + std::to_string(i) : std::to_string(i);
+              context.OpenTab(project_b / "src" / ("file_" + index + ".cpp"));
+            }
+            context.PumpFrames(3);
+
+            (void)context.Open(project_a);
+            context.PumpFrames(1);
+            (void)context.Open(project_b);
+            context.PumpFrames(30);
+          },
+  });
 }
 
 util::JsonValue ToJson(const Aggregate& aggregate) {

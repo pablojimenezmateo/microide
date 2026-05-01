@@ -198,6 +198,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
           .path = candidate,
           .title = candidate.filename().string(),
           .editor_state = MakeEditorTabState(startup_view),
+          .deferred_handle = std::nullopt,
           .compare = std::nullopt,
           .merge = std::nullopt,
       });

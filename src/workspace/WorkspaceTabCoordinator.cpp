@@ -272,6 +272,25 @@ void TabCoordinator::Activate(std::size_t index) {
         state_.welcome_surface.viewport = *active_view;
         operations_.apply_editor_preferences(state_.welcome_surface.viewport);
       }
+    } else if (tab.deferred_handle.has_value()) {
+      editor::TextViewport loaded_view;
+      const std::filesystem::path deferred_path = tab.deferred_handle->path.lexically_normal();
+      if (deferred_path.empty() || !loaded_view.OpenFile(deferred_path)) {
+        return;
+      }
+      operations_.apply_editor_preferences(loaded_view);
+      loaded_view.MoveCursorTo(tab.deferred_handle->cursor_line,
+                               tab.deferred_handle->cursor_column);
+      loaded_view.SetScrollLine(tab.deferred_handle->scroll_line);
+      loaded_view.SetHorizontalScroll(tab.deferred_handle->horizontal_scroll);
+      if (tab.deferred_handle->selection.has_value()) {
+        const auto& selection = *tab.deferred_handle->selection;
+        loaded_view.MoveCursorTo(selection.start.line, selection.start.column);
+        loaded_view.MoveCursorTo(selection.end.line, selection.end.column, true);
+      }
+      state_.welcome_surface.viewport = loaded_view;
+      tab.editor_state = operations_.make_editor_tab_state(loaded_view);
+      tab.deferred_handle.reset();
     } else {
       editor::TextViewport loaded_view;
       if (!loaded_view.OpenFile(tab.path)) {
@@ -436,6 +455,7 @@ bool TabCoordinator::OpenUntitled() {
       .path = {},
       .title = "untitled",
       .editor_state = operations_.make_editor_tab_state(untitled_view),
+      .deferred_handle = std::nullopt,
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
@@ -483,6 +503,7 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
       .path = normalized_path,
       .title = normalized_path.filename().string(),
       .editor_state = operations_.make_editor_tab_state(opened_view),
+      .deferred_handle = std::nullopt,
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
@@ -532,6 +553,7 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
       .path = virtual_path,
       .title = std::string(title),
       .editor_state = operations_.make_editor_tab_state(viewport),
+      .deferred_handle = std::nullopt,
       .compare = std::nullopt,
       .merge = std::nullopt,
   });

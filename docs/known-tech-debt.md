@@ -235,6 +235,18 @@ are good candidates for the next openspec tech-debt pass:
 6. Project-content and indexing architecture (item 5) still consumes a point-in-time file list;
    only revisit if profiling shows meaningful search or refresh cost after the recent fixes.
 
+## 8–12 Status Update (2026-05-01)
+
+The debt items tracked as 8–12 in this document are now resolved or explicitly narrowed:
+
+- item 8 (review-comment linear scans): resolved; indexed lookup path remains in place
+- item 9 (double layout computation per frame): resolved; layout is prepared once and reused
+- item 10 (terminal cursor multi-lock reads): resolved; cursor snapshots are single-lock
+- item 11 (`std::find` over `marked_lines` in render path): resolved; vector scan removed
+- item 12 (sanitizer/fuzz triage tracking): reduced to environment/process follow-up only
+
+Remaining debt focus stays on items 5 and 6 unless new profiling demonstrates regressions.
+
 ## 12. 2026-04-29 Sanitizer/Fuzz Triage Snapshot
 
 Status:

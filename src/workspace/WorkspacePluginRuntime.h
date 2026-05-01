@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +38,9 @@ class WorkspacePluginRuntime {
   bool ConsumeAssetChanges(bool force_check);
 
   bool Reload(const std::filesystem::path& project_root, bool reload_syntax_definitions = true);
+  std::span<const std::string_view> ChangedSyntaxLanguages() const {
+    return changed_syntax_language_views_;
+  }
   bool syntax_definitions_changed() const { return syntax_definitions_changed_; }
   std::string ReloadSummary() const;
 
@@ -50,6 +54,8 @@ class WorkspacePluginRuntime {
   std::size_t runtime_syntax_plugin_definition_count_ = 0;
   std::vector<std::string> runtime_syntax_errors_;
   bool syntax_definitions_changed_ = false;
+  std::vector<std::string> changed_syntax_languages_;
+  std::vector<std::string_view> changed_syntax_language_views_;
   bool syntax_fingerprint_initialized_ = false;
   std::uint64_t syntax_source_fingerprint_ = 0;
 };

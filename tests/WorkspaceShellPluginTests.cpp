@@ -871,6 +871,118 @@ return ide.plugin({
          "skipping an unchanged syntax rebuild should preserve active syntax highlighting");
 }
 
+void TestWorkspaceShellPluginsReloadScopesSyntaxInvalidationByChangedLanguages() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path todo = project_root / "a.todo";
+  const std::filesystem::path note = project_root / "b.note";
+  WriteFile(project_root / "README.md", "scoped syntax invalidation fixture\n");
+  WriteFile(todo, "TODO item\n");
+  WriteFile(note, "NOTE item\n");
+
+  WritePluginInit(
+      plugins_root, "syntax",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "syntax"
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bTODO\\b", group = "keyword" }
+  }
+}
+)");
+  WritePluginSyntax(
+      plugins_root, "syntax", "note.lua",
+      R"(return {
+  filetype = "note",
+  files = { "\\.note$" },
+  rules = {
+    { pattern = "\\bNOTE\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "scoped syntax invalidation fixture should open the project");
+
+  WorkspaceShellTestAccess::OpenFile(shell, todo);
+  auto todo_has_keyword = [&shell]() {
+    const auto& tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+    return std::any_of(tokens.begin(), tokens.end(), [](microide::editor::SyntaxTokenKind kind) {
+      return kind == microide::editor::SyntaxTokenKind::Keyword;
+    });
+  };
+  Expect(todo_has_keyword(), "todo file should highlight TODO before any reload");
+
+  WorkspaceShellTestAccess::OpenFile(shell, note);
+  auto note_has_keyword = [&shell]() {
+    const auto& tokens = WorkspaceShellTestAccess::ActiveEditor(shell).HighlightedLineTokens(0);
+    return std::any_of(tokens.begin(), tokens.end(), [](microide::editor::SyntaxTokenKind kind) {
+      return kind == microide::editor::SyntaxTokenKind::Keyword;
+    });
+  };
+  Expect(note_has_keyword(), "note file should highlight NOTE before any reload");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "plugins-reload should succeed when syntax definitions are unchanged");
+  WorkspaceShellTestAccess::OpenFile(shell, todo);
+  Expect(todo_has_keyword(), "empty changed-language set should keep todo highlighting intact");
+  WorkspaceShellTestAccess::OpenFile(shell, note);
+  Expect(note_has_keyword(), "empty changed-language set should keep note highlighting intact");
+
+  WritePluginSyntax(
+      plugins_root, "syntax", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\bDONE\\b", group = "keyword" }
+  }
+}
+)");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "plugins-reload should succeed after changing one syntax language");
+  WorkspaceShellTestAccess::OpenFile(shell, todo);
+  Expect(!todo_has_keyword(),
+         "single-language change should invalidate and refresh todo syntax highlighting");
+  WorkspaceShellTestAccess::OpenFile(shell, note);
+  Expect(note_has_keyword(),
+         "single-language change should not invalidate unrelated note syntax highlighting");
+
+  WritePluginSyntax(
+      plugins_root, "syntax", "note.lua",
+      R"(return {
+  filetype = "note",
+  files = { "\\.note$" },
+  rules = {
+    { pattern = "\\bDONE\\b", group = "keyword" }
+  }
+}
+)");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
+         "plugins-reload should succeed after changing all syntax languages");
+  WorkspaceShellTestAccess::OpenFile(shell, todo);
+  Expect(!todo_has_keyword(),
+         "all-language change should keep todo in its updated non-keyword state");
+  WorkspaceShellTestAccess::OpenFile(shell, note);
+  Expect(!note_has_keyword(),
+         "all-language change should invalidate and refresh note syntax highlighting");
+}
+
 void TestWorkspaceShellPluginWatcherReloadsChangedCommands() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2401,6 +2513,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginsReloadRefreshesRuntimeSyntaxHighlighting);
   AddTest(tests, "WorkspaceShell/PluginsReloadSkipsUnchangedRuntimeSyntaxRebuild",
           TestWorkspaceShellPluginsReloadSkipsUnchangedRuntimeSyntaxRebuild);
+  AddTest(tests, "WorkspaceShell/PluginsReloadScopesSyntaxInvalidationByChangedLanguages",
+          TestWorkspaceShellPluginsReloadScopesSyntaxInvalidationByChangedLanguages);
   AddTest(tests, "WorkspaceShell/PluginWatcherReloadsChangedCommands",
           TestWorkspaceShellPluginWatcherReloadsChangedCommands);
   AddTest(tests, "WorkspaceShell/PluginWatcherReloadsRuntimeSyntaxHighlighting",

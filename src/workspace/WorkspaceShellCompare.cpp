@@ -151,6 +151,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
       .path = normalized_path,
       .title = compare_tab.title,
       .editor_state = std::nullopt,
+      .deferred_handle = std::nullopt,
       .compare = std::move(compare_tab),
       .merge = std::nullopt,
   };

@@ -172,13 +172,18 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   }
 }
 
-void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  CompareTabState* compare_tab = ActiveCompareTab();
-  if (renderer == nullptr || compare_tab == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
+void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
+                                          const SDL_FRect& rect,
+                                          CompareTabState& compare_tab_state,
+                                          bool draw_compare_caret,
+                                          const editor::DiagnosticsStore& diagnostics_store) {
+  CompareTabState* compare_tab = &compare_tab_state;
+  if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::RenderCompareSurface");
+  ++render_compare_surface_invocation_count_;
   static const std::vector<editor::SyntaxTokenKind> kEmptyTokens;
   static const editor::DecoratedTextGridRenderer kDecoratedRowRenderer;
 
@@ -193,9 +198,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   PopulateCompareSyntaxTokensForWindow(*compare_tab, visible_start_row, visible_end_row);
   const TextGridInteractionLayout right_interaction =
       BuildCompareRightInteractionLayout(surface, *compare_tab);
-  const bool draw_compare_caret =
-      context_.current_project_state.surface.focus == FocusTarget::Editor && compare_tab->right_view_active && CaretVisibleNow() &&
-      !(CurrentTextInputSurface() == TextInputSurface::Editor && !context_.text_input.composition.text.empty());
   const std::optional<editor::SelectionRange> right_selection =
       compare_tab->right_view_active ? compare_tab->right_viewport.selection_range() : std::nullopt;
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
@@ -205,7 +207,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   const auto* right_diagnostics =
       compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
               !compare_tab->right_viewport.dirty()
-          ? context_.current_project_state.diagnostics_store.FindByPath(compare_tab->right_viewport.path())
+          ? diagnostics_store.FindByPath(compare_tab->right_viewport.path())
           : nullptr;
   visible_editor_blame_overlay_ = blame_overlay;
   const float bottom_reserved =
@@ -489,9 +491,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRec
   }
 }
 
-void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface) {
-  CompareTabState* compare_tab = ActiveCompareTab();
-  if (renderer == nullptr || compare_tab == nullptr) {
+void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
+                                             const SDL_FRect& editor_surface,
+                                             CompareTabState& compare_tab_state) {
+  CompareTabState* compare_tab = &compare_tab_state;
+  if (renderer == nullptr) {
     return;
   }
 

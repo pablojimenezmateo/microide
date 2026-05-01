@@ -35,12 +35,24 @@ RenderViewModelBuilder::RenderViewModelBuilder(const WorkspaceContext& context)
     : context_(context) {}
 
 FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceLayout& layout) const {
+  std::optional<FrameSurfaceViewModel::CompareSurfaceViewModel> compare_surface;
+  if (context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size()) {
+    const TabEntry& active_tab =
+        context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index];
+    if (active_tab.kind == TabEntry::Kind::Compare || active_tab.kind == TabEntry::Kind::Merge) {
+      compare_surface = FrameSurfaceViewModel::CompareSurfaceViewModel{
+          .kind = active_tab.kind,
+      };
+    }
+  }
+
   return FrameSurfaceViewModel{
       .layout = layout,
       .sidebar_visible = context_.current_project_state.sidebar.visible,
       .bottom_panel_visible = context_.current_project_state.panel.command_mode ||
                               context_.current_project_state.panel.content !=
                                   PanelContentKind::None,
+      .compare_surface = compare_surface,
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }

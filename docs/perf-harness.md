@@ -30,6 +30,16 @@ When adding a scenario:
 4. pump frames intentionally (`PumpFrames`) so rendering work is included consistently
 5. decide whether the scenario belongs in smoke (`.smoke = true`) or gate-only (`.smoke = false`)
 
+Current notable scenarios:
+
+- `switch_and_idle` (smoke): open fixture project A, open 20 tabs, switch to fixture project B,
+  open 15 tabs, switch A→B, then idle for 30 frames
+  - fixture roots:
+    - `tests/perf/fixtures/switch_project_a`
+    - `tests/perf/fixtures/switch_project_b`
+  - baseline:
+    - `tests/perf/baselines/switch_and_idle.json`
+
 ## Run Under Virtual Display
 
 ```bash

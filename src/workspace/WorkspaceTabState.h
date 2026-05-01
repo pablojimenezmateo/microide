@@ -116,10 +116,22 @@ struct TabEntry {
     std::unique_ptr<EditorSplitNode> split_root;
   };
 
+  struct DeferredTabHandle {
+    std::filesystem::path path;
+    std::string language_hint;
+    std::size_t cursor_line = 0;
+    std::size_t cursor_column = 0;
+    std::size_t scroll_line = 0;
+    std::size_t horizontal_scroll = 0;
+    std::optional<editor::SelectionRange> selection;
+    std::size_t active_leaf_id = 1;
+  };
+
   Kind kind = Kind::Editor;
   std::filesystem::path path;
   std::string title;
   std::optional<EditorTabState> editor_state;
+  std::optional<DeferredTabHandle> deferred_handle;
   std::optional<CompareTabState> compare;
   std::optional<MergeTabState> merge;
 };

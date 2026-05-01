@@ -1456,6 +1456,112 @@ void TestWorkspaceShellRestoreSessionPreservesMergeNavigationState() {
          "merge session restore should preserve the committed conflict choice metadata");
 }
 
+void TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::vector<std::filesystem::path> files;
+  for (int i = 0; i < 20; ++i) {
+    const std::filesystem::path path = root / ("file_" + std::to_string(i) + ".txt");
+    WriteFile(path, "line 1\nline 2\nline 3\n");
+    files.push_back(path);
+  }
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, files.front());
+  for (std::size_t i = 1; i < files.size(); ++i) {
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, files[i]),
+           "session defer fixture should open each tab");
+  }
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "session restore should succeed for deferred-tab fixture");
+
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(tabs.size() == files.size(),
+         "session restore should preserve the total tab count");
+  std::size_t deferred_count = 0;
+  for (std::size_t i = 0; i < tabs.size(); ++i) {
+    if (tabs[i].deferred_handle.has_value()) {
+      ++deferred_count;
+      if (i != 0) {
+        Expect(!tabs[i].path.empty(),
+               "deferred tab entries should preserve displayable paths in tab-strip state");
+      }
+    }
+  }
+  Expect(deferred_count >= 1,
+         "inactive clean editor tabs should restore as deferred handles");
+}
+
+void TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  WriteFile(alpha, "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n");
+  WriteFile(beta, "b1\nb2\nb3\nb4\nb5\nb6\nb7\nb8\nb9\nb10\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
+         "deferred hydration fixture should open the secondary tab");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(6, 1);
+  WorkspaceShellTestAccess::ActiveEditor(shell).SetScrollLine(4);
+  WorkspaceShellTestAccess::ActiveEditor(shell).SetHorizontalScroll(0);
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "deferred hydration restore should succeed");
+  const auto& tabs_before = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(tabs_before.size() == 2, "deferred hydration restore should reopen both tabs");
+  Expect(tabs_before[1].deferred_handle.has_value(),
+         "inactive secondary tab should restore as deferred");
+  Expect(tabs_before[1].deferred_handle->cursor_line == 6 &&
+             tabs_before[1].deferred_handle->cursor_column == 1 &&
+             tabs_before[1].deferred_handle->scroll_line == 4,
+         "deferred handle should persist cursor/scroll metadata");
+
+  WorkspaceShellTestAccess::ActivateTab(restored, 1);
+  const auto& tabs_after = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(!tabs_after[1].deferred_handle.has_value() && tabs_after[1].editor_state.has_value(),
+         "activating a deferred tab should hydrate and clear the deferred handle");
+  const auto& hydrated = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(hydrated.path() == beta.lexically_normal(),
+         "hydrated deferred tab should open the same path");
+  Expect(hydrated.cursor_line() == 6 && hydrated.cursor_column() == 1 &&
+             hydrated.scroll_line() == 4,
+         "hydrated deferred tab should restore cursor and scroll metadata");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
@@ -1517,6 +1623,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMoveMergeSelectionInvalidatesConflictBand);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesMergeNavigationState",
           TestWorkspaceShellRestoreSessionPreservesMergeNavigationState);
+  AddTest(tests, "WorkspaceShell/RestoreSessionDefersInactiveCleanEditorTabs",
+          TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs);
+  AddTest(tests, "WorkspaceShell/DeferredTabHydrationPreservesCursorAndScroll",
+          TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",

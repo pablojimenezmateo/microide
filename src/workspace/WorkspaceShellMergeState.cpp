@@ -670,6 +670,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
       .path = merge_tab.output_path,
       .title = merge_tab.title,
       .editor_state = std::nullopt,
+      .deferred_handle = std::nullopt,
       .compare = std::nullopt,
       .merge = std::move(merge_tab),
   };

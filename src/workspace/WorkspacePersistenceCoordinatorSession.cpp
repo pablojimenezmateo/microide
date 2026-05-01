@@ -7,6 +7,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/WorkspaceConversation.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -232,6 +233,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
+    std::size_t restored_tab_index = 0;
     for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
     if (persisted_tab.kind == "compare") {
       std::filesystem::path compare_path = persisted_tab.compare_path;
@@ -292,6 +294,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
           static_cast<std::size_t>(std::numeric_limits<int>::max())));
       compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
       state.open_tabs.push_back(std::move(*compare_tab));
+      ++restored_tab_index;
       continue;
     }
     if (persisted_tab.kind == "merge") {
@@ -357,8 +360,15 @@ bool PersistenceCoordinator::RestoreSessionState() {
       merge_state.result_viewport.SetHorizontalScroll(merge_state.horizontal_scroll);
       merge_state.scroll_row = static_cast<int>(merge_state.result_viewport.scroll_line());
       state.open_tabs.push_back(std::move(*merge_tab));
+      ++restored_tab_index;
       continue;
     }
+
+    const bool contains_dirty_snapshot = std::any_of(
+        persisted_tab.views.begin(), persisted_tab.views.end(),
+        [](const PersistedEditorViewState& view) { return view.dirty_snapshot; });
+    const bool should_eager_hydrate =
+        restored_tab_index == persisted_session.active_tab_index || contains_dirty_snapshot;
 
     TabEntry::EditorTabState editor_state;
     editor_state.active_leaf_id = persisted_tab.active_leaf_id;
@@ -457,20 +467,44 @@ bool PersistenceCoordinator::RestoreSessionState() {
     operations_.normalize_editor_split_tree(editor_state);
     const TabEntry::EditorTabState::EditorViewState* active_view =
         operations_.find_editor_view_state(editor_state, editor_state.active_leaf_id);
+    const TabEntry::EditorTabState::EditorViewState* fallback_view =
+        active_view != nullptr ? active_view : &editor_state.views.front();
     if (active_view == nullptr) {
-      active_view = &editor_state.views.front();
       editor_state.active_leaf_id = editor_state.views.front().leaf_id;
     }
+    const std::filesystem::path tab_path = operations_.editor_view_path(*fallback_view);
 
-    const std::filesystem::path tab_path = operations_.editor_view_path(*active_view);
-    state.open_tabs.push_back(TabEntry{
+    TabEntry restored_tab{
         .kind = TabEntry::Kind::Editor,
         .path = tab_path,
         .title = tab_path.empty() ? "untitled" : tab_path.filename().string(),
-        .editor_state = std::move(editor_state),
+        .editor_state = std::nullopt,
+        .deferred_handle = std::nullopt,
         .compare = std::nullopt,
         .merge = std::nullopt,
-    });
+    };
+    if (should_eager_hydrate) {
+      restored_tab.editor_state = std::move(editor_state);
+    } else {
+      std::optional<editor::SelectionRange> selection;
+      if (const auto* leaf_view =
+              operations_.find_editor_view_state(editor_state, editor_state.active_leaf_id);
+          leaf_view != nullptr && !leaf_view->needs_restore) {
+        selection = leaf_view->viewport.selection_range();
+      }
+      restored_tab.deferred_handle = TabEntry::DeferredTabHandle{
+          .path = tab_path,
+          .language_hint = editor::runtime_syntax::DetectFiletype(tab_path, {}),
+          .cursor_line = fallback_view->restored_cursor_line,
+          .cursor_column = fallback_view->restored_cursor_column,
+          .scroll_line = fallback_view->restored_scroll_line,
+          .horizontal_scroll = fallback_view->restored_horizontal_scroll,
+          .selection = selection,
+          .active_leaf_id = editor_state.active_leaf_id,
+      };
+    }
+    state.open_tabs.push_back(std::move(restored_tab));
+    ++restored_tab_index;
   }
   }
 
@@ -616,9 +650,35 @@ PersistenceCoordinator::BuildPersistedMergeTabState(
 std::optional<PersistedEditorTabState>
 PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
                                                      TabEntry& tab) {
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-      tab.editor_state->views.empty()) {
+  if (tab.kind != TabEntry::Kind::Editor) {
     return std::nullopt;
+  }
+
+  if (!tab.editor_state.has_value() || tab.editor_state->views.empty()) {
+    if (!tab.deferred_handle.has_value() || tab.deferred_handle->path.empty()) {
+      return std::nullopt;
+    }
+    PersistedEditorTabState persisted_tab;
+    persisted_tab.kind = "editor";
+    persisted_tab.active_leaf_id = tab.deferred_handle->active_leaf_id;
+    persisted_tab.views.push_back(PersistedEditorViewState{
+        .leaf_id = tab.deferred_handle->active_leaf_id,
+        .path = tab.deferred_handle->path.lexically_normal(),
+        .cursor_line = tab.deferred_handle->cursor_line,
+        .cursor_column = tab.deferred_handle->cursor_column,
+        .scroll_line = tab.deferred_handle->scroll_line,
+        .horizontal_scroll = tab.deferred_handle->horizontal_scroll,
+        .dirty_snapshot = false,
+        .line_ending = editor::TextViewport::LineEnding::LF,
+        .buffer_lines = {},
+    });
+    persisted_tab.split_nodes.push_back(PersistedSplitNodeState{
+        .path = {},
+        .orientation = "leaf",
+        .size_fraction = 1.0f,
+        .leaf_id = tab.deferred_handle->active_leaf_id,
+    });
+    return persisted_tab;
   }
 
   auto& editor_state = tab.editor_state.value();

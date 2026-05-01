@@ -58,6 +58,15 @@
   };
   using RenderInvalidation = workspace::RenderInvalidation;
   using EventResult = workspace::EventResult;
+  struct FrameToken {
+   public:
+    FrameToken() = default;
+
+   private:
+    friend class WorkspaceShell;
+    explicit FrameToken(std::uint64_t frame_id) : frame_id_(frame_id) {}
+    std::uint64_t frame_id_ = 0;
+  };
 
   WorkspaceShell();
 
@@ -66,6 +75,8 @@
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
+  FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);
+  void RenderClip(const FrameToken& frame_token, SDL_Renderer* renderer, int width, int height);
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
@@ -600,7 +611,7 @@
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
-  void InvalidateRuntimeSyntaxStateCaches();
+  void InvalidateRuntimeSyntaxStateCaches(std::span<const std::string_view> changed_languages);
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens = true,
                                      bool open_lsp_documents = true);
@@ -842,7 +853,11 @@
   void ApplyMergeChoice(compare::MergeChoice choice);
   void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
-  void RenderCompareSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
+  void RenderCompareSurface(SDL_Renderer* renderer,
+                            const SDL_FRect& rect,
+                            CompareTabState& compare_tab,
+                            bool draw_compare_caret,
+                            const editor::DiagnosticsStore& diagnostics_store);
   void RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
@@ -1352,7 +1367,9 @@
                                   const CompareSurfaceLayout& surface) const;
   std::optional<TextInputVisual> BuildCompareTextInputVisual(const SDL_FRect& editor_surface) const;
   std::optional<TextInputVisual> BuildMergeTextInputVisual(const SDL_FRect& editor_surface) const;
-  void RenderCompareScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
+  void RenderCompareScrollbars(SDL_Renderer* renderer,
+                               const SDL_FRect& editor_surface,
+                               CompareTabState& compare_tab);
   void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface);
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
@@ -1386,6 +1403,10 @@
   WorkspaceProjectFileMonitor project_file_monitor_;
   WorkspacePluginRuntime plugin_runtime_;
   std::size_t reload_plugins_invocation_count_ = 0;
+  std::size_t render_compare_surface_invocation_count_ = 0;
+  std::optional<WorkspaceLayout> prepared_frame_layout_;
+  bool prepared_frame_draw_editor_caret_ = false;
+  std::uint64_t prepared_frame_id_ = 0;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
   SaveParticipantRegistry save_participant_registry_;

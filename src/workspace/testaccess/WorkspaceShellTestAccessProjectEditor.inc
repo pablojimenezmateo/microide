@@ -20,6 +20,7 @@
         .path = path.lexically_normal(),
         .title = path.filename().string(),
         .editor_state = WorkspaceShell::MakeEditorTabState(opened_view),
+        .deferred_handle = std::nullopt,
         .compare = std::nullopt,
         .merge = std::nullopt,
     });
@@ -340,6 +341,12 @@
   }
   static void ResetReloadPluginsInvocationCount(WorkspaceShell& shell) {
     shell.reload_plugins_invocation_count_ = 0;
+  }
+  static std::size_t RenderCompareSurfaceInvocationCount(const WorkspaceShell& shell) {
+    return shell.render_compare_surface_invocation_count_;
+  }
+  static void ResetRenderCompareSurfaceInvocationCount(WorkspaceShell& shell) {
+    shell.render_compare_surface_invocation_count_ = 0;
   }
   static WorkspaceShell::EventResult HandleScheduledWake(WorkspaceShell& shell) {
     return shell.HandleScheduledWake();

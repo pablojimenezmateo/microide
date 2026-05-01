@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -564,6 +565,123 @@ RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& rep
   return result;
 }
 
+RuleResult CheckCompareRenderStructuralGate(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "compare render structural gate";
+  result.hard_fail = true;
+  const std::regex active_compare_pattern(R"(\bActiveTabIsCompare\s*\()");
+  const std::regex direct_state_pattern(R"(context_\.current_project_state)");
+
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (!name.starts_with("WorkspaceShellCompareRender")) {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendViolations(result, entry.path(), text, active_compare_pattern,
+                     "compare render translation units must consume structural view-model gates, "
+                     "not ActiveTabIsCompare()");
+    AppendViolations(result, entry.path(), text, direct_state_pattern,
+                     "compare render translation units must not read context_.current_project_state");
+  }
+  return result;
+}
+
+RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "per-clip render path avoids frame prep";
+  result.hard_fail = true;
+
+  const std::filesystem::path app_cpp = repo_root / "src/app/Application.cpp";
+  const std::filesystem::path shell_render_cpp = repo_root / "src/workspace/WorkspaceShellRender.cpp";
+  const std::string app_text = ReadText(app_cpp);
+  const std::string shell_render_text = ReadText(shell_render_cpp);
+  const std::vector<bool> app_is_code = BuildCodeMask(app_text);
+  const std::vector<bool> shell_is_code = BuildCodeMask(shell_render_text);
+
+  const std::regex partial_loop_pattern(
+      R"(for\s*\(\s*const SDL_Rect& clip_rect\s*:\s*dirty_region_analysis\.merged_clip_rects\s*\)\s*\{)");
+  std::smatch partial_loop_match;
+  if (std::regex_search(app_text, partial_loop_match, partial_loop_pattern)) {
+    const std::size_t loop_start =
+        static_cast<std::size_t>(partial_loop_match.position()) + partial_loop_match.length() - 1;
+    std::size_t depth = 0;
+    std::size_t loop_end = app_text.size();
+    for (std::size_t i = loop_start; i < app_text.size(); ++i) {
+      if (i < app_is_code.size() && !app_is_code[i]) {
+        continue;
+      }
+      if (app_text[i] == '{') {
+        ++depth;
+      } else if (app_text[i] == '}') {
+        --depth;
+        if (depth == 0) {
+          loop_end = i;
+          break;
+        }
+      }
+    }
+    const std::string loop_body = app_text.substr(loop_start, loop_end - loop_start + 1);
+    if (loop_body.find("PrepareFrameOnce(") != std::string::npos ||
+        loop_body.find("PrepareRenderFrame(") != std::string::npos) {
+      result.violations.push_back(Violation{
+          .path = app_cpp,
+          .line = LineNumberAt(app_text, loop_start),
+          .message = "partial-clip render loop must not invoke frame prep; prepare once before the loop",
+      });
+    }
+  }
+
+  const std::regex render_clip_pattern(
+      R"(WorkspaceShell::RenderClip\s*\([^)]*\)\s*\{)");
+  std::smatch render_clip_match;
+  if (std::regex_search(shell_render_text, render_clip_match, render_clip_pattern)) {
+    const std::size_t body_start =
+        static_cast<std::size_t>(render_clip_match.position()) + render_clip_match.length() - 1;
+    std::size_t depth = 0;
+    std::size_t body_end = shell_render_text.size();
+    for (std::size_t i = body_start; i < shell_render_text.size(); ++i) {
+      if (i < shell_is_code.size() && !shell_is_code[i]) {
+        continue;
+      }
+      if (shell_render_text[i] == '{') {
+        ++depth;
+      } else if (shell_render_text[i] == '}') {
+        --depth;
+        if (depth == 0) {
+          body_end = i;
+          break;
+        }
+      }
+    }
+    const std::string body =
+        shell_render_text.substr(body_start, body_end - body_start + 1);
+    const std::array<std::string_view, 5> forbidden{
+        "PrepareFrameOnce(",
+        "PrepareRenderFrame(",
+        "ComputeLayout(",
+        "NormalizeEditorSplitTree(",
+        "RenderViewModelBuilder(",
+    };
+    for (const std::string_view needle : forbidden) {
+      if (body.find(needle) == std::string::npos) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = shell_render_cpp,
+          .line = LineNumberAt(shell_render_text, body_start),
+          .message = "RenderClip must not run frame prep/layout/normalization/view-model construction",
+      });
+      break;
+    }
+  }
+
+  return result;
+}
+
 RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "persistence file-io boundary";
@@ -616,6 +734,8 @@ void TestArchitectureInvariants() {
   results.push_back(CheckPersistenceFileIoBoundary(repo_root));
   results.push_back(CheckPluginDrainBeforeTeardown(repo_root));
   results.push_back(CheckSinglePluginReloadPerActivation(repo_root));
+  results.push_back(CheckCompareRenderStructuralGate(repo_root));
+  results.push_back(CheckPerClipRenderPathDoesNotRunFramePrep(repo_root));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.h", 400));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShellTestAccess.h", 600));

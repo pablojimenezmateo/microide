@@ -13,6 +13,7 @@ namespace microide::workspace {
 
 class EditorTabService {
  public:
+  using DeferredTabHandle = TabEntry::DeferredTabHandle;
   explicit EditorTabService(TabCoordinator coordinator);
 
   std::string ActiveTitle() const;
