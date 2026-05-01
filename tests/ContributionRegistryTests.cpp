@@ -353,7 +353,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", temp.path() / "config");
+  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedStatusItems().empty(), "plugin should contribute status items");
   Expect(host.ContributedStatusItems().front().text == "ready", "status text should match");
@@ -385,7 +385,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", temp.path() / "config");
+  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
   host.Reload(temp.path() / "project");
   Expect(host.ContributedStatusItems().front().text == "0", "initial status text should be 0");
   host.ExecuteCommand("update.status.tick", {});
@@ -504,7 +504,7 @@ return ide.plugin({
     return std::nullopt;
   };
   host.SetCallbacks(std::move(callbacks));
-  ScopedEnvVar env("XDG_CONFIG_HOME", temp.path() / "config");
+  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
   host.Reload(temp.path() / "project");
   host.ExecuteCommand("settings.get.read", {});
   Expect(get_setting_called, "get_setting callback should be called");
