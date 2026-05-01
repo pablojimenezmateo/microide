@@ -335,6 +335,12 @@
   static bool ReloadProjectIfFilesChanged(WorkspaceShell& shell, bool force_check) {
     return shell.ReloadProjectIfFilesChanged(force_check);
   }
+  static std::size_t ReloadPluginsInvocationCount(const WorkspaceShell& shell) {
+    return shell.reload_plugins_invocation_count_;
+  }
+  static void ResetReloadPluginsInvocationCount(WorkspaceShell& shell) {
+    shell.reload_plugins_invocation_count_ = 0;
+  }
   static WorkspaceShell::EventResult HandleScheduledWake(WorkspaceShell& shell) {
     return shell.HandleScheduledWake();
   }

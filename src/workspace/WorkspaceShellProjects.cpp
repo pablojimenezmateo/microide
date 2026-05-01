@@ -60,14 +60,8 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
               },
           .activate_current_tab_after_state_load =
               [this]() { return ActivateCurrentTabAfterStateLoad(); },
-          .reload_plugins_for_current_project =
-              [this](bool reload_syntax_definitions,
-                     bool replay_plugin_buffer_opens,
-                     bool open_lsp_documents) {
-                ReloadPluginsForCurrentProject(reload_syntax_definitions,
-                                               replay_plugin_buffer_opens,
-                                               open_lsp_documents);
-              },
+          .refresh_plugin_surfaces_for_reactivation =
+              [this]() { RefreshPluginSurfacesForReactivation(); },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .save_workspace_session =

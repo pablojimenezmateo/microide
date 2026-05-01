@@ -504,6 +504,66 @@ RuleResult CheckPluginDrainBeforeTeardown(const std::filesystem::path& repo_root
   return result;
 }
 
+RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& repo_root) {
+  // The reactivation branch of ProjectCatalogService::ActivateProjectState SHALL NOT
+  // call reload_plugins_for_current_project / ReloadPluginsForCurrentProject. The
+  // first-activation branch routes through initialize_current_project, which already
+  // performs exactly one reload internally. Reintroducing a direct call here would
+  // restore the back-to-back reload regression the change was created to fix.
+  RuleResult result;
+  result.label = "single plugin reload per ActivateProjectState";
+  result.hard_fail = true;
+  const std::filesystem::path service_cpp = repo_root / "src/workspace/ProjectCatalogService.cpp";
+  if (!std::filesystem::exists(service_cpp)) {
+    return result;
+  }
+  const std::string text = ReadText(service_cpp);
+  const std::vector<bool> is_code = BuildCodeMask(text);
+  const std::regex activate_pattern(R"(ProjectCatalogService::ActivateProjectState\s*\([^)]*\)\s*\{)");
+  std::smatch match;
+  if (!std::regex_search(text, match, activate_pattern)) {
+    return result;
+  }
+  const std::size_t body_start = static_cast<std::size_t>(match.position()) + match.length() - 1;
+  // Walk braces to find the matching close.
+  std::size_t depth = 0;
+  std::size_t body_end = text.size();
+  for (std::size_t i = body_start; i < text.size(); ++i) {
+    if (i < is_code.size() && !is_code[i]) {
+      continue;
+    }
+    if (text[i] == '{') {
+      ++depth;
+    } else if (text[i] == '}') {
+      --depth;
+      if (depth == 0) {
+        body_end = i;
+        break;
+      }
+    }
+  }
+  const std::regex reload_pattern(
+      R"((reload_plugins_for_current_project|ReloadPluginsForCurrentProject)\s*\()");
+  for (std::sregex_iterator it(text.begin() + static_cast<std::ptrdiff_t>(body_start),
+                                text.begin() + static_cast<std::ptrdiff_t>(body_end),
+                                reload_pattern),
+       end;
+       it != end; ++it) {
+    const std::size_t pos = body_start + static_cast<std::size_t>(it->position());
+    if (pos < is_code.size() && !is_code[pos]) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = service_cpp,
+        .line = LineNumberAt(text, pos),
+        .message = "ActivateProjectState must not call reload_plugins_for_current_project; "
+                   "first init goes through initialize_current_project, reactivation through "
+                   "refresh_plugin_surfaces_for_reactivation",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "persistence file-io boundary";
@@ -555,6 +615,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckViewModelBackReferences(repo_root));
   results.push_back(CheckPersistenceFileIoBoundary(repo_root));
   results.push_back(CheckPluginDrainBeforeTeardown(repo_root));
+  results.push_back(CheckSinglePluginReloadPerActivation(repo_root));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.h", 400));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShellTestAccess.h", 600));

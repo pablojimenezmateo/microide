@@ -172,7 +172,11 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
-      ReloadPluginsForCurrentProject(false, false, false);
+      ReloadPluginsForCurrentProject(PluginReloadRequest{
+          .syntax_definitions = false,
+          .replay_buffer_opens = false,
+          .open_lsp_documents = false,
+      });
     }
     return true;
   }
@@ -225,7 +229,11 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::ReloadPluginsForCurrentProject");
-    ReloadPluginsForCurrentProject(true, false, false);
+    ReloadPluginsForCurrentProject(PluginReloadRequest{
+        .syntax_definitions = true,
+        .replay_buffer_opens = false,
+        .open_lsp_documents = false,
+    });
   }
   return true;
 }

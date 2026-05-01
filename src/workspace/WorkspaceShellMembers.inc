@@ -596,9 +596,8 @@
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
-  bool ReloadPluginsForCurrentProject(bool reload_syntax_definitions = true,
-                                      bool replay_plugin_buffer_opens = true,
-                                      bool open_lsp_documents = false);
+  bool ReloadPluginsForCurrentProject(PluginReloadRequest request = {});
+  void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
   void InvalidateRuntimeSyntaxStateCaches();
@@ -1386,6 +1385,7 @@
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
   WorkspacePluginRuntime plugin_runtime_;
+  std::size_t reload_plugins_invocation_count_ = 0;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
   SaveParticipantRegistry save_participant_registry_;

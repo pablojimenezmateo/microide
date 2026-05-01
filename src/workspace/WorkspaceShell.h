@@ -63,6 +63,7 @@
 #include "workspace/PersistenceService.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceOutputChannels.h"
+#include "workspace/WorkspacePluginReloadRequest.h"
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/WorkspaceProjectFileMonitor.h"
 #include "workspace/WorkspaceProjectDialogState.h"

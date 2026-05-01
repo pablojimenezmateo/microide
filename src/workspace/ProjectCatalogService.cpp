@@ -97,8 +97,8 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
   }
   {
     util::PerformanceTrace::Scope scope(
-        "ProjectCatalogService::ActivateProjectState::ReloadPluginsForCurrentProject");
-    operations_.reload_plugins_for_current_project(true, false, false);
+        "ProjectCatalogService::ActivateProjectState::RefreshPluginSurfacesForReactivation");
+    operations_.refresh_plugin_surfaces_for_reactivation();
   }
   return true;
 }

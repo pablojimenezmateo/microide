@@ -2358,6 +2358,28 @@ return ide.plugin({
          "switching back should restore the first project's plugin sidebar items");
 }
 
+void TestWorkspaceShellProjectReactivationDoesNotReloadPlugins() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  WriteFile(project_a / "README.md", "alpha\n");
+  WriteFile(project_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "reactivation fixture should open the first project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "reactivation fixture should open the second project");
+
+  WorkspaceShellTestAccess::ResetReloadPluginsInvocationCount(shell);
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "reactivation fixture should switch back to the first project");
+  Expect(WorkspaceShellTestAccess::ReloadPluginsInvocationCount(shell) == 0,
+         "reactivating an already-initialised project state must not invoke "
+         "ReloadPluginsForCurrentProject");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
@@ -2425,6 +2447,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchDoesNotReplayPluginBufferOpenHooks);
   AddTest(tests, "WorkspaceShell/PluginSidebarPersistsAcrossProjectSwitches",
           TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches);
+  AddTest(tests, "WorkspaceShell/ProjectReactivationDoesNotReloadPlugins",
+          TestWorkspaceShellProjectReactivationDoesNotReloadPlugins);
 }
 
 }  // namespace microide::tests

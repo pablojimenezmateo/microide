@@ -26,7 +26,7 @@ class ProjectCatalogService {
     std::function<void()> apply_welcome_editor_preferences_if_placeholder;
     std::function<void()> ensure_terminal_tab_open;
     std::function<bool()> activate_current_tab_after_state_load;
-    std::function<void(bool, bool, bool)> reload_plugins_for_current_project;
+    std::function<void()> refresh_plugin_surfaces_for_reactivation;
     std::function<void()> save_config_state;
     std::function<void()> save_session_state;
     std::function<void()> save_workspace_session;
