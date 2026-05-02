@@ -185,6 +185,18 @@ std::uint64_t ScenarioContext::RandomU64() {
   return rng_();
 }
 
+void ScenarioContext::OpenFileFinder() {
+  ExecuteCommand("files");
+}
+
+void ScenarioContext::ActivateGitSidebar() {
+  ExecuteCommand("sidebar-show git");
+}
+
+void ScenarioContext::StartSearch(std::string_view query) {
+  ExecuteCommand("project-search " + std::string(query));
+}
+
 void PerfHarness::RegisterScenario(const Scenario& scenario) {
   ScenarioRegistry().push_back(scenario);
 }

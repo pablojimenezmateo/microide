@@ -63,6 +63,9 @@ class ScenarioContext {
                           std::chrono::milliseconds timeout);
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);
   std::uint64_t RandomU64();
+  void OpenFileFinder();
+  void ActivateGitSidebar();
+  void StartSearch(std::string_view query);
 
  private:
   workspace::WorkspaceShell& shell_;

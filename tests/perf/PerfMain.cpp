@@ -608,6 +608,7 @@ int main(int argc, char** argv) {
       BaselineRecord record{
           .scenario_name = scenario.name,
           .metrics = aggregate->metrics,
+          .tolerances = {},
       };
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
