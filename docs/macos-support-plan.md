@@ -1,6 +1,6 @@
 # macOS Support Plan
 
-Reviewed on 2026-04-25.
+Reviewed on 2026-04-26.
 
 This document outlines what `microide` needs to support macOS as a first-class host.
 It is a host-platform plan, not a compatibility promise.
@@ -39,10 +39,10 @@ The codebase is already partly portable:
 
 But several important services are still Linux-first or only loosely portable:
 
-- `src/terminal/TerminalSession.cpp` is a POSIX PTY implementation built around `openpty`, `fork`,
-  `ioctl`, process groups, and signal handling
-- `src/platform/Subprocess.cpp` and `src/platform/AsyncSubprocess.cpp` are still direct
-  `fork`/`execvp` implementations instead of a deliberate platform process layer
+- `src/terminal/TerminalSession.cpp` still depends on a POSIX-backed terminal backend today even
+  though the PTY lifecycle is now split behind `src/platform/TerminalBackend.*`
+- `src/platform/Subprocess.cpp` and `src/platform/AsyncSubprocess.cpp` now depend on
+  `src/platform/ProcessBackend.*`, but that backend is still POSIX-backed today
 - `src/platform/FileWatcher.cpp` has Linux `inotify` wakeups and falls back to snapshot polling on
   non-Linux hosts
 - there is no macOS-specific packaging, bundle metadata, signing, notarization, or launch
@@ -63,7 +63,7 @@ macOS support should not be considered complete until all of these are true:
 - app config, cache, state, and data directories resolve to correct macOS locations
 - delete-to-trash uses a correct macOS flow
 - open-folder, open-URL, and subprocess launch paths behave correctly from an app-bundle launch
-- targeted tests run on macOS CI, and local launch instructions are documented
+- targeted local tests run on macOS, and local launch instructions are documented
 
 ## Main Gaps
 
@@ -102,8 +102,8 @@ fragile. The terminal path needs a deliberate macOS launch contract.
 
 ### 3. Subprocess launch is not yet a real cross-platform service
 
-`src/platform/Subprocess.cpp` and `src/platform/AsyncSubprocess.cpp` are still direct process code.
-They should become a host process service with explicit platform implementations.
+`src/platform/Subprocess.cpp` and `src/platform/AsyncSubprocess.cpp` now route through an explicit
+process backend seam, but the non-POSIX implementations still need to be written.
 
 For macOS this matters because:
 
@@ -225,10 +225,10 @@ Goal: make subprocesses and terminal tabs reliable on macOS.
 
 Work:
 
-- split direct process management out of `Subprocess` and `AsyncSubprocess` into a clearer platform
-  service contract
-- split PTY session launch or lifecycle out of `TerminalSession` so the screen model and escape
-  handling stay platform-neutral
+- keep building on the extracted process backend instead of reintroducing direct process ownership
+  into `Subprocess` or `AsyncSubprocess`
+- keep building on the extracted terminal backend instead of reintroducing PTY lifecycle ownership
+  into `TerminalSession`
 - implement a Darwin PTY backend with correct resize, shutdown, and child reaping behavior
 - define one explicit environment policy for shell, git, formatter, LSP, DAP, and plugin tool
   launches from an app bundle
@@ -279,7 +279,7 @@ macOS support should be validated in focused layers.
 
 ### Automated
 
-- build `microide` and `microide_tests` on macOS CI
+- keep a documented macOS local build and validation path until CI is worth maintaining
 - run focused editor, workspace, project, terminal, and plugin-runtime tests
 - add `AppDirectories` tests for macOS directory mapping
 - add file-watcher tests around create, rename, delete, and move semantics

@@ -1,7 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-29.
-Updated on 2026-05-01 for `address-render-and-plugin-reload-hotspots`.
+Reviewed on 2026-04-26.
 
 This is the single source of truth for:
 
@@ -55,9 +54,6 @@ These are implemented and should not be treated as open migration work:
 - manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, active-buffer metadata, argv-based process helpers, repo-owned dogfood plugins, and `plugins-reload`
 - plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, a built-in Problems sidebar, and host rename/delete cleanup for stale diagnostic paths
 - targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
-- deterministic performance harness scaffolding under `tests/perf/` with smoke and baseline-comparison workflows documented in `docs/perf-harness.md`
-- sanitizer build presets and CI variants for ASAN, UBSAN, and TSAN (TSAN now treated as a required signal)
-- libFuzzer harnesses and corpora for persisted-record decode, legacy importer, search regex compile-match, and git blame parsing with PR and nightly CI runs
 
 ## Active Phases
 
@@ -111,10 +107,10 @@ Current state:
   `Workspace*ActionExecutor.cpp` translation units instead of one monolithic
   `WorkspaceActionCoordinator.cpp`
 - the top-level action coordinator now routes project, sidebar, search, tab, edit, and global
-  execution through a dedicated `WorkspaceActionServices*` facade instead of keeping action
+  execution through a dedicated `WorkspaceActionContext*` facade instead of keeping action
   behavior on a nested shell-owned `WorkspaceShell::ActionCoordinator` with broad private access
-- `WorkspaceActionCoordinator` now executes from a value `WorkspaceActionContext` in
-  `WorkspaceActionServices*` instead of taking `WorkspaceShell&`
+- `WorkspaceActionCoordinator` now executes from a value `WorkspaceActionContext` instead of
+  taking `WorkspaceShell&`
 - project-catalog mutation, project or workspace session persistence, command-prompt feedback,
   and menu-surface transitions now use top-level `WorkspaceProjectCatalogCoordinator`,
   `WorkspacePersistenceCoordinator`, `WorkspaceCommandPromptCoordinator`, and
@@ -237,52 +233,41 @@ Current state:
   implemented: event routing, wake routing, action enablement, render composition, and test hooks
   all live behind explicit seams instead of direct shell-owned monoliths
 
-### 3. Render + Reload Regression Recovery (Completed 2026-05-01)
-
-Status:
-
-- Completed in `openspec/changes/address-render-and-plugin-reload-hotspots`
-
-Delivered outcomes:
-
-- plugin reload path now drains async workers before teardown via a bounded drain seam
-- project reactivation refreshes plugin surfaces without reloading Lua plugins
-- runtime syntax cache invalidation is scoped to changed languages
-- compare-surface rendering is structurally gated by render view model data
-- frame prep executes once per frame (not once per clip) on partial redraw paths
-- session restore now supports deferred tab hydration for inactive clean tabs
-- perf harness now includes `switch_and_idle` with committed baseline
-
-Measured budgets recovered in this slice:
-
-- median `Application::Render(partial)` for 1 dirty rect / 1 coalesced clip: `2.49 ms`
-- `WorkspaceShell::RestoreSessionState::RebuildTabs` on 20-tab restore: `26.33 ms` median
-- `switch_and_idle` baseline committed under `tests/perf/baselines/switch_and_idle.json`
-
 ### 2. Cross-Platform Host Support
 
 Current state:
 
 - app-directory policy, trash or recycle-bin behavior, external URL handling, and runtime asset
   discovery now route through dedicated `src/platform/*` services instead of Linux-first callers
+- sync and async subprocess execution now route through a dedicated `platform/ProcessBackend`
+  service seam instead of embedding POSIX process launch directly in the public facades
+- terminal lifecycle now routes through `platform/TerminalBackend`, so `TerminalSession` keeps the
+  screen model and escape handling while host launch/resize/shutdown behavior sits behind a host
+  service boundary
 - CMake now supports macOS bundle output, Windows desktop output, and non-`pkg-config` package
   discovery for PCRE2 and libcurl
-- local bring-up and CI coverage now exist for Linux, macOS, and Windows host-facing build or test
-  paths
+- local bring-up now exists for Linux, macOS, and Windows host-facing build or test paths, while
+  CI is intentionally deferred until the cross-platform backends settle
 
+Remaining work:
+
+- implement Windows subprocess and terminal backends behind the new seams
+- add native macOS and Windows watcher backends so supported hosts do not rely on polling by
+  default
+- add focused host-platform CI later, after the terminal/process and watcher backends are stable
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
   terminal selection, tree context menus, and redraw behavior instead of `WorkspaceShell&`
 - action-context dispatch, tab save or reopen or retarget flow, and editor or compare or merge
-  or tab-strip mouse routing now run through `WorkspaceActionServices`, `WorkspaceTabCoordinator`,
+  or tab-strip mouse routing now run through `WorkspaceActionContext`, `WorkspaceTabCoordinator`,
   `WorkspaceEditorMouseCoordinator`, `WorkspaceCompareMouseCoordinator`,
   `WorkspaceMergeMouseCoordinator`, and `WorkspaceTabMouseCoordinator` with explicit state plus
   callback dependencies instead of `WorkspaceShell&`
 - production `WorkspaceShell` friend-class access is now gone, and the old
   `WorkspaceShellTestAccess` friend path is gone too; shell tests now use the public
   `MICROIDE_TESTING`-gated `WorkspaceShell::TestAccess` API from
-  `workspace/WorkspaceShellTestAccess.h`
+  `workspace/WorkspaceShellTesting.h`
 - the active shell now aliases the `ProjectSurfaceState` stored in the current
   `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
   dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic
@@ -498,6 +483,49 @@ Open work:
 - validate real LLM workflows against the shipped inline completion and chat surfaces before
   expanding the UX
 
+### 6. Deferred Work And Throughput Pass (2026-05-02)
+
+This phase addresses background-thread isolation, event-driven file watching, search throughput,
+and adaptive idle rendering. The infrastructure layer is shipped; workspace wiring is in progress.
+
+Shipped:
+
+- `platform/FileIndexWatcher.*` platform abstraction with Linux `inotify`, macOS `FSEvents`,
+  Windows `ReadDirectoryChangesW`, and a poll-fallback backend; callback fires on the watcher
+  thread with an `IndexUpdateBatch` (created/deleted/renamed entries with path + mtime)
+- `project/ProjectBackgroundExecutor.*` single-thread per-project executor with `Post`,
+  `PostLatest` (debounce by key), `Cancel`, and `Shutdown(deadline)` for background subprocess
+  dispatch
+- `project/PatternCache.*` PCRE2 pattern cache with LRU eviction at 64 entries; thread-safe with
+  `std::mutex`; eliminates repeated compile + JIT on repeated searches
+- `app/BackgroundTaskCounter.*` global atomic counter wired into search dispatch and
+  `ProjectBackgroundExecutor`; `IncrementBackgroundTaskCount` / `DecrementBackgroundTaskCountAndWake`
+  keep the event loop awake during in-flight background work
+- PCRE2 JIT compilation added to `util/RegexUtil.h` immediately after `pcre2_compile`; JIT
+  unavailability emits a one-time `SDL_Log` and falls back to interpreted mode
+- Architecture lint rules in `tests/ArchitectureInvariantsTests.cpp`:
+  `CheckNoSynchronousSubprocessWaitInWorkspace` (hard-fail on `Subprocess::Wait` / `waitpid` /
+  `WaitForSingleObject` in workspace TUs) and `CheckLspDidOpenIsNonBlocking` (policy rule)
+- Perf fixture: 10 000-file flat project under `tests/perf/fixtures/file_finder_large/`
+- Perf fixture: pre-seeded 1 000-file git repository under `tests/perf/fixtures/git_status_project/`
+- Perf baselines committed: `file_finder_cold.json`, `git_sidebar_activate.json`,
+  `search_first_result.json` under `tests/perf/baselines/`; `idle_soak_30s` scenario extended with
+  wakeup-rate assertion
+- Full unit test coverage for `BackgroundTaskCounter`, `FileIndexWatcher`, and `PatternCache`
+
+Open work (tracked in `openspec/changes/deferred-work-and-throughput-pass/tasks.md`):
+
+- wire `FileIndexWatcher` to project open/close in the workspace coordinator (task 2.2–2.3) and
+  update file-finder and search call sites to consume `ProjectFileIndex::Snapshot()` (tasks 2.4–2.5)
+- migrate git `Status`, `Blame`, and `Log` call sites through `ProjectBackgroundExecutor` with SDL
+  user-event delivery (tasks 3.2–3.4); verify cancel-on-project-switch (task 3.5)
+- add `layout_dirty_` flag and guard `ComputeLayout` in `PrepareFrameOnce` (tasks 5.1–5.2); add
+  `visible_line_range` to `FrameToken` and plumb render phases through it (tasks 5.3–5.4)
+- add `SearchResultBuffer` and incremental search streaming with per-batch SDL wake events (tasks
+  7.1–7.4); update cancel path and add integration tests (tasks 7.5–7.6)
+- add `IdleHint` enum and replace zero-delay SDL poll loop with `IdleHint`-driven strategy (tasks
+  8.5–8.6); run `idle_soak_30s` harness to verify near-zero wake rate at rest (task 8.8)
+
 ### 2. Terminal Hardening
 
 Current state:
@@ -592,7 +620,6 @@ These are not current project work unless deliberately promoted into their own p
 - recent-project and recent-file affordances
 - soft wrap
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
-- legacy persisted text-file cleanup (`*.legacy`) before release +2; this is scheduled as a dedicated follow-up change after the current structured-persistence migration settles
 
 ## Companion Docs
 

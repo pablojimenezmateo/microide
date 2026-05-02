@@ -10,6 +10,7 @@
 #include <system_error>
 #include <vector>
 
+#include "app/BackgroundTaskCounter.h"
 #include "project/ProjectFileScanner.h"
 #include "util/RegexUtil.h"
 
@@ -184,10 +185,12 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
     active_run_id_ = run_id;
   }
 
+  app::IncrementBackgroundTaskCount();
   task_executor_.Submit(
       [this, root, query = std::move(query), options, indexed_files = std::move(indexed_files),
        run_id](const util::CancellationToken& token) {
         WorkerMain(root, query, options, std::move(indexed_files), run_id, token);
+        app::DecrementBackgroundTaskCountAndWake();
       });
   return run_id;
 }

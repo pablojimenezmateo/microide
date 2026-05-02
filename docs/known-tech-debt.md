@@ -47,38 +47,36 @@ The following previously tracked debts were closed on 2026-04-29 by
 - `WorkspaceLspClient` TSAN race (reported during sanitizer bring-up): closed
   - request/callback ownership synchronization was fixed and verified with TSAN runs in the sanitizer matrix
 
-## 5. Search and Index Integration Is Better, but Still Snapshot-Based Rather Than Event-Driven
+## 5. Search and Index Integration — Event-Driven File Watch
 
-Impact:
-- Medium
-- Lower urgency than the pre-`0aa44cb` search issues, but still worth tracking
+Status:
+- Partially resolved on 2026-05-02 by `deferred-work-and-throughput-pass`.
 
-Current state:
-- Project search can now consume an indexed file snapshot instead of rescanning the tree itself.
-- `FileIndex` now caches hidden and non-hidden scans separately.
+What was closed:
+- `FileIndexWatcher` platform abstraction ships Linux `inotify`, macOS `FSEvents`, Windows
+  `ReadDirectoryChangesW`, and a poll-fallback backend.
+- `PatternCache` with LRU eviction eliminates repeated PCRE2 compile/JIT on repeated searches.
+- `ProjectBackgroundExecutor` isolates per-project git dispatch from the main thread.
+- `BackgroundTaskCounter` tracks in-flight background work for adaptive idle rendering.
+- PCRE2 JIT is now compiled into the search engine; interpreted fallback emits a one-time log.
+- `ProjectSearchService` wires `BackgroundTaskCounter` so the event loop stays awake during search.
 
-What is still debt:
-- Search still consumes a point-in-time file list and then opens files directly from disk.
-- There is no deeper shared project-content service for search, file finder, diagnostics-driven
-  refresh, and other read-heavy workflows.
-- The index refresh policy is still explicit and host-driven rather than fully unified with all
-  project mutations and file-watch events.
-
-Evidence:
-- `src/project/FileIndex.h`
-- `src/project/FileIndex.cpp`
-- `src/project/ProjectSearchService.cpp`
-- `src/workspace/WorkspaceShellProjectSearch.cpp`
-
-Why this is still debt:
-- The biggest search inefficiencies were fixed, but project read paths are still not unified under
-  one host-owned content model.
-- As plugin and indexing workloads grow, the project layer may want a narrower “project snapshot”
-  or content service instead of multiple consumers reading the filesystem independently.
+What is still open:
+- The workspace coordinator does not yet wire `FileIndexWatcher` to project open/close; the
+  watcher exists but is not plumbed into the file-finder or project-search call sites (tasks 2.2–2.5).
+- File-finder and project-search still fall back to `CollectProjectFiles` directory traversal until
+  the watcher wiring lands.
+- Git dispatch (`GitOperations::Status`, `Blame`, `Log`) still runs synchronously on the tab/sidebar
+  activation path; the `ProjectBackgroundExecutor` exists but migration is deferred (tasks 3.2–3.6).
+- `WorkspaceTabCoordinatorShellBridge` and `WorkspaceToolDownloader` still call `RunSubprocess`
+  synchronously; tracked separately as formatter and tool-validator follow-ups.
 
 Recommended follow-up:
-- Only pursue this if profiling shows file-discovery or file-open churn is still material after the
-  recent fixes.
+- Wire `FileIndexWatcher` to project open in the workspace coordinator (task 2.2) and update the
+  file-finder and search call sites to consume `ProjectFileIndex::Snapshot()` (tasks 2.4–2.5).
+- Migrate git sidebar dispatch through `ProjectBackgroundExecutor` (tasks 3.2–3.4).
+- Only move formatter and tool-validator calls async after the git dispatch migration lands and
+  profiling confirms they are on a latency-sensitive path.
 
 ## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 
@@ -232,8 +230,10 @@ are good candidates for the next openspec tech-debt pass:
 5. Oversized coordinator translation units:
    - Closed in this change: coordinator units were decomposed and the coordinator TU-size rule is
      hard-fail.
-6. Project-content and indexing architecture (item 5) still consumes a point-in-time file list;
-   only revisit if profiling shows meaningful search or refresh cost after the recent fixes.
+6. Project-content and indexing architecture (item 5) now has an event-driven watcher layer and
+   background executor, but workspace wiring (file-finder, search, git dispatch) is deferred to the
+   next pass. Revisit when the `deferred-work-and-throughput-pass` wiring tasks (2.2–2.5, 3.2–3.6)
+   are scoped into an openspec change.
 
 ## 8–12 Status Update (2026-05-01)
 

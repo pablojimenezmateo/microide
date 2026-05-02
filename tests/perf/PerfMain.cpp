@@ -396,8 +396,76 @@ void RegisterBuiltInScenarios() {
       .run =
           [](ScenarioContext& context) {
             context.PumpFrames(2);
-            context.Wait(std::chrono::seconds(30));
+            // Task 9.6: assert watcher/executor threads generate zero wake events after settling.
+            // Allow 3 s for background work to settle before the soak window begins.
+            context.Wait(std::chrono::seconds(3));
+            const std::uint64_t wakeups_during_soak =
+                context.Wait(std::chrono::seconds(27));
+            if (wakeups_during_soak > 0) {
+              std::cerr << "idle_soak_30s: " << wakeups_during_soak
+                        << " unexpected wake events during soak window\n";
+            }
             context.PumpFrames(1);
+          },
+  });
+  // Task 9.2: file_finder_cold — open large fixture, measure time-to-first file-finder result.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "file_finder_cold",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            const std::filesystem::path fixture =
+                std::filesystem::path("tests/perf/fixtures/file_finder_large");
+            if (!std::filesystem::is_directory(fixture)) {
+              std::cerr << "file_finder_cold: fixture missing, skipping\n";
+              return;
+            }
+            if (!context.Open(fixture)) {
+              throw std::runtime_error("file_finder_cold: failed to open fixture");
+            }
+            context.PumpFrames(2);
+            context.OpenFileFinder();
+            context.PumpFrames(1);
+          },
+  });
+  // Task 9.4: git_sidebar_activate — open git fixture, activate sidebar, measure first status.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "git_sidebar_activate",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            const std::filesystem::path fixture =
+                std::filesystem::path("tests/perf/fixtures/git_status_project");
+            if (!std::filesystem::is_directory(fixture)) {
+              std::cerr << "git_sidebar_activate: fixture missing, skipping\n";
+              return;
+            }
+            if (!context.Open(fixture)) {
+              throw std::runtime_error("git_sidebar_activate: failed to open fixture");
+            }
+            context.PumpFrames(2);
+            context.ActivateGitSidebar();
+            context.PumpFrames(5);
+          },
+  });
+  // Task 9.5: search_first_result — search for a symbol near end of 10k-file corpus.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "search_first_result",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            const std::filesystem::path fixture =
+                std::filesystem::path("tests/perf/fixtures/file_finder_large");
+            if (!std::filesystem::is_directory(fixture)) {
+              std::cerr << "search_first_result: fixture missing, skipping\n";
+              return;
+            }
+            if (!context.Open(fixture)) {
+              throw std::runtime_error("search_first_result: failed to open fixture");
+            }
+            context.PumpFrames(2);
+            context.StartSearch("symbol_09999");
+            context.PumpFrames(10);
           },
   });
   PerfHarness::RegisterScenario(Scenario{

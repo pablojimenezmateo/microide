@@ -130,6 +130,7 @@ add_library(microide_runtime_syntax_generated OBJECT
 target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 
 set(MICROIDE_CORE_SOURCES
+  src/app/BackgroundTaskCounter.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
@@ -145,10 +146,12 @@ set(MICROIDE_CORE_SOURCES
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
+  src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
   src/platform/HostIntegration.cpp
   src/platform/HostPlatform.cpp
+  src/platform/ProcessBackend.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/TerminalBackend.cpp
@@ -199,6 +202,8 @@ set(MICROIDE_CORE_SOURCES
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
+  src/project/PatternCache.cpp
+  src/project/ProjectBackgroundExecutor.cpp
   src/project/ProjectSearchService.cpp
   src/project/ProjectRoot.cpp
   src/render/DebugTextBackend.cpp
@@ -468,6 +473,9 @@ add_executable(microide_tests
   tests/PluginHostTests.cpp
   tests/ParseTests.cpp
   tests/ArchitectureInvariantsTests.cpp
+  tests/BackgroundTaskCounterTests.cpp
+  tests/FileIndexWatcherTests.cpp
+  tests/PatternCacheTests.cpp
   tests/PersistedRecordDumpTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
@@ -697,6 +705,7 @@ elseif(MSVC)
 endif()
 
 add_executable(microide_search_bench
+  src/app/BackgroundTaskCounter.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp

@@ -40,6 +40,35 @@ Current notable scenarios:
   - baseline:
     - `tests/perf/baselines/switch_and_idle.json`
 
+- `file_finder_cold` (gate): builds the in-process file index from the 10 000-file flat fixture,
+  simulates file-finder open, measures time to first rendered result; asserts ≤ 50 ms
+  - fixture root:
+    - `tests/perf/fixtures/file_finder_large/`
+  - baseline:
+    - `tests/perf/baselines/file_finder_cold.json`
+  - skips gracefully when fixture directory is absent
+
+- `git_sidebar_activate` (gate): opens the pre-seeded 1 000-file git fixture project, activates
+  the git sidebar, measures time from activation to first rendered git-status frame; asserts ≤ 200 ms
+  - fixture root:
+    - `tests/perf/fixtures/git_status_project/`
+  - baseline:
+    - `tests/perf/baselines/git_sidebar_activate.json`
+  - skips gracefully when fixture directory is absent
+
+- `search_first_result` (gate): initiates a search on the 10 000-file fixture with a pattern that
+  matches one file near the end of the corpus, measures time to first result batch; asserts ≤ 100 ms
+  - fixture root:
+    - `tests/perf/fixtures/file_finder_large/`
+  - baseline:
+    - `tests/perf/baselines/search_first_result.json`
+  - skips gracefully when fixture directory is absent
+
+- `idle_soak_30s` (gate): 3-second settle then 27-second soak; asserts that the file-index watcher
+  thread and git executor thread generate zero SDL wake events during the soak period after startup
+  work completes; verifies the event loop reaches `SDL_WaitEvent` at rest
+  - no fixture required
+
 ## Run Under Virtual Display
 
 ```bash

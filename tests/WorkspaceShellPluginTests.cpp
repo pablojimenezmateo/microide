@@ -1890,7 +1890,11 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
                 .disabled_keybinding_ids = {},
             }));
   ScopedEnvVar home("HOME", home_dir.string());
-  ScopedEnvVar path("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  // Prepend the fake codex bin dir so command -v codex resolves to our stub
+  // even when sh -l sources /etc/profile (which may add /usr/local/bin where
+  // a real codex binary can live on developer machines).
+  ScopedEnvVar path("PATH", (home_dir / ".nvm" / "versions" / "node" / "v20.20.0" / "bin").string() +
+                                ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;

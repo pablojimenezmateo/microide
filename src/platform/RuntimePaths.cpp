@@ -10,7 +10,9 @@ namespace microide::platform {
 namespace {
 
 std::filesystem::path EnvPath(const char* name) {
-  const char* value = SDL_getenv(name);
+  // SDL_getenv_unsafe bypasses SDL's cached copy so it sees changes made by
+  // setenv() after SDL initialization (e.g. in tests via ScopedEnvVar).
+  const char* value = SDL_getenv_unsafe(name);
   return value != nullptr && value[0] != '\0' ? std::filesystem::path(value)
                                               : std::filesystem::path{};
 }

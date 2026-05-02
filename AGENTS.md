@@ -139,6 +139,23 @@ Policy invariants (no automated lint, but reviewers will reject):
 - Plugin reload/shutdown must drain async process workers before plugin teardown using the bounded
   drain seam; do not call teardown directly without the drain step.
 
+The 2026-05-02 `deferred-work-and-throughput-pass` added four further invariants:
+
+- No synchronous subprocess wait on the main thread in workspace code (`src/workspace/`). New code
+  that needs subprocess results must dispatch through `ProjectBackgroundExecutor` or a similar
+  background executor and deliver results via SDL user event. The
+  `CheckNoSynchronousSubprocessWaitInWorkspace` lint rule hard-fails on direct `Subprocess::Wait`,
+  `waitpid`, `WaitForSingleObject`, or `WaitForMultipleObjects` calls in workspace TUs.
+- LSP `textDocument/didOpen` and `textDocument/didChange` notifications must not be sent
+  synchronously on the `ActivateTab` call path. The hydration notification must be posted
+  asynchronously so the tab is visible before any LSP acknowledgement is awaited.
+- `ComputeLayout()` must be skipped when the layout-dirty flag is clear. Layout recomputation must
+  only run when a window-resize, divider-drag, sidebar-toggle, or panel-toggle event has set the
+  dirty flag; do not call it unconditionally from `PrepareFrameOnce`.
+- The SDL event loop must never use a zero-delay `SDL_PollEvent` spin at idle. Use the
+  `IdleHint`-driven strategy: `Full` hint → `SDL_PollEvent`; `CaretOnly` hint →
+  `SDL_WaitEventTimeout(caret_remaining_ms)`; `Idle` hint → `SDL_WaitEvent`.
+
 The durable contracts these rules implement live in
 `openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`,
 and `openspec/specs/shared-edit-primitives/spec.md`. Update those specs in the same change when a

@@ -6,6 +6,9 @@
 
 #include <pcre2.h>
 
+#include <SDL3/SDL.h>
+
+#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -80,6 +83,13 @@ class CompiledRegex {
     pcre2_code* code = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()), pattern.size(),
                                      options, &error_code, &error_offset, nullptr);
     if (code != nullptr) {
+      const int jit_rc = pcre2_jit_compile(code, PCRE2_JIT_COMPLETE);
+      if (jit_rc != 0) {
+        static std::atomic<bool> jit_warned{false};
+        if (!jit_warned.exchange(true)) {
+          SDL_Log("RegexUtil: PCRE2 JIT unavailable (rc=%d); using interpreted mode", jit_rc);
+        }
+      }
       code_ = std::shared_ptr<pcre2_code>(code, pcre2_code_free);
     } else if (!error_prefix_.empty()) {
       error_ = BuildRegexErrorMessage(error_prefix_, error_code, error_offset);

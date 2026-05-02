@@ -58,6 +58,9 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests);
 void RegisterAllocationCounterTests(std::vector<TestCase>& tests);
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests);
+void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests);
+void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests);
+void RegisterPatternCacheTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -125,6 +128,9 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPhase3Tests(tests);
   microide::tests::RegisterPhase4Tests(tests);
   microide::tests::RegisterPhase5Tests(tests);
+  microide::tests::RegisterBackgroundTaskCounterTests(tests);
+  microide::tests::RegisterFileIndexWatcherTests(tests);
+  microide::tests::RegisterPatternCacheTests(tests);
 
   bool ran_any = false;
   std::size_t selected_count = 0;
