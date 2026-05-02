@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {

@@ -19,7 +19,7 @@ using microide::workspace::VirtualDocumentSpec;
 
 void TestSecretStoragePersistsAcrossInstances() {
   TemporaryDirectory temp_dir;
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", temp_dir.path() / "config");
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", (temp_dir.path() / "config").string());
 
   {
     SecretStorage storage;
