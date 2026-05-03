@@ -437,6 +437,10 @@ if(UNIX AND NOT APPLE)
   target_link_libraries(microide PRIVATE util)
 endif()
 
+if(APPLE)
+  target_link_libraries(microide PRIVATE "-framework CoreFoundation" "-framework CoreServices")
+endif()
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic)
   if(MICROIDE_WARNINGS_AS_ERRORS)
@@ -520,6 +524,11 @@ target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
+
+if(APPLE)
+  target_link_libraries(microide_tests PRIVATE "-framework CoreFoundation" "-framework CoreServices")
+endif()
+
 target_compile_definitions(microide_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1

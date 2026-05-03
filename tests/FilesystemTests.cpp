@@ -98,7 +98,7 @@ void TestFileWatcherEntryFilterSkipsIgnoredDirectories() {
   WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 2;\n");
   Expect(!watcher.Poll(), "entry filters should suppress changes under ignored directories");
 
-  WriteFile(root / "src" / "main.ts", "export const main = 2;\n");
+  WriteFile(root / "src" / "main.ts", "export const main = 2;\nexport {};\n");
   Expect(watcher.Poll(), "entry filters should still allow visible project changes");
 }
 
