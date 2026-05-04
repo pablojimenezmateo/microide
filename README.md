@@ -66,7 +66,7 @@ For the authoritative in-scope/non-goal list see `openspec/specs/product-vision/
 In-scope and non-goals are declared in `openspec/specs/product-vision/spec.md`.
 
 Short version: built-in editor, diff, merge, search, git, terminal, and AI workflows stay host-owned.
-Out of scope: full debugger UI, plugin marketplaces, cloud/collaboration/sync, recent-project surfaces, soft wrap.
+Out of scope: full debugger UI, plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
 
 ## Build
 
@@ -187,7 +187,7 @@ tasks [task-id]                     term [command]
 tests-discover                      tests-run [test-id...]
 tree [root]                         tree-refresh
 ui-scale [n|up|down|reset]          unsplit
-vsplit [path]
+vsplit [path]                       wrap [on|off]
 ```
 
 Current commands:
@@ -231,6 +231,7 @@ Current commands:
 - `sidebar-toggle [tool]`
 - `sidebar-width <n>`
 - `soft-tabs [on|off]`
+- `wrap [on|off]`
 - `split-first`
 - `split-last`
 - `split-next`

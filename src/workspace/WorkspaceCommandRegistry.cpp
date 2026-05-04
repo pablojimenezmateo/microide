@@ -75,6 +75,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::SidebarWidth, "sidebar-width", "sidebar-width <n>", "Sidebar Width",
                  ""},
       ActionSpec{ActionId::SoftTabs, "soft-tabs", "soft-tabs [on|off]", "Soft Tabs", ""},
+      ActionSpec{ActionId::Wrap, "wrap", "wrap [on|off]", "Word Wrap", "", true},
       ActionSpec{ActionId::SplitFirst, "split-first", "split-first", "First Split", ""},
       ActionSpec{ActionId::SplitLast, "split-last", "split-last", "Last Split", ""},
       ActionSpec{ActionId::SplitNext, "split-next", "split-next", "Next Split", ""},

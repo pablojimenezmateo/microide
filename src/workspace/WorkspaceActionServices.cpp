@@ -765,6 +765,16 @@ void WorkspaceActionContext::SetSoftTabs(bool enabled) {
   operations_.save_config_state();
 }
 
+bool WorkspaceActionContext::SoftWrapEnabled() const {
+  return state_.editor_preferences.soft_wrap;
+}
+
+void WorkspaceActionContext::SetSoftWrap(bool enabled) {
+  state_.editor_preferences.soft_wrap = enabled;
+  operations_.apply_editor_preferences_to_all_tabs();
+  operations_.save_config_state();
+}
+
 bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
   switch (target) {
     case FocusRequestTarget::Sidebar:

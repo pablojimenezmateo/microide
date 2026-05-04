@@ -674,6 +674,16 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "soft-tabs should enable soft tabs for editor preferences");
 
+  Expect(ExecuteCommand(shell, "wrap on"),
+         "wrap should execute with a typed boolean request");
+  Expect(WorkspaceShellTestAccess::SoftWrapEnabled(shell),
+         "wrap should enable soft wrap for editor preferences");
+
+  Expect(ExecuteCommand(shell, "wrap"),
+         "wrap should toggle when invoked without explicit args");
+  Expect(!WorkspaceShellTestAccess::SoftWrapEnabled(shell),
+         "wrap without args should invert the current soft-wrap setting");
+
   Expect(ExecuteCommand(shell, "focus panel"),
          "focus should execute with a typed focus target");
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),
@@ -715,6 +725,15 @@ void TestWorkspaceShellCommandPromptCompletionAndHistory() {
          "down should restore the pending empty command input");
   Expect(WorkspaceShellTestAccess::CommandInput(shell).empty(),
          "history navigation back to the pending input should restore an empty prompt");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "wr"),
+         "completion fixture should allow typing a second command prefix");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "tab should complete the wrap command");
+  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "wrap ",
+         "tab completion should expand the wrap command name");
+  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed wrap",
+         "tab completion should report the wrap command completion");
 }
 
 void TestWorkspaceShellCtrlNOpensUntitledTab() {

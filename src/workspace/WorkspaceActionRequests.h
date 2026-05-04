@@ -129,6 +129,12 @@ struct SoftTabsRequest {
 
 std::optional<SoftTabsRequest> BuildSoftTabsRequest(const std::vector<std::string>& args);
 
+struct WrapRequest {
+  bool enabled = false;
+};
+
+std::optional<WrapRequest> BuildWrapRequest(const std::vector<std::string>& args);
+
 enum class FocusRequestTarget {
   Sidebar,
   Editor,

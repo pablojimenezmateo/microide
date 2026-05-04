@@ -82,6 +82,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::ShowOutput),
       MenuItem(ActionId::ShowChat),
+      MenuItem(ActionId::Wrap, "Word Wrap", {}, {}, 0, true),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}},
                1),

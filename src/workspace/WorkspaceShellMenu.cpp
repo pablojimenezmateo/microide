@@ -259,6 +259,9 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   if (item.action == ActionId::SidebarToggle) {
     return context_.current_project_state.sidebar.visible;
   }
+  if (item.action == ActionId::Wrap) {
+    return context_.current_project_state.editor_preferences.soft_wrap;
+  }
   if (item.action == ActionId::SidebarShow && item.arg_count > 0) {
     const std::optional<SidebarViewInfo> view = FindSidebarView(item.args[0], plugin_runtime_.Host());
     if (view.has_value()) {

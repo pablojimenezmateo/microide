@@ -117,6 +117,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.SetSoftTabs(request->enabled);
       return DispatchResult::Handled;
     }
+    case ActionId::Wrap: {
+      if (args.empty()) {
+        context_.SetSoftWrap(!context_.SoftWrapEnabled());
+        return DispatchResult::Handled;
+      }
+      const std::optional<WrapRequest> request = BuildWrapRequest(args);
+      if (!request.has_value()) {
+        return reject("wrap expects on or off");
+      }
+      context_.SetSoftWrap(request->enabled);
+      return DispatchResult::Handled;
+    }
     case ActionId::Focus: {
       const FocusRequest request = BuildFocusRequest(args);
       if (context_.Focus(request.target)) {

@@ -54,6 +54,7 @@ enum class ActionId {
   SidebarToggle,
   SidebarWidth,
   SoftTabs,
+  Wrap,
   SplitFirst,
   SplitLast,
   SplitNext,

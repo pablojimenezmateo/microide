@@ -176,6 +176,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     }
     case ActionId::SidebarWidth:
     case ActionId::SoftTabs:
+    case ActionId::Wrap:
     case ActionId::TabSize:
     case ActionId::TestsDiscover:
     case ActionId::UiScale:

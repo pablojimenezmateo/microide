@@ -286,6 +286,8 @@ class WorkspaceActionContext {
   float UiScale() const;
   void ApplyUiScale(float scale);
   void SetSoftTabs(bool enabled);
+  bool SoftWrapEnabled() const;
+  void SetSoftWrap(bool enabled);
   bool Focus(FocusRequestTarget target);
   void OpenCommandPrompt(std::string input = {});
   bool PluginRuntimeEnabled() const;

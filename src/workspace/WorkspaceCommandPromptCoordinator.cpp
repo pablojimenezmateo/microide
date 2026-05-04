@@ -173,6 +173,8 @@ void CommandPromptCoordinator::CompleteInput() {
     }
   } else if (command == "soft-tabs" && active_index == 1) {
     candidates = CompleteFromList(active_prefix, kToggleValues);
+  } else if (command == "wrap" && active_index == 1) {
+    candidates = CompleteFromList(active_prefix, kToggleValues);
   } else if (command == "ui-scale" && active_index == 1) {
     candidates = CompleteFromList(active_prefix, kUiScaleCommands);
   }

@@ -271,6 +271,20 @@ std::optional<SoftTabsRequest> BuildSoftTabsRequest(const std::vector<std::strin
   };
 }
 
+std::optional<WrapRequest> BuildWrapRequest(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    return std::nullopt;
+  }
+  const std::string value = ToLower(args[0]);
+  if (value != "on" && value != "off" && value != "true" && value != "false" &&
+      value != "1" && value != "0") {
+    return std::nullopt;
+  }
+  return WrapRequest{
+      .enabled = value == "on" || value == "true" || value == "1",
+  };
+}
+
 FocusRequest BuildFocusRequest(const std::vector<std::string>& args) {
   const std::string target = args.empty() ? std::string{} : args[0];
   if (target == "sidebar") {

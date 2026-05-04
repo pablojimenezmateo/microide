@@ -236,6 +236,9 @@
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;
   }
+  static bool SoftWrapEnabled(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_preferences.soft_wrap;
+  }
   static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
     shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::SidebarDivider;
   }

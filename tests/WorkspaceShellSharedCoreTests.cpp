@@ -271,6 +271,12 @@ void TestWorkspaceMenuRegistry() {
   const MenuSpec* view = FindWorkspaceMenuSpec(MenuId::View);
   Expect(view != nullptr, "menu registry should expose the view menu");
   Expect(view->label == "View", "view menu should preserve its label");
+  Expect(std::find_if(view->items.begin(), view->items.end(),
+                      [](const auto& item) {
+                        return item.action == ActionId::Wrap && item.checkable &&
+                               item.label == "Word Wrap";
+                      }) != view->items.end(),
+         "view menu should expose a checkable word-wrap toggle");
 
   const auto menus = WorkspaceMenuSpecs();
   Expect(std::find_if(menus.begin(), menus.end(),
