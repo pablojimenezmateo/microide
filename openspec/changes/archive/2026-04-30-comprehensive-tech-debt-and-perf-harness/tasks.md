@@ -33,7 +33,7 @@
 - [x] 3.4 Add `CheckPersistenceFileIoBoundary` rule rejecting `std::ifstream`/`std::ofstream`/`std::fopen`/`open(` on filenames matching the documented project-state, user-config, session, and conversation patterns outside `PersistenceService.{h,cpp}`, the legacy importer, and `src/persistence/*`. Hard-fail.
 - [x] 3.5 Flip `CheckPluginTranslationUnitSize` to hard-fail. Confirm no current violations.
 - [x] 3.6 Replace the regex-based `try`/`std::sto*` heuristic in `CheckThrowingStoParsers` with a tokenizing scan that walks `try { ... }` block bodies (track brace depth, ignore strings and comments). Add focused tests against contrived multi-line and nested examples.
-- [x] 3.7 Run `ctest --test-dir build/microide --output-on-failure` and confirm the lint test passes.
+- [x] 3.7 Run `ctest --test-dir build --output-on-failure` and confirm the lint test passes.
 
 ## 4. Sanitizer CI Variants
 
@@ -109,7 +109,7 @@
 
 ## 13. Final Validation
 
-- [x] 13.1 Run `cmake --build build/microide` clean; run `ctest --test-dir build/microide --output-on-failure`; resolve any flake.
+- [x] 13.1 Run `cmake --build build` clean; run `ctest --test-dir build --output-on-failure`; resolve any flake.
 - [x] 13.2 Run `microide_perf_tests` on `perf-runner-v1`. Confirm every baseline is green.
 - [x] 13.3 Run all sanitizer CI variants and fuzz CI on the final state. Confirm green.
 - [x] 13.4 Run `openspec status --change "comprehensive-tech-debt-and-perf-harness"` and confirm all artifacts are done; archive the change.

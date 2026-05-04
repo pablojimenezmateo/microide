@@ -138,7 +138,7 @@ Run from `microide-perf` preset only; not gated in default CI but available via 
 - **Per-frame-once split risks misuse.** A future caller that forgets to invoke `PrepareFrameOnce` before `RenderClip` will produce a stale view model. Mitigation: bake the contract into a `FrameToken` that `RenderClip` requires by signature (RAII-style, can't be default-constructed).
 - **Plugin shutdown drain may regress shutdown latency by tens of ms** if a worker is mid-callback. Acceptable trade vs. crash risk, and the 250 ms deadline caps worst case.
 - **Compare-surface view-model gating** changes the contract between `RenderViewModelBuilder` and the compare render TU. We update the architectural-lint test to enforce it; this is the right kind of gate per `CLAUDE.md`'s rendering-stays-host-owned principle.
-- **Measurement bias:** all targets are measured on the default `build/microide` preset (or `microide-perf` for harness). Sanitizer presets (`microide-asan/-ubsan/-tsan`) are not used for budget validation — they are only run for the D6 plugin shutdown change to validate the lifetime fix.
+- **Measurement bias:** all targets are measured on the default `build/` tree (or `microide-perf` for harness). Sanitizer presets (`microide-asan/-ubsan/-tsan`) are not used for budget validation — they are only run for the D6 plugin shutdown change to validate the lifetime fix.
 
 ## Migration Plan
 

@@ -77,8 +77,8 @@ Requirements:
 - optional: SDL3_ttf for the real font backend
 
 ```bash
-cmake -S . -B build/microide
-cmake --build build/microide
+cmake -S . -B build
+cmake --build build
 ./build/microide/microide
 ```
 

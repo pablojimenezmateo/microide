@@ -45,9 +45,9 @@ python3 tests/generate_fixtures.py
 Run the first automated checks with:
 
 ```bash
-cmake -S . -B build/microide
-cmake --build build/microide
-ctest --test-dir build/microide --output-on-failure
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Run a focused subset of the in-tree test binary with one or more substring filters:

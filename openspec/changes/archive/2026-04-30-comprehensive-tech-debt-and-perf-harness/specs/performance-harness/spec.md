@@ -13,7 +13,7 @@ The repository SHALL ship a `microide_perf` binary that drives a real SDL window
 - **THEN** the SDL window SHALL be created at 1920x1080 with DPI 1.0 and the bundled debug font, and SHALL NOT vary based on the host display configuration
 
 #### Scenario: Harness is registered as a CTest entry
-- **WHEN** `ctest --test-dir build/microide` runs
+- **WHEN** `ctest --test-dir build` runs
 - **THEN** the harness SHALL be invokable as the `microide_perf_tests` entry, and the entry SHALL fail the run if any scenario regresses beyond the per-metric tolerance against its committed baseline
 
 ### Requirement: Scenario Definition And Coverage

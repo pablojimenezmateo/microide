@@ -51,14 +51,14 @@ When guidance conflicts, use this order:
 Configure and build with the repo's CMake flow:
 
 ```bash
-cmake -S . -B build/microide
-cmake --build build/microide
+cmake -S . -B build
+cmake --build build
 ```
 
 Run the full automated test suite with:
 
 ```bash
-ctest --test-dir build/microide --output-on-failure
+ctest --test-dir build --output-on-failure
 ```
 
 Run focused tests with one or more substring filters:

@@ -1,6 +1,6 @@
 ## Why
 
-A perf trace on `feat/tech-debt-4` (2026-04-30, default `build/microide` — no sanitizers) shows the workspace is now **noticeably slower than before the 2026-04-29 `comprehensive-tech-debt-cleanup`**. Several regressions are visible at every interaction tier — startup, project switch, idle steady-state — and at least one of them (the syntax-cache invalidation on plugin reload) is the same class of cost the prior pass was supposed to remove. The user also reports that the session ended in a plugin-related crash. Correctness, then speed, then low CPU is the priority order: a 690 ms startup tab restore and a 142 ms project switch with two back-to-back plugin reloads no longer meet that bar.
+A perf trace on `feat/tech-debt-4` (2026-04-30, default `build/` tree — no sanitizers) shows the workspace is now **noticeably slower than before the 2026-04-29 `comprehensive-tech-debt-cleanup`**. Several regressions are visible at every interaction tier — startup, project switch, idle steady-state — and at least one of them (the syntax-cache invalidation on plugin reload) is the same class of cost the prior pass was supposed to remove. The user also reports that the session ended in a plugin-related crash. Correctness, then speed, then low CPU is the priority order: a 690 ms startup tab restore and a 142 ms project switch with two back-to-back plugin reloads no longer meet that bar.
 
 Concrete numbers from the trace (all in non-sanitizer build):
 
@@ -48,4 +48,4 @@ Affected source:
 
 Build / runtime: no public ABI changes, no new dependencies. Plugin host shutdown becomes synchronous-with-drain — plugins that depended on fire-and-forget callbacks surviving past `Shutdown()` will need to migrate, but per `guidelines/plugins.md` that was never a supported contract.
 
-Measurement note: all perf comparisons use the default `build/microide` (and `microide-perf` preset for harness runs). Sanitizer presets (`microide-asan`, `-ubsan`, `-tsan`) carry their own overhead and are not used for budget validation — only for correctness checks on the plugin-runtime drain fix.
+Measurement note: all perf comparisons use the default `build/` tree (and `microide-perf` preset for harness runs). Sanitizer presets (`microide-asan`, `-ubsan`, `-tsan`) carry their own overhead and are not used for budget validation — only for correctness checks on the plugin-runtime drain fix.

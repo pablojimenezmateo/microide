@@ -77,5 +77,5 @@ The active editor viewport SHALL be owned exclusively by the active editor tab. 
 The build SHALL include an architectural-lint test that runs as part of `ctest` and rejects regressions of these invariants without requiring human review.
 
 #### Scenario: Lint is part of the default test run
-- **WHEN** `ctest --test-dir build/microide` runs
+- **WHEN** `ctest --test-dir build` runs
 - **THEN** the architectural-lint test SHALL execute and SHALL fail the run if any banned pattern (new `friend class` in workspace, new `WorkspaceShell&` in coordinator, `try`/`catch` numeric parsing, oversized translation unit) is introduced

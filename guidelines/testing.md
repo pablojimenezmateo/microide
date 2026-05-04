@@ -13,16 +13,16 @@ Purpose: define the durable testing strategy and minimum validation expectations
 ## Test Stack
 
 - Build and register tests through CMake.
-- Run the full suite with `ctest --test-dir build/microide --output-on-failure`.
+- Run the full suite with `ctest --test-dir build --output-on-failure`.
 - Run focused coverage with `./build/microide/microide_tests <filter>`.
 - Keep fixtures and test support under `tests/`.
 
 Useful commands:
 
 ```bash
-cmake -S . -B build/microide
-cmake --build build/microide
-ctest --test-dir build/microide --output-on-failure
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
 ./build/microide/microide_tests TextViewport
 ```
 

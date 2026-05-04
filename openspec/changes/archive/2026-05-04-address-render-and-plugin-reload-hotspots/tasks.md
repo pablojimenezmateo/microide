@@ -62,7 +62,7 @@
 - [x] 8.2 Update `docs/known-tech-debt.md` to mark items 8–12 (or their successors) as resolved by this change, or to update their status
 - [x] 8.3 Update `AGENTS.md` § Do-Not-Regress Patterns with the four new invariants (single reload per activation, structural compare gate, per-frame prep once, plugin drain seam)
 - [x] 8.4 Update `docs/perf-harness.md` with the new `switch_and_idle` scenario
-- [x] 8.5 Run the full default test suite: `cmake --build build/microide && ctest --test-dir build/microide --output-on-failure`
+- [x] 8.5 Run the full default test suite: `cmake --build build && ctest --test-dir build --output-on-failure`
 - [x] 8.6 Run the ASAN preset: `cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure` (build succeeded; `ctest` failed on existing `WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard`; initial run also hit environment-specific LSan ptrace limitation)
 - [x] 8.7 Run the UBSAN preset and the TSAN preset (the TSAN run is the primary validation for §1): UBSAN build succeeded with the same existing test failure; TSAN build succeeded and surfaced a data race in `WorkspaceSidebarCoordinator.cpp` on the git-sidebar refresh snapshot path
-- [x] 8.8 Capture a fresh perf trace using `MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1` and attach to the change record (`/tmp/microide_idle_trace.log`; executed via `./build/microide-perf-make/microide/microide` in this tree because `./build/microide/microide` resolves to a directory)
+- [x] 8.8 Capture a fresh perf trace using `MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1` and attach to the change record (`/tmp/microide_idle_trace.log`; executed via `./build/microide-perf-make/microide/microide` in the older nested `-B build/microide` layout because `./build/microide/microide` resolved to a directory there)
