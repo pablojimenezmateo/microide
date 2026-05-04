@@ -23,7 +23,7 @@
       "displayName": "microide address sanitizer",
       "description": "Debug build with AddressSanitizer enabled.",
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/microide-asan-make",
+      "binaryDir": "${sourceDir}/build/microide-asan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "MICROIDE_WARNINGS_AS_ERRORS": "OFF",
@@ -38,7 +38,7 @@
       "displayName": "microide undefined behavior sanitizer",
       "description": "Debug build with UndefinedBehaviorSanitizer enabled.",
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/microide-ubsan-make",
+      "binaryDir": "${sourceDir}/build/microide-ubsan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "MICROIDE_WARNINGS_AS_ERRORS": "OFF",
@@ -53,7 +53,7 @@
       "displayName": "microide thread sanitizer",
       "description": "Debug build with ThreadSanitizer enabled.",
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/microide-tsan-make",
+      "binaryDir": "${sourceDir}/build/microide-tsan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "MICROIDE_WARNINGS_AS_ERRORS": "OFF",

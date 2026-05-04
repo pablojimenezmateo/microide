@@ -23,7 +23,7 @@ Set a lower ASLR mmap entropy value before running TSAN binaries:
 sudo sysctl vm.mmap_rnd_bits=28
 ```
 
-Then run TSAN tests (for example `build/microide-tsan-make/microide/microide_tests`).
+Then run TSAN tests (for example `build/microide-tsan/microide/microide_tests`).
 
 ## 1. Diff Pipeline Benchmark
 
