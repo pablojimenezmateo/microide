@@ -929,6 +929,104 @@ void TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories() {
          "collapsing all should keep selection on the nearest still-visible ancestor");
 }
 
+void TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path ignored_file = root / ".env.local";
+  WriteFile(root / ".gitignore", ".env.local\n");
+  WriteFile(ignored_file, "TOKEN=abc\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
+  const auto ignored_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+    return entry.path == ignored_file.lexically_normal();
+  });
+  Expect(ignored_it != entries.end(),
+         "ignored file should remain visible in the project tree");
+  Expect(ignored_it != entries.end() && ignored_it->ignored,
+         "ignored file should be marked ignored in the tree model");
+
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, ignored_file),
+         "ignored file should be selectable in the tree");
+  const auto activated = WorkspaceShellTestAccess::ActivateTreeSelection(shell);
+  Expect(activated.has_value() && activated->lexically_normal() == ignored_file.lexically_normal(),
+         "activating an ignored file selection should return a direct-open file path");
+}
+
+void TestWorkspaceShellIgnoredDirectoryExpansionMaterializesOneLevel() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path ignored_dir = root / "node_modules";
+  const std::filesystem::path nested_dir = ignored_dir / "pkg";
+  const std::filesystem::path nested_file = nested_dir / "deep.js";
+  const std::filesystem::path immediate_file = ignored_dir / "top.js";
+  WriteFile(root / ".gitignore", "node_modules/\n");
+  WriteFile(immediate_file, "console.log('top');\n");
+  WriteFile(nested_file, "console.log('deep');\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  const auto contains_path = [&](const std::filesystem::path& path) {
+    const auto& tree_entries = WorkspaceShellTestAccess::TreeEntries(shell);
+    return std::any_of(tree_entries.begin(), tree_entries.end(),
+                       [&](const auto& entry) { return entry.path == path.lexically_normal(); });
+  };
+
+  Expect(contains_path(ignored_dir),
+         "ignored directory should be visible before expansion");
+  Expect(!contains_path(immediate_file) && !contains_path(nested_file),
+         "ignored descendants should remain unmaterialized before expansion");
+
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, ignored_dir),
+         "ignored directory should be selectable");
+  WorkspaceShellTestAccess::ExpandTreeSelection(shell);
+
+  Expect(contains_path(immediate_file),
+         "expanding ignored directory should materialize immediate children");
+  Expect(contains_path(nested_dir),
+         "expanding ignored directory should materialize immediate child directories");
+  Expect(!contains_path(nested_file),
+         "expanding ignored directory should not recursively materialize deeper descendants");
+}
+
+void TestWorkspaceShellHiddenIgnoredDirectoryUsesSameLazyExpansionRules() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path hidden_ignored_dir = root / ".cache";
+  const std::filesystem::path nested_dir = hidden_ignored_dir / "pkg";
+  const std::filesystem::path nested_file = nested_dir / "deep.bin";
+  const std::filesystem::path immediate_file = hidden_ignored_dir / "top.bin";
+  WriteFile(root / ".gitignore", ".cache/\n");
+  WriteFile(immediate_file, "top\n");
+  WriteFile(nested_file, "deep\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  const auto contains_path = [&](const std::filesystem::path& path) {
+    const auto& tree_entries = WorkspaceShellTestAccess::TreeEntries(shell);
+    return std::any_of(tree_entries.begin(), tree_entries.end(),
+                       [&](const auto& entry) { return entry.path == path.lexically_normal(); });
+  };
+
+  Expect(contains_path(hidden_ignored_dir),
+         "hidden ignored directories should be visible like other ignored directories");
+  Expect(!contains_path(immediate_file) && !contains_path(nested_file),
+         "hidden ignored descendants should remain unmaterialized before expansion");
+
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, hidden_ignored_dir),
+         "hidden ignored directory should be selectable");
+  WorkspaceShellTestAccess::ExpandTreeSelection(shell);
+
+  Expect(contains_path(immediate_file),
+         "expanding hidden ignored directories should materialize immediate children");
+  Expect(!contains_path(nested_file),
+         "expanding hidden ignored directories should still avoid recursive materialization");
+}
+
 void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1727,6 +1825,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender);
   AddTest(tests, "WorkspaceShell/TreeCollapseButtonCollapsesAllOpenDirectories",
           TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories);
+  AddTest(tests, "WorkspaceShell/IgnoredTreeFileActivatesDirectOpenPath",
+          TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath);
+  AddTest(tests, "WorkspaceShell/IgnoredDirectoryExpansionMaterializesOneLevel",
+          TestWorkspaceShellIgnoredDirectoryExpansionMaterializesOneLevel);
+  AddTest(tests, "WorkspaceShell/HiddenIgnoredDirectoryUsesSameLazyExpansionRules",
+          TestWorkspaceShellHiddenIgnoredDirectoryUsesSameLazyExpansionRules);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensSymbolAwareContextMenu",

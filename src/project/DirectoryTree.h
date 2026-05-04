@@ -26,6 +26,8 @@ struct TreeEntry {
   int depth = 0;
   bool is_directory = false;
   bool expanded = false;
+  bool ignored = false;
+  bool children_materialized = false;
   GitFileStatus git_status = GitFileStatus::Clean;
 };
 

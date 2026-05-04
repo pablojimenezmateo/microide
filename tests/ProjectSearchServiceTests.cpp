@@ -182,6 +182,23 @@ void TestProjectSearchServiceHiddenAndBinaryFiles() {
   Expect(has_hidden_match, "hidden-inclusive project search should include hidden matches");
 }
 
+void TestProjectSearchServiceExcludesIgnoredFilesByDefault() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / ".gitignore", "node_modules/\nignored.txt\n");
+  WriteFile(root / "tracked.txt", "needle\n");
+  WriteFile(root / "ignored.txt", "needle\n");
+  WriteFile(root / "node_modules" / "dep" / "index.js", "needle\n");
+
+  const auto result = RunProjectSearch(root, "needle");
+  Expect(result.finished, "ignored-excluding project search should finish");
+  Expect(result.error.empty(), "ignored-excluding project search should not error");
+  Expect(result.results.size() == 1,
+         "default project search should exclude ignored files and ignored descendants");
+  Expect(result.results[0].relative_path == std::filesystem::path("tracked.txt"),
+         "default project search should keep tracked files while excluding ignored paths");
+}
+
 void TestProjectSearchServicePublishesStableResultOrdering() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -380,6 +397,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceRegexModeAndInvalidRegex);
   AddTest(tests, "ProjectSearchService/HiddenAndBinaryFiles",
           TestProjectSearchServiceHiddenAndBinaryFiles);
+  AddTest(tests, "ProjectSearchService/ExcludesIgnoredFilesByDefault",
+          TestProjectSearchServiceExcludesIgnoredFilesByDefault);
   AddTest(tests, "ProjectSearchService/PublishesStableResultOrdering",
           TestProjectSearchServicePublishesStableResultOrdering);
   AddTest(tests, "ProjectSearchService/FlagsTruncatedLargeResultSets",

@@ -16,6 +16,7 @@ struct SortableEntry {
   std::filesystem::path path;
   std::string sort_key;
   bool is_directory = false;
+  bool ignored = false;
   IgnoreMatcher matcher;
 };
 
@@ -25,11 +26,6 @@ std::string DisplayName(const std::filesystem::path& path) {
     return name;
   }
   return path.string();
-}
-
-bool IsHidden(const std::filesystem::path& path) {
-  const auto name = path.filename().string();
-  return !name.empty() && name[0] == '.';
 }
 
 }  // namespace
@@ -265,6 +261,8 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
       .depth = 0,
       .is_directory = true,
       .expanded = true,
+      .ignored = false,
+      .children_materialized = true,
       .git_status = GitFileStatus::Clean,
   });
   AppendDirectory(root_, 1, matcher);
@@ -312,29 +310,18 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       continue;
     }
 
-    if (IsHidden(path)) {
-      iterator.increment(error);
-      continue;
-    }
+    const bool ignored = matcher.Ignored(relative, is_directory);
 
     if (is_directory) {
       IgnoreMatcher child_matcher = matcher;
       child_matcher.LoadIgnoreFile(path / ".gitignore");
-      if (child_matcher.Ignored(relative, true)) {
-        iterator.increment(error);
-        continue;
-      }
       children.push_back(SortableEntry{
           .path = path,
           .sort_key = sort_key,
           .is_directory = true,
+          .ignored = ignored,
           .matcher = std::move(child_matcher),
       });
-      iterator.increment(error);
-      continue;
-    }
-
-    if (matcher.Ignored(relative, false)) {
       iterator.increment(error);
       continue;
     }
@@ -343,6 +330,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
         .path = path,
         .sort_key = sort_key,
         .is_directory = false,
+        .ignored = ignored,
         .matcher = IgnoreMatcher{},
     });
     iterator.increment(error);
@@ -363,6 +351,8 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
         .depth = depth,
         .is_directory = child.is_directory,
         .expanded = expanded,
+        .ignored = child.ignored,
+        .children_materialized = expanded,
         .git_status = EntryGitStatus(child.path),
     });
 

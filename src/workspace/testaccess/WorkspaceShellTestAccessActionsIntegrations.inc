@@ -179,6 +179,12 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.context_.current_project_state.directory_tree.SelectPath(path);
   }
+  static void ExpandTreeSelection(WorkspaceShell& shell) {
+    shell.context_.current_project_state.directory_tree.ExpandSelection();
+  }
+  static std::optional<std::filesystem::path> ActivateTreeSelection(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.directory_tree.ActivateSelection();
+  }
   static void CollapseTreeSelection(WorkspaceShell& shell) { shell.context_.current_project_state.directory_tree.CollapseSelection(); }
   static void ShowSearchSidebar(WorkspaceShell& shell,
                                 std::string query,

@@ -795,8 +795,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       DrawVCenteredTextOn(
           text_renderer_, renderer,
           MakeRect(label_x, row_rect.y, label_width, row_rect.h), 0.0f,
-          selected ? theme_.text_primary
-                   : (entry.is_directory ? theme_.text_primary : theme_.text_secondary),
+          selected
+              ? theme_.text_primary
+              : (entry.ignored ? theme_.text_muted
+                               : (entry.is_directory ? theme_.text_primary : theme_.text_secondary)),
           selected ? theme_.row_highlight : theme_.surface_background,
           TruncateLabel(entry.label, label_width));
       if (has_git_marker) {

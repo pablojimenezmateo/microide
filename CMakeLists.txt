@@ -460,6 +460,7 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/CompareModelTests.cpp
   tests/DiagnosticsStoreTests.cpp
+  tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
   tests/FileOperationServiceTests.cpp
