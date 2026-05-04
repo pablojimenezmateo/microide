@@ -32,6 +32,7 @@ class WorkspaceProjectSearchRuntime {
   project::ProjectSearchService service_;
   Uint32 event_type_ = 0;
   std::uint64_t active_run_id_ = 0;
+  std::uint64_t active_search_id_ = 0;
 };
 
 }  // namespace microide::workspace

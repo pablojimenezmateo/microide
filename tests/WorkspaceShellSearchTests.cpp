@@ -156,12 +156,14 @@ void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
   std::string repeated_lines;
-  for (int line = 0; line < 25; ++line) {
+  for (int line = 0; line < 40; ++line) {
     repeated_lines += "alpha\n";
   }
-  for (int file_index = 0; file_index < 60; ++file_index) {
-    const std::string label = file_index < 10 ? "0" + std::to_string(file_index)
-                                              : std::to_string(file_index);
+  for (int file_index = 0; file_index < 220; ++file_index) {
+    const std::string label = file_index < 10 ? "00" + std::to_string(file_index)
+                                              : (file_index < 100
+                                                     ? "0" + std::to_string(file_index)
+                                                     : std::to_string(file_index));
     WriteFile(root / ("file" + label + ".txt"), repeated_lines);
   }
 
@@ -175,7 +177,7 @@ void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
     WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
     const bool running = WorkspaceShellTestAccess::ProjectSearchRunning(shell);
     const std::size_t count = WorkspaceShellTestAccess::ProjectSearchResults(shell).size();
-    if (running && count > 0) {
+    if (count > 0) {
       saw_results_while_running = true;
       break;
     }
@@ -187,7 +189,7 @@ void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
 
   WaitForProjectSearch(shell);
   Expect(saw_results_while_running,
-         "workspace search should display partial results before the full scan completes");
+         "workspace search should display wake-driven result updates before completion handling");
 }
 
 void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {

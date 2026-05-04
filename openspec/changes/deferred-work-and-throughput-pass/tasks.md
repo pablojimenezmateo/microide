@@ -55,8 +55,8 @@
 - [x] 7.1 Add `SearchResultBuffer` holding a `std::vector<SearchResult>` protected by `std::shared_mutex` and a `search_id` (monotonic counter to distinguish results from cancelled searches)
 - [x] 7.2 Modify the search worker to write to `SearchResultBuffer` in batches of `MICROIDE_SEARCH_BATCH_SIZE` results (default 20; compile-time define) and post an SDL user event after each batch
 - [x] 7.3 Add atomic `cancel_` flag to the search context; check it between files; exit the worker loop immediately when set
-- [ ] 7.4 Update the search overlay UI to acquire a shared lock on `SearchResultBuffer` and render whatever results are present on each frame triggered by a search wake event; do not wait for the `search_done` signal before showing partial results
-- [ ] 7.5 Update the cancellation path (new search initiated, overlay dismissed): set `cancel_`, increment `search_id`, clear the buffer under exclusive lock, discard any wake events carrying the old `search_id`
+- [x] 7.4 Update the search overlay UI to acquire a shared lock on `SearchResultBuffer` and render whatever results are present on each frame triggered by a search wake event; do not wait for the `search_done` signal before showing partial results
+- [x] 7.5 Update the cancellation path (new search initiated, overlay dismissed): set `cancel_`, increment `search_id`, clear the buffer under exclusive lock, discard any wake events carrying the old `search_id`
 - [x] 7.6 Add integration tests: search on a multi-file fixture, assert the UI receives a partial result batch before the worker has processed all files; cancel a search, assert the worker stops within one file boundary; empty-result search returns the empty-results state promptly
 
 ## 8. Adaptive Idle Rendering (D6)

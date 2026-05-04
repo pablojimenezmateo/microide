@@ -57,13 +57,11 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
   auto update = *maybe_update;
 
-  for (auto& result : update.results) {
-    if (context_.current_project_state.overlay.workflow.project_search.results.size() >= kMaxProjectSearchResults) {
-      context_.current_project_state.overlay.workflow.project_search.truncated = true;
-      StopProjectSearch();
-      break;
-    }
-    context_.current_project_state.overlay.workflow.project_search.results.push_back(std::move(result));
+  context_.current_project_state.overlay.workflow.project_search.results = std::move(update.results);
+  if (context_.current_project_state.overlay.workflow.project_search.results.size() >
+      kMaxProjectSearchResults) {
+    context_.current_project_state.overlay.workflow.project_search.results.resize(
+        kMaxProjectSearchResults);
   }
 
   context_.current_project_state.overlay.workflow.project_search.truncated =

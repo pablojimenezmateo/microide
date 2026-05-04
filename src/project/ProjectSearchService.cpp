@@ -228,6 +228,20 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
   return update;
 }
 
+std::vector<ProjectSearchResult> ProjectSearchService::SnapshotResults(
+    std::uint64_t search_id) const {
+  std::shared_lock buffer_lock(result_buffer_.mutex);
+  if (search_id == 0 || result_buffer_.search_id != search_id) {
+    return {};
+  }
+  return result_buffer_.results;
+}
+
+std::uint64_t ProjectSearchService::active_search_id() const {
+  std::lock_guard lock(mutex_);
+  return active_search_id_;
+}
+
 void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::string query,
                                       ProjectSearchOptions options,
@@ -414,6 +428,7 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
       pending_update_ = {};
     }
     pending_update_.run_id = run_id;
+    pending_update_.search_id = active_search_id_;
     for (auto& result : batch) {
       if (pending_update_.results.size() >= kMaxResults) {
         break;
@@ -440,6 +455,7 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletio
       pending_update_ = {};
     }
     pending_update_.run_id = run_id;
+    pending_update_.search_id = active_search_id_;
     pending_update_.truncated = pending_update_.truncated || completion.truncated;
     pending_update_.finished = true;
     pending_update_.error = std::move(completion.error);

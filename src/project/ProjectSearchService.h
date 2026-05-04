@@ -41,6 +41,7 @@ struct ProjectSearchResult {
 
 struct ProjectSearchUpdate {
   std::uint64_t run_id = 0;
+  std::uint64_t search_id = 0;
   std::vector<ProjectSearchResult> results;
   bool truncated = false;
   bool finished = false;
@@ -58,6 +59,8 @@ class ProjectSearchService {
                       std::vector<std::filesystem::path> indexed_files = {});
   void Stop();
   ProjectSearchUpdate TakePendingUpdate();
+  std::vector<ProjectSearchResult> SnapshotResults(std::uint64_t search_id) const;
+  std::uint64_t active_search_id() const;
 
  private:
   struct SearchCompletion {
