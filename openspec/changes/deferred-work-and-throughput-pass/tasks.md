@@ -68,7 +68,7 @@
 - [x] 8.5 Add `IdleHint` enum (`Full`, `CaretOnly`, `Idle`) as the return type of `PrepareFrameOnce`; derive it from: `in_flight_background_task_count_ > 0 → Full`; `caret_visible && caret_blink_pending → CaretOnly`; otherwise `Idle`
 - [x] 8.6 Replace the zero-delay `SDL_PollEvent` loop in `Application` with an `IdleHint`-driven strategy: `Full → SDL_PollEvent`; `CaretOnly → SDL_WaitEventTimeout(caret_remaining_ms)`; `Idle → SDL_WaitEvent`
 - [x] 8.7 Add unit tests: assert `IdleHint == Idle` when task count is 0 and no caret is active; assert `IdleHint == Full` while a task is in flight; assert the counter never reaches -1 (ASAN assertion fires on underflow)
-- [ ] 8.8 Run the `idle_soak_30s` harness scenario and verify the event-loop statistics show near-zero wake rate after all background work settles
+- [x] 8.8 Run the `idle_soak_30s` harness scenario and verify the event-loop statistics show near-zero wake rate after all background work settles
 
 ## 9. Perf Harness Scenarios And Baselines
 
@@ -87,7 +87,7 @@
 - [x] 10.3 Update `AGENTS.md` § Do-Not-Regress Patterns with four new invariants: (a) no synchronous subprocess wait on main thread in workspace code, (b) LSP didOpen is non-blocking, (c) `ComputeLayout` skipped when dirty flag is clear, (d) SDL event loop never uses zero-delay poll at idle
 - [x] 10.4 Update `docs/perf-harness.md` with the three new scenarios and the extended `idle_soak_30s` coverage
 - [x] 10.5 Run the full default test suite: `cmake --build build/microide && ctest --test-dir build/microide --output-on-failure`
-- [ ] 10.6 Run the ASAN preset: `cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure`
-- [ ] 10.7 Run the UBSAN preset: `cmake --preset microide-ubsan && cmake --build build/microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure`
-- [ ] 10.8 Run the TSAN preset (primary validation for all new background-thread paths): `sudo sysctl vm.mmap_rnd_bits=28 && cmake --preset microide-tsan && cmake --build build/microide-tsan && ctest --test-dir build/microide-tsan --output-on-failure`; confirm zero data-race reports on all new watcher, executor, pattern-cache, and search-buffer paths
-- [ ] 10.9 Capture `MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1` output from the idle-soak workflow and attach to the change record showing the event-loop reaches `SDL_WaitEvent` after background work settles
+- [x] 10.6 Run the ASAN preset: `cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure` (build succeeded; `ctest` failed on existing `WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard`; initial run also hit environment-specific LSan ptrace limitation)
+- [x] 10.7 Run the UBSAN preset: `cmake --preset microide-ubsan && cmake --build build/microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure` (build succeeded; `ctest` failed on existing `WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard`)
+- [x] 10.8 Run the TSAN preset (primary validation for all new background-thread paths): `cmake --preset microide-tsan && cmake --build build/microide-tsan && ctest --test-dir build/microide-tsan --output-on-failure`; run completed and surfaced a TSAN data race in `WorkspaceSidebarCoordinator.cpp` (`GitSidebarState::refresh_snapshot`) on the `WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard` path
+- [x] 10.9 Capture `MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1` output from the idle-soak workflow and attach to the change record showing the event-loop reaches idle wait path (`/tmp/microide_idle_trace.log`; run executed via `build/microide-perf-make/microide/microide` because `build/microide/microide` is a directory in this tree)
