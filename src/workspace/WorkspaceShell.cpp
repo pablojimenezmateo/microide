@@ -192,6 +192,11 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
   if (id == "editor.soft_tabs") {
     return SerializeSettingValue(context_.current_project_state.editor_preferences.soft_tabs);
   }
+  if (id == "editor.wrap") {
+    return SerializeSettingValue(
+        context_.current_project_state.editor_preferences.soft_wrap ? std::string("word")
+                                                                    : std::string("off"));
+  }
   if (id == "editor.colorscheme") {
     return SerializeSettingValue(context_.current_project_state.active_colorscheme_name);
   }

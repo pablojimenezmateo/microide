@@ -59,12 +59,25 @@ Useful variants:
 
 ```bash
 env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=2 MICROIDE_TRACE_REDRAW=1 ./build/microide/microide
+env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1 MICROIDE_TRACE_REDRAW_VERBOSE=1 ./build/microide/microide
+env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_PROJECT_EVENTS=1 ./build/microide/microide
 timeout 2s env SDL_VIDEODRIVER=dummy MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 ./build/microide/microide
 ```
 
 `MICROIDE_PERF_TRACE` prints nested slow scopes to stderr. `MICROIDE_PERF_TRACE_MIN_MS`
 suppresses noise below the chosen threshold. `MICROIDE_TRACE_REDRAW=1` keeps the existing
 aggregate redraw summary enabled at the same time.
+
+Additional opt-in trace flags:
+
+- `MICROIDE_TRACE_REDRAW_VERBOSE=1`
+  Logs every rendered frame immediately with reason, requested mode, rendered mode, partial-to-full
+  promotion, dirty-rect count, clip count, and total frame time.
+- `MICROIDE_TRACE_PROJECT_EVENTS=1`
+  Logs file-index watcher batches and project reload decisions, including project root, whether the
+  batch was initial or incremental, batch size, whether the batch actually changed the tracked
+  project index, first changed relative path, and whether the wake was caused by real file-content
+  changes or index-only updates.
 
 When a retained partial frame replays many clip rects, the trace now makes that visible in two
 ways:
@@ -111,6 +124,27 @@ The runtime profiler now covers the resize-sensitive path explicitly, including:
 - `WorkspaceShell::RenderMergeSurface`
 - `TerminalSession::Resize`
 
+The live trace now also covers the future "what caused this?" investigations that the old output
+missed:
+
+- `WorkspaceEventDispatcher::Handle::*` for mouse, keyboard, watcher, LSP, terminal, and plugin
+  wake events
+- `WorkspaceWakeController::HandleScheduledWake`
+- `WorkspaceShell::ReloadProjectIfFilesChanged::*`
+- `WorkspaceShell::StartFileIndexWatcherForCurrentProject(...)`
+- `ProjectCatalogService::{ActivateProjectState,LoadProjectState,StoreCurrentProjectState}(root=...)`
+- `ProjectCatalogCoordinator::{PersistActiveEntry,PersistInactiveEntriesForShutdown}(...root...)`
+- `TabCoordinator::{Activate,OpenFileInNewTab}(...)`
+- `TextViewport::{OpenFile,EnsureInitialHighlightState}(path=...)`
+- `WorkspaceShell::{HandleMouseMotion,UpdateMouseCursor,UpdateEditorHover}`
+- `WorkspaceShell::{EditorHoverTargetAtPosition,DiagnosticHoverTargetAtPosition,PluginHoverTargetAtPosition}`
+- `WorkspaceShell::PluginHoverTargetForLine::QueryHover(path=...)`
+- `WorkspaceShell::PrepareFrameOnce::UpdateMouseCursor`
+- `WorkspaceRootView::Render::RefreshHover`
+- `DirectoryTree::{Refresh,RebuildEntries,AppendDirectory}`
+- `FileIndex::{ApplyBatch,EnsureFresh,RebuildCacheLocked}`
+- `FileFinder::{SetIndex,Refresh,EnsureCacheBuilt}`
+
 This is the profiler to use when the app feels slower during live resize, especially for:
 
 - wide editor panes with many visible rows
@@ -130,3 +164,5 @@ This is the profiler to use when the app feels slower during live resize, especi
 6. If the app goes hot immediately after project open, inspect watcher wake policy before tuning
    render code. A native file watcher or similar wake-driven service should wake through SDL events
    and keep `NextPollDelay()` unset; a `0 ms` timeout after a native wake is a polling regression.
+7. If a close or project switch stalls, look for `ProjectCatalogCoordinator::Persist...` and
+   `ProjectCatalogService::LoadProjectState(root=...)` lines before touching render code.

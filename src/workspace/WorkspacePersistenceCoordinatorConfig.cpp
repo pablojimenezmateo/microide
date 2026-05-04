@@ -55,6 +55,16 @@ bool ApplyCanonicalProjectSetting(ProjectWorkspaceState& state,
     }
     return false;
   }
+  if (id == "editor.wrap") {
+    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
+        const std::string mode = std::get<std::string>(*parsed);
+        state.editor_preferences.soft_wrap = (mode == "word");
+        return true;
+      }
+    }
+    return false;
+  }
   if (id == "editor.colorscheme") {
     state.active_colorscheme_name = std::string(value);
     return true;
@@ -211,6 +221,7 @@ bool PersistenceCoordinator::RestoreConfigState() {
   mutable_current.editor_preferences.tab_size = persisted_state.editor_tab_size;
   mutable_current.editor_preferences.indent_width = persisted_state.editor_indent_width;
   mutable_current.editor_preferences.soft_tabs = persisted_state.editor_soft_tabs;
+  mutable_current.editor_preferences.soft_wrap = false;
   mutable_current.project_base_color = persisted_state.project_base_color;
   mutable_current.sidebar_policies = RuntimeSidebarPolicies(persisted_state.sidebar_policies);
   for (const auto& [id, value] : persisted_state.settings) {
@@ -243,6 +254,8 @@ void PersistenceCoordinator::SaveConfigState() const {
       .settings = state.settings,
       .sidebar_policies = PersistedSidebarPolicies(state.sidebar_policies),
   };
+  SetStoredSetting(persisted.settings, "editor.wrap",
+                   state.editor_preferences.soft_wrap ? "word" : "off");
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }
 

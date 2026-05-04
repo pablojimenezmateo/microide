@@ -118,7 +118,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     SDL_GetMouseState(&mouse_x, &mouse_y);
     SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
   }
-  UpdateMouseCursor(mouse_x, mouse_y);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::UpdateMouseCursor");
+    UpdateMouseCursor(mouse_x, mouse_y);
+  }
   return FrameToken{prepared_frame_id_, visible_line_range};
 }
 

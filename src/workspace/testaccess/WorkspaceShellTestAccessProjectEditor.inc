@@ -343,11 +343,20 @@
   static bool ReloadProjectIfFilesChanged(WorkspaceShell& shell, bool force_check) {
     return shell.ReloadProjectIfFilesChanged(force_check);
   }
+  static void SetFileIndexHasPendingChanges(WorkspaceShell& shell, bool pending) {
+    shell.file_index_has_pending_changes_.store(pending, std::memory_order_release);
+  }
   static std::size_t ReloadPluginsInvocationCount(const WorkspaceShell& shell) {
     return shell.reload_plugins_invocation_count_;
   }
   static void ResetReloadPluginsInvocationCount(WorkspaceShell& shell) {
     shell.reload_plugins_invocation_count_ = 0;
+  }
+  static std::size_t ReloadCleanOpenBuffersFromDiskInvocationCount(const WorkspaceShell& shell) {
+    return shell.reload_clean_open_buffers_from_disk_invocation_count_;
+  }
+  static void ResetReloadCleanOpenBuffersFromDiskInvocationCount(WorkspaceShell& shell) {
+    shell.reload_clean_open_buffers_from_disk_invocation_count_ = 0;
   }
   static std::size_t RenderCompareSurfaceInvocationCount(const WorkspaceShell& shell) {
     return shell.render_compare_surface_invocation_count_;

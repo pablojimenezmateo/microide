@@ -18,6 +18,11 @@ struct ProjectFile {
 
 class FileIndex {
  public:
+  enum class RootPopulationMode {
+    ScanNow,
+    Deferred,
+  };
+
   FileIndex() = default;
   ~FileIndex() = default;
   FileIndex(FileIndex&& other) noexcept;
@@ -25,10 +30,11 @@ class FileIndex {
   FileIndex(const FileIndex&) = delete;
   FileIndex& operator=(const FileIndex&) = delete;
 
-  bool SetRoot(const std::filesystem::path& root);
+  bool SetRoot(const std::filesystem::path& root,
+               RootPopulationMode population_mode = RootPopulationMode::ScanNow);
   void Reset();
   void Refresh();
-  void ApplyBatch(const platform::IndexUpdateBatch& batch);
+  bool ApplyBatch(const platform::IndexUpdateBatch& batch);
   std::vector<ProjectFile> Snapshot() const;
   const std::vector<std::filesystem::path>& files(
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
@@ -42,13 +48,14 @@ class FileIndex {
   };
 
   static std::size_t CacheIndex(ProjectFileScanMode mode);
+  static bool IsGitMetadataRelativePath(const std::filesystem::path& path);
   static bool IsHiddenRelativePath(const std::filesystem::path& path);
   static bool LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs);
   static bool LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs);
   static ProjectFile ToProjectFile(const platform::IndexFileEntry& entry);
   void EnsureFresh(ProjectFileScanMode mode) const;
-  void UpsertProjectFileLocked(const ProjectFile& file);
-  void RemoveProjectFileLocked(const std::filesystem::path& relative_path);
+  bool UpsertProjectFileLocked(const ProjectFile& file);
+  bool RemoveProjectFileLocked(const std::filesystem::path& relative_path);
   void RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const;
 
   std::filesystem::path root_;

@@ -9,6 +9,7 @@ namespace microide::util {
 class PerformanceTrace {
  public:
   static bool Enabled();
+  static bool FlagEnabled(const char* env_name);
   static double MinimumDurationMs();
 
   class Scope {

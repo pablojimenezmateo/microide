@@ -163,6 +163,7 @@ struct EditorPreferences {
   std::size_t tab_size = 4;
   std::size_t indent_width = 4;
   bool soft_tabs = false;
+  bool soft_wrap = false;
 };
 
 }  // namespace microide::workspace

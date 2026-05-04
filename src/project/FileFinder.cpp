@@ -4,9 +4,12 @@
 #include <cctype>
 #include <limits>
 
+#include "util/PerformanceTrace.h"
+
 namespace microide::project {
 
 void FileFinder::SetIndex(const FileIndex* index) {
+  util::PerformanceTrace::Scope perf_scope("FileFinder::SetIndex");
   index_ = index;
   cached_entries_.clear();
   cache_ready_ = false;
@@ -24,6 +27,7 @@ void FileFinder::SetQuery(std::string query) {
 
 
 void FileFinder::Refresh() {
+  util::PerformanceTrace::Scope perf_scope("FileFinder::Refresh");
   results_.clear();
   selected_index_ = 0;
 
@@ -137,6 +141,7 @@ std::string FileFinder::ToLower(std::string value) {
 }
 
 void FileFinder::EnsureCacheBuilt() {
+  util::PerformanceTrace::Scope perf_scope("FileFinder::EnsureCacheBuilt");
   if (cache_ready_ || index_ == nullptr) {
     return;
   }

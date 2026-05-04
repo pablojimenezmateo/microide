@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "editor/EditorViewRenderer.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
@@ -16,6 +17,7 @@
 namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseButtonDown");
   const auto ensure_redraw = [this](auto request_redraw) {
     if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
@@ -123,9 +125,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (HandleTabMouseButtonDown(event, layout)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
-    return true;
+  {
+    util::PerformanceTrace::Scope tab_scope("WorkspaceShell::HandleMouseButtonDown::Tabs");
+    if (HandleTabMouseButtonDown(event, layout)) {
+      ensure_redraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
   }
 
   if (MakePanelMouseCoordinator().HandleButtonDown(event, layout)) {
@@ -222,6 +227,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return handled;
   }
 
+  util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");
   const bool handled = MakeEditorMouseCoordinator().HandleButtonDown(event, layout);
   if (handled) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
@@ -230,6 +236,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 }
 
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseButtonUp");
   const auto ensure_redraw = [this](auto request_redraw) {
     if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();

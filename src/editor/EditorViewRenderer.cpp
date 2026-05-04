@@ -288,6 +288,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   std::size_t blame_index = 0;
   std::string lowered_line_scratch;
 
+  util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t line_index = scroll_line + row;
     if (line_index >= lines.size()) {
@@ -397,16 +398,22 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     const auto layout = viewport.VisibleLineLayout(line_index);
-    const std::vector<SyntaxTokenKind>& token_kinds =
-        viewport.HighlightedLineTokens(line_index);
+    const std::vector<SyntaxTokenKind>* token_kinds = nullptr;
+    {
+      util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::HighlightedLineTokens");
+      token_kinds = &viewport.HighlightedLineTokens(line_index);
+    }
     AppendLayoutSyntaxTextRuns(row_desc, text_renderer, theme, metrics.text_x, y, layout,
                                selected ? theme.text_primary : theme.text_secondary,
-                               token_kinds);
+                               *token_kinds);
     AppendDiagnosticUnderlines(row_desc, text_renderer, theme, metrics.text_x, y,
                                metrics.line_height, lines[line_index], line_index,
                                viewport.horizontal_scroll(), viewport.visible_columns(),
                                viewport.tab_size(), diagnostics);
-    kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
+    {
+      util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
+      kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
+    }
     if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
         severity.has_value()) {
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,

@@ -438,9 +438,7 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
       event.type = git_sidebar_event_type_;
       pushed = SDL_PushEvent(&event);
     }
-    if (!stored || !pushed) {
-      app::DecrementBackgroundTaskCountAndWake();
-    }
+    (void)pushed;
   });
 }
 

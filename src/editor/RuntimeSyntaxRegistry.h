@@ -40,6 +40,7 @@ struct RuntimeSyntaxReloadResult {
 RuntimeSyntaxReloadResult ReloadDefinitions(
     const std::vector<RuntimeSyntaxDefinitionData>& definitions,
     std::vector<std::string>* errors = nullptr);
+void EnsureInitialized();
 std::size_t RegistryRevision();
 SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines);
 std::string DetectFiletype(const std::filesystem::path& path,

@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/StartupTrace.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -249,6 +251,25 @@ void TabCoordinator::Activate(std::size_t index) {
   if (index >= state_.open_tabs.size()) {
     return;
   }
+  std::string perf_label = "TabCoordinator::Activate";
+  if (util::PerformanceTrace::Enabled()) {
+    perf_label += "(index=" + std::to_string(index);
+    if (!state_.open_tabs[index].path.empty()) {
+      perf_label += ",path=" + state_.open_tabs[index].path.string();
+    }
+    perf_label += ")";
+  }
+  util::StartupTrace::Scope trace_scope("TabCoordinator::Activate");
+  util::PerformanceTrace::Scope perf_scope(perf_label);
+
+  if (state_.active_tab_index == index) {
+    auto& active_tab = state_.open_tabs[index];
+    state_.surface.focus = FocusTarget::Editor;
+    operations_.reset_caret_blink();
+    operations_.request_active_tab_redraw(
+        active_tab.kind == TabEntry::Kind::Editor && !state_.welcome_surface.viewport.path().empty());
+    return;
+  }
 
   if (state_.active_tab_index < state_.open_tabs.size() && state_.active_tab_index != index) {
     SyncActiveEditorTab();
@@ -307,8 +328,11 @@ void TabCoordinator::Activate(std::size_t index) {
   } else if (tab.kind == TabEntry::Kind::Merge) {
     operations_.reveal_active_merge_selection();
   } else if (tab.kind == TabEntry::Kind::Editor && !state_.welcome_surface.viewport.path().empty()) {
-    state_.directory_tree.SelectPath(state_.welcome_surface.viewport.path().lexically_normal());
-    operations_.reveal_selected_tree_sidebar_line();
+    util::StartupTrace::Scope select_path_scope("TabCoordinator::Activate::SelectDirectoryPath");
+    if (state_.directory_tree.SelectPathIfVisible(
+            state_.welcome_surface.viewport.path().lexically_normal())) {
+      operations_.reveal_selected_tree_sidebar_line();
+    }
   }
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
@@ -468,6 +492,11 @@ bool TabCoordinator::OpenUntitled() {
 }
 
 bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
+  std::string perf_label = "TabCoordinator::OpenFileInNewTab";
+  if (util::PerformanceTrace::Enabled()) {
+    perf_label += "(path=" + path.string() + ")";
+  }
+  util::PerformanceTrace::Scope perf_scope(perf_label);
   if (state_.root.empty()) {
     return false;
   }
@@ -479,7 +508,11 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
                                         tab.path == normalized_path;
                                });
 
-  state_.directory_tree.SelectPath(normalized_path);
+  {
+    util::PerformanceTrace::Scope select_path_scope(
+        "TabCoordinator::OpenFileInNewTab::SelectDirectoryPath");
+    state_.directory_tree.SelectPath(normalized_path);
+  }
 
   if (existing != state_.open_tabs.end()) {
     const std::size_t existing_index =
@@ -492,8 +525,11 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   }
 
   editor::TextViewport opened_view;
-  if (!opened_view.OpenFile(normalized_path)) {
-    return false;
+  {
+    util::PerformanceTrace::Scope open_scope("TabCoordinator::OpenFileInNewTab::OpenFile");
+    if (!opened_view.OpenFile(normalized_path)) {
+      return false;
+    }
   }
   operations_.apply_editor_preferences(opened_view);
   state_.welcome_surface.viewport = opened_view;

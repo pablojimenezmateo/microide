@@ -29,6 +29,10 @@ struct TextPosition {
   std::size_t column = 0;
 };
 
+inline bool operator==(const TextPosition& lhs, const TextPosition& rhs) {
+  return lhs.line == rhs.line && lhs.column == rhs.column;
+}
+
 struct SelectionRange {
   TextPosition start;
   TextPosition end;
@@ -61,6 +65,8 @@ class TextViewport {
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);
+  void SetSoftWrap(bool soft_wrap);
+  bool soft_wrap() const { return soft_wrap_; }
   void MoveCursorVertical(int delta, bool extend_selection = false);
   void MoveCursorHorizontal(int delta, bool extend_selection = false);
   void MoveCursorLineStart(bool extend_selection = false);
@@ -109,12 +115,20 @@ class TextViewport {
   std::string LineEndingLabel() const;
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;
+  LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index) const;
+  std::size_t visual_line_count() const;
+  std::size_t visual_scroll_line() const { return scroll_line_; }
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;
   bool syntax_highlighting_enabled() const { return !document_->placeholder; }
   TextViewportCacheStats CacheStats() const;
   void ResetCacheStats() const;
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
+  const std::vector<TextPosition>& secondary_carets() const { return secondary_carets_; }
+  bool has_multiple_carets() const { return !secondary_carets_.empty(); }
+  void AddSecondaryCaret(std::size_t line, std::size_t column);
+  void SetSecondaryCarets(std::vector<TextPosition> carets);
+  void ClearSecondaryCarets();
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   std::string SelectedText() const;
@@ -135,6 +149,7 @@ class TextViewport {
     std::size_t scroll_line = 0;
     std::size_t horizontal_scroll = 0;
     std::optional<TextPosition> selection_anchor;
+    std::vector<TextPosition> secondary_carets;
     bool placeholder = false;
     bool dirty = false;
   };
@@ -170,6 +185,12 @@ class TextViewport {
       return line_index == o.line_index && horizontal_scroll == o.horizontal_scroll &&
              visible_columns == o.visible_columns && tab_size == o.tab_size;
     }
+  };
+
+  struct WrappedRowLayout {
+    std::size_t line_index = 0;
+    std::size_t visual_start = 0;
+    std::size_t visual_end = 0;
   };
 
   struct VisibleLineCacheKeyHash {
@@ -210,6 +231,9 @@ class TextViewport {
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
                                      const std::vector<std::string>& replacement) const;
+  bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
+  bool ApplyMultiCaretBackspace(bool record_undo);
+  bool ApplyMultiCaretDeleteForward(bool record_undo);
   static HistoryEntry BuildHistoryEntryForDocumentChange(const std::vector<std::string>& before_lines,
                                                          const ViewState& before_state,
                                                          const std::vector<std::string>& after_lines,
@@ -228,6 +252,9 @@ class TextViewport {
   std::size_t MaxVisualColumns() const;
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();
+  void EnsureWrappedRowLayouts() const;
+  std::size_t CursorVisualRow() const;
+  std::size_t ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const;
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(const std::vector<std::string>& lines);
   static std::vector<std::string> SliceLines(const std::vector<std::string>& lines,
@@ -247,6 +274,13 @@ class TextViewport {
   std::size_t tab_size_ = 4;
   std::size_t indent_width_ = 4;
   bool soft_tabs_ = false;
+  bool soft_wrap_ = false;
+  std::vector<TextPosition> secondary_carets_;
+  mutable std::vector<WrappedRowLayout> wrapped_row_layouts_;
+  mutable std::vector<std::size_t> wrapped_line_row_offsets_;
+  mutable std::size_t wrapped_row_layouts_tab_size_ = 0;
+  mutable std::size_t wrapped_row_layouts_visible_columns_ = 0;
+  mutable std::size_t wrapped_row_layouts_revision_ = 0;
   mutable std::optional<std::size_t> cached_max_visual_columns_;
   mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
   mutable std::deque<std::size_t> cached_visual_line_columns_;

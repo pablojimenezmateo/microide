@@ -163,6 +163,15 @@ void TestSettingsRegistryFindById() {
   Expect(spec->type == SettingType::Int, "editor.tab_size should be Int type");
 }
 
+void TestSettingsRegistryWrapSpecAndEnumValues() {
+  const auto* spec = FindBuiltinSettingSpec("editor.wrap");
+  Expect(spec != nullptr, "should find built-in setting 'editor.wrap'");
+  Expect(spec->type == SettingType::Enum, "editor.wrap should be Enum type");
+  Expect(spec->enum_values.size() == 2 && spec->enum_values[0].value == "off" &&
+             spec->enum_values[1].value == "word",
+         "editor.wrap enum should expose 'off' and 'word' values");
+}
+
 void TestSettingsRegistryFindUnknown() {
   Expect(FindBuiltinSettingSpec("no.such.setting") == nullptr,
          "unknown setting id should return nullptr");
@@ -200,6 +209,16 @@ void TestParseSettingValueInvalid() {
   Expect(spec != nullptr, "editor.tab_size spec required");
   Expect(!ParseSettingValue(*spec, "not-a-number").has_value(),
          "should not parse non-numeric string as int");
+}
+
+void TestParseSettingValueWrapEnum() {
+  const auto* spec = FindBuiltinSettingSpec("editor.wrap");
+  Expect(spec != nullptr, "editor.wrap spec required");
+  const auto word = ParseSettingValue(*spec, "word");
+  Expect(word.has_value(), "editor.wrap should parse 'word'");
+  Expect(std::get<std::string>(*word) == "word", "parsed editor.wrap value should be 'word'");
+  Expect(!ParseSettingValue(*spec, "bounded").has_value(),
+         "editor.wrap should reject unsupported enum values");
 }
 
 void TestSerializeSettingValueRoundTrip() {
@@ -540,11 +559,14 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
           TestResolveKeybindingsFindLeftCtrlMatch);
   AddTest(tests, "SettingsRegistry/BuiltinsNonEmpty", TestSettingsRegistryBuiltinsNonEmpty);
   AddTest(tests, "SettingsRegistry/FindById", TestSettingsRegistryFindById);
+  AddTest(tests, "SettingsRegistry/WrapSpecAndEnumValues",
+          TestSettingsRegistryWrapSpecAndEnumValues);
   AddTest(tests, "SettingsRegistry/FindUnknown", TestSettingsRegistryFindUnknown);
   AddTest(tests, "SettingsRegistry/ParseBool", TestParseSettingValueBool);
   AddTest(tests, "SettingsRegistry/ParseInt", TestParseSettingValueInt);
   AddTest(tests, "SettingsRegistry/ParseFloat", TestParseSettingValueFloat);
   AddTest(tests, "SettingsRegistry/ParseInvalid", TestParseSettingValueInvalid);
+  AddTest(tests, "SettingsRegistry/ParseWrapEnum", TestParseSettingValueWrapEnum);
   AddTest(tests, "SettingsRegistry/SerializeRoundTrip", TestSerializeSettingValueRoundTrip);
   AddTest(tests, "SettingsRegistry/DefaultValue", TestDefaultSettingValue);
   AddTest(tests, "SettingsRegistry/PluginDeclare", TestPluginContributedSettingsDeclare);

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <string_view>
 
+#include "util/PerformanceTrace.h"
 #include "util/Parse.h"
 
 namespace microide::workspace {
@@ -747,10 +748,14 @@ void WorkspaceShell::ClearMouseHoverState() {
 }
 
 void WorkspaceShell::UpdateMouseCursor(float x, float y) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateMouseCursor");
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
-  UpdateEditorHover(x, y);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateMouseCursor::UpdateEditorHover");
+    UpdateEditorHover(x, y);
+  }
 
   const CursorKind next_kind = CursorKindForPosition(x, y);
   if (next_kind == cursor_kind_) {

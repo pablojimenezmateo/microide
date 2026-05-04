@@ -1097,6 +1097,40 @@ void TestWorkspaceShellEditorDragSelectionTracksPointer() {
          "editor drag selection should capture the dragged text range");
 }
 
+void TestWorkspaceShellAltClickAddsSecondaryCaret() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha beta\nsecond line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float click_x = metrics.text_x + char_width * 5.0f;
+
+  const SDL_Keymod previous_mods = SDL_GetModState();
+  SDL_SetModState(static_cast<SDL_Keymod>(previous_mods | SDL_KMOD_ALT));
+  const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
+  SDL_SetModState(previous_mods);
+
+  Expect(handled, "Alt+left click inside the editor should be handled");
+  Expect(viewport.has_multiple_carets(),
+         "Alt+left click should add a secondary caret");
+  Expect(!viewport.secondary_carets().empty() &&
+             viewport.secondary_carets().front() == microide::editor::TextPosition{0, 0},
+         "Alt+left click should preserve the previous primary caret as secondary");
+  Expect(viewport.cursor_column() == 5,
+         "Alt+left click should move the primary caret to the clicked column");
+}
+
 void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1509,6 +1543,47 @@ void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
          "project watcher should still detect visible project changes");
 }
 
+void TestWorkspaceShellProjectWatcherIgnoresGitMetadataLockfiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / ".git" / "HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "git-metadata watcher fixture should open the project");
+
+  WriteFile(root / ".git" / "index.lock", "lock\n");
+  Expect(!WaitForProjectReload(shell, std::chrono::milliseconds(400)),
+         "project watcher should ignore .git lockfile churn");
+  Expect(!WaitForFileIndexPath(shell, std::filesystem::path(".git/index.lock"), true,
+                               std::chrono::milliseconds(50)),
+         "file index should not include .git lockfiles");
+
+  WriteFile(root / "watched.txt", "changed\n");
+  Expect(WaitForProjectReload(shell, std::chrono::milliseconds(1000)),
+         "project watcher should still detect visible project changes after ignoring git locks");
+}
+
+void TestWorkspaceShellFileIndexUpdatesDoNotReloadCleanBuffers() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "index-only reload fixture should open the project");
+
+  WorkspaceShellTestAccess::ResetReloadCleanOpenBuffersFromDiskInvocationCount(shell);
+  WorkspaceShellTestAccess::SetFileIndexHasPendingChanges(shell, true);
+
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+         "index-only watcher updates should still refresh project state");
+  Expect(WorkspaceShellTestAccess::ReloadCleanOpenBuffersFromDiskInvocationCount(shell) == 0,
+         "file index updates alone should not reopen clean editor buffers from disk");
+}
+
 void TestWorkspaceShellFileFinderReflectsFileIndexUpdates() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1586,6 +1661,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchDiscardsStaleGitSidebarRefreshResult);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitignoredDirectories",
           TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
+  AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitMetadataLockfiles",
+          TestWorkspaceShellProjectWatcherIgnoresGitMetadataLockfiles);
+  AddTest(tests, "WorkspaceShell/FileIndexUpdatesDoNotReloadCleanBuffers",
+          TestWorkspaceShellFileIndexUpdatesDoNotReloadCleanBuffers);
   AddTest(tests, "WorkspaceShell/FileFinderReflectsFileIndexUpdates",
           TestWorkspaceShellFileFinderReflectsFileIndexUpdates);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
@@ -1648,6 +1727,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorWheelActivatesHoveredSplit);
   AddTest(tests, "WorkspaceShell/EditorDragSelectionTracksPointer",
           TestWorkspaceShellEditorDragSelectionTracksPointer);
+  AddTest(tests, "WorkspaceShell/AltClickAddsSecondaryCaret",
+          TestWorkspaceShellAltClickAddsSecondaryCaret);
   AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/WindowMouseLeaveClearsTabTooltip",

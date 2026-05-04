@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #include "util/PerformanceTrace.h"
 
@@ -94,10 +95,17 @@ bool ProjectCatalogCoordinator::RestoreAfterRemoval(std::size_t preferred_index,
 }
 
 void ProjectCatalogCoordinator::PersistActiveEntry() {
-  util::PerformanceTrace::Scope trace_scope("ProjectCatalogCoordinator::PersistActiveEntry");
   if (!context_.HasActiveProjectCatalogEntry()) {
     return;
   }
+  std::string perf_label = "ProjectCatalogCoordinator::PersistActiveEntry";
+  if (util::PerformanceTrace::Enabled()) {
+    if (const auto* entry = context_.ProjectCatalogEntry(context_.project_catalog.active_index);
+        entry != nullptr && !entry->root.empty()) {
+      perf_label += "(root=" + entry->root.string() + ")";
+    }
+  }
+  util::PerformanceTrace::Scope trace_scope(perf_label);
   {
     util::PerformanceTrace::Scope scope("ProjectCatalogCoordinator::SaveConfigState");
     operations_.save_config_state();
@@ -118,12 +126,23 @@ void ProjectCatalogCoordinator::PersistActiveEntry() {
 }
 
 void ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown() {
+  util::PerformanceTrace::Scope trace_scope(
+      "ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown");
   for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     auto* entry = context_.ProjectCatalogEntry(i);
     if (entry == nullptr || !entry->initialized ||
         (context_.HasActiveProjectCatalogEntry() && i == context_.project_catalog.active_index)) {
       continue;
     }
+    std::string entry_scope_label = "ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry";
+    if (util::PerformanceTrace::Enabled()) {
+      entry_scope_label += "(index=" + std::to_string(i);
+      if (!entry->root.empty()) {
+        entry_scope_label += ",root=" + entry->root.string();
+      }
+      entry_scope_label += ")";
+    }
+    util::PerformanceTrace::Scope entry_scope(entry_scope_label);
     operations_.load_project_state(*entry);
     operations_.save_config_state();
     operations_.save_session_state();

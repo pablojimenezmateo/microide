@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <utility>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectCatalogCoordinator.h"
@@ -27,6 +28,7 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   operations_.initialize_task_runtime();
   operations_.initialize_provider_bridge_manager();
   operations_.register_wake_events();
+  editor::runtime_syntax::EnsureInitialized();
 
   {
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");

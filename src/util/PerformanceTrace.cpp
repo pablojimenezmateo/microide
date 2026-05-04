@@ -71,6 +71,13 @@ bool PerformanceTrace::Enabled() {
   return enabled;
 }
 
+bool PerformanceTrace::FlagEnabled(const char* env_name) {
+  if (env_name == nullptr || env_name[0] == '\0') {
+    return false;
+  }
+  return ParseEnabledValue(std::getenv(env_name));
+}
+
 double PerformanceTrace::MinimumDurationMs() {
   static const double minimum_ms =
       ParseMinimumDurationMs(std::getenv("MICROIDE_PERF_TRACE_MIN_MS"));

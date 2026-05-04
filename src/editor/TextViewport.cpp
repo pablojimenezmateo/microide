@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
@@ -29,6 +30,13 @@ std::string ToLower(std::string_view text) {
   return lowered;
 }
 
+bool TextPositionLess(const TextPosition& lhs, const TextPosition& rhs) {
+  if (lhs.line != rhs.line) {
+    return lhs.line < rhs.line;
+  }
+  return lhs.column < rhs.column;
+}
+
 }  // namespace
 
 TextViewport::TextViewport() {
@@ -41,6 +49,11 @@ TextViewport::TextViewport() {
 }
 
 bool TextViewport::OpenFile(const std::filesystem::path& path) {
+  std::string perf_label = "TextViewport::OpenFile";
+  if (util::PerformanceTrace::Enabled()) {
+    perf_label += "(path=" + path.string() + ")";
+  }
+  util::PerformanceTrace::Scope perf_scope(perf_label);
   EnsureDocument();
   const std::optional<std::string> content = util::ReadTextFile(path);
   if (!content.has_value()) {
@@ -138,12 +151,40 @@ void TextViewport::SetSoftTabs(bool soft_tabs) {
   soft_tabs_ = soft_tabs;
 }
 
+void TextViewport::SetSoftWrap(bool soft_wrap) {
+  if (soft_wrap_ == soft_wrap) {
+    return;
+  }
+  soft_wrap_ = soft_wrap;
+  ClampScrollState();
+  EnsureCursorVisible();
+}
+
 void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   if (document_->lines.empty() || delta == 0) {
     return;
   }
 
   BeginSelectionIfNeeded(extend_selection);
+  if (soft_wrap_) {
+    EnsureWrappedRowLayouts();
+    if (wrapped_row_layouts_.empty()) {
+      return;
+    }
+    const std::size_t current_row = CursorVisualRow();
+    const int max_row = static_cast<int>(wrapped_row_layouts_.size()) - 1;
+    const std::size_t target_row =
+        static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
+    const WrappedRowLayout& target = wrapped_row_layouts_[target_row];
+    const std::size_t target_visual_column =
+        ResolveSoftWrapCursorColumnForTargetRow(target_row);
+    cursor_line_ = target.line_index;
+    cursor_column_ = TextLayout::TextColumnForVisualColumn(
+        document_->lines[target.line_index], target_visual_column, tab_size_);
+    preferred_column_ = target_visual_column;
+    EnsureCursorVisible();
+    return;
+  }
   const int current = static_cast<int>(cursor_line_);
   const int max_index = static_cast<int>(document_->lines.size()) - 1;
   cursor_line_ = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
@@ -239,6 +280,11 @@ void TextViewport::Page(int direction) {
 }
 
 void TextViewport::InsertCharacter(char character) {
+  if (has_multiple_carets()) {
+    const std::string text(1, character);
+    (void)ApplyMultiCaretInsert(text, true);
+    return;
+  }
   const SelectionRange range = selection_range().value_or(
       SelectionRange{TextPosition{cursor_line_, cursor_column_},
                      TextPosition{cursor_line_, cursor_column_}});
@@ -250,6 +296,10 @@ void TextViewport::InsertText(std::string_view text, bool record_undo) {
   if (text.empty()) {
     return;
   }
+  if (has_multiple_carets()) {
+    (void)ApplyMultiCaretInsert(text, record_undo);
+    return;
+  }
 
   const SelectionRange range = selection_range().value_or(
       SelectionRange{TextPosition{cursor_line_, cursor_column_},
@@ -258,6 +308,10 @@ void TextViewport::InsertText(std::string_view text, bool record_undo) {
 }
 
 void TextViewport::InsertNewline() {
+  if (has_multiple_carets()) {
+    (void)ApplyMultiCaretInsert("\n", true);
+    return;
+  }
   const SelectionRange range = selection_range().value_or(
       SelectionRange{TextPosition{cursor_line_, cursor_column_},
                      TextPosition{cursor_line_, cursor_column_}});
@@ -280,6 +334,10 @@ void TextViewport::InsertTab() {
 
 void TextViewport::Backspace() {
   if (document_->lines.empty()) {
+    return;
+  }
+  if (has_multiple_carets()) {
+    (void)ApplyMultiCaretBackspace(true);
     return;
   }
 
@@ -314,6 +372,10 @@ void TextViewport::Backspace() {
 
 void TextViewport::DeleteForward() {
   if (document_->lines.empty()) {
+    return;
+  }
+  if (has_multiple_carets()) {
+    (void)ApplyMultiCaretDeleteForward(true);
     return;
   }
 
@@ -507,8 +569,45 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
   return layout;
 }
 
+LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) const {
+  if (!soft_wrap_) {
+    return VisibleLineLayout(visual_row_index);
+  }
+  EnsureWrappedRowLayouts();
+  if (visual_row_index >= wrapped_row_layouts_.size()) {
+    return LayoutLine{};
+  }
+
+  const WrappedRowLayout& row = wrapped_row_layouts_[visual_row_index];
+  LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[row.line_index], row.visual_start,
+                                                   visible_columns_, tab_size_);
+  if (row.line_index == cursor_line_) {
+    const std::size_t caret_visual = cursor_visual_column();
+    if (caret_visual >= row.visual_start && caret_visual <= row.visual_end) {
+      layout.caret_visible = true;
+      layout.caret_column = caret_visual - row.visual_start;
+    } else {
+      layout.caret_visible = false;
+      layout.caret_column = 0;
+    }
+  } else {
+    layout.caret_visible = false;
+    layout.caret_column = 0;
+  }
+  return layout;
+}
+
+std::size_t TextViewport::visual_line_count() const {
+  if (!soft_wrap_) {
+    return document_->lines.size();
+  }
+  EnsureWrappedRowLayouts();
+  return wrapped_row_layouts_.size();
+}
+
 const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     std::size_t line_index) const {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::HighlightedLineTokens");
   static const std::vector<SyntaxTokenKind> kEmptyTokens;
   if (line_index >= document_->lines.size()) {
     return kEmptyTokens;
@@ -521,14 +620,20 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   EnsureHighlightCaches();
 
   if (const auto it = highlight_cache_.find(line_index); it != highlight_cache_.end()) {
+    util::PerformanceTrace::Scope hit_scope("TextViewport::HighlightedLineTokens::CacheHit");
     ++highlight_hits_;
     return it->second;
   }
 
+  util::PerformanceTrace::Scope miss_scope("TextViewport::HighlightedLineTokens::CacheMiss");
   const SyntaxState previous_state = HighlightStateBeforeLine(line_index);
-  const HighlightedLine highlighted =
-      SyntaxHighlighter::HighlightLine(document_->lines[line_index], document_->path,
-                                       previous_state);
+  HighlightedLine highlighted;
+  {
+    util::PerformanceTrace::Scope highlight_scope(
+        "TextViewport::HighlightedLineTokens::HighlightLine");
+    highlighted = SyntaxHighlighter::HighlightLine(document_->lines[line_index], document_->path,
+                                                   previous_state);
+  }
   line_highlight_states_[line_index] = highlighted.end_state;
 
   if (highlight_cache_.size() >= kHighlightCacheLimit) {
@@ -558,6 +663,36 @@ void TextViewport::ResetCacheStats() const {
   highlight_hits_ = 0;
   highlight_state_advances_ = 0;
   highlight_checkpoint_advances_ = 0;
+}
+
+void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
+  if (document_->lines.empty()) {
+    return;
+  }
+  const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
+  const std::size_t clamped_column =
+      TextLayout::ClampTextColumn(document_->lines[clamped_line], column);
+  const TextPosition position{clamped_line, clamped_column};
+  if (position == TextPosition{cursor_line_, cursor_column_}) {
+    return;
+  }
+  if (std::find(secondary_carets_.begin(), secondary_carets_.end(), position) !=
+      secondary_carets_.end()) {
+    return;
+  }
+  secondary_carets_.push_back(position);
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(), TextPositionLess);
+}
+
+void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
+  secondary_carets_.clear();
+  for (const TextPosition& caret : carets) {
+    AddSecondaryCaret(caret.line, caret.column);
+  }
+}
+
+void TextViewport::ClearSecondaryCarets() {
+  secondary_carets_.clear();
 }
 
 bool TextViewport::has_selection() const {
@@ -619,6 +754,43 @@ bool TextViewport::DeleteSelectedText() {
 bool TextViewport::DeleteCurrentLine() {
   if (document_->lines.empty()) {
     return false;
+  }
+  if (has_multiple_carets()) {
+    std::vector<std::size_t> lines_to_delete;
+    lines_to_delete.reserve(secondary_carets_.size() + 1);
+    lines_to_delete.push_back(cursor_line_);
+    for (const TextPosition& caret : secondary_carets_) {
+      lines_to_delete.push_back(std::min(caret.line, document_->lines.size() - 1));
+    }
+    std::sort(lines_to_delete.begin(), lines_to_delete.end());
+    lines_to_delete.erase(std::unique(lines_to_delete.begin(), lines_to_delete.end()),
+                          lines_to_delete.end());
+    if (lines_to_delete.empty()) {
+      return false;
+    }
+
+    const std::vector<std::string> before_lines = document_->lines;
+    const ViewState before_state = CaptureViewState();
+    for (auto it = lines_to_delete.rbegin(); it != lines_to_delete.rend(); ++it) {
+      document_->lines.erase(document_->lines.begin() + static_cast<std::ptrdiff_t>(*it));
+    }
+    if (document_->lines.empty()) {
+      document_->lines.push_back("");
+    }
+    cursor_line_ = std::min(cursor_line_, document_->lines.size() - 1);
+    cursor_column_ = 0;
+    preferred_column_ = 0;
+    selection_anchor_.reset();
+    secondary_carets_.clear();
+    document_->placeholder = false;
+    document_->dirty = true;
+    RefreshEncoding();
+    InvalidateDerivedCaches(0);
+    InvalidateVisualColumnCache();
+    EnsureCursorVisible();
+    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
+                                                        document_->lines, CaptureViewState()));
+    return true;
   }
 
   if (document_->lines.size() == 1) {
@@ -721,6 +893,7 @@ void TextViewport::ResetState(std::vector<std::string> lines,
   scroll_line_ = 0;
   horizontal_scroll_ = 0;
   selection_anchor_.reset();
+  secondary_carets_.clear();
   document_->undo_stack.clear();
   document_->redo_stack.clear();
   document_->placeholder = placeholder;
@@ -731,6 +904,11 @@ void TextViewport::ResetState(std::vector<std::string> lines,
 }
 
 void TextViewport::EnsureInitialHighlightState() const {
+  std::string perf_label = "TextViewport::EnsureInitialHighlightState";
+  if (util::PerformanceTrace::Enabled() && !document_->path.empty()) {
+    perf_label += "(path=" + document_->path.string() + ")";
+  }
+  util::PerformanceTrace::Scope perf_scope(perf_label);
   if (!syntax_highlighting_enabled()) {
     initial_highlight_state_.reset();
     return;
@@ -742,6 +920,7 @@ void TextViewport::EnsureInitialHighlightState() const {
 }
 
 void TextViewport::EnsureHighlightCaches() const {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::EnsureHighlightCaches");
   if (!syntax_highlighting_enabled() || document_->lines.empty()) {
     return;
   }
@@ -766,6 +945,7 @@ void TextViewport::EnsureHighlightCaches() const {
 }
 
 void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::EnsureHighlightCheckpoint");
   EnsureHighlightCaches();
   if (!syntax_highlighting_enabled() || document_->lines.empty() ||
       checkpoint_index >= highlight_checkpoints_.size()) {
@@ -787,11 +967,17 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
   std::size_t line = previous_checkpoint * kHighlightCheckpointInterval;
   const std::size_t target_line =
       std::min(document_->lines.size(), checkpoint_index * kHighlightCheckpointInterval);
+  util::PerformanceTrace::Scope replay_scope(
+      "TextViewport::EnsureHighlightCheckpoint::ReplayToCheckpoint");
   for (; line < target_line; ++line) {
     if (IsCachedHighlightState(line_highlight_states_[line])) {
       state = line_highlight_states_[line];
     } else {
-      state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+      {
+        util::PerformanceTrace::Scope advance_scope(
+            "TextViewport::EnsureHighlightCheckpoint::AdvanceState");
+        state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+      }
       line_highlight_states_[line] = state;
       ++highlight_checkpoint_advances_;
     }
@@ -804,6 +990,7 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
 }
 
 SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::HighlightStateBeforeLine");
   EnsureHighlightCaches();
   if (line_index == 0) {
     return *initial_highlight_state_;
@@ -816,12 +1003,17 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
                           ? *initial_highlight_state_
                           : highlight_checkpoints_[checkpoint_index];
 
+  util::PerformanceTrace::Scope replay_scope("TextViewport::HighlightStateBeforeLine::Replay");
   for (std::size_t line = checkpoint_line; line < line_index; ++line) {
     if (IsCachedHighlightState(line_highlight_states_[line])) {
       state = line_highlight_states_[line];
       continue;
     }
-    state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+    {
+      util::PerformanceTrace::Scope advance_scope(
+          "TextViewport::HighlightStateBeforeLine::AdvanceState");
+      state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+    }
     line_highlight_states_[line] = state;
     ++highlight_state_advances_;
   }
@@ -903,6 +1095,11 @@ void TextViewport::InvalidateVisualColumnCache() {
   cached_visual_line_columns_.clear();
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_revision_ = 0;
+  wrapped_row_layouts_.clear();
+  wrapped_line_row_offsets_.clear();
+  wrapped_row_layouts_tab_size_ = 0;
+  wrapped_row_layouts_visible_columns_ = 0;
+  wrapped_row_layouts_revision_ = 0;
 }
 
 void TextViewport::InvalidateLayoutCaches() {
@@ -944,6 +1141,7 @@ TextViewport::ViewState TextViewport::CaptureViewState() const {
       .scroll_line = scroll_line_,
       .horizontal_scroll = horizontal_scroll_,
       .selection_anchor = selection_anchor_,
+      .secondary_carets = secondary_carets_,
       .placeholder = document_->placeholder,
       .dirty = document_->dirty,
   };
@@ -956,6 +1154,7 @@ void TextViewport::RestoreViewState(const ViewState& state) {
   scroll_line_ = state.scroll_line;
   horizontal_scroll_ = state.horizontal_scroll;
   selection_anchor_ = state.selection_anchor;
+  secondary_carets_ = state.secondary_carets;
   document_->placeholder = state.placeholder;
   document_->dirty = state.dirty;
 }
@@ -1109,6 +1308,196 @@ TextViewport::HistoryEntry TextViewport::BuildHistoryEntryForDocumentChange(
   };
 }
 
+bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
+  EnsureDocument();
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  std::vector<TextPosition> carets = secondary_carets_;
+  carets.push_back(TextPosition{cursor_line_, cursor_column_});
+  std::sort(carets.begin(), carets.end(), TextPositionLess);
+  carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
+  if (carets.empty()) {
+    return false;
+  }
+
+  const std::vector<std::string> before_lines = document_->lines;
+  const ViewState before_state = CaptureViewState();
+  const TextPosition primary_before{cursor_line_, cursor_column_};
+  TextPosition primary_after = primary_before;
+
+  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
+    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+    const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(
+        SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, text);
+    if (!entry.has_value()) {
+      continue;
+    }
+    ApplyHistoryEntry(*entry, true);
+    if (line == primary_before.line && column == primary_before.column) {
+      primary_after = TextPosition{
+          entry->after_state.cursor_line,
+          entry->after_state.cursor_column,
+      };
+    }
+  }
+
+  cursor_line_ = primary_after.line;
+  cursor_column_ = primary_after.column;
+  preferred_column_ = cursor_visual_column();
+  selection_anchor_.reset();
+  document_->placeholder = false;
+  document_->dirty = true;
+  EnsureCursorVisible();
+
+  if (record_undo) {
+    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
+                                                        document_->lines, CaptureViewState()));
+  } else {
+    document_->redo_stack.clear();
+  }
+  return true;
+}
+
+bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
+  EnsureDocument();
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  std::vector<TextPosition> carets = secondary_carets_;
+  carets.push_back(TextPosition{cursor_line_, cursor_column_});
+  std::sort(carets.begin(), carets.end(), TextPositionLess);
+  carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
+  if (carets.empty()) {
+    return false;
+  }
+
+  const std::vector<std::string> before_lines = document_->lines;
+  const ViewState before_state = CaptureViewState();
+  const TextPosition primary_before{cursor_line_, cursor_column_};
+  TextPosition primary_after = primary_before;
+  bool changed = false;
+
+  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
+    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+    std::optional<HistoryEntry> entry;
+    if (column > 0) {
+      const std::size_t erase_start =
+          TextLayout::PreviousTextColumn(document_->lines[line], column);
+      entry = BuildRangeHistoryEntry(
+          SelectionRange{TextPosition{line, erase_start}, TextPosition{line, column}}, "");
+    } else if (line > 0) {
+      entry = BuildRangeHistoryEntry(SelectionRange{
+                                         TextPosition{line - 1, document_->lines[line - 1].size()},
+                                         TextPosition{line, 0},
+                                     },
+                                     "");
+    }
+    if (!entry.has_value()) {
+      continue;
+    }
+    changed = true;
+    ApplyHistoryEntry(*entry, true);
+    if (line == primary_before.line && column == primary_before.column) {
+      primary_after = TextPosition{
+          entry->after_state.cursor_line,
+          entry->after_state.cursor_column,
+      };
+    }
+  }
+
+  if (!changed) {
+    return false;
+  }
+
+  cursor_line_ = primary_after.line;
+  cursor_column_ = primary_after.column;
+  preferred_column_ = cursor_visual_column();
+  selection_anchor_.reset();
+  document_->placeholder = false;
+  document_->dirty = true;
+  EnsureCursorVisible();
+
+  if (record_undo) {
+    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
+                                                        document_->lines, CaptureViewState()));
+  } else {
+    document_->redo_stack.clear();
+  }
+  return true;
+}
+
+bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
+  EnsureDocument();
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  std::vector<TextPosition> carets = secondary_carets_;
+  carets.push_back(TextPosition{cursor_line_, cursor_column_});
+  std::sort(carets.begin(), carets.end(), TextPositionLess);
+  carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
+  if (carets.empty()) {
+    return false;
+  }
+
+  const std::vector<std::string> before_lines = document_->lines;
+  const ViewState before_state = CaptureViewState();
+  const TextPosition primary_before{cursor_line_, cursor_column_};
+  TextPosition primary_after = primary_before;
+  bool changed = false;
+
+  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
+    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+    std::optional<HistoryEntry> entry;
+    if (column < document_->lines[line].size()) {
+      const std::size_t erase_end =
+          TextLayout::NextTextColumn(document_->lines[line], column);
+      entry = BuildRangeHistoryEntry(
+          SelectionRange{TextPosition{line, column}, TextPosition{line, erase_end}}, "");
+    } else if (line + 1 < document_->lines.size()) {
+      entry = BuildRangeHistoryEntry(
+          SelectionRange{TextPosition{line, column}, TextPosition{line + 1, 0}}, "");
+    }
+    if (!entry.has_value()) {
+      continue;
+    }
+    changed = true;
+    ApplyHistoryEntry(*entry, true);
+    if (line == primary_before.line && column == primary_before.column) {
+      primary_after = TextPosition{
+          entry->after_state.cursor_line,
+          entry->after_state.cursor_column,
+      };
+    }
+  }
+
+  if (!changed) {
+    return false;
+  }
+
+  cursor_line_ = primary_after.line;
+  cursor_column_ = primary_after.column;
+  preferred_column_ = cursor_visual_column();
+  selection_anchor_.reset();
+  document_->placeholder = false;
+  document_->dirty = true;
+  EnsureCursorVisible();
+
+  if (record_undo) {
+    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
+                                                        document_->lines, CaptureViewState()));
+  } else {
+    document_->redo_stack.clear();
+  }
+  return true;
+}
+
 bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   std::string_view replacement,
                                   bool record_undo) {
@@ -1218,10 +1607,15 @@ void TextViewport::ClampCursorColumn() {
 }
 
 void TextViewport::ClampScrollState() {
+  const std::size_t total_visual_lines = visual_line_count();
   const std::size_t max_vertical_scroll =
-      document_->lines.size() > visible_lines_ ? document_->lines.size() - visible_lines_ : 0;
+      total_visual_lines > visible_lines_ ? total_visual_lines - visible_lines_ : 0;
   scroll_line_ = std::min(scroll_line_, max_vertical_scroll);
 
+  if (soft_wrap_) {
+    horizontal_scroll_ = 0;
+    return;
+  }
   const std::size_t max_visual_columns = MaxVisualColumns();
   const std::size_t max_horizontal_scroll =
       max_visual_columns > visible_columns_ ? max_visual_columns - visible_columns_ : 0;
@@ -1229,18 +1623,24 @@ void TextViewport::ClampScrollState() {
 }
 
 void TextViewport::EnsureCursorVisible() {
-  if (cursor_line_ < scroll_line_) {
-    scroll_line_ = cursor_line_;
+  const std::size_t cursor_visual_row = CursorVisualRow();
+  if (cursor_visual_row < scroll_line_) {
+    scroll_line_ = cursor_visual_row;
   }
 
   const std::size_t vertical_margin = std::min(kScrollMargin, visible_lines_ > 0 ? visible_lines_ - 1 : 0);
-  if (cursor_line_ < scroll_line_ + vertical_margin) {
-    scroll_line_ = cursor_line_ > vertical_margin ? cursor_line_ - vertical_margin : 0;
+  if (cursor_visual_row < scroll_line_ + vertical_margin) {
+    scroll_line_ = cursor_visual_row > vertical_margin ? cursor_visual_row - vertical_margin : 0;
   } else {
     const std::size_t visible_span = visible_lines_ > vertical_margin ? visible_lines_ - vertical_margin - 1 : 0;
-    if (cursor_line_ > scroll_line_ + visible_span) {
-      scroll_line_ = cursor_line_ > visible_span ? cursor_line_ - visible_span : 0;
+    if (cursor_visual_row > scroll_line_ + visible_span) {
+      scroll_line_ = cursor_visual_row > visible_span ? cursor_visual_row - visible_span : 0;
     }
+  }
+
+  if (soft_wrap_) {
+    ClampScrollState();
+    return;
   }
 
   const std::size_t visual_cursor_column = cursor_visual_column();
@@ -1291,6 +1691,90 @@ std::size_t TextViewport::MaxVisualColumns() const {
   cached_max_visual_columns_tab_size_ = tab_size_;
   cached_max_visual_columns_revision_ = document_->layout_revision;
   return *cached_max_visual_columns_;
+}
+
+void TextViewport::EnsureWrappedRowLayouts() const {
+  if (!document_) {
+    return;
+  }
+  if (!soft_wrap_) {
+    wrapped_row_layouts_.clear();
+    wrapped_line_row_offsets_.clear();
+    wrapped_row_layouts_tab_size_ = tab_size_;
+    wrapped_row_layouts_visible_columns_ = visible_columns_;
+    wrapped_row_layouts_revision_ = document_->layout_revision;
+    return;
+  }
+  if (wrapped_row_layouts_revision_ == document_->layout_revision &&
+      wrapped_row_layouts_tab_size_ == tab_size_ &&
+      wrapped_row_layouts_visible_columns_ == visible_columns_) {
+    return;
+  }
+
+  wrapped_row_layouts_.clear();
+  wrapped_line_row_offsets_.clear();
+  wrapped_row_layouts_.reserve(document_->lines.size());
+  wrapped_line_row_offsets_.reserve(document_->lines.size());
+  const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
+  for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
+    wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
+    const std::size_t line_visual_width =
+        TextLayout::VisualColumnForTextColumn(document_->lines[line_index],
+                                              document_->lines[line_index].size(), tab_size_);
+    if (line_visual_width == 0) {
+      wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, 0, 0});
+      continue;
+    }
+    for (std::size_t start = 0; start < line_visual_width; start += wrap_columns) {
+      const std::size_t end = std::min(line_visual_width, start + wrap_columns);
+      wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, start, end});
+    }
+  }
+  if (wrapped_row_layouts_.empty()) {
+    wrapped_row_layouts_.push_back(WrappedRowLayout{0, 0, 0});
+  }
+  wrapped_row_layouts_tab_size_ = tab_size_;
+  wrapped_row_layouts_visible_columns_ = visible_columns_;
+  wrapped_row_layouts_revision_ = document_->layout_revision;
+}
+
+std::size_t TextViewport::CursorVisualRow() const {
+  if (!soft_wrap_) {
+    return cursor_line_;
+  }
+  EnsureWrappedRowLayouts();
+  if (document_->lines.empty() || cursor_line_ >= document_->lines.size() ||
+      wrapped_line_row_offsets_.size() != document_->lines.size()) {
+    return 0;
+  }
+  const std::size_t base_row = wrapped_line_row_offsets_[cursor_line_];
+  const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
+  const std::size_t caret_visual = cursor_visual_column();
+  const std::size_t row_in_line = caret_visual / wrap_columns;
+  const std::size_t line_visual_width =
+      TextLayout::VisualColumnForTextColumn(document_->lines[cursor_line_],
+                                            document_->lines[cursor_line_].size(), tab_size_);
+  const std::size_t rows_for_line = std::max<std::size_t>(1, (line_visual_width + wrap_columns - 1) /
+                                                                 wrap_columns);
+  const std::size_t clamped_in_line = std::min(row_in_line, rows_for_line - 1);
+  return std::min(base_row + clamped_in_line,
+                  wrapped_row_layouts_.empty() ? 0 : wrapped_row_layouts_.size() - 1);
+}
+
+std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const {
+  EnsureWrappedRowLayouts();
+  if (wrapped_row_layouts_.empty()) {
+    return 0;
+  }
+  const std::size_t clamped_row = std::min(target_row, wrapped_row_layouts_.size() - 1);
+  const WrappedRowLayout& current = wrapped_row_layouts_[CursorVisualRow()];
+  const WrappedRowLayout& target = wrapped_row_layouts_[clamped_row];
+  const std::size_t caret_visual = cursor_visual_column();
+  const std::size_t local_offset =
+      caret_visual > current.visual_start ? caret_visual - current.visual_start : 0;
+  const std::size_t desired =
+      std::max(preferred_column_, target.visual_start + local_offset);
+  return std::min(desired, target.visual_end);
 }
 
 void TextViewport::EnsureDocument() {

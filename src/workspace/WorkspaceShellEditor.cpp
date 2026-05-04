@@ -10,6 +10,7 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
   viewport.SetTabSize(context_.current_project_state.editor_preferences.tab_size);
   viewport.SetIndentWidth(context_.current_project_state.editor_preferences.indent_width);
   viewport.SetSoftTabs(context_.current_project_state.editor_preferences.soft_tabs);
+  viewport.SetSoftWrap(context_.current_project_state.editor_preferences.soft_wrap);
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
@@ -231,6 +232,7 @@ void WorkspaceShell::RequestCloseTabs(std::vector<std::size_t> indices) {
 }
 
 void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
+  ++reload_clean_open_buffers_from_disk_invocation_count_;
   SyncActiveEditorTab();
   std::vector<std::filesystem::path> paths;
   for (const auto& tab : context_.current_project_state.open_tabs) {

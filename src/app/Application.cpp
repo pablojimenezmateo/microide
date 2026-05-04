@@ -40,15 +40,6 @@ bool CustomWindowChromeEnabled(SDL_Window* window) {
   return window != nullptr && (SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) != 0;
 }
 
-bool FlagEnabled(const char* value) {
-  if (value == nullptr || value[0] == '\0') {
-    return false;
-  }
-
-  const std::string_view text(value);
-  return text != "0" && text != "false" && text != "FALSE" && text != "off" && text != "OFF";
-}
-
 std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowPresentationState(
     SDL_Window* window,
     SDL_Renderer* renderer,
@@ -261,7 +252,9 @@ bool Application::Initialize() {
 
   initialized_ = true;
   first_render_complete_ = false;
-  redraw_trace_enabled_ = FlagEnabled(SDL_getenv("MICROIDE_TRACE_REDRAW"));
+  redraw_trace_enabled_ = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW");
+  redraw_trace_verbose_enabled_ =
+      util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW_VERBOSE");
   return true;
 }
 
@@ -397,7 +390,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
         workspace_shell_.RenderClip(frame_token, renderer_, width, height);
       }
       SDL_RenderPresent(renderer_);
-        RecordRenderStats(true, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
+      RecordRenderStats(true, true, false, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
       first_render_complete_ = true;
       return;
     }
@@ -447,13 +440,13 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
           "microide perf: partial frame replayed %zu coalesced clip rects from %zu dirty rects",
           rendered_clip_count, dirty_rect_count);
     }
-    RecordRenderStats(full_redraw || dirty_rects.empty(), dirty_rect_count, rendered_clip_count,
-                      reason, SDL_GetTicksNS() - render_start);
+    RecordRenderStats(full_redraw_requested, full_redraw, promote_partial_to_full, dirty_rect_count,
+                      rendered_clip_count, reason, SDL_GetTicksNS() - render_start);
   } else {
     util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
     workspace_shell_.RenderClip(frame_token, renderer_, width, height);
     SDL_RenderPresent(renderer_);
-    RecordRenderStats(true, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
+    RecordRenderStats(true, true, false, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
   }
   first_render_complete_ = true;
 }
@@ -520,11 +513,21 @@ void Application::DestroySceneTexture() {
   scene_texture_valid_ = false;
 }
 
-void Application::RecordRenderStats(bool full_redraw,
+void Application::RecordRenderStats(bool full_redraw_requested,
+                                    bool full_redraw,
+                                    bool promoted_partial_to_full,
                                     std::size_t dirty_rect_count,
                                     std::size_t rendered_clip_count,
                                     const char* reason,
                                     Uint64 elapsed_ns) {
+  if (redraw_trace_verbose_enabled_) {
+    SDL_Log(
+        "microide redraw frame: reason=%s requested=%s rendered=%s promoted=%s dirty=%zu clips=%zu elapsed=%.2f ms",
+        reason != nullptr ? reason : "unknown", full_redraw_requested ? "full" : "partial",
+        full_redraw ? "full" : "partial", promoted_partial_to_full ? "yes" : "no",
+        dirty_rect_count, rendered_clip_count, static_cast<double>(elapsed_ns) / 1'000'000.0);
+  }
+
   if (!redraw_trace_enabled_) {
     return;
   }

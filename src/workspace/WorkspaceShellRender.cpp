@@ -25,6 +25,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
                                &active_editor_pane_rect);
   if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::RefreshHover");
     UpdateEditorHover(last_mouse_x_, last_mouse_y_);
     editor_hover_refresh_pending_ = false;
   }

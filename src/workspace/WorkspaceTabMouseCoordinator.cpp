@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "workspace/TerminalPanelService.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
@@ -62,6 +63,7 @@ TabMouseCoordinator::TabMouseCoordinator(ProjectCatalogState& project_catalog,
 
 bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                            const WorkspaceLayout& layout) {
+  util::PerformanceTrace::Scope perf_scope("TabMouseCoordinator::HandleButtonDown");
   if (Contains(layout.project_tab_strip, event.button.x, event.button.y)) {
     for (const WorkspaceShell::VisibleStripTab& tab :
          operations_.compute_visible_project_tabs(layout.project_tab_strip)) {
@@ -110,14 +112,22 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
            Contains(tab.close_rect, event.button.x, event.button.y))) {
         operations_.request_close_tab(tab.index);
       } else if (event.button.button == SDL_BUTTON_LEFT) {
-        operations_.activate_tab(tab.index);
+        {
+          util::PerformanceTrace::Scope activate_scope(
+              "TabMouseCoordinator::HandleButtonDown::ActivateEditorTab");
+          operations_.activate_tab(tab.index);
+        }
         tab_drag_state_ = TabDragState{
             .kind = TabDragKind::Editor,
             .press_x = static_cast<float>(event.button.x),
             .press_y = static_cast<float>(event.button.y),
         };
       } else if (event.button.button == SDL_BUTTON_RIGHT) {
-        operations_.activate_tab(tab.index);
+        {
+          util::PerformanceTrace::Scope activate_scope(
+              "TabMouseCoordinator::HandleButtonDown::ActivateEditorTab");
+          operations_.activate_tab(tab.index);
+        }
         operations_.open_anchored_menu(
             MenuId::EditorTabContext,
             MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,

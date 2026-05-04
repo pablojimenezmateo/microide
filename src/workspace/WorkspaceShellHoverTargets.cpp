@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "editor/DiagnosticsRender.h"
 #include "editor/TextLayout.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -75,6 +77,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     const TextGridInteractionLayout& interaction,
     float x,
     float y) const {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::PluginHoverTargetForLine");
   if (path.empty() || x < interaction.text_x || !Contains(interaction.rect, x, y)) {
     return std::nullopt;
   }
@@ -102,8 +105,12 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   const std::size_t text_column =
       editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, tab_size);
   plugin::PluginHost::HoverResult hover;
-  if (!plugin_runtime_.Host().QueryHover(path, line_index + 1, text_column + 1, &hover,
-                                         nullptr)) {
+  std::string hover_scope_label = "WorkspaceShell::PluginHoverTargetForLine::QueryHover";
+  if (util::PerformanceTrace::Enabled()) {
+    hover_scope_label += "(path=" + path.string() + ")";
+  }
+  util::PerformanceTrace::Scope hover_scope(hover_scope_label);
+  if (!plugin_runtime_.Host().QueryHover(path, line_index + 1, text_column + 1, &hover, nullptr)) {
     return std::nullopt;
   }
 
@@ -150,6 +157,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHoverTargetAtPosition(
     float x,
     float y) const {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::DiagnosticHoverTargetAtPosition");
   const HoverTargetsViewModel hover_targets_vm = RenderViewModelBuilder(context_).BuildHoverTargets();
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
@@ -283,6 +291,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTargetAtPosition(
     float x,
     float y) const {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::PluginHoverTargetAtPosition");
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
     return std::nullopt;
@@ -375,6 +384,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTargetAtPosition(
     float x,
     float y) const {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::EditorHoverTargetAtPosition");
   const HoverTargetsViewModel hover_targets_vm = RenderViewModelBuilder(context_).BuildHoverTargets();
   if (!hover_targets_vm.hover_enabled) {
     return std::nullopt;

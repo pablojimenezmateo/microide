@@ -28,7 +28,9 @@ class Application {
   bool UpdateRendererPresentation(int* logical_width = nullptr, int* logical_height = nullptr);
   bool EnsureSceneTexture(int logical_width, int logical_height);
   void DestroySceneTexture();
-  void RecordRenderStats(bool full_redraw,
+  void RecordRenderStats(bool full_redraw_requested,
+                         bool full_redraw,
+                         bool promoted_partial_to_full,
                          std::size_t dirty_rect_count,
                          std::size_t rendered_clip_count,
                          const char* reason,
@@ -48,6 +50,7 @@ class Application {
   bool first_render_complete_ = false;
   bool scene_texture_valid_ = false;
   bool redraw_trace_enabled_ = false;
+  bool redraw_trace_verbose_enabled_ = false;
   int scene_texture_width_ = 0;
   int scene_texture_height_ = 0;
   Uint64 redraw_trace_frames_ = 0;

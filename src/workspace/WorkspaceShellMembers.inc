@@ -1450,6 +1450,7 @@
   std::atomic<bool> file_index_initial_build_in_flight_{false};
   WorkspacePluginRuntime plugin_runtime_;
   std::size_t reload_plugins_invocation_count_ = 0;
+  std::size_t reload_clean_open_buffers_from_disk_invocation_count_ = 0;
   std::size_t render_compare_surface_invocation_count_ = 0;
   std::optional<WorkspaceLayout> prepared_frame_layout_;
   mutable TabStripGeometryCache tab_strip_geometry_cache_;

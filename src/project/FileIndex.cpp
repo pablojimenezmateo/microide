@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "project/ProjectFileScanner.h"
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 
 namespace microide::project {
@@ -56,7 +57,8 @@ FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
   return *this;
 }
 
-bool FileIndex::SetRoot(const std::filesystem::path& root) {
+bool FileIndex::SetRoot(const std::filesystem::path& root,
+                        RootPopulationMode population_mode) {
   util::StartupTrace::Scope trace_scope("FileIndex::SetRoot");
   std::error_code error;
   const auto absolute_root = std::filesystem::absolute(root, error);
@@ -72,7 +74,9 @@ bool FileIndex::SetRoot(const std::filesystem::path& root) {
   }
   exclude_hidden_cache_ = {};
   include_hidden_cache_ = {};
-  Refresh();
+  if (population_mode == RootPopulationMode::ScanNow) {
+    Refresh();
+  }
   return true;
 }
 
@@ -106,20 +110,33 @@ void FileIndex::Refresh() {
   EnsureFresh(ProjectFileScanMode::ExcludeHidden);
 }
 
-void FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
+bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
+  util::PerformanceTrace::Scope perf_scope("FileIndex::ApplyBatch");
   std::unique_lock lock(files_mutex_);
+  bool changed = false;
   if (batch.is_initial) {
+    changed = !files_.empty();
     files_.clear();
   }
   for (const auto& change : batch.changes) {
-    if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
-      RemoveProjectFileLocked(change.entry.relative_path);
+    const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
+    if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
       continue;
     }
-    UpsertProjectFileLocked(ToProjectFile(change.entry));
+    if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
+      changed = RemoveProjectFileLocked(relative_path) || changed;
+      continue;
+    }
+    ProjectFile file = ToProjectFile(change.entry);
+    file.relative_path = relative_path;
+    changed = UpsertProjectFileLocked(file) || changed;
+  }
+  if (!changed) {
+    return false;
   }
   exclude_hidden_cache_.needs_refresh = true;
   include_hidden_cache_.needs_refresh = true;
+  return true;
 }
 
 std::vector<ProjectFile> FileIndex::Snapshot() const {
@@ -146,6 +163,11 @@ bool FileIndex::IsHiddenRelativePath(const std::filesystem::path& path) {
   return false;
 }
 
+bool FileIndex::IsGitMetadataRelativePath(const std::filesystem::path& path) {
+  const auto it = path.begin();
+  return it != path.end() && *it == std::filesystem::path(".git");
+}
+
 bool FileIndex::LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs) {
   return lhs.relative_path.native() < rhs.native();
 }
@@ -164,6 +186,7 @@ ProjectFile FileIndex::ToProjectFile(const platform::IndexFileEntry& entry) {
 
 void FileIndex::EnsureFresh(ProjectFileScanMode mode) const {
   util::StartupTrace::Scope trace_scope("FileIndex::SnapshotCache");
+  util::PerformanceTrace::Scope perf_scope("FileIndex::EnsureFresh");
   std::unique_lock lock(files_mutex_);
   CacheBucket& cache = CacheIndex(mode) == 0 ? exclude_hidden_cache_ : include_hidden_cache_;
   if (!cache.needs_refresh) {
@@ -172,23 +195,30 @@ void FileIndex::EnsureFresh(ProjectFileScanMode mode) const {
   RebuildCacheLocked(mode, cache);
 }
 
-void FileIndex::UpsertProjectFileLocked(const ProjectFile& file) {
+bool FileIndex::UpsertProjectFileLocked(const ProjectFile& file) {
   auto it = std::lower_bound(files_.begin(), files_.end(), file.relative_path, LessProjectPath);
   if (it != files_.end() && it->relative_path == file.relative_path) {
+    if (it->mtime == file.mtime && it->size == file.size) {
+      return false;
+    }
     *it = file;
-    return;
+    return true;
   }
   files_.insert(it, file);
+  return true;
 }
 
-void FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_path) {
+bool FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_path) {
   auto it = std::lower_bound(files_.begin(), files_.end(), relative_path, LessProjectPath);
   if (it != files_.end() && it->relative_path == relative_path) {
     files_.erase(it);
+    return true;
   }
+  return false;
 }
 
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {
+  util::PerformanceTrace::Scope perf_scope("FileIndex::RebuildCacheLocked");
   cache.files.clear();
   if (root_.empty()) {
     cache.needs_refresh = false;

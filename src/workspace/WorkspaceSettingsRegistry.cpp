@@ -17,6 +17,11 @@ const SettingEnumValue kColorschemeValues[] = {
     {"light", "Light"},
 };
 
+const SettingEnumValue kEditorWrapValues[] = {
+    {"off", "Off"},
+    {"word", "Word"},
+};
+
 }  // namespace
 
 std::span<const SettingSpec> BuiltinSettingSpecs() {
@@ -56,6 +61,18 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = {},
           .enum_values = {},
+      },
+      SettingSpec{
+          .id = "editor.wrap",
+          .label = "Word Wrap",
+          .description = "Wrap long lines to the viewport width.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::Project,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = "off",
+          .enum_values = kEditorWrapValues,
       },
       SettingSpec{
           .id = "editor.colorscheme",

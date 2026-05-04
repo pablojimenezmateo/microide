@@ -44,8 +44,34 @@ void CloseIfValid(int fd) {
 }
 #endif
 
+bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
+  const auto it = relative_path.begin();
+  return it != relative_path.end() && *it == std::filesystem::path(".git");
+}
+
+bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory) {
+  return directory.filename() == ".git";
+}
+
+bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
+                                 const std::filesystem::path& root,
+                                 std::filesystem::path& relative_path) {
+  std::error_code rel_error;
+  std::filesystem::path rel = std::filesystem::relative(absolute_path, root, rel_error);
+  if (rel_error || rel.empty()) {
+    return false;
+  }
+  rel = rel.lexically_normal();
+  if (IsGitMetadataRelativePath(rel)) {
+    return false;
+  }
+  relative_path = std::move(rel);
+  return true;
+}
+
 // Build an initial IndexUpdateBatch by scanning root recursively.
-IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root) {
+IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
+                                   const std::atomic<bool>* stop_requested = nullptr) {
   IndexUpdateBatch batch;
   batch.is_initial = true;
 
@@ -53,15 +79,25 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root) {
   constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
   for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
        !error && it != end; it.increment(error)) {
+    if (stop_requested != nullptr &&
+        stop_requested->load(std::memory_order_acquire)) {
+      break;
+    }
     std::error_code status_error;
     const auto status = it->status(status_error);
-    if (status_error || !std::filesystem::is_regular_file(status)) {
+    if (status_error) {
+      continue;
+    }
+    if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+      it.disable_recursion_pending();
+      continue;
+    }
+    if (!std::filesystem::is_regular_file(status)) {
       continue;
     }
     const std::filesystem::path abs_path = it->path().lexically_normal();
-    std::error_code rel_error;
-    const std::filesystem::path rel = std::filesystem::relative(abs_path, root, rel_error);
-    if (rel_error || rel.empty()) {
+    std::filesystem::path rel;
+    if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
       continue;
     }
 
@@ -106,13 +142,24 @@ struct FileIndexWatcher::Impl {
   bool poll_mode = false;
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
+  std::thread initial_scan_worker;
+  std::atomic<bool> stop_initial_scan{false};
 
   ~Impl() {
     StopNative();
     StopPoll();
   }
 
+  void StopInitialScan() {
+    stop_initial_scan.store(true, std::memory_order_release);
+    if (initial_scan_worker.joinable()) {
+      initial_scan_worker.join();
+    }
+    stop_initial_scan.store(false, std::memory_order_release);
+  }
+
   void StopNative() {
+    StopInitialScan();
     if (!native_active) {
       return;
     }
@@ -147,8 +194,22 @@ struct FileIndexWatcher::Impl {
     }
   }
 
+  void StartInitialScan() {
+    StopInitialScan();
+    stop_initial_scan.store(false, std::memory_order_release);
+    initial_scan_worker = std::thread([this]() {
+      IndexUpdateBatch initial = BuildInitialBatch(root, &stop_initial_scan);
+      if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
+        callback(std::move(initial));
+      }
+    });
+  }
+
   // Add inotify watches recursively for dir and all subdirectories.
   bool AddWatchRecursive(const std::filesystem::path& dir) {
+    if (ShouldSkipWatchedDirectory(dir)) {
+      return true;
+    }
     constexpr std::uint32_t kMask = IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF |
                                      IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_ATTRIB;
     const int wd = inotify_add_watch(inotify_fd, dir.c_str(), kMask);
@@ -166,7 +227,14 @@ struct FileIndexWatcher::Impl {
          !error && it != end; it.increment(error)) {
       std::error_code status_error;
       const auto status = it->status(status_error);
-      if (status_error || !std::filesystem::is_directory(status)) {
+      if (status_error) {
+        continue;
+      }
+      if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+        it.disable_recursion_pending();
+        continue;
+      }
+      if (!std::filesystem::is_directory(status)) {
         continue;
       }
       const std::filesystem::path subdir = it->path().lexically_normal();
@@ -272,10 +340,8 @@ struct FileIndexWatcher::Impl {
                 AddWatchRecursive(abs_path);
                 // No file change to report
               } else if (!is_dir) {
-                std::error_code rel_error;
-                const std::filesystem::path rel =
-                    std::filesystem::relative(abs_path, root, rel_error);
-                if (!rel_error && !rel.empty()) {
+                std::filesystem::path rel;
+                if (TryBuildTrackedRelativePath(abs_path, root, rel)) {
                   IndexUpdateBatch::Change change;
                   if ((ev->mask & (IN_DELETE | IN_MOVED_FROM | IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
                     change.kind = IndexUpdateBatch::Kind::Deleted;
@@ -342,13 +408,19 @@ struct FileIndexWatcher::Impl {
            !error && it != end; it.increment(error)) {
         std::error_code status_error;
         const auto status = it->status(status_error);
-        if (status_error || !std::filesystem::is_regular_file(status)) {
+        if (status_error) {
+          continue;
+        }
+        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+          it.disable_recursion_pending();
+          continue;
+        }
+        if (!std::filesystem::is_regular_file(status)) {
           continue;
         }
         const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::error_code rel_error;
-        const auto rel = std::filesystem::relative(abs_path, root, rel_error);
-        if (rel_error || rel.empty()) {
+        std::filesystem::path rel;
+        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
           continue;
         }
         std::error_code mtime_error;
@@ -496,9 +568,8 @@ struct FileIndexWatcher::Impl {
         continue;
       }
 
-      std::error_code rel_error;
-      const auto rel = std::filesystem::relative(abs_path, self->root, rel_error);
-      if (rel_error || rel.empty()) {
+      std::filesystem::path rel;
+      if (!TryBuildTrackedRelativePath(abs_path, self->root, rel)) {
         continue;
       }
 
@@ -590,13 +661,19 @@ struct FileIndexWatcher::Impl {
            !error && it != end; it.increment(error)) {
         std::error_code status_error;
         const auto status = it->status(status_error);
-        if (status_error || !std::filesystem::is_regular_file(status)) {
+        if (status_error) {
+          continue;
+        }
+        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+          it.disable_recursion_pending();
+          continue;
+        }
+        if (!std::filesystem::is_regular_file(status)) {
           continue;
         }
         const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::error_code rel_error;
-        const auto rel = std::filesystem::relative(abs_path, root, rel_error);
-        if (rel_error || rel.empty()) {
+        std::filesystem::path rel;
+        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
           continue;
         }
         std::error_code mtime_error;
@@ -787,6 +864,13 @@ struct FileIndexWatcher::Impl {
             reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(ptr);
         const std::wstring wname(info->FileName, info->FileNameLength / sizeof(WCHAR));
         const std::filesystem::path rel = std::filesystem::path(wname).lexically_normal();
+        if (rel.empty() || IsGitMetadataRelativePath(rel)) {
+          if (info->NextEntryOffset == 0) {
+            break;
+          }
+          ptr += info->NextEntryOffset;
+          continue;
+        }
 
         IndexUpdateBatch::Change change;
         if (info->Action == FILE_ACTION_REMOVED || info->Action == FILE_ACTION_RENAMED_OLD_NAME) {
@@ -852,13 +936,19 @@ struct FileIndexWatcher::Impl {
            !error && it != end; it.increment(error)) {
         std::error_code status_error;
         const auto status = it->status(status_error);
-        if (status_error || !std::filesystem::is_regular_file(status)) {
+        if (status_error) {
+          continue;
+        }
+        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+          it.disable_recursion_pending();
+          continue;
+        }
+        if (!std::filesystem::is_regular_file(status)) {
           continue;
         }
         const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::error_code rel_error;
-        const auto rel = std::filesystem::relative(abs_path, root, rel_error);
-        if (rel_error || rel.empty()) {
+        std::filesystem::path rel;
+        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
           continue;
         }
         std::error_code mtime_error;
@@ -959,13 +1049,19 @@ struct FileIndexWatcher::Impl {
            !error && it != end; it.increment(error)) {
         std::error_code status_error;
         const auto status = it->status(status_error);
-        if (status_error || !std::filesystem::is_regular_file(status)) {
+        if (status_error) {
+          continue;
+        }
+        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+          it.disable_recursion_pending();
+          continue;
+        }
+        if (!std::filesystem::is_regular_file(status)) {
           continue;
         }
         const std::filesystem::path abs_path = it->path().lexically_normal();
-        std::error_code rel_error;
-        const auto rel = std::filesystem::relative(abs_path, root, rel_error);
-        if (rel_error || rel.empty()) {
+        std::filesystem::path rel;
+        if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
           continue;
         }
         std::error_code mtime_error;
@@ -1050,16 +1146,19 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   }
   impl_->root = absolute_root.lexically_normal();
 
-  // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
-  if (impl_->callback) {
-    IndexUpdateBatch initial = BuildInitialBatch(impl_->root);
-    impl_->callback(std::move(initial));
-  }
-
-  // Try native backend
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+  // Try native backend
   if (impl_->StartNative()) {
     impl_->is_native.store(true, std::memory_order_release);
+#if defined(__linux__)
+    impl_->StartInitialScan();
+#else
+    // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
+    if (impl_->callback) {
+      IndexUpdateBatch initial = BuildInitialBatch(impl_->root);
+      impl_->callback(std::move(initial));
+    }
+#endif
     return true;
   }
 
@@ -1069,6 +1168,15 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   }
 #endif
 
+#if defined(__linux__)
+  impl_->StartInitialScan();
+#else
+  // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
+  if (impl_->callback) {
+    IndexUpdateBatch initial = BuildInitialBatch(impl_->root);
+    impl_->callback(std::move(initial));
+  }
+#endif
   impl_->StartPollFallback();
   return true;
 }

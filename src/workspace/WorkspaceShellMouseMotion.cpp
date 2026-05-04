@@ -4,6 +4,7 @@
 #include <cmath>
 #include <optional>
 
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
@@ -15,6 +16,7 @@
 namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseMotion");
   const auto ensure_redraw = [this](auto request_redraw) {
     if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();
@@ -25,7 +27,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const std::optional<EditorHoverTarget> previous_hover_target = active_editor_hover_target_;
     const bool previous_action_hovered =
         last_mouse_position_valid_ && EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
-    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+    {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::HandleMouseMotion::UpdateMouseCursor");
+      UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+    }
     const bool current_action_hovered =
         EditorHoverPopupPrimaryActionHovered(static_cast<float>(event.motion.x),
                                              static_cast<float>(event.motion.y));
@@ -180,6 +186,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 }
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseWheel");
   const auto ensure_redraw = [this](auto request_redraw) {
     if (!pending_render_invalidation_.HasAnyRedraw()) {
       request_redraw();

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "editor/EditorViewRenderer.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -21,6 +22,7 @@ EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
 
 bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
+  util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleButtonDown");
   const auto dividers = operations_.compute_editor_split_divider_layouts(layout.editor_surface);
   const auto divider_it = std::find_if(
       dividers.begin(), dividers.end(),
@@ -96,8 +98,20 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       static_cast<std::size_t>(std::max(
           0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
 
-  viewport->MoveCursorToVisualColumn(line, visual_column,
-                                     (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+  const SDL_Keymod modifiers = SDL_GetModState();
+  const bool alt_left_click =
+      event.button.button == SDL_BUTTON_LEFT && (modifiers & SDL_KMOD_ALT) != 0;
+  const editor::TextPosition previous_primary{viewport->cursor_line(), viewport->cursor_column()};
+  {
+    util::PerformanceTrace::Scope move_scope(
+        "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
+    viewport->MoveCursorToVisualColumn(line, visual_column,
+                                       !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
+  }
+  if (alt_left_click) {
+    viewport->AddSecondaryCaret(previous_primary.line, previous_primary.column);
+    viewport->ClearSelection();
+  }
   if (event.button.clicks == 2) {
     viewport->SelectWordAtCursor();
   } else if (event.button.clicks >= 3) {
@@ -123,6 +137,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return true;
   }
   operations_.request_focused_editor_redraw();
+  if (alt_left_click) {
+    return true;
+  }
   interaction_state_.mouse_selecting = true;
   return true;
 }

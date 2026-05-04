@@ -28,7 +28,6 @@ void SidebarCoordinator::RefreshGit() {
   state_.sidebar.git.base_ref.clear();
   state_.sidebar.git.base_label.clear();
   state_.sidebar.git.repo_available = false;
-  state_.sidebar.git.refreshing = false;
   state_.sidebar.git.selected_index = 0;
   if (project_root_.empty()) {
     return;
@@ -87,7 +86,11 @@ void SidebarCoordinator::RefreshGit() {
   state_.sidebar.git.repo_available = snapshot.repo_available;
   state_.sidebar.git.base_ref = snapshot.base_ref;
   state_.sidebar.git.base_label = snapshot.base_label;
-  state_.sidebar.git.refreshing = false;
+  // Preserve refresh-in-flight state when data was rendered from a synchronous
+  // fallback while an async refresh request is still pending.
+  if (has_snapshot) {
+    state_.sidebar.git.refreshing = false;
+  }
 
   for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
     if (state_.sidebar.git.entries[i].path == previous_path &&

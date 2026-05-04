@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/Parse.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspacePathUtils.h"
 
@@ -89,6 +90,7 @@ const TabEntry::EditorTabState::EditorViewState* TabCoordinator::FindEditorViewS
 }
 
 bool TabCoordinator::RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view) {
+  util::PerformanceTrace::Scope perf_scope("TabCoordinator::RestoreEditorView");
   if (!view.needs_restore) {
     return true;
   }
@@ -97,8 +99,11 @@ bool TabCoordinator::RestoreEditorView(TabEntry::EditorTabState::EditorViewState
   }
 
   editor::TextViewport loaded_view;
-  if (!loaded_view.OpenFile(view.restored_path)) {
-    return false;
+  {
+    util::PerformanceTrace::Scope open_scope("TabCoordinator::RestoreEditorView::OpenFile");
+    if (!loaded_view.OpenFile(view.restored_path)) {
+      return false;
+    }
   }
   loaded_view.MoveCursorTo(view.restored_cursor_line, view.restored_cursor_column);
   loaded_view.SetScrollLine(view.restored_scroll_line);
@@ -276,6 +281,7 @@ bool TabCoordinator::CycleEditorSplit(int delta) {
 }
 
 bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
+  util::PerformanceTrace::Scope perf_scope("TabCoordinator::EnsureEditorTabLoaded");
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return false;
   }
@@ -283,6 +289,13 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
   auto& editor_state = *tab.editor_state;
   bool loaded_any = false;
   bool active_loaded = false;
+  if (auto* active_view = FindEditorViewState(editor_state, editor_state.active_leaf_id);
+      active_view != nullptr && active_view->needs_restore) {
+    if (RestoreEditorView(*active_view)) {
+      loaded_any = true;
+      active_loaded = true;
+    }
+  }
   for (auto& view : editor_state.views) {
     if (!view.needs_restore) {
       loaded_any = true;
@@ -290,12 +303,6 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
         active_loaded = true;
       }
       continue;
-    }
-    if (RestoreEditorView(view)) {
-      loaded_any = true;
-      if (view.leaf_id == editor_state.active_leaf_id) {
-        active_loaded = true;
-      }
     }
   }
 

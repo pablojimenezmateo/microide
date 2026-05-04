@@ -25,6 +25,15 @@ bool WaitFor(std::mutex& mutex, std::condition_variable& cv, Pred pred,
   return cv.wait_for(lock, timeout, pred);
 }
 
+bool BatchContainsPath(const IndexUpdateBatch& batch, const std::filesystem::path& relative_path) {
+  for (const auto& change : batch.changes) {
+    if (change.entry.relative_path == relative_path) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void TestFileIndexWatcherInitialBatchContainsExistingFiles() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -46,7 +55,19 @@ void TestFileIndexWatcherInitialBatchContainsExistingFiles() {
   const bool ok = watcher.Watch(root);
   Expect(ok, "FileIndexWatcher::Watch should succeed on an existing directory");
 
-  // The initial batch fires synchronously during Watch(), so it's already in batches.
+  const bool found_initial_batch = WaitFor(
+      mutex, cv,
+      [&] {
+        for (const auto& batch : batches) {
+          if (batch.is_initial) {
+            return true;
+          }
+        }
+        return false;
+      },
+      std::chrono::milliseconds(1200));
+  Expect(found_initial_batch, "FileIndexWatcher should emit an initial batch with is_initial=true");
+
   bool found_initial = false;
   {
     std::lock_guard lock(mutex);
@@ -65,7 +86,7 @@ void TestFileIndexWatcherInitialBatchContainsExistingFiles() {
       }
     }
   }
-  Expect(found_initial, "FileIndexWatcher should emit an initial batch with is_initial=true");
+  Expect(found_initial, "initial batch should remain available after emission");
 
   watcher.Unwatch();
 }
@@ -108,6 +129,110 @@ void TestFileIndexWatcherDetectsCreatedFile() {
     Expect(created_rel == std::filesystem::path("new_file.txt"),
            "FileIndexWatcher should report correct relative path for created file");
   }
+
+  watcher.Unwatch();
+}
+
+void TestFileIndexWatcherSkipsGitMetadataInInitialBatch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / ".git" / "HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / ".git" / "config", "[core]\n");
+  WriteFile(root / "README.md", "# Project\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<IndexUpdateBatch> batches;
+
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    batches.push_back(std::move(batch));
+    cv.notify_all();
+  });
+
+  Expect(watcher.Watch(root), "Watch should succeed on a git-backed directory");
+
+  const bool found_initial_batch = WaitFor(
+      mutex, cv,
+      [&] {
+        for (const auto& batch : batches) {
+          if (batch.is_initial) {
+            return true;
+          }
+        }
+        return false;
+      },
+      std::chrono::milliseconds(1200));
+  Expect(found_initial_batch, "FileIndexWatcher should emit an initial batch for git-backed projects");
+
+  bool found_initial = false;
+  bool saw_readme = false;
+  bool saw_git_head = false;
+  bool saw_git_config = false;
+  {
+    std::lock_guard lock(mutex);
+    for (const auto& batch : batches) {
+      if (!batch.is_initial) {
+        continue;
+      }
+      found_initial = true;
+      saw_readme = saw_readme || BatchContainsPath(batch, std::filesystem::path("README.md"));
+      saw_git_head = saw_git_head || BatchContainsPath(batch, std::filesystem::path(".git/HEAD"));
+      saw_git_config =
+          saw_git_config || BatchContainsPath(batch, std::filesystem::path(".git/config"));
+    }
+  }
+
+  Expect(found_initial, "initial batch should remain available for git-backed projects");
+  Expect(saw_readme, "initial IndexUpdateBatch should still include visible project files");
+  Expect(!saw_git_head,
+         "initial IndexUpdateBatch should skip .git metadata files such as HEAD");
+  Expect(!saw_git_config,
+         "initial IndexUpdateBatch should skip .git metadata files such as config");
+
+  watcher.Unwatch();
+}
+
+void TestFileIndexWatcherIgnoresGitMetadataUpdates() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "watch_git_metadata";
+  std::filesystem::create_directories(root / ".git");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool saw_project_file = false;
+  bool saw_git_metadata = false;
+
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    if (batch.is_initial) {
+      return;
+    }
+    std::lock_guard lock(mutex);
+    for (const auto& change : batch.changes) {
+      if (change.entry.relative_path == std::filesystem::path("visible.txt")) {
+        saw_project_file = true;
+      }
+      if (!change.entry.relative_path.empty() &&
+          *change.entry.relative_path.begin() == std::filesystem::path(".git")) {
+        saw_git_metadata = true;
+      }
+    }
+    cv.notify_all();
+  });
+
+  Expect(watcher.Watch(root), "Watch should succeed on a repository root");
+
+  WriteFile(root / ".git" / "index.lock", "lock\n");
+  WriteFile(root / "visible.txt", "tracked\n");
+
+  const bool notified =
+      WaitFor(mutex, cv, [&] { return saw_project_file; }, std::chrono::milliseconds(1200));
+  Expect(notified,
+         "FileIndexWatcher should still detect visible project files after git metadata changes");
+  Expect(!saw_git_metadata,
+         "FileIndexWatcher should not report .git metadata updates such as index.lock");
 
   watcher.Unwatch();
 }
@@ -180,6 +305,10 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherInitialBatchContainsExistingFiles);
   AddTest(tests, "FileIndexWatcher/DetectsCreatedFile",
           TestFileIndexWatcherDetectsCreatedFile);
+  AddTest(tests, "FileIndexWatcher/SkipsGitMetadataInInitialBatch",
+          TestFileIndexWatcherSkipsGitMetadataInInitialBatch);
+  AddTest(tests, "FileIndexWatcher/IgnoresGitMetadataUpdates",
+          TestFileIndexWatcherIgnoresGitMetadataUpdates);
   AddTest(tests, "FileIndexWatcher/DetectsDeletedFile",
           TestFileIndexWatcherDetectsDeletedFile);
   AddTest(tests, "FileIndexWatcher/UnwatchStopsNotifications",

@@ -1,6 +1,7 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <optional>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "editor/RuntimeSyntaxData.h"
+#include "util/PerformanceTrace.h"
 #include "util/RegexUtil.h"
 
 namespace microide::editor::runtime_syntax {
@@ -151,6 +153,16 @@ bool RegexMatches(std::string_view text, const CompiledRegex& pattern) {
   return FindFirstRegex(text, pattern).has_value();
 }
 
+struct FiletypeCandidateSet {
+  const std::string_view* names = nullptr;
+  std::size_t count = 0;
+};
+
+template <std::size_t N>
+constexpr FiletypeCandidateSet MakeCandidateSet(const std::array<std::string_view, N>& names) {
+  return FiletypeCandidateSet{names.data(), names.size()};
+}
+
 struct Rule {
   GeneratedRuleKind kind = GeneratedRuleKind::Pattern;
   SyntaxTokenKind group = SyntaxTokenKind::Plain;
@@ -192,6 +204,14 @@ bool StartsWith(std::string_view text, std::string_view prefix) {
 
 bool Contains(std::string_view text, std::string_view needle) {
   return text.find(needle) != std::string_view::npos;
+}
+
+std::string ToLower(std::string_view text) {
+  std::string lowered(text);
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return lowered;
 }
 
 SyntaxTokenKind TokenKindForGroupName(std::string_view group_name) {
@@ -767,6 +787,207 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
                                  const std::filesystem::path& path,
                                  const std::vector<std::string>* lines,
                                  std::string_view first_line) {
+  static constexpr std::array<std::string_view, 1> kCCandidates = {"c"};
+  static constexpr std::array<std::string_view, 1> kCMakeCandidates = {"cmake"};
+  static constexpr std::array<std::string_view, 1> kCPlusPlusCandidates = {"c++"};
+  static constexpr std::array<std::string_view, 1> kCSharpCandidates = {"csharp"};
+  static constexpr std::array<std::string_view, 1> kDockerfileCandidates = {"dockerfile"};
+  static constexpr std::array<std::string_view, 1> kGoCandidates = {"go"};
+  static constexpr std::array<std::string_view, 1> kGoModCandidates = {"gomod"};
+  static constexpr std::array<std::string_view, 1> kHcCandidates = {"hc"};
+  static constexpr std::array<std::string_view, 1> kJavaCandidates = {"java"};
+  static constexpr std::array<std::string_view, 1> kJavaScriptCandidates = {"javascript"};
+  static constexpr std::array<std::string_view, 1> kJsonCandidates = {"json"};
+  static constexpr std::array<std::string_view, 1> kKotlinCandidates = {"kotlin"};
+  static constexpr std::array<std::string_view, 1> kLuaCandidates = {"lua"};
+  static constexpr std::array<std::string_view, 1> kMakefileCandidates = {"makefile"};
+  static constexpr std::array<std::string_view, 1> kMarkdownCandidates = {"markdown"};
+  static constexpr std::array<std::string_view, 1> kMesonCandidates = {"meson"};
+  static constexpr std::array<std::string_view, 1> kObjectiveCCandidates = {"objective-c"};
+  static constexpr std::array<std::string_view, 1> kPython2Candidates = {"python2"};
+  static constexpr std::array<std::string_view, 1> kPythonCandidates = {"python"};
+  static constexpr std::array<std::string_view, 1> kRubyCandidates = {"ruby"};
+  static constexpr std::array<std::string_view, 1> kRustCandidates = {"rust"};
+  static constexpr std::array<std::string_view, 1> kShellCandidates = {"shell"};
+  static constexpr std::array<std::string_view, 1> kSwiftCandidates = {"swift"};
+  static constexpr std::array<std::string_view, 1> kTomlCandidates = {"toml"};
+  static constexpr std::array<std::string_view, 1> kTypeScriptCandidates = {"typescript"};
+  static constexpr std::array<std::string_view, 1> kYamlCandidates = {"yaml"};
+  static constexpr std::array<std::string_view, 2> kCPlusPlusHHCandidates = {"c++", "hc"};
+  static constexpr std::array<std::string_view, 2> kObjectiveCMCandidates = {"objective-c",
+                                                                              "octave"};
+  static constexpr std::array<std::string_view, 4> kHeaderCandidates = {"c", "c++", "hc",
+                                                                         "objective-c"};
+
+  const auto definition_id_for_filetype = [&](std::string_view filetype) -> std::uint32_t {
+    for (std::size_t i = 0; i < registry.definitions.size(); ++i) {
+      if (registry.definitions[i].filetype == filetype) {
+        return static_cast<std::uint32_t>(i + 1);
+      }
+    }
+    return 0;
+  };
+  const auto resolve_from_matches = [&](const std::vector<std::uint32_t>& matches,
+                                        std::string_view signature_scope_label) {
+    if (matches.empty()) {
+      return registry.default_definition_id;
+    }
+    if (matches.size() == 1 || lines == nullptr) {
+      return matches.front();
+    }
+
+    const std::size_t line_limit = std::min(lines->size(), kSignatureDetectLineLimit);
+    util::PerformanceTrace::Scope signature_scope(signature_scope_label);
+    for (const std::uint32_t definition_id : matches) {
+      const Definition* definition = DefinitionById(registry, definition_id);
+      if (definition == nullptr || !definition->signature_regex.valid()) {
+        continue;
+      }
+      for (std::size_t i = 0; i < line_limit; ++i) {
+        if (RegexMatches((*lines)[i], definition->signature_regex)) {
+          return definition_id;
+        }
+      }
+    }
+
+    return matches.front();
+  };
+  const auto try_fast_candidates =
+      [&](FiletypeCandidateSet candidates) -> std::optional<std::uint32_t> {
+    if (candidates.names == nullptr || candidates.count == 0) {
+      return std::nullopt;
+    }
+
+    const std::string path_text = path.generic_string();
+    util::PerformanceTrace::Scope fast_scope(
+        "RuntimeSyntaxRegistry::DetectDefinitionId::FastFilenameMatches");
+    std::vector<std::uint32_t> matches;
+    matches.reserve(candidates.count);
+    for (std::size_t i = 0; i < candidates.count; ++i) {
+      const std::uint32_t definition_id = definition_id_for_filetype(candidates.names[i]);
+      if (definition_id == 0) {
+        continue;
+      }
+      const Definition* definition = DefinitionById(registry, definition_id);
+      if (definition == nullptr || !definition->filename_regex.valid()) {
+        continue;
+      }
+      if (RegexMatches(path_text, definition->filename_regex)) {
+        matches.push_back(definition_id);
+      }
+    }
+    if (matches.empty()) {
+      return std::nullopt;
+    }
+    return resolve_from_matches(matches,
+                                "RuntimeSyntaxRegistry::DetectDefinitionId::FastSignatureScan");
+  };
+  const auto fast_candidate_set_for_path =
+      [&](const std::filesystem::path& candidate_path) -> std::optional<FiletypeCandidateSet> {
+    const std::string lower_name = ToLower(candidate_path.filename().string());
+    const std::string lower_extension = ToLower(candidate_path.extension().string());
+
+    if (lower_name == "cmakelists.txt") {
+      return MakeCandidateSet(kCMakeCandidates);
+    }
+    if (lower_name == "dockerfile" || lower_name == "containerfile") {
+      return MakeCandidateSet(kDockerfileCandidates);
+    }
+    if (lower_name == "go.mod") {
+      return MakeCandidateSet(kGoModCandidates);
+    }
+    if (lower_name == "makefile") {
+      return MakeCandidateSet(kMakefileCandidates);
+    }
+    if (lower_name == "meson.build" || lower_name == "meson_options.txt" ||
+        lower_name == "meson.options") {
+      return MakeCandidateSet(kMesonCandidates);
+    }
+
+    if (lower_extension == ".c") {
+      return MakeCandidateSet(kCCandidates);
+    }
+    if (lower_extension == ".cc" || lower_extension == ".cpp" || lower_extension == ".cxx" ||
+        lower_extension == ".hpp" || lower_extension == ".hxx") {
+      return MakeCandidateSet(kCPlusPlusCandidates);
+    }
+    if (lower_extension == ".cs") {
+      return MakeCandidateSet(kCSharpCandidates);
+    }
+    if (lower_extension == ".def" || lower_extension == ".h" || lower_extension == ".ii") {
+      return MakeCandidateSet(kHeaderCandidates);
+    }
+    if (lower_extension == ".go") {
+      return MakeCandidateSet(kGoCandidates);
+    }
+    if (lower_extension == ".hc") {
+      return MakeCandidateSet(kHcCandidates);
+    }
+    if (lower_extension == ".hh") {
+      return MakeCandidateSet(kCPlusPlusHHCandidates);
+    }
+    if (lower_extension == ".java") {
+      return MakeCandidateSet(kJavaCandidates);
+    }
+    if (lower_extension == ".js" || lower_extension == ".mjs" || lower_extension == ".cjs") {
+      return MakeCandidateSet(kJavaScriptCandidates);
+    }
+    if (lower_extension == ".json") {
+      return MakeCandidateSet(kJsonCandidates);
+    }
+    if (lower_extension == ".kt" || lower_extension == ".kts") {
+      return MakeCandidateSet(kKotlinCandidates);
+    }
+    if (lower_extension == ".lua") {
+      return MakeCandidateSet(kLuaCandidates);
+    }
+    if (lower_extension == ".m") {
+      return MakeCandidateSet(kObjectiveCMCandidates);
+    }
+    if (lower_extension == ".markdown" || lower_extension == ".md" || lower_extension == ".mkd" ||
+        lower_extension == ".mkdn") {
+      return MakeCandidateSet(kMarkdownCandidates);
+    }
+    if (lower_extension == ".mm") {
+      return MakeCandidateSet(kObjectiveCCandidates);
+    }
+    if (lower_extension == ".py" || lower_extension == ".py3" || lower_extension == ".pyw") {
+      return MakeCandidateSet(kPythonCandidates);
+    }
+    if (lower_extension == ".py2") {
+      return MakeCandidateSet(kPython2Candidates);
+    }
+    if (lower_extension == ".rb" || lower_extension == ".rake") {
+      return MakeCandidateSet(kRubyCandidates);
+    }
+    if (lower_extension == ".rs") {
+      return MakeCandidateSet(kRustCandidates);
+    }
+    if (lower_extension == ".sh" || lower_extension == ".bash") {
+      return MakeCandidateSet(kShellCandidates);
+    }
+    if (lower_extension == ".swift") {
+      return MakeCandidateSet(kSwiftCandidates);
+    }
+    if (lower_extension == ".toml") {
+      return MakeCandidateSet(kTomlCandidates);
+    }
+    if (lower_extension == ".ts" || lower_extension == ".tsx") {
+      return MakeCandidateSet(kTypeScriptCandidates);
+    }
+    if (lower_extension == ".yaml" || lower_extension == ".yml") {
+      return MakeCandidateSet(kYamlCandidates);
+    }
+
+    return std::nullopt;
+  };
+
+  if (const auto fast_candidates = fast_candidate_set_for_path(path); fast_candidates.has_value()) {
+    if (const auto fast_match = try_fast_candidates(*fast_candidates); fast_match.has_value()) {
+      return *fast_match;
+    }
+  }
+
   const std::string path_text = path.generic_string();
   const std::string_view header_line =
       lines != nullptr && !lines->empty() ? std::string_view(lines->front()) : first_line;
@@ -776,43 +997,28 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
   filename_matches.reserve(registry.definitions.size());
   header_matches.reserve(registry.definitions.size());
 
-  for (std::size_t i = 0; i < registry.definitions.size(); ++i) {
-    const Definition& definition = registry.definitions[i];
-    const std::uint32_t definition_id = static_cast<std::uint32_t>(i + 1);
+  {
+    util::PerformanceTrace::Scope generic_scope(
+        "RuntimeSyntaxRegistry::DetectDefinitionId::GenericFilenameHeaderMatches");
+    for (std::size_t i = 0; i < registry.definitions.size(); ++i) {
+      const Definition& definition = registry.definitions[i];
+      const std::uint32_t definition_id = static_cast<std::uint32_t>(i + 1);
 
-    if (definition.filename_regex.valid() && RegexMatches(path_text, definition.filename_regex)) {
-      filename_matches.push_back(definition_id);
-      continue;
-    }
-    if (filename_matches.empty() && definition.header_regex.valid() &&
-        RegexMatches(header_line, definition.header_regex)) {
-      header_matches.push_back(definition_id);
+      if (definition.filename_regex.valid() && RegexMatches(path_text, definition.filename_regex)) {
+        filename_matches.push_back(definition_id);
+        continue;
+      }
+      if (filename_matches.empty() && definition.header_regex.valid() &&
+          RegexMatches(header_line, definition.header_regex)) {
+        header_matches.push_back(definition_id);
+      }
     }
   }
 
   const std::vector<std::uint32_t>& matches =
       filename_matches.empty() ? header_matches : filename_matches;
-  if (matches.empty()) {
-    return registry.default_definition_id;
-  }
-  if (matches.size() == 1 || lines == nullptr) {
-    return matches.front();
-  }
-
-  const std::size_t line_limit = std::min(lines->size(), kSignatureDetectLineLimit);
-  for (const std::uint32_t definition_id : matches) {
-    const Definition* definition = DefinitionById(registry, definition_id);
-    if (definition == nullptr || !definition->signature_regex.valid()) {
-      continue;
-    }
-    for (std::size_t i = 0; i < line_limit; ++i) {
-      if (RegexMatches((*lines)[i], definition->signature_regex)) {
-        return definition_id;
-      }
-    }
-  }
-
-  return matches.front();
+  return resolve_from_matches(matches,
+                              "RuntimeSyntaxRegistry::DetectDefinitionId::GenericSignatureScan");
 }
 
 }  // namespace
@@ -834,11 +1040,17 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
   };
 }
 
+void EnsureInitialized() {
+  util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::EnsureInitialized");
+  (void)GetRegistry();
+}
+
 std::size_t RegistryRevision() {
   return MutableRegistryRevision();
 }
 
 SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines) {
+  util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::DetectState");
   const Registry& registry = GetRegistry();
   return SyntaxState{
       .definition_id = DetectDefinitionId(registry, path, &lines, {}),
@@ -857,6 +1069,7 @@ HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
                               std::string_view first_line) {
+  util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::HighlightLine");
   const Registry& registry = GetRegistry();
 
   const std::uint32_t definition_id =
@@ -879,7 +1092,10 @@ HighlightedLine HighlightLine(std::string_view line,
     }
   }
 
-  HighlightTopLevel(registry, definition_id, line, cursor, result.tokens, &result.end_state);
+  {
+    util::PerformanceTrace::Scope top_scope("RuntimeSyntaxRegistry::HighlightLine::TopLevel");
+    HighlightTopLevel(registry, definition_id, line, cursor, result.tokens, &result.end_state);
+  }
   return result;
 }
 
@@ -887,6 +1103,7 @@ SyntaxState AdvanceState(std::string_view line,
                          const std::filesystem::path& path,
                          const SyntaxState& state,
                          std::string_view first_line) {
+  util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::AdvanceState");
   const Registry& registry = GetRegistry();
   const std::uint32_t definition_id =
       state.definition_id != 0 ? state.definition_id
@@ -906,7 +1123,10 @@ SyntaxState AdvanceState(std::string_view line,
     }
   }
 
-  HighlightTopLevel(registry, definition_id, line, cursor, no_tokens, &end_state);
+  {
+    util::PerformanceTrace::Scope top_scope("RuntimeSyntaxRegistry::AdvanceState::TopLevel");
+    HighlightTopLevel(registry, definition_id, line, cursor, no_tokens, &end_state);
+  }
   return end_state;
 }
 

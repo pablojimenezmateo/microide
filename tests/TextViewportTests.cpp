@@ -255,6 +255,126 @@ void TestTextViewportUndoRedoPreservesLatestViewState() {
          "redo should restore the latest scroll position from before undo");
 }
 
+void TestTextViewportUndoRedoPreservesSecondaryCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/multi-caret-history.txt");
+  viewport.MoveCursorTo(1, 2);
+  viewport.SetSecondaryCarets({{0, 1}, {2, 3}});
+
+  viewport.InsertText("X");
+
+  Expect(viewport.has_multiple_carets(),
+         "multi-caret fixture should still have secondary carets after edit");
+  Expect(viewport.secondary_carets().size() == 2,
+         "multi-caret fixture should keep the expected secondary caret count");
+
+  Expect(viewport.Undo(), "undo should succeed after an edit with secondary carets");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "undo should restore the pre-edit primary caret position");
+  Expect(viewport.secondary_carets().size() == 2 &&
+             viewport.secondary_carets()[0] == microide::editor::TextPosition{0, 1} &&
+             viewport.secondary_carets()[1] == microide::editor::TextPosition{2, 3},
+         "undo should restore the pre-edit secondary caret set");
+
+  Expect(viewport.Redo(), "redo should succeed after undoing an edit with secondary carets");
+  Expect(viewport.secondary_carets().size() == 2 &&
+             viewport.secondary_carets()[0] == microide::editor::TextPosition{0, 1} &&
+             viewport.secondary_carets()[1] == microide::editor::TextPosition{2, 3},
+         "redo should restore the secondary caret set captured at edit time");
+}
+
+void TestTextViewportMultiCaretInsertAndUndoAreAtomic() {
+  TextViewport viewport;
+  viewport.LoadContent("abc\ndef\nghi\n", "/tmp/multi-caret-insert.txt");
+  viewport.MoveCursorTo(1, 1);
+  viewport.SetSecondaryCarets({{0, 1}, {2, 1}});
+
+  viewport.InsertText("X");
+  Expect(viewport.lines()[0] == "aXbc" && viewport.lines()[1] == "dXef" &&
+             viewport.lines()[2] == "gXhi",
+         "multi-caret insert should fan out to primary and secondary caret positions");
+
+  Expect(viewport.Undo(), "undo should succeed after a multi-caret insert");
+  Expect(viewport.lines()[0] == "abc" && viewport.lines()[1] == "def" &&
+             viewport.lines()[2] == "ghi",
+         "undo should revert all multi-caret insertions atomically");
+}
+
+void TestTextViewportMultiCaretBackspaceAndDeleteForward() {
+  TextViewport viewport;
+  viewport.LoadContent("abcd\nefgh\n", "/tmp/multi-caret-delete.txt");
+  viewport.MoveCursorTo(0, 2);
+  viewport.SetSecondaryCarets({{1, 2}});
+
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == "acd" && viewport.lines()[1] == "egh",
+         "multi-caret backspace should erase one text column for each caret");
+
+  viewport.DeleteForward();
+  Expect(viewport.lines()[0] == "ad" && viewport.lines()[1] == "eg",
+         "multi-caret delete-forward should erase one text column for each caret");
+}
+
+void TestTextViewportMultiCaretDeleteCurrentLineIsAtomic() {
+  TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\nline3\n", "/tmp/multi-caret-line-delete.txt");
+  viewport.MoveCursorTo(1, 0);
+  viewport.SetSecondaryCarets({{3, 2}});
+
+  Expect(viewport.DeleteCurrentLine(),
+         "multi-caret delete current line should succeed");
+  const bool has_line1 = std::find(viewport.lines().begin(), viewport.lines().end(), "line1") !=
+                         viewport.lines().end();
+  const bool has_line3 = std::find(viewport.lines().begin(), viewport.lines().end(), "line3") !=
+                         viewport.lines().end();
+  Expect(!has_line1 && !has_line3,
+         "multi-caret line deletion should remove every targeted line");
+
+  Expect(viewport.Undo(), "undo should succeed after multi-caret line deletion");
+  Expect(viewport.lines().size() >= 4 && viewport.lines()[1] == "line1" &&
+             viewport.lines()[3] == "line3",
+         "undo should restore all deleted lines atomically");
+}
+
+void TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-rows.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 10);
+
+  Expect(viewport.visual_line_count() == 4,
+         "soft wrap should expose three content rows plus the trailing empty-line row");
+
+  const auto row0 = viewport.VisibleWrappedRowLayout(0);
+  const auto row1 = viewport.VisibleWrappedRowLayout(1);
+  const auto row2 = viewport.VisibleWrappedRowLayout(2);
+  Expect(row0.text.rfind("abcdefgh", 0) == 0,
+         "first wrapped row should start at the beginning of the line");
+  Expect(row1.text.rfind("ijklmnop", 0) == 0,
+         "second wrapped row should expose the middle slice");
+  Expect(row2.text.rfind("qrst", 0) == 0,
+         "last wrapped row should expose the tail slice");
+  Expect(row1.caret_visible && row1.caret_column == 2,
+         "wrapped row layout should place the caret on the correct wrapped row");
+}
+
+void TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nxyz\n", "/tmp/soft-wrap-vertical.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 10);
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 0,
+         "moving down within a wrapped logical line should keep the same logical line");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 1,
+         "moving down from the last wrapped row should continue to the next logical line");
+}
+
 void TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta", "/tmp/replace-lines.txt");
@@ -285,6 +405,42 @@ void TestTextViewportMaxVisualColumnsUpdatesIncrementally() {
   viewport.ReplaceRange({{1, 0}, {1, viewport.lines()[1].size()}}, "tiny");
   Expect(viewport.max_visual_columns() == 6,
          "shrinking the former widest line should recompute the new maximum width");
+}
+
+void TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader() {
+  const std::vector<std::string> lines = {
+      "#pragma once",
+      "namespace demo {",
+      "class Widget {",
+      "public:",
+      "  Widget() = default;",
+      "};",
+      "}",
+  };
+
+  Expect(microide::editor::runtime_syntax::DetectFiletype("/tmp/widget.h", lines) == "c++",
+         "C++ headers should still resolve to the C++ syntax definition");
+}
+
+void TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource() {
+  const std::vector<std::string> lines = {
+      "#import <Foundation/Foundation.h>",
+      "@interface Widget : NSObject",
+      "@end",
+  };
+
+  Expect(microide::editor::runtime_syntax::DetectFiletype("/tmp/widget.m", lines) == "objective-c",
+         "Objective-C source files should still resolve to the Objective-C syntax definition");
+}
+
+void TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists() {
+  const std::vector<std::string> lines = {
+      "cmake_minimum_required(VERSION 3.25)",
+      "project(microide)",
+  };
+
+  Expect(microide::editor::runtime_syntax::DetectFiletype("/tmp/CMakeLists.txt", lines) == "cmake",
+         "CMakeLists.txt should still resolve to the CMake syntax definition");
 }
 
 void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
@@ -365,10 +521,28 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints);
   AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",
           TestTextViewportUndoRedoPreservesLatestViewState);
+  AddTest(tests, "TextViewport/UndoRedoPreservesSecondaryCarets",
+          TestTextViewportUndoRedoPreservesSecondaryCarets);
+  AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
+          TestTextViewportMultiCaretInsertAndUndoAreAtomic);
+  AddTest(tests, "TextViewport/MultiCaretBackspaceAndDeleteForward",
+          TestTextViewportMultiCaretBackspaceAndDeleteForward);
+  AddTest(tests, "TextViewport/MultiCaretDeleteCurrentLineIsAtomic",
+          TestTextViewportMultiCaretDeleteCurrentLineIsAtomic);
+  AddTest(tests, "TextViewport/SoftWrapExposesVisualRowsAndWrappedCaret",
+          TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret);
+  AddTest(tests, "TextViewport/SoftWrapMoveCursorVerticalUsesWrappedRows",
+          TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
   AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",
           TestTextViewportMaxVisualColumnsUpdatesIncrementally);
+  AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
+          TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader);
+  AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource",
+          TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource);
+  AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeKeepsCMakeLists",
+          TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
 }

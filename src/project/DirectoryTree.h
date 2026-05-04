@@ -37,6 +37,7 @@ class DirectoryTree {
   void MoveSelection(int delta);
   void SetSelectedIndex(std::size_t index);
   bool SelectPath(const std::filesystem::path& path);
+  bool SelectPathIfVisible(const std::filesystem::path& path);
   void ExpandSelection();
   void CollapseSelection();
   void CollapseAll();

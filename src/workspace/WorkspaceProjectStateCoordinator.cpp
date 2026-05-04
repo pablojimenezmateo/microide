@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <mutex>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -16,7 +17,38 @@
 
 namespace microide::workspace {
 
+namespace {
+
+bool TraceProjectEventsEnabled() {
+  static const bool enabled =
+      util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_PROJECT_EVENTS");
+  return enabled;
+}
+
+void LogProjectIndexBatch(const std::filesystem::path& root,
+                          const platform::IndexUpdateBatch& batch,
+                          bool applied_to_index) {
+  if (!TraceProjectEventsEnabled()) {
+    return;
+  }
+
+  const std::string root_text = root.string();
+  const std::string first_path =
+      batch.changes.empty() ? std::string{} : batch.changes.front().entry.relative_path.string();
+  SDL_Log("microide project: file-index-batch root=%s initial=%d changes=%zu applied=%d first=%s",
+          root_text.c_str(), batch.is_initial ? 1 : 0, batch.changes.size(),
+          applied_to_index ? 1 : 0,
+          first_path.empty() ? "-" : first_path.c_str());
+}
+
+}  // namespace
+
 bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
+  std::string perf_label = "WorkspaceShell::StartFileIndexWatcherForCurrentProject";
+  if (util::PerformanceTrace::Enabled() && !context_.current_project_state.root.empty()) {
+    perf_label += "(root=" + context_.current_project_state.root.string() + ")";
+  }
+  util::PerformanceTrace::Scope perf_scope(perf_label);
   if (context_.current_project_state.root.empty()) {
     return false;
   }
@@ -24,18 +56,28 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
 
   file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
   file_index_watcher_->SetCallback([this](platform::IndexUpdateBatch batch) {
-    context_.current_project_state.file_index.ApplyBatch(batch);
-    if (!batch.is_initial) {
+    bool applied_to_index = false;
+    {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceShell::FileIndexWatcherCallback::ApplyBatch");
+      applied_to_index = context_.current_project_state.file_index.ApplyBatch(batch);
+    }
+    LogProjectIndexBatch(context_.current_project_state.root, batch, applied_to_index);
+    if (!batch.is_initial && applied_to_index) {
       file_index_has_pending_changes_.store(true, std::memory_order_release);
     }
     if (batch.is_initial &&
         file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
       app::DecrementBackgroundTaskCountAndWake();
     }
-    if (project_file_event_type_ != 0) {
+    if (project_file_event_type_ != 0 && (batch.is_initial || applied_to_index)) {
       SDL_Event event{};
       event.type = project_file_event_type_;
-      SDL_PushEvent(&event);
+      {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceShell::FileIndexWatcherCallback::PushWakeEvent");
+        SDL_PushEvent(&event);
+      }
     }
   });
 
@@ -75,7 +117,8 @@ bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
   if (!state.directory_tree.SetRoot(state.root)) {
     return false;
   }
-  if (!state.file_index.SetRoot(state.root)) {
+    if (!state.file_index.SetRoot(state.root,
+                                  project::FileIndex::RootPopulationMode::Deferred)) {
     return false;
   }
   state.file_finder.SetIndex(&state.file_index);
@@ -315,7 +358,9 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   {
     util::StartupTrace::Scope index_scope("FileIndex::SetRoot");
     StopFileIndexWatcher();
-    if (!context_.current_project_state.file_index.SetRoot(context_.current_project_state.root)) {
+    if (!context_.current_project_state.file_index.SetRoot(
+            context_.current_project_state.root,
+            project::FileIndex::RootPopulationMode::Deferred)) {
       return false;
     }
     if (!StartFileIndexWatcherForCurrentProject()) {

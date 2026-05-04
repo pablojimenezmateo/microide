@@ -63,6 +63,7 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   }
   font_path_ = font_path;
   TTF_SetFontHinting(font_, TTF_HINTING_LIGHT_SUBPIXEL);
+  TTF_SetFontKerning(font_, false);
   LoadFallbackFonts();
 
   RefreshMetrics();
@@ -335,6 +336,7 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
       continue;
     }
     TTF_SetFontHinting(fallback_font, TTF_HINTING_LIGHT_SUBPIXEL);
+    TTF_SetFontKerning(fallback_font, false);
     if (!TTF_AddFallbackFont(font_, fallback_font)) {
       TTF_CloseFont(fallback_font);
       continue;

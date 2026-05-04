@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "editor/DiagnosticsRender.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -430,7 +431,12 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
 }
 
 void WorkspaceShell::UpdateEditorHover(float x, float y) {
-  if (const auto target = EditorHoverTargetAtPosition(x, y); target.has_value()) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateEditorHover");
+  const auto target = [&]() -> std::optional<EditorHoverTarget> {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
+    return EditorHoverTargetAtPosition(x, y);
+  }();
+  if (target.has_value()) {
     active_editor_hover_target_ = *target;
     return;
   }

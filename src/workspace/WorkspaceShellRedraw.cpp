@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "app/BackgroundTaskCounter.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
 
 namespace microide::workspace {
@@ -16,6 +18,12 @@ namespace {
 
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
 constexpr std::size_t kBlameNeighborhoodRadius = 1;
+
+bool TraceProjectEventsEnabled() {
+  static const bool enabled =
+      util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_PROJECT_EVENTS");
+  return enabled;
+}
 
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
@@ -588,9 +596,6 @@ std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
 }
 
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
-  if (plugin_runtime_.PendingAsyncProcessCount() > 0) {
-    return 10;
-  }
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
   if (const auto plugin_delay = plugin_runtime_.NextPollDelay(); plugin_delay.has_value()) {
     const Uint32 plugin_delay_ms =
@@ -628,17 +633,10 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
-  if (app::GetBackgroundTaskCount() > 0) {
-    return IdleWaitState{
-        .hint = IdleHint::Full,
-        .caret_remaining_ms = 0,
-    };
-  }
-
-  if (const auto caret_delay = NextCaretBlinkDelayMs(); caret_delay.has_value()) {
+  if (const auto next_delay = NextAnimationDelayMs(); next_delay.has_value()) {
     return IdleWaitState{
         .hint = IdleHint::CaretOnly,
-        .caret_remaining_ms = *caret_delay,
+        .caret_remaining_ms = std::max<Uint32>(1, *next_delay),
     };
   }
 
@@ -649,23 +647,52 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
 }
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
-  const bool index_changed = force_check
-                                 ? false
-                                 : file_index_has_pending_changes_.exchange(
-                                       false, std::memory_order_acq_rel);
-  const bool changed =
-      force_check ? project_file_monitor_.ConsumePendingChanges() : project_file_monitor_.PollForChanges();
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadProjectIfFilesChanged");
+  const bool index_changed = [&]() {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::ReloadProjectIfFilesChanged::ConsumeIndexFlag");
+    return force_check ? false
+                       : file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);
+  }();
+  const bool changed = [&]() {
+    util::PerformanceTrace::Scope scope(
+        force_check ? "WorkspaceShell::ReloadProjectIfFilesChanged::ConsumePendingProjectChanges"
+                    : "WorkspaceShell::ReloadProjectIfFilesChanged::PollProjectFileMonitor");
+    return force_check ? project_file_monitor_.ConsumePendingChanges()
+                       : project_file_monitor_.PollForChanges();
+  }();
+  if (TraceProjectEventsEnabled()) {
+    const std::string root_text = context_.current_project_state.root.string();
+    const std::string active_path = context_.current_project_state.welcome_surface.viewport.path().string();
+    SDL_Log(
+        "microide project: reload-check root=%s force=%d content_changed=%d index_changed=%d active=%s",
+        root_text.empty() ? "-" : root_text.c_str(), force_check ? 1 : 0, changed ? 1 : 0,
+        index_changed ? 1 : 0, active_path.empty() ? "-" : active_path.c_str());
+  }
   if (!changed && !index_changed) {
     return false;
   }
 
-  context_.current_project_state.directory_tree.Refresh();
-  context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
-  ReloadCleanOpenBuffersFromDisk();
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::ReloadProjectIfFilesChanged::RefreshDirectoryTree");
+    context_.current_project_state.directory_tree.Refresh();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::ReloadProjectIfFilesChanged::RefreshFileFinder");
+    context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
+  }
+  if (changed) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::ReloadProjectIfFilesChanged::ReloadCleanOpenBuffersFromDisk");
+    ReloadCleanOpenBuffersFromDisk();
+  }
   return true;
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
   ExpirePendingToolApprovals();
   if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
     return EventResult{

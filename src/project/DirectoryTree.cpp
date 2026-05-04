@@ -5,6 +5,7 @@
 
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 
 namespace microide::project {
@@ -50,6 +51,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
 }
 
 void DirectoryTree::Refresh() {
+  util::PerformanceTrace::Scope perf_scope("DirectoryTree::Refresh");
   if (root_.empty()) {
     return;
   }
@@ -116,6 +118,26 @@ bool DirectoryTree::SelectPath(const std::filesystem::path& path) {
   }
 
   RebuildEntries(false);
+  for (std::size_t i = 0; i < entries_.size(); ++i) {
+    if (entries_[i].path == normalized_path) {
+      selected_index_ = i;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool DirectoryTree::SelectPathIfVisible(const std::filesystem::path& path) {
+  if (root_.empty() || path.empty()) {
+    return false;
+  }
+
+  std::error_code error;
+  const auto absolute_path = std::filesystem::absolute(path, error);
+  if (error || absolute_path.empty()) {
+    return false;
+  }
+  const auto normalized_path = absolute_path.lexically_normal();
   for (std::size_t i = 0; i < entries_.size(); ++i) {
     if (entries_[i].path == normalized_path) {
       selected_index_ = i;
@@ -221,6 +243,7 @@ std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
 
 void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
   util::StartupTrace::Scope trace_scope("DirectoryTree::RebuildEntries");
+  util::PerformanceTrace::Scope perf_scope("DirectoryTree::RebuildEntries");
   const auto selected_path =
       entries_.empty() ? std::filesystem::path{} : entries_[selected_index_].path;
 
@@ -258,6 +281,7 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
 void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
                                     int depth,
                                     const IgnoreMatcher& matcher) {
+  util::PerformanceTrace::Scope perf_scope("DirectoryTree::AppendDirectory");
   if (!IsExpanded(directory)) {
     return;
   }
