@@ -298,6 +298,167 @@ void TestFileIndexWatcherUnwatchStopsNotifications() {
          "FileIndexWatcher should not fire callback after Unwatch()");
 }
 
+void TestFileIndexWatcherSkipsGitignoredDirectoriesInInitialBatch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / ".gitignore", "build/\nnode_modules/\n");
+  WriteFile(root / "src" / "main.cpp", "int main() {}\n");
+  WriteFile(root / "build" / "out.o", "binary\n");
+  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 1;\n");
+  WriteFile(root / "README.md", "# Project\n");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<IndexUpdateBatch> batches;
+
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    std::lock_guard lock(mutex);
+    batches.push_back(std::move(batch));
+    cv.notify_all();
+  });
+
+  Expect(watcher.Watch(root), "Watch should succeed on .gitignore-backed project");
+
+  const bool got_initial = WaitFor(
+      mutex, cv,
+      [&] {
+        for (const auto& batch : batches) {
+          if (batch.is_initial) {
+            return true;
+          }
+        }
+        return false;
+      },
+      std::chrono::milliseconds(1500));
+  Expect(got_initial, "FileIndexWatcher should emit an initial batch when .gitignore is present");
+
+  bool saw_main = false;
+  bool saw_readme = false;
+  bool saw_build_artifact = false;
+  bool saw_node_modules = false;
+  {
+    std::lock_guard lock(mutex);
+    for (const auto& batch : batches) {
+      if (!batch.is_initial) {
+        continue;
+      }
+      saw_main = saw_main || BatchContainsPath(batch, std::filesystem::path("src/main.cpp"));
+      saw_readme = saw_readme || BatchContainsPath(batch, std::filesystem::path("README.md"));
+      saw_build_artifact =
+          saw_build_artifact || BatchContainsPath(batch, std::filesystem::path("build/out.o"));
+      saw_node_modules = saw_node_modules ||
+                         BatchContainsPath(batch, std::filesystem::path("node_modules/pkg/index.js"));
+    }
+  }
+  Expect(saw_main, "initial batch should contain non-ignored sources");
+  Expect(saw_readme, "initial batch should contain non-ignored top-level files");
+  Expect(!saw_build_artifact,
+         "initial batch should skip files under .gitignored directories (build/)");
+  Expect(!saw_node_modules,
+         "initial batch should skip files under .gitignored directories (node_modules/)");
+
+  watcher.Unwatch();
+}
+
+void TestFileIndexWatcherIgnoresChangesInsideGitignoredDirectory() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "watch_ignored_changes";
+  WriteFile(root / ".gitignore", "ignored/\n");
+  std::filesystem::create_directories(root / "ignored");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool saw_visible = false;
+  bool saw_ignored = false;
+
+  FileIndexWatcher watcher;
+  watcher.SetCallback([&](IndexUpdateBatch batch) {
+    if (batch.is_initial) {
+      return;
+    }
+    std::lock_guard lock(mutex);
+    for (const auto& change : batch.changes) {
+      const auto first = change.entry.relative_path.empty()
+                             ? std::filesystem::path{}
+                             : *change.entry.relative_path.begin();
+      if (first == std::filesystem::path("ignored")) {
+        saw_ignored = true;
+      } else if (change.entry.relative_path == std::filesystem::path("visible.txt")) {
+        saw_visible = true;
+      }
+    }
+    cv.notify_all();
+  });
+
+  Expect(watcher.Watch(root), "Watch should succeed");
+
+  WriteFile(root / "ignored" / "secret.txt", "hidden\n");
+  WriteFile(root / "visible.txt", "tracked\n");
+
+  const bool notified =
+      WaitFor(mutex, cv, [&] { return saw_visible; }, std::chrono::milliseconds(1500));
+  Expect(notified, "FileIndexWatcher should still notify for non-ignored files");
+  Expect(!saw_ignored,
+         "FileIndexWatcher should not emit change events for files under .gitignored dirs");
+
+  watcher.Unwatch();
+}
+
+void TestFileIndexWatcherWatchReturnsPromptly() {
+  // Build a deep, wide tree (~2000 directories) so that a synchronous recursive
+  // walk would be observable. The async setup path should keep Watch() under a
+  // generous threshold even on slow machines.
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "wide_tree";
+  std::filesystem::create_directories(root);
+  for (int outer = 0; outer < 40; ++outer) {
+    for (int inner = 0; inner < 50; ++inner) {
+      const auto sub = root / ("d" + std::to_string(outer)) / ("s" + std::to_string(inner));
+      std::filesystem::create_directories(sub);
+      WriteFile(sub / "file.txt", "x\n");
+    }
+  }
+
+  FileIndexWatcher watcher;
+  watcher.SetCallback([](IndexUpdateBatch /*batch*/) {});
+
+  const auto start = std::chrono::steady_clock::now();
+  const bool ok = watcher.Watch(root);
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+  Expect(ok, "Watch should succeed on wide tree");
+  // The watch-tree build runs on a background thread; Watch() itself should be fast.
+  // 200ms is loose to absorb sanitizer / loaded-CI overhead while still catching the
+  // pre-fix behavior where this took ~1s on real projects.
+  Expect(elapsed.count() < 200,
+         "FileIndexWatcher::Watch should return promptly while watches build asynchronously");
+
+  watcher.Unwatch();
+}
+
+void TestFileIndexWatcherUnwatchDuringBootstrapIsSafe() {
+  // Build a sizable tree, then immediately Unwatch() to exercise the
+  // stop-during-setup path in the Linux backend. Any race or use-after-free
+  // would surface under ASAN/TSAN here.
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "bootstrap_cancel";
+  std::filesystem::create_directories(root);
+  for (int outer = 0; outer < 30; ++outer) {
+    for (int inner = 0; inner < 30; ++inner) {
+      const auto sub = root / ("a" + std::to_string(outer)) / ("b" + std::to_string(inner));
+      std::filesystem::create_directories(sub);
+    }
+  }
+
+  for (int trial = 0; trial < 5; ++trial) {
+    FileIndexWatcher watcher;
+    watcher.SetCallback([](IndexUpdateBatch /*batch*/) {});
+    Expect(watcher.Watch(root), "Watch should succeed");
+    watcher.Unwatch();  // No assertion: success is "did not crash / hang".
+  }
+}
+
 }  // namespace
 
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
@@ -313,6 +474,14 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherDetectsDeletedFile);
   AddTest(tests, "FileIndexWatcher/UnwatchStopsNotifications",
           TestFileIndexWatcherUnwatchStopsNotifications);
+  AddTest(tests, "FileIndexWatcher/SkipsGitignoredDirectoriesInInitialBatch",
+          TestFileIndexWatcherSkipsGitignoredDirectoriesInInitialBatch);
+  AddTest(tests, "FileIndexWatcher/IgnoresChangesInsideGitignoredDirectory",
+          TestFileIndexWatcherIgnoresChangesInsideGitignoredDirectory);
+  AddTest(tests, "FileIndexWatcher/WatchReturnsPromptly",
+          TestFileIndexWatcherWatchReturnsPromptly);
+  AddTest(tests, "FileIndexWatcher/UnwatchDuringBootstrapIsSafe",
+          TestFileIndexWatcherUnwatchDuringBootstrapIsSafe);
 }
 
 }  // namespace microide::tests

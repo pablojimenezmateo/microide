@@ -1,5 +1,7 @@
 #include "platform/FileIndexWatcher.h"
 
+#include "project/IgnoreMatcher.h"
+
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -10,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <system_error>
@@ -49,8 +52,21 @@ bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   return it != relative_path.end() && *it == std::filesystem::path(".git");
 }
 
-bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory) {
-  return directory.filename() == ".git";
+bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
+                                const std::filesystem::path& root,
+                                const project::IgnoreMatcher* matcher) {
+  if (directory.filename() == ".git") {
+    return true;
+  }
+  if (matcher == nullptr) {
+    return false;
+  }
+  std::error_code error;
+  auto relative = std::filesystem::relative(directory, root, error);
+  if (error || relative.empty() || relative == std::filesystem::path(".")) {
+    return false;
+  }
+  return matcher->Ignored(relative.lexically_normal(), /*is_directory=*/true);
 }
 
 bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
@@ -71,6 +87,7 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
 
 // Build an initial IndexUpdateBatch by scanning root recursively.
 IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
+                                   const project::IgnoreMatcher* matcher,
                                    const std::atomic<bool>* stop_requested = nullptr) {
   IndexUpdateBatch batch;
   batch.is_initial = true;
@@ -88,7 +105,8 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
     if (status_error) {
       continue;
     }
-    if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+    if (std::filesystem::is_directory(status) &&
+        ShouldSkipWatchedDirectory(it->path(), root, matcher)) {
       it.disable_recursion_pending();
       continue;
     }
@@ -129,6 +147,7 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
+  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
   bool warned_fallback = false;
 
   // inotify backend
@@ -136,6 +155,9 @@ struct FileIndexWatcher::Impl {
   int control_pipe[2] = {-1, -1};
   std::map<int, std::filesystem::path> wd_to_path;  // watch descriptor -> abs path
   std::thread worker;
+  std::thread setup_thread;
+  std::atomic<bool> stop_native_setup{false};
+  std::atomic<bool> setup_done{false};
   bool native_active = false;
 
   // poll-fallback
@@ -160,23 +182,40 @@ struct FileIndexWatcher::Impl {
 
   void StopNative() {
     StopInitialScan();
-    if (!native_active) {
-      return;
-    }
-    native_active = false;
-    // Signal worker
+    // Tell the setup thread to bail and unblock the worker (if it's already running).
+    stop_native_setup.store(true, std::memory_order_release);
     if (control_pipe[1] >= 0) {
       const char byte = 0;
       while (write(control_pipe[1], &byte, 1) < 0 && errno == EINTR) {
       }
     }
+    if (setup_thread.joinable()) {
+      setup_thread.join();
+    }
+    if (!native_active) {
+      // Setup thread aborted (or never ran successfully); just clean up any FDs it left behind.
+      for (auto& [wd, path] : wd_to_path) {
+        if (inotify_fd >= 0) {
+          inotify_rm_watch(inotify_fd, wd);
+        }
+      }
+      wd_to_path.clear();
+      CloseIfValid(control_pipe[0]);
+      CloseIfValid(control_pipe[1]);
+      control_pipe[0] = control_pipe[1] = -1;
+      CloseIfValid(inotify_fd);
+      inotify_fd = -1;
+      stop_native_setup.store(false, std::memory_order_release);
+      setup_done.store(false, std::memory_order_release);
+      return;
+    }
+    native_active = false;
     if (worker.joinable()) {
       worker.join();
     }
     CloseIfValid(control_pipe[0]);
     CloseIfValid(control_pipe[1]);
     control_pipe[0] = control_pipe[1] = -1;
-    // Remove all watches and close inotify fd
     for (auto& [wd, path] : wd_to_path) {
       if (inotify_fd >= 0) {
         inotify_rm_watch(inotify_fd, wd);
@@ -185,6 +224,8 @@ struct FileIndexWatcher::Impl {
     wd_to_path.clear();
     CloseIfValid(inotify_fd);
     inotify_fd = -1;
+    stop_native_setup.store(false, std::memory_order_release);
+    setup_done.store(false, std::memory_order_release);
   }
 
   void StopPoll() {
@@ -197,40 +238,66 @@ struct FileIndexWatcher::Impl {
   void StartInitialScan() {
     StopInitialScan();
     stop_initial_scan.store(false, std::memory_order_release);
-    initial_scan_worker = std::thread([this]() {
-      IndexUpdateBatch initial = BuildInitialBatch(root, &stop_initial_scan);
+    auto matcher = ignore_matcher;
+    initial_scan_worker = std::thread([this, matcher]() {
+      IndexUpdateBatch initial = BuildInitialBatch(root, matcher.get(), &stop_initial_scan);
       if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
         callback(std::move(initial));
       }
     });
   }
 
-  // Add inotify watches recursively for dir and all subdirectories.
-  bool AddWatchRecursive(const std::filesystem::path& dir) {
-    if (ShouldSkipWatchedDirectory(dir)) {
+  // Mask used for every inotify watch. Defined here so both the synchronous root-watch
+  // bootstrap and the background recursive walk use identical event filters.
+  static constexpr std::uint32_t kInotifyMask = IN_CREATE | IN_DELETE | IN_DELETE_SELF |
+                                                 IN_MOVE_SELF | IN_MOVED_FROM | IN_MOVED_TO |
+                                                 IN_CLOSE_WRITE | IN_ATTRIB;
+
+  // Add a single inotify watch for `dir` if it's not skipped. Returns false on ENOSPC.
+  // Sets `out_added` to true if a new watch was registered (root-skipped or already-present
+  // entries return true with out_added=false).
+  bool AddSingleWatch(const std::filesystem::path& dir,
+                      const project::IgnoreMatcher* matcher, bool& out_added) {
+    out_added = false;
+    if (ShouldSkipWatchedDirectory(dir, root, matcher)) {
       return true;
     }
-    constexpr std::uint32_t kMask = IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF |
-                                     IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_ATTRIB;
-    const int wd = inotify_add_watch(inotify_fd, dir.c_str(), kMask);
+    const int wd = inotify_add_watch(inotify_fd, dir.c_str(), kInotifyMask);
     if (wd < 0) {
       if (errno == ENOSPC) {
-        return false;  // watch limit exhausted
+        return false;
       }
-      return true;  // ignore other errors (permission denied etc.)
+      return true;
     }
     wd_to_path[wd] = dir;
+    out_added = true;
+    return true;
+  }
+
+  // Add inotify watches recursively for dir and all subdirectories. Periodically checks
+  // stop_native_setup so an Unwatch() during bootstrap returns promptly. Returns false
+  // only on inotify watch-limit exhaustion (ENOSPC); other per-watch errors are skipped.
+  bool AddWatchRecursive(const std::filesystem::path& dir,
+                         const project::IgnoreMatcher* matcher) {
+    bool added = false;
+    if (!AddSingleWatch(dir, matcher, added)) {
+      return false;
+    }
 
     std::error_code error;
     constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
     for (std::filesystem::recursive_directory_iterator it(dir, opts, error), end;
          !error && it != end; it.increment(error)) {
+      if (stop_native_setup.load(std::memory_order_acquire)) {
+        return true;
+      }
       std::error_code status_error;
       const auto status = it->status(status_error);
       if (status_error) {
         continue;
       }
-      if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+      if (std::filesystem::is_directory(status) &&
+          ShouldSkipWatchedDirectory(it->path(), root, matcher)) {
         it.disable_recursion_pending();
         continue;
       }
@@ -238,7 +305,7 @@ struct FileIndexWatcher::Impl {
         continue;
       }
       const std::filesystem::path subdir = it->path().lexically_normal();
-      const int sub_wd = inotify_add_watch(inotify_fd, subdir.c_str(), kMask);
+      const int sub_wd = inotify_add_watch(inotify_fd, subdir.c_str(), kInotifyMask);
       if (sub_wd < 0) {
         if (errno == ENOSPC) {
           return false;
@@ -250,6 +317,11 @@ struct FileIndexWatcher::Impl {
     return true;
   }
 
+  // StartNative opens the inotify fd + control pipe and registers a watch on the project
+  // root synchronously (sub-millisecond) so top-level changes are observed even if the
+  // caller mutates the tree immediately after Watch() returns. The recursive subtree walk
+  // (~hundreds of ms on large trees) is handed off to a setup thread that starts the read
+  // loop afterwards, or aborts cleanly if Unwatch() is called during bootstrap.
   bool StartNative() {
     inotify_fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
     if (inotify_fd < 0) {
@@ -262,22 +334,43 @@ struct FileIndexWatcher::Impl {
       return false;
     }
 
-    if (!AddWatchRecursive(root)) {
-      // Watch limit exhausted
+    bool root_added = false;
+    if (!AddSingleWatch(root, ignore_matcher.get(), root_added) || !root_added) {
+      // Either ENOSPC on the very first watch, or root itself is somehow ignored.
+      // Tear down and let the caller fall back to poll mode.
       CloseIfValid(control_pipe[0]);
       CloseIfValid(control_pipe[1]);
       control_pipe[0] = control_pipe[1] = -1;
-      for (auto& [wd, path] : wd_to_path) {
-        inotify_rm_watch(inotify_fd, wd);
-      }
-      wd_to_path.clear();
       CloseIfValid(inotify_fd);
       inotify_fd = -1;
+      wd_to_path.clear();
       return false;
     }
 
+    stop_native_setup.store(false, std::memory_order_release);
+    setup_done.store(false, std::memory_order_release);
     native_active = true;
-    worker = std::thread([this]() { WorkerMain(); });
+    // The setup thread populates wd_to_path for the rest of the tree, then starts the
+    // worker. Events that arrive on the root watch during this window queue inside the
+    // kernel's inotify queue and are drained when the worker starts; we don't read them
+    // from a second thread, so there's no data race on wd_to_path.
+    auto matcher = ignore_matcher;
+    setup_thread = std::thread([this, matcher]() {
+      // Walk subdirectories of root and register watches for each. AddWatchRecursive
+      // re-uses the existing root watch (inotify_add_watch returns the same wd).
+      const bool watches_ok = AddWatchRecursive(root, matcher.get());
+      if (stop_native_setup.load(std::memory_order_acquire)) {
+        setup_done.store(true, std::memory_order_release);
+        return;
+      }
+      if (!watches_ok && !warned_fallback) {
+        warned_fallback = true;
+        SDL_Log(
+            "FileIndexWatcher: inotify watch limit exhausted; tracking partial tree only");
+      }
+      worker = std::thread([this]() { WorkerMain(); });
+      setup_done.store(true, std::memory_order_release);
+    });
     return true;
   }
 
@@ -337,7 +430,7 @@ struct FileIndexWatcher::Impl {
 
               if (is_dir && (ev->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
                 // New directory: add watches for it recursively
-                AddWatchRecursive(abs_path);
+                AddWatchRecursive(abs_path, ignore_matcher.get());
                 // No file change to report
               } else if (!is_dir) {
                 std::filesystem::path rel;
@@ -411,7 +504,8 @@ struct FileIndexWatcher::Impl {
         if (status_error) {
           continue;
         }
-        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+        if (std::filesystem::is_directory(status) &&
+            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
           it.disable_recursion_pending();
           continue;
         }
@@ -498,6 +592,7 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
+  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
 
   // FSEvents backend
   FSEventStreamRef stream = nullptr;
@@ -664,7 +759,8 @@ struct FileIndexWatcher::Impl {
         if (status_error) {
           continue;
         }
-        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+        if (std::filesystem::is_directory(status) &&
+            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
           it.disable_recursion_pending();
           continue;
         }
@@ -737,6 +833,7 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
+  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
   bool warned_fallback = false;
 
   HANDLE dir_handle = INVALID_HANDLE_VALUE;
@@ -939,7 +1036,8 @@ struct FileIndexWatcher::Impl {
         if (status_error) {
           continue;
         }
-        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+        if (std::filesystem::is_directory(status) &&
+            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
           it.disable_recursion_pending();
           continue;
         }
@@ -1013,6 +1111,7 @@ struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
   std::filesystem::path root;
   FileIndexWatcher::Callback callback;
+  std::shared_ptr<project::IgnoreMatcher> ignore_matcher;
   bool warned_fallback = false;
   bool poll_mode = false;
   std::thread poll_worker;
@@ -1052,7 +1151,8 @@ struct FileIndexWatcher::Impl {
         if (status_error) {
           continue;
         }
-        if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path())) {
+        if (std::filesystem::is_directory(status) &&
+            ShouldSkipWatchedDirectory(it->path(), root, ignore_matcher.get())) {
           it.disable_recursion_pending();
           continue;
         }
@@ -1146,6 +1246,16 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   }
   impl_->root = absolute_root.lexically_normal();
 
+  // Load .gitignore once per Watch() and share it across the (possibly background) walks.
+  // Reading .gitignore is fast and bounded; threading through a const matcher keeps the
+  // recursive walks reading immutable state.
+  auto matcher = std::make_shared<project::IgnoreMatcher>();
+  if (matcher->SetRoot(impl_->root)) {
+    impl_->ignore_matcher = std::move(matcher);
+  } else {
+    impl_->ignore_matcher.reset();
+  }
+
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   // Try native backend
   if (impl_->StartNative()) {
@@ -1155,7 +1265,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
 #else
     // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
     if (impl_->callback) {
-      IndexUpdateBatch initial = BuildInitialBatch(impl_->root);
+      IndexUpdateBatch initial = BuildInitialBatch(impl_->root, impl_->ignore_matcher.get());
       impl_->callback(std::move(initial));
     }
 #endif
@@ -1173,7 +1283,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
 #else
   // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
   if (impl_->callback) {
-    IndexUpdateBatch initial = BuildInitialBatch(impl_->root);
+    IndexUpdateBatch initial = BuildInitialBatch(impl_->root, impl_->ignore_matcher.get());
     impl_->callback(std::move(initial));
   }
 #endif
