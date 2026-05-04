@@ -284,8 +284,12 @@ struct GitBlameService::Impl {
   }
 
   bool RequestStillCurrentLocked(const PendingRequest& request) const {
+    const auto latest_it = latest_request_keys.find(request.file_key);
+    const bool is_latest_request =
+        latest_it != latest_request_keys.end() && latest_it->second == request.request_key;
     return request.clear_generation == clear_generation &&
-           request.file_generation == CurrentFileGenerationLocked(request.file_key);
+           request.file_generation == CurrentFileGenerationLocked(request.file_key) &&
+           is_latest_request;
   }
 
   bool RequestStillCurrent(const PendingRequest& request) const {
@@ -334,6 +338,7 @@ struct GitBlameService::Impl {
           now - cache->last_validated_at < kCacheValidationInterval) {
         return;
       }
+      RemovePendingRequestsForFileLocked(file_key);
       if (request_key == active_request_key || pending_request_keys.count(request_key) > 0) {
         return;
       }
@@ -347,6 +352,7 @@ struct GitBlameService::Impl {
         .file_generation = file_generation,
         .clear_generation = request_clear_generation,
       };
+      latest_request_keys[file_key] = request_key;
       pending_request_keys.insert(request_key);
       pending_request_files.emplace(request_key, file_key);
     }
@@ -413,6 +419,7 @@ struct GitBlameService::Impl {
     std::lock_guard lock(mutex);
     ++file_generations[file_key];
     file_caches.erase(file_key);
+    latest_request_keys.erase(file_key);
     RemovePendingRequestsForFileLocked(file_key);
   }
 
@@ -422,6 +429,7 @@ struct GitBlameService::Impl {
       ++clear_generation;
       file_caches.clear();
       file_generations.clear();
+      latest_request_keys.clear();
       pending_request_keys.clear();
       pending_request_files.clear();
       active_request_key.clear();
@@ -435,6 +443,7 @@ struct GitBlameService::Impl {
       active_request_key.clear();
       pending_request_keys.clear();
       pending_request_files.clear();
+      latest_request_keys.clear();
     }
     executor.CancelAll();
   }
@@ -676,6 +685,7 @@ struct GitBlameService::Impl {
   std::string active_request_key;
   std::unordered_map<std::string, FileCache> file_caches;
   std::unordered_map<std::string, std::uint64_t> file_generations;
+  std::unordered_map<std::string, std::string> latest_request_keys;
   std::uint64_t clear_generation = 0;
   std::uint64_t access_generation = 0;
   util::TaskExecutor executor;

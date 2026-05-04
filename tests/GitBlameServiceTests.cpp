@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -394,6 +395,81 @@ void TestGitBlameServiceClearDropsInFlightResults() {
          "reloaded blame after clear should still reflect the current commit");
 }
 
+void TestGitBlameServiceLatestRequestSupersedesPendingWindow() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "main.cpp";
+
+  std::ostringstream content;
+  for (int i = 0; i < 600; ++i) {
+    content << "line " << i << '\n';
+  }
+  WriteFile(file_path, content.str());
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Initial blame", "initial blame");
+
+  GitBlameService service;
+  std::mutex hook_mutex;
+  std::condition_variable hook_cv;
+  bool hook_entered = false;
+  bool release_hook = false;
+  bool hook_used = false;
+  GitBlameServiceTestAccess::SetBeforeCacheApplyHook(service, [&]() {
+    std::unique_lock lock(hook_mutex);
+    if (hook_used) {
+      return;
+    }
+    hook_used = true;
+    hook_entered = true;
+    hook_cv.notify_all();
+    hook_cv.wait(lock, [&]() { return release_hook; });
+  });
+
+  const GitBlameRequest early_request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 0,
+      .visible_line_count = 1,
+      .total_line_count = 600,
+      .dirty = false,
+  };
+  const GitBlameRequest latest_request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 500,
+      .visible_line_count = 1,
+      .total_line_count = 600,
+      .dirty = false,
+  };
+
+  service.Request(early_request);
+  {
+    std::unique_lock lock(hook_mutex);
+    const bool entered = hook_cv.wait_for(lock, std::chrono::seconds(2),
+                                          [&]() { return hook_entered; });
+    Expect(entered, "supersede fixture should observe the first in-flight request");
+  }
+
+  service.Request(latest_request);
+  {
+    std::lock_guard lock(hook_mutex);
+    release_hook = true;
+  }
+  hook_cv.notify_all();
+
+  const auto latest_snapshot = WaitForSnapshot(service, latest_request);
+  const auto early_snapshot = service.Snapshot(early_request);
+  service.Stop();
+
+  Expect(latest_snapshot.eligible && !latest_snapshot.loading,
+         "latest blame request should complete after superseding an older pending window");
+  Expect(!latest_snapshot.lines.empty() && latest_snapshot.lines.front().line >= 500,
+         "latest blame snapshot should keep the most recent requested window");
+  Expect(early_snapshot.lines.empty(),
+         "superseded older blame windows should not be applied to the cache");
+}
+
 }  // namespace
 
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
@@ -413,6 +489,8 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceInvalidateDropsInFlightResults);
   AddTest(tests, "GitBlame/ClearDropsInFlightResults",
           TestGitBlameServiceClearDropsInFlightResults);
+  AddTest(tests, "GitBlame/LatestRequestSupersedesPendingWindow",
+          TestGitBlameServiceLatestRequestSupersedesPendingWindow);
 }
 
 }  // namespace microide::tests
