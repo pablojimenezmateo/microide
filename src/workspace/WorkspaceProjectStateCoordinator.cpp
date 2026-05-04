@@ -7,12 +7,58 @@
 
 #include "util/PerformanceTrace.h"
 #include "platform/AppDirectories.h"
+#include "app/BackgroundTaskCounter.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
+
+bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
+  if (context_.current_project_state.root.empty()) {
+    return false;
+  }
+  StopFileIndexWatcher();
+
+  file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
+  file_index_watcher_->SetCallback([this](platform::IndexUpdateBatch batch) {
+    context_.current_project_state.file_index.ApplyBatch(batch);
+    file_index_has_pending_changes_.store(true, std::memory_order_release);
+    if (batch.is_initial &&
+        file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
+      app::DecrementBackgroundTaskCountAndWake();
+    }
+    if (project_file_event_type_ != 0) {
+      SDL_Event event{};
+      event.type = project_file_event_type_;
+      SDL_PushEvent(&event);
+    }
+  });
+
+  app::IncrementBackgroundTaskCount();
+  file_index_initial_build_in_flight_.store(true, std::memory_order_release);
+  if (!file_index_watcher_->Watch(context_.current_project_state.root)) {
+    file_index_watcher_.reset();
+    file_index_initial_build_in_flight_.store(false, std::memory_order_release);
+    app::DecrementBackgroundTaskCountAndWake();
+    return false;
+  }
+  return true;
+}
+
+void WorkspaceShell::StopFileIndexWatcher() {
+  if (file_index_watcher_ != nullptr) {
+    file_index_watcher_->Unwatch();
+    file_index_watcher_.reset();
+  }
+  file_index_has_pending_changes_.store(false, std::memory_order_relaxed);
+  const bool had_initial_build = file_index_initial_build_in_flight_.exchange(
+      false, std::memory_order_acq_rel);
+  if (had_initial_build) {
+    app::DecrementBackgroundTaskCountAndWake();
+  }
+}
 
 bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
                                            const std::filesystem::path& project_root) {
@@ -87,6 +133,8 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
+  StopFileIndexWatcher();
+  context_.current_project_state.file_index.Reset();
   project_file_monitor_.Reset();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
@@ -256,7 +304,11 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
   {
     util::StartupTrace::Scope index_scope("FileIndex::SetRoot");
+    StopFileIndexWatcher();
     if (!context_.current_project_state.file_index.SetRoot(context_.current_project_state.root)) {
+      return false;
+    }
+    if (!StartFileIndexWatcherForCurrentProject()) {
       return false;
     }
   }

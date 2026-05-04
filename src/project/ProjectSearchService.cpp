@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "app/BackgroundTaskCounter.h"
-#include "project/ProjectFileScanner.h"
 #include "util/RegexUtil.h"
 
 namespace microide::project {
@@ -274,14 +273,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   }
 
-  const std::vector<std::filesystem::path>& files = indexed_files;
-  const std::vector<std::filesystem::path> scanned_files =
-      files.empty()
-          ? CollectProjectFiles(absolute_root, options.show_hidden ? ProjectFileScanMode::IncludeHidden
-                                                                   : ProjectFileScanMode::ExcludeHidden)
-          : std::vector<std::filesystem::path>{};
-  const std::vector<std::filesystem::path>& candidate_files =
-      files.empty() ? scanned_files : files;
+  const std::vector<std::filesystem::path>& candidate_files = indexed_files;
   std::vector<ProjectSearchResult> batch;
   std::size_t total_results = 0;
   std::array<char, 4096> probe{};

@@ -33,6 +33,7 @@ class FileFinder {
 
  private:
   struct CachedFileEntry {
+    std::filesystem::path relative_path;
     std::string path_string;
     std::string lower_path;
     std::string lower_filename;

@@ -614,13 +614,16 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
+  const bool index_changed =
+      file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);
   const bool changed =
       force_check ? project_file_monitor_.ConsumePendingChanges() : project_file_monitor_.PollForChanges();
-  if (!changed) {
+  if (!changed && !index_changed) {
     return false;
   }
 
   context_.current_project_state.directory_tree.Refresh();
+  context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
   ReloadCleanOpenBuffersFromDisk();
   return true;
 }

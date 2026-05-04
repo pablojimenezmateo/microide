@@ -33,15 +33,14 @@ void FileFinder::Refresh() {
   EnsureCacheBuilt();
 
   const std::string lower_query = ToLower(query_.text());
-  const auto& files = index_->files();
-  for (std::size_t i = 0; i < cached_entries_.size() && i < files.size(); ++i) {
-    const int score = RankMatchCached(cached_entries_[i], lower_query);
+  for (const auto& entry : cached_entries_) {
+    const int score = RankMatchCached(entry, lower_query);
     if (score == std::numeric_limits<int>::max()) {
       continue;
     }
     results_.push_back(FileFinderResult{
-        .relative_path = files[i],
-        .path_string = cached_entries_[i].path_string,
+        .relative_path = entry.relative_path,
+        .path_string = entry.path_string,
         .score = score,
     });
   }
@@ -142,12 +141,13 @@ void FileFinder::EnsureCacheBuilt() {
     return;
   }
 
-  const auto& files = index_->files();
+  const auto files = index_->Snapshot();
   cached_entries_.clear();
   cached_entries_.reserve(files.size());
   for (const auto& path : files) {
-    const std::string path_string = path.string();
+    const std::string path_string = path.relative_path.string();
     cached_entries_.push_back(CachedFileEntry{
+        .relative_path = path.relative_path,
         .path_string = path_string,
         .lower_path = ToLower(path_string),
         .lower_filename = ToLower(std::filesystem::path(path_string).filename().string()),

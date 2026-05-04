@@ -24,6 +24,31 @@ bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
          SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
 }
 
+bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return false;
+}
+
+bool WaitForFileIndexPath(WorkspaceShell& shell,
+                          const std::filesystem::path& relative_path,
+                          bool expected_present,
+                          std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (WorkspaceShellTestAccess::FileIndexContainsPath(shell, relative_path) == expected_present) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WorkspaceShellTestAccess::FileIndexContainsPath(shell, relative_path) == expected_present;
+}
+
 void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "picked-project";
@@ -1387,6 +1412,66 @@ void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
          "project watcher should still detect visible project changes");
 }
 
+void TestWorkspaceShellFileFinderReflectsFileIndexUpdates() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path readme = root / "README.md";
+  const std::filesystem::path added_file = root / "new-indexed.cpp";
+  WriteFile(readme, "root\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "file-index update fixture should open the project");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "file finder should open on demand");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "new-indexed"),
+         "typing a missing file query should be handled");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) == 0,
+         "file finder should have no result before the file exists");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should close the overlay after the missing file query");
+
+  WriteFile(added_file, "int value() { return 7; }\n");
+  Expect(WaitForProjectReload(shell, std::chrono::milliseconds(1000)),
+         "project reload should observe a newly added file via the file index watcher");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("new-indexed.cpp"), true,
+                              std::chrono::milliseconds(1000)),
+         "file index should include the newly added file");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "file finder should open after a file-index update");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "new-indexed"),
+         "typing the added file query should be handled");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) >= 1,
+         "file finder should include the newly indexed file");
+  const auto selected_path = WorkspaceShellTestAccess::FileFinderSelectedPath(shell);
+  Expect(selected_path.has_value() &&
+             selected_path->lexically_normal() ==
+                 std::filesystem::path("new-indexed.cpp"),
+         "file finder should select the newly indexed file path");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing Enter should open the newly indexed file");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == added_file.lexically_normal(),
+         "opening from file finder should land on the newly indexed file");
+
+  std::error_code remove_error;
+  std::filesystem::remove(added_file, remove_error);
+  Expect(!remove_error, "fixture cleanup should remove the indexed file");
+  Expect(WaitForProjectReload(shell, std::chrono::milliseconds(1000)),
+         "project reload should observe file deletion via the file index watcher");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("new-indexed.cpp"), false,
+                              std::chrono::milliseconds(1000)),
+         "file index should remove the deleted file");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "file finder should still open after file deletion");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "new-indexed"),
+         "typing the deleted file query should be handled");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) == 0,
+         "file finder should no longer list the deleted file");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -1400,6 +1485,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitignoredDirectories",
           TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
+  AddTest(tests, "WorkspaceShell/FileFinderReflectsFileIndexUpdates",
+          TestWorkspaceShellFileFinderReflectsFileIndexUpdates);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
   AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",

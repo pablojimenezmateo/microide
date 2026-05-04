@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -19,6 +20,7 @@
 #include "editor/EditorViewRenderer.h"
 #include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
+#include "platform/FileIndexWatcher.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/GitBlameService.h"

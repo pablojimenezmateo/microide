@@ -55,7 +55,8 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
   }
   if (runtime_.project_file_event_type != 0 && event.type == runtime_.project_file_event_type) {
     const bool consumed = operations_.project_file_monitor_consume_wake_event(event.type);
-    if (consumed && operations_.reload_project_if_files_changed(true)) {
+    const bool reloaded = operations_.reload_project_if_files_changed(true);
+    if (reloaded) {
       return EventResult{
           .handled = true,
           .redraw = RenderInvalidation{
@@ -64,7 +65,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
           },
       };
     }
-    return finish(consumed);
+    return finish(consumed || reloaded);
   }
   if (operations_.project_search_handles_event(event.type)) {
     operations_.consume_project_search_updates();

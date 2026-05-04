@@ -196,6 +196,23 @@
   static bool TextInputSurfaceIsFileFinder(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::FileFinder;
   }
+  static std::size_t FileFinderResultCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.file_finder.results().size();
+  }
+  static std::optional<std::filesystem::path> FileFinderSelectedPath(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.file_finder.SelectedPath();
+  }
+  static bool FileIndexContainsPath(const WorkspaceShell& shell,
+                                    const std::filesystem::path& relative_path) {
+    const auto files = shell.context_.current_project_state.file_index.Snapshot();
+    const std::filesystem::path normalized = relative_path.lexically_normal();
+    for (const auto& file : files) {
+      if (file.relative_path == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
   static bool TextInputSurfaceIsPromptInput(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::PromptInput;
   }

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/ProjectSearchService.h"
+#include "project/ProjectFileScanner.h"
 
 #include <algorithm>
 #include <chrono>
@@ -28,6 +29,11 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
                                  std::string query,
                                  ProjectSearchOptions options = {},
                                  std::vector<std::filesystem::path> indexed_files = {}) {
+  if (indexed_files.empty()) {
+    indexed_files = project::CollectProjectFiles(
+        root, options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
+                                  : project::ProjectFileScanMode::ExcludeHidden);
+  }
   ProjectSearchService service;
   const std::uint64_t run_id = service.Start(root, std::move(query), options,
                                              std::move(indexed_files));
@@ -248,8 +254,10 @@ void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
   WriteFile(root / "omega.txt", "omega\n");
 
   ProjectSearchService service;
-  const std::uint64_t first_run_id = service.Start(root, "alpha");
-  const std::uint64_t second_run_id = service.Start(root, "omega");
+  const std::vector<std::filesystem::path> indexed_files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  const std::uint64_t first_run_id = service.Start(root, "alpha", {}, indexed_files);
+  const std::uint64_t second_run_id = service.Start(root, "omega", {}, indexed_files);
 
   SearchRunResult latest;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -314,7 +322,9 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
   }
 
   ProjectSearchService service;
-  service.Start(root, "alpha");
+  const std::vector<std::filesystem::path> indexed_files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  service.Start(root, "alpha", {}, indexed_files);
   service.Stop();
   std::this_thread::sleep_for(std::chrono::milliseconds(25));
 

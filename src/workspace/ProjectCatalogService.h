@@ -17,6 +17,8 @@ class ProjectCatalogService {
     std::function<void()> stop_project_search;
     std::function<void()> close_tree_context_menu;
     std::function<void()> clear_editor_blame;
+    std::function<bool()> start_file_index_watcher_for_current_project;
+    std::function<void()> stop_file_index_watcher;
     std::function<void(ProjectWorkspaceState&)> rebind_project_state;
     std::function<void()> reset_current_project_state_storage;
     std::function<void()> reset_transient_interaction_state;

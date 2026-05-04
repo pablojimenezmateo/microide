@@ -10,12 +10,12 @@
 
 ## 2. In-Process ProjectFileIndex (D1 continued)
 
-- [ ] 2.1 Refactor `src/project/FileIndex.{h,cpp}` to hold a sorted `std::vector<ProjectFile>` (path + mtime + size) protected by `std::shared_mutex`; add `ApplyBatch(IndexUpdateBatch)` (exclusive lock) and `Snapshot() -> std::vector<ProjectFile>` (shared lock) methods
-- [ ] 2.2 Wire `FileIndexWatcher` startup to project open in the workspace coordinator: on `InitializeCurrentProject`, construct watcher for the project root, connect its callback to `ProjectFileIndex::ApplyBatch` + SDL wake event post
-- [ ] 2.3 Wire watcher teardown to project close and project switch: call `Unwatch()` and reset the index before the new project's watcher starts
-- [ ] 2.4 Update the file-finder overlay open path to query `ProjectFileIndex::Snapshot()` instead of triggering a directory traversal; remove the old scan entry point from the file-finder call site
-- [ ] 2.5 Update the project search worker to obtain its file list from `ProjectFileIndex::Snapshot()` at search start instead of calling a directory-traversal helper
-- [ ] 2.6 Add integration tests: cold open with a pre-seeded directory, assert file-finder query returns expected files without any scan; add/remove a file, assert the index updates and the file-finder reflects the change
+- [x] 2.1 Refactor `src/project/FileIndex.{h,cpp}` to hold a sorted `std::vector<ProjectFile>` (path + mtime + size) protected by `std::shared_mutex`; add `ApplyBatch(IndexUpdateBatch)` (exclusive lock) and `Snapshot() -> std::vector<ProjectFile>` (shared lock) methods
+- [x] 2.2 Wire `FileIndexWatcher` startup to project open in the workspace coordinator: on `InitializeCurrentProject`, construct watcher for the project root, connect its callback to `ProjectFileIndex::ApplyBatch` + SDL wake event post
+- [x] 2.3 Wire watcher teardown to project close and project switch: call `Unwatch()` and reset the index before the new project's watcher starts
+- [x] 2.4 Update the file-finder overlay open path to query `ProjectFileIndex::Snapshot()` instead of triggering a directory traversal; remove the old scan entry point from the file-finder call site
+- [x] 2.5 Update the project search worker to obtain its file list from `ProjectFileIndex::Snapshot()` at search start instead of calling a directory-traversal helper
+- [x] 2.6 Add integration tests: cold open with a pre-seeded directory, assert file-finder query returns expected files without any scan; add/remove a file, assert the index updates and the file-finder reflects the change
 
 ## 3. Background Subprocess Isolation — Git (D2)
 
@@ -62,7 +62,7 @@
 ## 8. Adaptive Idle Rendering (D6)
 
 - [x] 8.1 Add `in_flight_background_task_count_` atomic int to `Application` (or a narrow `BackgroundTaskRegistry` service); add `IncrementTaskCount()` and `DecrementTaskCount() + PostWakeEvent()` methods; add ASAN assertion that the count never goes negative
-- [ ] 8.2 Wire `FileIndexWatcher` to call `IncrementTaskCount()` when initial index build starts and `DecrementTaskCount()` when `IndexReady` fires
+- [x] 8.2 Wire `FileIndexWatcher` to call `IncrementTaskCount()` when initial index build starts and `DecrementTaskCount()` when `IndexReady` fires
 - [x] 8.3 Wire `ProjectBackgroundExecutor` git dispatch to call `IncrementTaskCount()` on `Post()` and `DecrementTaskCount()` on result delivery via SDL user event
 - [x] 8.4 Wire search worker to call `IncrementTaskCount()` on search start and `DecrementTaskCount()` on worker exit (whether complete or cancelled)
 - [ ] 8.5 Add `IdleHint` enum (`Full`, `CaretOnly`, `Idle`) as the return type of `PrepareFrameOnce`; derive it from: `in_flight_background_task_count_ > 0 → Full`; `caret_visible && caret_blink_pending → CaretOnly`; otherwise `Idle`

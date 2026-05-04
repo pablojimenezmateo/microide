@@ -107,6 +107,7 @@ void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& stat
   util::PerformanceTrace::Scope trace_scope("ProjectCatalogService::StoreCurrentProjectState");
   operations_.sync_active_editor_tab();
   operations_.stop_project_search();
+  operations_.stop_file_index_watcher();
   operations_.close_tree_context_menu();
   context_.current_project_state.initialized = true;
   context_.current_project_state.restore_persistence_on_activate = false;
@@ -141,6 +142,11 @@ void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
     context_.current_project_state.overlay.workflow.project_search.running = false;
     operations_.rebind_project_state(context_.current_project_state);
     operations_.reset_transient_interaction_state();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::LoadProjectState::StartFileIndexWatcherForCurrentProject");
+    operations_.start_file_index_watcher_for_current_project();
   }
   {
     util::PerformanceTrace::Scope scope("ProjectCatalogService::LoadProjectState::ResetStoredState");

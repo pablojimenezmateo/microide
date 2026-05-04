@@ -27,6 +27,9 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
           .stop_project_search = [this]() { StopProjectSearch(); },
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .clear_editor_blame = [this]() { ClearEditorBlame(); },
+          .start_file_index_watcher_for_current_project =
+              [this]() { return StartFileIndexWatcherForCurrentProject(); },
+          .stop_file_index_watcher = [this]() { StopFileIndexWatcher(); },
           .rebind_project_state = [this](ProjectWorkspaceState& state) { RebindProjectState(state); },
           .reset_current_project_state_storage =
               [this]() { ResetCurrentProjectStateStorage(); },

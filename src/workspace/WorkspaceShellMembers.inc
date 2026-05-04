@@ -625,6 +625,8 @@
   void NotifyPluginBufferSave(const std::filesystem::path& path);
   void NotifyLspBufferClose(const std::filesystem::path& path);
   void ResetProjectScopedState(bool show_welcome);
+  bool StartFileIndexWatcherForCurrentProject();
+  void StopFileIndexWatcher();
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
                                 bool restore_persistence,
@@ -1401,6 +1403,9 @@
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
+  std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
+  std::atomic<bool> file_index_has_pending_changes_{false};
+  std::atomic<bool> file_index_initial_build_in_flight_{false};
   WorkspacePluginRuntime plugin_runtime_;
   std::size_t reload_plugins_invocation_count_ = 0;
   std::size_t render_compare_surface_invocation_count_ = 0;
