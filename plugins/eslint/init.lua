@@ -100,7 +100,7 @@ local function eslint_command(ctx, relative_path, report_path, use_yarn)
   if use_yarn then
     return {
       "bash",
-      "-ic",
+      "-lc",
       shell_with_user_env({
         "yarn",
         "-s",
@@ -140,7 +140,7 @@ local function tsc_command(ctx, relative_path)
   if has_yarn_lock(ctx) then
     return {
       "bash",
-      "-ic",
+      "-lc",
       shell_with_user_env({
         tsc_binary(ctx),
         "-p",

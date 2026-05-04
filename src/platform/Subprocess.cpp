@@ -377,7 +377,9 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   std::array<UniqueFd, 2> stderr_pipe;
   std::array<UniqueFd, 2> stdin_pipe;
 
-  const bool needs_stdin = !options.stdin_text.empty();
+  // Always provide a host-owned stdin pipe so background helpers never inherit
+  // the controlling terminal. Callers that do not send stdin should observe EOF.
+  constexpr bool needs_stdin = true;
   if (!OpenPipe(options.capture_stdout, &stdout_pipe) ||
       !OpenPipe(options.capture_stderr, &stderr_pipe) || !OpenPipe(needs_stdin, &stdin_pipe)) {
     return result;
@@ -400,9 +402,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
         dup2(devnull.Get(), STDERR_FILENO);
       }
     }
-    if (needs_stdin) {
-      dup2(stdin_pipe[0].Get(), STDIN_FILENO);
-    }
+    dup2(stdin_pipe[0].Get(), STDIN_FILENO);
 
     stdout_pipe[0].Reset();
     stdout_pipe[1].Reset();
@@ -429,10 +429,10 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   stdout_pipe[1].Reset();
   stderr_pipe[1].Reset();
   stdin_pipe[0].Reset();
-  if (needs_stdin) {
+  if (!options.stdin_text.empty()) {
     WriteAllToPipe(stdin_pipe[1].Get(), options.stdin_text);
-    stdin_pipe[1].Reset();
   }
+  stdin_pipe[1].Reset();
 
   DrainCapturedPipes(options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
                      options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text);
@@ -481,7 +481,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
     return true;
   };
 
-  const bool needs_stdin = !options.stdin_text.empty();
+  const bool needs_stdin = true;
   if (!open_pipe(options.capture_stdout, stdout_read, stdout_write) ||
       !open_pipe(options.capture_stderr, stderr_read, stderr_write) ||
       !open_pipe(needs_stdin, stdin_read, stdin_write)) {
@@ -507,7 +507,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   STARTUPINFOW startup_info{};
   startup_info.cb = sizeof(startup_info);
   startup_info.dwFlags = STARTF_USESTDHANDLES;
-  startup_info.hStdInput = needs_stdin ? stdin_read.Get() : GetStdHandle(STD_INPUT_HANDLE);
+  startup_info.hStdInput = stdin_read.Get();
   startup_info.hStdOutput =
       options.capture_stdout ? stdout_write.Get() : GetStdHandle(STD_OUTPUT_HANDLE);
   startup_info.hStdError = options.capture_stderr
@@ -542,10 +542,10 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   if (options.capture_stderr && stderr_read.IsValid()) {
     stderr_thread = std::thread([&]() { DrainPipeToString(stderr_read.Get(), &result.stderr_text); });
   }
-  if (needs_stdin && stdin_write.IsValid()) {
+  if (stdin_write.IsValid() && !options.stdin_text.empty()) {
     WriteAllToHandle(stdin_write.Get(), options.stdin_text);
-    stdin_write.Reset();
   }
+  stdin_write.Reset();
 
   WaitForSingleObject(process_info.hProcess, INFINITE);
   DWORD exit_code = 0;

@@ -5,6 +5,11 @@
 #include <optional>
 #include <string>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace microide::tests {
 namespace {
 
@@ -64,6 +69,36 @@ void TestSubprocessCapturesStderrAndCwd() {
 }
 
 #if defined(__unix__) || defined(__APPLE__)
+class ScopedStdinRedirect {
+ public:
+  explicit ScopedStdinRedirect(const std::filesystem::path& path) {
+    saved_stdin_ = dup(STDIN_FILENO);
+    Expect(saved_stdin_ >= 0, "stdin redirect fixture should duplicate the current stdin");
+
+    redirected_fd_ = open(path.c_str(), O_RDONLY);
+    Expect(redirected_fd_ >= 0, "stdin redirect fixture should open the redirected stdin file");
+    Expect(dup2(redirected_fd_, STDIN_FILENO) >= 0,
+           "stdin redirect fixture should replace the process stdin");
+  }
+
+  ~ScopedStdinRedirect() {
+    if (saved_stdin_ >= 0) {
+      (void)dup2(saved_stdin_, STDIN_FILENO);
+      close(saved_stdin_);
+    }
+    if (redirected_fd_ >= 0) {
+      close(redirected_fd_);
+    }
+  }
+
+  ScopedStdinRedirect(const ScopedStdinRedirect&) = delete;
+  ScopedStdinRedirect& operator=(const ScopedStdinRedirect&) = delete;
+
+ private:
+  int saved_stdin_ = -1;
+  int redirected_fd_ = -1;
+};
+
 void TestSubprocessAppliesEnvironmentOverrides() {
   ScopedEnvVar scoped_env("MICROIDE_SUBPROCESS_TEST_ENV", "outer");
 
@@ -110,6 +145,31 @@ void TestSubprocessAppliesEnvironmentOverrides() {
   Expect(unset_result.stdout_text == "unset",
          "subprocess execution should allow removing inherited environment variables");
 }
+
+void TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin() {
+  TemporaryDirectory temp_dir;
+  const auto redirected_stdin = temp_dir.path() / "ambient-stdin.txt";
+  WriteFile(redirected_stdin, "ambient stdin should not leak\n");
+
+  ScopedStdinRedirect redirect(redirected_stdin);
+  const auto result = RunSubprocess(
+      {"python3", "-c", "import sys; sys.stdout.write(sys.stdin.read())"},
+      SubprocessOptions{
+          .cwd = {},
+          .stdin_text = {},
+          .environment_overrides = {},
+          .capture_stdout = true,
+          .capture_stderr = true,
+          .silence_stderr = false,
+      });
+
+  Expect(result.exit_code == 0,
+         "stdin inheritance regression fixture should exit successfully");
+  Expect(result.stdout_text.empty(),
+         "subprocesses without explicit stdin should receive EOF instead of inheriting parent stdin");
+  Expect(result.stderr_text.empty(),
+         "stdin inheritance regression fixture should not emit stderr");
+}
 #endif
 
 }  // namespace
@@ -120,6 +180,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Subprocess/AppliesEnvironmentOverrides",
           TestSubprocessAppliesEnvironmentOverrides);
+  AddTest(tests, "Subprocess/WithoutExplicitStdinDoesNotInheritParentStdin",
+          TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin);
 #endif
 }
 
