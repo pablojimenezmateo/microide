@@ -1051,6 +1051,152 @@ return ide.plugin({
          "opening an editable merge buffer should trigger the normal plugin buffer-open hook");
 }
 
+void TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = project_root / "alpha.md";
+  const std::filesystem::path beta = project_root / "beta.md";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  const std::filesystem::path server_path = project_root / "phase5_delayed_didopen_lsp.py";
+  WriteFile(server_path, R"py(#!/usr/bin/env python3
+import json
+import sys
+import time
+
+def write_message(payload):
+    body = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.decode("utf-8").strip()
+        if not line:
+            break
+        if line.startswith("Content-Length:"):
+            content_length = int(line.split(":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+while True:
+    msg = read_message()
+    if msg is None:
+      break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "initialized":
+        pass
+    elif method == "textDocument/didOpen":
+        uri = msg["params"]["textDocument"]["uri"]
+        time.sleep(0.35)
+        write_message({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "diagnostics": [{
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 1},
+                    },
+                    "severity": 2,
+                    "message": "delayed didOpen diagnostic",
+                }],
+            },
+        })
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py");
+
+  WritePluginInit(
+      plugins_root, "phase5-delayed-didopen",
+      std::string(R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "phase5-delayed-didopen",
+  setup = function(ctx)
+    ctx.lsp.add({
+      id = "markdown",
+      language_id = "markdown",
+      command = { "python3", ")lua") +
+          server_path.generic_string() +
+          std::string(R"lua(" }
+    })
+  end
+})
+)lua"));
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "delayed-didOpen fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
+         "delayed-didOpen fixture should open deferred candidate tab");
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, project_root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "delayed-didOpen fixture should restore saved session");
+  const auto& before_tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(before_tabs.size() == 2 && before_tabs[1].deferred_handle.has_value(),
+         "restored inactive tab should remain deferred before activation");
+
+  const Uint64 start = SDL_GetTicks();
+  WorkspaceShellTestAccess::ActivateTab(restored, 1);
+  const Uint64 elapsed = SDL_GetTicks() - start;
+  const auto& after_tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(after_tabs[1].editor_state.has_value() && !after_tabs[1].deferred_handle.has_value(),
+         "activating deferred tab should hydrate immediately");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(restored).path() == beta.lexically_normal(),
+         "activating deferred tab should switch active editor before delayed didOpen diagnostics");
+  Expect(elapsed < 250,
+         "activating deferred tab should not block on delayed didOpen diagnostics");
+
+  const auto* immediate_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(restored, beta);
+  const bool immediate_has_diagnostic =
+      immediate_diagnostics != nullptr && !immediate_diagnostics->empty();
+  Expect(!immediate_has_diagnostic,
+         "delayed didOpen diagnostics should not be required for deferred tab hydration");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(restored, "x"),
+         "post-hydration edit should trigger LSP didOpen/didChange for the activated tab");
+
+}
+
 }  // namespace
 
 void RegisterPhase5Tests(std::vector<TestCase>& tests) {
@@ -1066,6 +1212,8 @@ void RegisterPhase5Tests(std::vector<TestCase>& tests) {
           TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions);
   AddTest(tests, "Phase5.LspMergeBuffersPublishDiagnosticsAndBufferHooks",
           TestPhase5LspMergeBuffersPublishDiagnosticsAndBufferHooks);
+  AddTest(tests, "Phase5.DeferredTabHydrationCompletesBeforeDidOpenDiagnostics",
+          TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics);
 }
 
 }  // namespace microide::tests

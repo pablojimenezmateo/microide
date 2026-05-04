@@ -30,7 +30,7 @@
 
 - [x] 4.1 Add `CheckNoSynchronousSubprocessWaitInWorkspace` rule to `tests/ArchitectureInvariantsTests.cpp`: hard-fail if any file under `src/workspace/` contains a direct call to `Subprocess::Wait()`, `waitpid()`, `WaitForSingleObject()`, or equivalent blocking-wait primitives; verify by introducing a bait call (confirm failure) then removing it (confirm pass)
 - [x] 4.2 Add `CheckLspDidOpenIsNonBlocking` rule to `tests/ArchitectureInvariantsTests.cpp`: hard-fail if `textDocument/didOpen` or `textDocument/didChange` notification sends appear in a synchronous path reachable from `EditorTabService::ActivateTab`; document the expected async dispatch pattern in the rule comment
-- [ ] 4.3 Audit existing LSP `textDocument/didOpen` dispatch path against the new lint rule; fix any synchronous send found; add a regression test asserting that tab hydration completes before the LSP server has acknowledged the notification
+- [x] 4.3 Audit existing LSP `textDocument/didOpen` dispatch path against the new lint rule; fix any synchronous send found; add a regression test asserting that tab hydration completes before the LSP server has acknowledged the notification
 
 ## 5. Layout And Geometry Cache (D3)
 

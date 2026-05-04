@@ -741,22 +741,50 @@ RuleResult CheckNoSynchronousSubprocessWaitInWorkspace(const std::filesystem::pa
 RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "LSP didOpen/didChange synchronous send from ActivateTab";
-  result.hard_fail = false;  // policy rule — reviewer-enforced, not auto-detected reliably
-  // Scan for any direct send of didOpen/didChange without an async wrapper in EditorTabService.
-  const std::string target = (repo_root / "src/workspace/WorkspaceTabCoordinator.cpp").string();
+  result.hard_fail = true;
+  // Scan Activate() in TabCoordinator for direct LSP didOpen/didChange dispatch.
+  // Activation should only hydrate UI state and schedule async work.
   const std::filesystem::path target_path = repo_root / "src/workspace/WorkspaceTabCoordinator.cpp";
   if (!std::filesystem::exists(target_path)) {
     return result;
   }
   const std::string text = ReadText(target_path);
-  // Hard pattern: synchronous LSP send directly inside ActivateTab function body.
-  // Allowed pattern: async dispatch via PostLatest/Post before the send.
-  const std::regex sync_send_pattern(
-      R"(\b(SendNotification|SendDidOpen|SendDidChange)\s*\()");
-  // We only flag if the send appears in ActivateTab context without an intervening async dispatch.
-  // This is a heuristic check; false negatives are acceptable since tests cover the async path.
-  (void)text;
-  (void)sync_send_pattern;
+
+  const std::string activate_signature = "void TabCoordinator::Activate(std::size_t index)";
+  const std::size_t activate_pos = text.find(activate_signature);
+  if (activate_pos == std::string::npos) {
+    return result;
+  }
+  const std::size_t body_start = text.find('{', activate_pos);
+  if (body_start == std::string::npos) {
+    return result;
+  }
+
+  std::size_t body_end = body_start;
+  int depth = 0;
+  for (; body_end < text.size(); ++body_end) {
+    if (text[body_end] == '{') {
+      ++depth;
+    } else if (text[body_end] == '}') {
+      --depth;
+      if (depth == 0) {
+        break;
+      }
+    }
+  }
+  if (body_end <= body_start || body_end >= text.size()) {
+    return result;
+  }
+
+  const std::string activate_body = text.substr(body_start + 1, body_end - body_start - 1);
+  const std::regex sync_lsp_dispatch_pattern(
+      R"(\b(DidOpen|DidChange|DidChangeIncremental|EnsureLspDocumentOpen|NotifyLspBufferOpen)\s*\()");
+  std::smatch match;
+  if (std::regex_search(activate_body, match, sync_lsp_dispatch_pattern)) {
+    result.violations.push_back(
+        Violation{target_path, 1,
+                  "TabCoordinator::Activate must not synchronously dispatch LSP didOpen/didChange"});
+  }
   return result;
 }
 
