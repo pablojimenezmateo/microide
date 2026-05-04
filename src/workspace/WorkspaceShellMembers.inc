@@ -611,6 +611,8 @@
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
+  void RequestGitSidebarRefresh();
+  bool ConsumePendingGitSidebarRefreshSnapshot(GitSidebarState::RefreshSnapshot* snapshot);
   void InvalidateRuntimeSyntaxStateCaches(std::span<const std::string_view> changed_languages);
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens = true,
@@ -876,6 +878,7 @@
   void RestorePreviousSidebar();
   void RefreshProjectFiles();
   void RefreshGitSidebar();
+  void ConsumeGitSidebarRefresh();
   bool RefreshProblemsSidebar();
   bool RefreshTestsSidebar();
   bool RefreshTestsSidebarState();
@@ -1403,6 +1406,10 @@
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
+  project::ProjectBackgroundExecutor project_background_executor_;
+  std::mutex git_sidebar_refresh_mutex_;
+  std::optional<GitSidebarState::RefreshSnapshot> git_sidebar_refresh_snapshot_;
+  std::uint64_t git_sidebar_refresh_generation_ = 0;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<bool> file_index_has_pending_changes_{false};
   std::atomic<bool> file_index_initial_build_in_flight_{false};
@@ -1437,6 +1444,7 @@
   WorkspaceProviderBridgeManager provider_bridge_manager_;
   PersistenceService persistence_service_;
   Uint32 git_blame_event_type_ = 0;
+  Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;
   Uint32 project_file_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;

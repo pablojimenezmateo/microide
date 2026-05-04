@@ -9,6 +9,9 @@
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
+#include "app/BackgroundTaskCounter.h"
+#include "project/GitCompareService.h"
+#include "project/GitStatusService.h"
 
 namespace microide::workspace {
 
@@ -100,7 +103,11 @@ void SidebarCoordinator::ShowProblems() {
 
 void SidebarCoordinator::ShowGit() {
   state_.directory_tree.RefreshGitStatuses();
-  RefreshGit();
+  if (operations_.request_git_refresh != nullptr) {
+    operations_.request_git_refresh();
+  } else {
+    RefreshGit();
+  }
   ShowMode(SidebarMode::Git, false);
   RevealSelectedGitLine();
 }
@@ -221,6 +228,11 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .stop_project_search = [this]() { StopProjectSearch(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
+          .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
+          .consume_git_refresh_snapshot =
+              [this](GitSidebarState::RefreshSnapshot* snapshot) {
+                return ConsumePendingGitSidebarRefreshSnapshot(snapshot);
+              },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
@@ -346,7 +358,104 @@ void WorkspaceShell::RefreshProjectFiles() {
   MakeSidebarService().RefreshProjectFiles();
 }
 
+void WorkspaceShell::RequestGitSidebarRefresh() {
+  if (context_.current_project_state.root.empty()) {
+    context_.current_project_state.sidebar.git.refreshing = false;
+    return;
+  }
+
+  const std::filesystem::path project_root = context_.current_project_state.root;
+  std::uint64_t generation = 0;
+  {
+    std::lock_guard lock(git_sidebar_refresh_mutex_);
+    generation = ++git_sidebar_refresh_generation_;
+    git_sidebar_refresh_snapshot_.reset();
+  }
+
+  context_.current_project_state.sidebar.git.refreshing = true;
+  RequestSidebarRedraw();
+  app::IncrementBackgroundTaskCount();
+  project_background_executor_.Post([this, project_root, generation]() {
+    GitSidebarState::RefreshSnapshot snapshot;
+    snapshot.generation = generation;
+
+    const auto working_entries = project::CollectGitWorkingTreeEntries(project_root);
+    for (const auto& entry : working_entries) {
+      snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+          .section = GitSidebarEntry::Section::Modified,
+          .relative_path = entry.relative_path,
+          .status = entry.status,
+          .conflicted = entry.conflicted,
+          .staged = entry.staged,
+      });
+    }
+
+    const auto base_ref = project::ResolveGitBaseReference(project_root);
+    if (base_ref.has_value()) {
+      snapshot.repo_available = true;
+      snapshot.base_ref = base_ref->ref;
+      snapshot.base_label = base_ref->label;
+      const auto outgoing_entries =
+          project::CollectGitBranchOutgoingFiles(project_root, snapshot.base_ref);
+      for (const auto& entry : outgoing_entries) {
+        snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+            .section = GitSidebarEntry::Section::Outgoing,
+            .relative_path = entry.relative_path,
+            .status = entry.status,
+            .conflicted = false,
+            .staged = false,
+        });
+      }
+    } else {
+      snapshot.repo_available = std::filesystem::exists(project_root / ".git");
+    }
+
+    bool stored = false;
+    bool pushed = false;
+    {
+      std::lock_guard lock(git_sidebar_refresh_mutex_);
+      if (generation == git_sidebar_refresh_generation_) {
+        git_sidebar_refresh_snapshot_ = std::move(snapshot);
+        stored = true;
+      }
+    }
+    if (stored && git_sidebar_event_type_ != 0) {
+      SDL_Event event{};
+      event.type = git_sidebar_event_type_;
+      pushed = SDL_PushEvent(&event);
+    }
+    if (!stored || !pushed) {
+      app::DecrementBackgroundTaskCountAndWake();
+    }
+  });
+}
+
+bool WorkspaceShell::ConsumePendingGitSidebarRefreshSnapshot(
+    GitSidebarState::RefreshSnapshot* snapshot) {
+  if (snapshot == nullptr) {
+    return false;
+  }
+
+  std::optional<GitSidebarState::RefreshSnapshot> pending;
+  {
+    std::lock_guard lock(git_sidebar_refresh_mutex_);
+    pending = std::move(git_sidebar_refresh_snapshot_);
+    git_sidebar_refresh_snapshot_.reset();
+  }
+  if (!pending.has_value()) {
+    return false;
+  }
+
+  *snapshot = std::move(*pending);
+  app::DecrementBackgroundTaskCountAndWake();
+  return true;
+}
+
 void WorkspaceShell::RefreshGitSidebar() {
+  RequestGitSidebarRefresh();
+}
+
+void WorkspaceShell::ConsumeGitSidebarRefresh() {
   MakeSidebarService().RefreshGit();
 }
 

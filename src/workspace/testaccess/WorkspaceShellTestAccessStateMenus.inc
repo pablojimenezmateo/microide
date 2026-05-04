@@ -167,6 +167,9 @@
   static bool ProjectSearchRunning(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.running;
   }
+  static bool GitSidebarRefreshing(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.refreshing;
+  }
   static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.truncated;
   }

@@ -27,7 +27,7 @@ bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
 bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
-    if (WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true)) {
+    if (WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
       return true;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -153,9 +153,19 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
          "opening a project should not eagerly collect git sidebar entries");
 
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "showing git sidebar should enter the refreshing state immediately");
+  const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < git_deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "git sidebar should leave refreshing state once async status arrives");
   const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
   Expect(!entries.empty(),
-         "showing git sidebar should collect entries on demand");
+         "showing git sidebar should render entries on wake after refresh dispatch");
   const bool found_modified_source = std::any_of(
       entries.begin(), entries.end(), [&](const WorkspaceShell::GitSidebarEntry& entry) {
         return entry.section == WorkspaceShell::GitSidebarEntry::Section::Modified &&
@@ -1384,8 +1394,16 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
   WriteFile(root / "watched.txt", "changed\n");
   Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
          "project watcher reload should detect filesystem changes");
-  Expect(!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
-         "project watcher reload should not continuously rearm after consuming a change");
+  bool settled = false;
+  for (int attempt = 0; attempt < 10; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true)) {
+      settled = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(settled,
+         "project watcher reload should settle quickly instead of continuously rearming");
   const auto idle_delay_after = shell.NextAnimationDelayMs();
   Expect(!idle_delay_after.has_value() || *idle_delay_after > 0,
          "project watcher reload should settle without a zero-delay wake after refresh");

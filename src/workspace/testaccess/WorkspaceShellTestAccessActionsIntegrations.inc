@@ -190,6 +190,9 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     return shell.RefreshProblemsSidebar();
   }
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
+  static void ConsumeGitSidebarRefresh(WorkspaceShell& shell) {
+    shell.ConsumeGitSidebarRefresh();
+  }
   static std::vector<std::string> GitSidebarSummaryLines(const WorkspaceShell& shell) {
     return shell.GitSidebarSummaryLines();
   }

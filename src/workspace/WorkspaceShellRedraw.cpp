@@ -614,8 +614,10 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
-  const bool index_changed =
-      file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);
+  const bool index_changed = force_check
+                                 ? false
+                                 : file_index_has_pending_changes_.exchange(
+                                       false, std::memory_order_acq_rel);
   const bool changed =
       force_check ? project_file_monitor_.ConsumePendingChanges() : project_file_monitor_.PollForChanges();
   if (!changed && !index_changed) {

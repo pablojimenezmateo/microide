@@ -455,7 +455,10 @@ std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines
   }
 
   const auto specs =
-      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available, context_.current_project_state.sidebar.git.base_ref, context_.current_project_state.sidebar.git.base_label);
+      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available,
+                               context_.current_project_state.sidebar.git.refreshing,
+                               context_.current_project_state.sidebar.git.base_ref,
+                               context_.current_project_state.sidebar.git.base_label);
   std::vector<GitSidebarLine> lines;
   lines.reserve(specs.size());
   for (const GitSidebarLineSpec& spec : specs) {
@@ -513,7 +516,10 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
                            : GitSidebarSection::Outgoing);
   }
   const auto specs =
-      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available, context_.current_project_state.sidebar.git.base_ref, context_.current_project_state.sidebar.git.base_label);
+      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available,
+                               context_.current_project_state.sidebar.git.refreshing,
+                               context_.current_project_state.sidebar.git.base_ref,
+                               context_.current_project_state.sidebar.git.base_label);
   return FindSelectedGitSidebarLineIndex(specs, context_.current_project_state.sidebar.git.selected_index);
 }
 

@@ -28,6 +28,7 @@ GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::pa
 std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     const std::vector<GitSidebarSection>& entry_sections,
     bool git_repo_available,
+    bool refreshing,
     std::string_view git_base_ref,
     std::string_view git_base_label) {
   std::vector<GitSidebarLineSpec> lines;
@@ -50,7 +51,9 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     lines.push_back(GitSidebarLineSpec{
         .kind = GitSidebarLineKind::Empty,
         .section = GitSidebarSection::Modified,
-        .label = git_repo_available ? "Working tree is clean" : "Not a git repository",
+        .label = refreshing ? "Refreshing git status..."
+                            : git_repo_available ? "Working tree is clean"
+                                                 : "Not a git repository",
     });
   } else {
     for (std::size_t i = 0; i < entry_sections.size(); ++i) {

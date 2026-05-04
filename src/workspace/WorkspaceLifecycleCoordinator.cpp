@@ -114,6 +114,11 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     git_blame_event_type_ = 0;
   }
 
+  git_sidebar_event_type_ = SDL_RegisterEvents(1);
+  if (git_sidebar_event_type_ == static_cast<Uint32>(-1)) {
+    git_sidebar_event_type_ = 0;
+  }
+
   terminal_event_type_ = SDL_RegisterEvents(1);
   if (terminal_event_type_ == static_cast<Uint32>(-1)) {
     terminal_event_type_ = 0;

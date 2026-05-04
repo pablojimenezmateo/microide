@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <system_error>
 #include <vector>
 
@@ -24,7 +25,9 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
   file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
   file_index_watcher_->SetCallback([this](platform::IndexUpdateBatch batch) {
     context_.current_project_state.file_index.ApplyBatch(batch);
-    file_index_has_pending_changes_.store(true, std::memory_order_release);
+    if (!batch.is_initial) {
+      file_index_has_pending_changes_.store(true, std::memory_order_release);
+    }
     if (batch.is_initial &&
         file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
       app::DecrementBackgroundTaskCountAndWake();
@@ -133,6 +136,13 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   auto persistence = MakePersistenceCoordinator();
   StopProjectSearch();
+  project_background_executor_.Cancel();
+  {
+    std::lock_guard lock(git_sidebar_refresh_mutex_);
+    ++git_sidebar_refresh_generation_;
+    git_sidebar_refresh_snapshot_.reset();
+  }
+  context_.current_project_state.sidebar.git.refreshing = false;
   StopFileIndexWatcher();
   context_.current_project_state.file_index.Reset();
   project_file_monitor_.Reset();

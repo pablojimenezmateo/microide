@@ -25,6 +25,8 @@ class SidebarCoordinator {
     std::function<void()> stop_project_search;
     std::function<void()> request_window_redraw;
     std::function<void()> request_sidebar_redraw;
+    std::function<void()> request_git_refresh;
+    std::function<bool(GitSidebarState::RefreshSnapshot*)> consume_git_refresh_snapshot;
     std::function<void()> refresh_project_search;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;

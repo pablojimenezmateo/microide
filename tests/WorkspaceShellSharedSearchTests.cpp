@@ -29,7 +29,8 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
       GitSidebarSection::Modified,
       GitSidebarSection::Outgoing,
   };
-  const auto lines = BuildGitSidebarLineSpecs(sections, true, "origin/main", "origin/main");
+  const auto lines =
+      BuildGitSidebarLineSpecs(sections, true, false, "origin/main", "origin/main");
   Expect(lines.size() == 5, "git sidebar lines should include both section headers and entries");
   Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Changes (2)",
          "git sidebar lines should include the modified header with count");
@@ -51,7 +52,7 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
 }
 
 void TestWorkspaceSharedGitSidebarEmptyStates() {
-  const auto clean_lines = BuildGitSidebarLineSpecs({}, true, "", "");
+  const auto clean_lines = BuildGitSidebarLineSpecs({}, true, false, "", "");
   Expect(clean_lines.size() == 4,
          "empty git sidebar should still show both section headers and empty rows");
   Expect(clean_lines[1].kind == GitSidebarLineKind::Empty &&
@@ -61,7 +62,7 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
              clean_lines[3].label == "Base branch unavailable",
          "git sidebar should describe a missing base branch for outgoing files");
 
-  const auto no_repo_lines = BuildGitSidebarLineSpecs({}, false, "", "");
+  const auto no_repo_lines = BuildGitSidebarLineSpecs({}, false, false, "", "");
   Expect(no_repo_lines[1].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
 }

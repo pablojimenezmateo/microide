@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -70,10 +71,27 @@ struct ProblemsSidebarEntry {
 };
 
 struct GitSidebarState {
+  struct RefreshSnapshotEntry {
+    GitSidebarEntry::Section section = GitSidebarEntry::Section::Modified;
+    std::filesystem::path relative_path;
+    project::GitFileStatus status = project::GitFileStatus::Clean;
+    bool conflicted = false;
+    bool staged = false;
+  };
+
+  struct RefreshSnapshot {
+    std::vector<RefreshSnapshotEntry> entries;
+    bool repo_available = false;
+    std::string base_ref;
+    std::string base_label;
+    std::uint64_t generation = 0;
+  };
+
   std::vector<GitSidebarEntry> entries;
   std::string base_ref;
   std::string base_label;
   bool repo_available = false;
+  bool refreshing = false;
   bool provider_backed = false;
   bool supports_mutations = true;
   std::string provider_id;

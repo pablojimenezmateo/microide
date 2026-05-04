@@ -28,15 +28,51 @@ void SidebarCoordinator::RefreshGit() {
   state_.sidebar.git.base_ref.clear();
   state_.sidebar.git.base_label.clear();
   state_.sidebar.git.repo_available = false;
+  state_.sidebar.git.refreshing = false;
   state_.sidebar.git.selected_index = 0;
   if (project_root_.empty()) {
     return;
   }
 
-  const auto working_entries = project::CollectGitWorkingTreeEntries(project_root_);
-  for (const auto& entry : working_entries) {
+  GitSidebarState::RefreshSnapshot snapshot;
+  bool has_snapshot =
+      operations_.consume_git_refresh_snapshot != nullptr &&
+      operations_.consume_git_refresh_snapshot(&snapshot);
+  if (!has_snapshot) {
+    const auto working_entries = project::CollectGitWorkingTreeEntries(project_root_);
+    for (const auto& entry : working_entries) {
+      snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+          .section = GitSidebarEntry::Section::Modified,
+          .relative_path = entry.relative_path,
+          .status = entry.status,
+          .conflicted = entry.conflicted,
+          .staged = entry.staged,
+      });
+    }
+    const auto base_ref = project::ResolveGitBaseReference(project_root_);
+    if (base_ref.has_value()) {
+      snapshot.repo_available = true;
+      snapshot.base_ref = base_ref->ref;
+      snapshot.base_label = base_ref->label;
+      const auto outgoing_entries =
+          project::CollectGitBranchOutgoingFiles(project_root_, snapshot.base_ref);
+      for (const auto& entry : outgoing_entries) {
+        snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+            .section = GitSidebarEntry::Section::Outgoing,
+            .relative_path = entry.relative_path,
+            .status = entry.status,
+            .conflicted = false,
+            .staged = false,
+        });
+      }
+    } else {
+      snapshot.repo_available = std::filesystem::exists(project_root_ / ".git");
+    }
+  }
+
+  for (const auto& entry : snapshot.entries) {
     state_.sidebar.git.entries.push_back(GitSidebarEntry{
-        .section = GitSidebarEntry::Section::Modified,
+        .section = entry.section,
         .path = (project_root_ / entry.relative_path).lexically_normal(),
         .relative_path = entry.relative_path,
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
@@ -48,31 +84,10 @@ void SidebarCoordinator::RefreshGit() {
         .supports_discard = true,
     });
   }
-
-  const auto base_ref = project::ResolveGitBaseReference(project_root_);
-  if (base_ref.has_value()) {
-    state_.sidebar.git.repo_available = true;
-    state_.sidebar.git.base_ref = base_ref->ref;
-    state_.sidebar.git.base_label = base_ref->label;
-    const auto outgoing_entries =
-        project::CollectGitBranchOutgoingFiles(project_root_, state_.sidebar.git.base_ref);
-    for (const auto& entry : outgoing_entries) {
-      state_.sidebar.git.entries.push_back(GitSidebarEntry{
-          .section = GitSidebarEntry::Section::Outgoing,
-          .path = (project_root_ / entry.relative_path).lexically_normal(),
-          .relative_path = entry.relative_path,
-          .status = entry.status,
-          .conflicted = false,
-          .staged = false,
-          .provider_id = {},
-          .provider_label = {},
-          .supports_stage = true,
-          .supports_discard = true,
-      });
-    }
-  } else {
-    state_.sidebar.git.repo_available = std::filesystem::exists(project_root_ / ".git");
-  }
+  state_.sidebar.git.repo_available = snapshot.repo_available;
+  state_.sidebar.git.base_ref = snapshot.base_ref;
+  state_.sidebar.git.base_label = snapshot.base_label;
+  state_.sidebar.git.refreshing = false;
 
   for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
     if (state_.sidebar.git.entries[i].path == previous_path &&

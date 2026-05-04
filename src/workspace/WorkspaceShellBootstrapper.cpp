@@ -54,6 +54,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
       WorkspaceEventDispatcher::Runtime{
           .project_open_dialog_event_type = shell->project_open_dialog_event_type_,
           .git_blame_event_type = shell->git_blame_event_type_,
+          .git_sidebar_event_type = shell->git_sidebar_event_type_,
           .terminal_event_type = shell->terminal_event_type_,
           .project_file_event_type = shell->project_file_event_type_,
           .lsp_event_type = shell->lsp_event_type_,
@@ -92,6 +93,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->ConsumeProviderBridgeUpdates(); },
           .request_focused_editor_redraw =
               [shell]() { shell->RequestFocusedEditorRedraw(); },
+          .consume_git_sidebar_refresh =
+              [shell]() { shell->ConsumeGitSidebarRefresh(); },
           .consume_lsp_callbacks =
               [shell]() { shell->ConsumeLspCallbacks(); },
           .consume_plugin_async_process_callbacks =

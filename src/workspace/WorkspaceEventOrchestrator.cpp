@@ -55,7 +55,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
   }
   if (runtime_.project_file_event_type != 0 && event.type == runtime_.project_file_event_type) {
     const bool consumed = operations_.project_file_monitor_consume_wake_event(event.type);
-    const bool reloaded = operations_.reload_project_if_files_changed(true);
+    const bool reloaded = operations_.reload_project_if_files_changed(false);
     if (reloaded) {
       return EventResult{
           .handled = true,
@@ -90,6 +90,10 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
   }
   if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
     operations_.request_focused_editor_redraw();
+    return finish(true);
+  }
+  if (runtime_.git_sidebar_event_type != 0 && event.type == runtime_.git_sidebar_event_type) {
+    operations_.consume_git_sidebar_refresh();
     return finish(true);
   }
   if (runtime_.terminal_event_type != 0 && event.type == runtime_.terminal_event_type) {

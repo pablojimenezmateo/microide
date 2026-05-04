@@ -34,6 +34,7 @@ struct GitSidebarEntryTextModel {
 std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     const std::vector<GitSidebarSection>& entry_sections,
     bool git_repo_available,
+    bool refreshing,
     std::string_view git_base_ref,
     std::string_view git_base_label);
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(

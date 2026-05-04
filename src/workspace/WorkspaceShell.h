@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -24,6 +25,7 @@
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/GitBlameService.h"
+#include "project/ProjectBackgroundExecutor.h"
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
