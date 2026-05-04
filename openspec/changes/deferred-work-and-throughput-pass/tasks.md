@@ -22,7 +22,7 @@
 - [x] 3.1 Introduce `src/project/ProjectBackgroundExecutor.{h,cpp}`: single-thread executor per project (one `std::thread` + `std::deque` work queue + `std::mutex` + `std::condition_variable`); supports `Post(task)`, `PostLatest(key, task)` (replaces any pending task with the same key — used for blame debounce), `Cancel()`, and `Shutdown(deadline)`
 - [x] 3.2 Migrate `GitOperations::Status()` call site in the git-sidebar coordinator to dispatch through `ProjectBackgroundExecutor`; deliver the result to the sidebar via SDL user event; sidebar enters "refreshing" state on the dispatch frame and renders the result on the wake frame
 - [x] 3.3 Migrate `GitOperations::Blame()` call site to use `PostLatest("blame", ...)` so rapid scroll triggers discard superseded blame requests; deliver result via SDL user event to the gutter renderer
-- [ ] 3.4 Migrate `GitOperations::Log()` call site to dispatch through the executor; deliver result via SDL user event
+- [x] 3.4 Migrate `GitOperations::Log()` call site to dispatch through the executor; deliver result via SDL user event
 - [x] 3.5 On project switch, call `ProjectBackgroundExecutor::Cancel()` before constructing the new project's executor; verify that results delivered after cancel are discarded (checked against the project-scoped cancel token, not a shell-level flag)
 - [x] 3.6 Add integration tests: open project, activate git sidebar, assert main thread never blocks on git subprocess; switch projects mid-operation, assert old result is discarded and new project starts clean
 
