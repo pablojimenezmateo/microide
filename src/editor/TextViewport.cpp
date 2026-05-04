@@ -1326,6 +1326,8 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(carets.size());
 
   for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
     const std::size_t line = std::min(it->line, document_->lines.size() - 1);
@@ -1333,19 +1335,33 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
     const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(
         SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, text);
     if (!entry.has_value()) {
+      if (!(line == primary_before.line && column == primary_before.column)) {
+        updated_secondary_carets.push_back(TextPosition{line, column});
+      }
       continue;
     }
     ApplyHistoryEntry(*entry, true);
+    const TextPosition updated_position{
+        entry->after_state.cursor_line,
+        entry->after_state.cursor_column,
+    };
     if (line == primary_before.line && column == primary_before.column) {
-      primary_after = TextPosition{
-          entry->after_state.cursor_line,
-          entry->after_state.cursor_column,
-      };
+      primary_after = updated_position;
+    } else {
+      updated_secondary_carets.push_back(updated_position);
     }
   }
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
+  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), TextPositionLess);
+  updated_secondary_carets.erase(
+      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
+      updated_secondary_carets.end());
+  updated_secondary_carets.erase(
+      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
+      updated_secondary_carets.end());
+  secondary_carets_ = std::move(updated_secondary_carets);
   preferred_column_ = cursor_visual_column();
   selection_anchor_.reset();
   document_->placeholder = false;
@@ -1379,6 +1395,8 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(carets.size());
   bool changed = false;
 
   for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
@@ -1398,15 +1416,21 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
                                      "");
     }
     if (!entry.has_value()) {
+      if (!(line == primary_before.line && column == primary_before.column)) {
+        updated_secondary_carets.push_back(TextPosition{line, column});
+      }
       continue;
     }
     changed = true;
     ApplyHistoryEntry(*entry, true);
+    const TextPosition updated_position{
+        entry->after_state.cursor_line,
+        entry->after_state.cursor_column,
+    };
     if (line == primary_before.line && column == primary_before.column) {
-      primary_after = TextPosition{
-          entry->after_state.cursor_line,
-          entry->after_state.cursor_column,
-      };
+      primary_after = updated_position;
+    } else {
+      updated_secondary_carets.push_back(updated_position);
     }
   }
 
@@ -1416,6 +1440,14 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
+  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), TextPositionLess);
+  updated_secondary_carets.erase(
+      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
+      updated_secondary_carets.end());
+  updated_secondary_carets.erase(
+      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
+      updated_secondary_carets.end());
+  secondary_carets_ = std::move(updated_secondary_carets);
   preferred_column_ = cursor_visual_column();
   selection_anchor_.reset();
   document_->placeholder = false;
@@ -1449,6 +1481,8 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(carets.size());
   bool changed = false;
 
   for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
@@ -1465,15 +1499,21 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
           SelectionRange{TextPosition{line, column}, TextPosition{line + 1, 0}}, "");
     }
     if (!entry.has_value()) {
+      if (!(line == primary_before.line && column == primary_before.column)) {
+        updated_secondary_carets.push_back(TextPosition{line, column});
+      }
       continue;
     }
     changed = true;
     ApplyHistoryEntry(*entry, true);
+    const TextPosition updated_position{
+        entry->after_state.cursor_line,
+        entry->after_state.cursor_column,
+    };
     if (line == primary_before.line && column == primary_before.column) {
-      primary_after = TextPosition{
-          entry->after_state.cursor_line,
-          entry->after_state.cursor_column,
-      };
+      primary_after = updated_position;
+    } else {
+      updated_secondary_carets.push_back(updated_position);
     }
   }
 
@@ -1483,6 +1523,14 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
+  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), TextPositionLess);
+  updated_secondary_carets.erase(
+      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
+      updated_secondary_carets.end());
+  updated_secondary_carets.erase(
+      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
+      updated_secondary_carets.end());
+  secondary_carets_ = std::move(updated_secondary_carets);
   preferred_column_ = cursor_visual_column();
   selection_anchor_.reset();
   document_->placeholder = false;

@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <string>
 
 #include "editor/DecoratedTextGridRenderer.h"
@@ -282,10 +283,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const auto& lines = viewport.lines();
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t cursor_line = viewport.cursor_line();
+  const auto& secondary_carets = viewport.secondary_carets();
   const auto selection = viewport.selection_range();
   char line_number_buf[20];
   const std::string lowered_search_query = ToLower(search_query);
   std::size_t blame_index = 0;
+  std::size_t secondary_caret_index = 0;
   std::string lowered_line_scratch;
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
@@ -431,11 +434,35 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (draw_caret && selected && layout.caret_visible) {
       const float caret_x = metrics.text_x +
                             static_cast<float>(layout.caret_column) * text_renderer.CharWidth();
-      const SDL_FRect caret =
-          SDL_FRect{caret_x, y - 1.0f, 1.5f, metrics.line_height};
+      const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
       SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
                              theme.cursor.a);
       SDL_RenderFillRect(renderer, &caret);
+    }
+
+    if (draw_caret) {
+      while (secondary_caret_index < secondary_carets.size() &&
+             secondary_carets[secondary_caret_index].line < line_index) {
+        ++secondary_caret_index;
+      }
+      for (std::size_t idx = secondary_caret_index;
+           idx < secondary_carets.size() && secondary_carets[idx].line == line_index; ++idx) {
+        const std::size_t visual_column = TextLayout::VisualColumnForTextColumn(
+            lines[line_index], secondary_carets[idx].column, viewport.tab_size());
+        if (visual_column < viewport.horizontal_scroll() ||
+            visual_column > viewport.horizontal_scroll() + viewport.visible_columns()) {
+          continue;
+        }
+        const float caret_x =
+            metrics.text_x +
+            static_cast<float>(visual_column - viewport.horizontal_scroll()) *
+                text_renderer.CharWidth();
+        const SDL_FRect caret =
+            SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
+        SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
+                               theme.cursor.a);
+        SDL_RenderFillRect(renderer, &caret);
+      }
     }
 
     if (blame_overlay.has_value() && blame_overlay->visible) {

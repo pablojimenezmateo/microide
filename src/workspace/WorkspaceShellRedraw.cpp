@@ -820,19 +820,9 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(const WorkspaceLa
     return context_.current_project_state.welcome_surface.viewport.is_placeholder() ? std::optional<SDL_FRect>(layout.editor_surface)
                                            : std::nullopt;
   }
+  return pane_it->rect;
 
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, context_.current_project_state.welcome_surface.viewport, pane_it->rect);
-  const float char_width = std::max(1.0f, text_renderer_.CharWidth());
-  const float cursor_x =
-      metrics.text_x +
-      static_cast<float>(context_.current_project_state.welcome_surface.viewport.cursor_visual_column() - context_.current_project_state.welcome_surface.viewport.horizontal_scroll()) *
-          char_width;
-  const float cursor_y =
-      metrics.first_line_y +
-      static_cast<float>(context_.current_project_state.welcome_surface.viewport.cursor_line() - context_.current_project_state.welcome_surface.viewport.scroll_line()) *
-          metrics.line_height;
-  return MakeRect(cursor_x, cursor_y - 1.0f, char_width, metrics.line_height);
+  (void)text_renderer_;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(const WorkspaceLayout& layout) const {
