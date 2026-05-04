@@ -180,8 +180,9 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                              const WorkspaceLayout& layout,
                              bool draw_editor_caret,
                              std::optional<SDL_FRect>* active_editor_pane_rect) {
-                        shell->RenderActiveWorkspaceSurface(renderer, layout, draw_editor_caret,
-                                                            active_editor_pane_rect);
+                        shell->RenderActiveWorkspaceSurface(
+                            renderer, layout, WorkspaceShell::FrameToken{}, draw_editor_caret,
+                            active_editor_pane_rect);
                       },
                   .refresh_hover_if_needed =
                       [shell]() {

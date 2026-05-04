@@ -22,7 +22,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   visible_editor_blame_overlay_.reset();
 
   RenderFrameBase(renderer, layout);
-  RenderActiveWorkspaceSurface(renderer, layout, prepared_frame_draw_editor_caret_,
+  RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
                                &active_editor_pane_rect);
   if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
     UpdateEditorHover(last_mouse_x_, last_mouse_y_);
@@ -55,7 +55,7 @@ void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
 }
 
 void WorkspaceShell::RenderPrepared(SDL_Renderer* renderer, int width, int height) {
-  const FrameToken frame_token = FrameToken{prepared_frame_id_};
+  const FrameToken frame_token = FrameToken{prepared_frame_id_, FrameToken::VisibleLineRange{}};
   if (prepared_frame_layout_ == std::nullopt || prepared_frame_id_ == 0) {
     Render(renderer, width, height);
     return;

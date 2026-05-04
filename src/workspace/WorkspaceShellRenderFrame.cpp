@@ -104,6 +104,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       CaretVisibleNow() &&
       !(context_.text_input.active_surface == TextInputSurface::Editor &&
         !context_.text_input.composition.text.empty());
+  FrameToken::VisibleLineRange visible_line_range{};
+  if (auto* viewport = ActiveEditorViewport(); viewport != nullptr && !viewport->is_placeholder()) {
+    visible_line_range.viewport = viewport;
+    visible_line_range.start_line = viewport->scroll_line();
+    visible_line_range.end_line = std::min(viewport->lines().size(),
+                                           viewport->scroll_line() + viewport->visible_lines());
+  }
   ++prepared_frame_id_;
   float mouse_x = last_mouse_x_;
   float mouse_y = last_mouse_y_;
@@ -112,7 +119,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
   }
   UpdateMouseCursor(mouse_x, mouse_y);
-  return FrameToken{prepared_frame_id_};
+  return FrameToken{prepared_frame_id_, visible_line_range};
 }
 
 void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int height) {
@@ -187,6 +194,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayo
 void WorkspaceShell::RenderActiveWorkspaceSurface(
     SDL_Renderer* renderer,
     const WorkspaceLayout& layout,
+    const FrameToken& frame_token,
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect) {
   const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
@@ -301,8 +309,15 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           !project_state.inline_completion.text.empty()) {
         const std::size_t line_index = project_state.inline_completion.start_line;
         const auto& lines = viewport->lines();
-        if (line_index < lines.size() && line_index >= viewport->scroll_line() &&
-            line_index < viewport->scroll_line() + viewport->visible_lines()) {
+        const std::size_t visible_start =
+            pane.active && frame_token.visible_line_range().viewport == viewport
+                ? frame_token.visible_line_range().start_line
+                : viewport->scroll_line();
+        const std::size_t visible_end =
+            pane.active && frame_token.visible_line_range().viewport == viewport
+                ? frame_token.visible_line_range().end_line
+                : std::min(lines.size(), viewport->scroll_line() + viewport->visible_lines());
+        if (line_index < lines.size() && line_index >= visible_start && line_index < visible_end) {
           const editor::EditorViewMetrics metrics =
               editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
           const std::size_t visual_column = editor::TextLayout::VisualColumnForTextColumn(

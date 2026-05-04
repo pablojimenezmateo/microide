@@ -150,23 +150,44 @@ float WorkspaceShell::TabWidthForIndex(std::size_t index) const {
 void WorkspaceShell::EnsureActiveTabVisible() {
   if (context_.current_project_state.open_tabs.empty()) {
     context_.current_project_state.tab_scroll_index = 0;
+    tab_strip_geometry_cache_.valid = false;
     return;
-  }
-
-  std::vector<float> widths;
-  widths.reserve(context_.current_project_state.open_tabs.size());
-  for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-    widths.push_back(TabWidthForIndex(i));
   }
 
   const float tab_strip_width =
       CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1440.0f;
+  const std::size_t tab_count = context_.current_project_state.open_tabs.size();
+  const std::size_t active_tab_index = context_.current_project_state.active_tab_index;
+  const bool cache_hit = tab_strip_geometry_cache_.valid &&
+                         tab_strip_geometry_cache_.tab_count == tab_count &&
+                         tab_strip_geometry_cache_.window_width == tab_strip_width &&
+                         tab_strip_geometry_cache_.active_tab_index == active_tab_index;
+  if (!cache_hit) {
+    tab_strip_geometry_cache_.tab_count = tab_count;
+    tab_strip_geometry_cache_.window_width = tab_strip_width;
+    tab_strip_geometry_cache_.active_tab_index = active_tab_index;
+    tab_strip_geometry_cache_.widths.clear();
+    tab_strip_geometry_cache_.display_titles.clear();
+    tab_strip_geometry_cache_.tooltip_labels.clear();
+    tab_strip_geometry_cache_.widths.reserve(tab_count);
+    tab_strip_geometry_cache_.display_titles.reserve(tab_count);
+    tab_strip_geometry_cache_.tooltip_labels.reserve(tab_count);
+    for (std::size_t i = 0; i < tab_count; ++i) {
+      tab_strip_geometry_cache_.display_titles.push_back(TabDisplayTitle(i));
+      tab_strip_geometry_cache_.tooltip_labels.push_back(TabTooltipLabel(i));
+      tab_strip_geometry_cache_.widths.push_back(
+          std::clamp(text_renderer_.MeasureWidth(tab_strip_geometry_cache_.display_titles.back()) + 58.0f,
+                     132.0f, 220.0f));
+    }
+    tab_strip_geometry_cache_.valid = true;
+  }
+
   const float start_x = 12.0f;
   const float gap = 1.0f;
   const float right_reserve = std::clamp(tab_strip_width * 0.22f, 160.0f, 240.0f);
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip_width - right_reserve);
   context_.current_project_state.tab_scroll_index =
-      static_cast<int>(EnsureVisibleStripIndex(widths, start_x, gap, max_tab_x,
+      static_cast<int>(EnsureVisibleStripIndex(tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
                                                static_cast<std::size_t>(std::max(0, context_.current_project_state.tab_scroll_index)),
                                                context_.current_project_state.active_tab_index));
 }
@@ -174,20 +195,35 @@ void WorkspaceShell::EnsureActiveTabVisible() {
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
     const SDL_FRect& tab_strip) const {
   if (context_.current_project_state.open_tabs.empty()) {
+    tab_strip_geometry_cache_.valid = false;
     return {};
   }
 
-  std::vector<float> widths;
-  std::vector<std::string> display_titles;
-  std::vector<std::string> tooltip_labels;
-  widths.reserve(context_.current_project_state.open_tabs.size());
-  display_titles.reserve(context_.current_project_state.open_tabs.size());
-  tooltip_labels.reserve(context_.current_project_state.open_tabs.size());
-  for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-    display_titles.push_back(TabDisplayTitle(i));
-    tooltip_labels.push_back(TabTooltipLabel(i));
-    widths.push_back(
-        std::clamp(text_renderer_.MeasureWidth(display_titles.back()) + 58.0f, 132.0f, 220.0f));
+  const std::size_t tab_count = context_.current_project_state.open_tabs.size();
+  const float tab_strip_width = tab_strip.w;
+  const std::size_t active_tab_index = context_.current_project_state.active_tab_index;
+  const bool cache_hit = tab_strip_geometry_cache_.valid &&
+                         tab_strip_geometry_cache_.tab_count == tab_count &&
+                         tab_strip_geometry_cache_.window_width == tab_strip_width &&
+                         tab_strip_geometry_cache_.active_tab_index == active_tab_index;
+  if (!cache_hit) {
+    tab_strip_geometry_cache_.tab_count = tab_count;
+    tab_strip_geometry_cache_.window_width = tab_strip_width;
+    tab_strip_geometry_cache_.active_tab_index = active_tab_index;
+    tab_strip_geometry_cache_.widths.clear();
+    tab_strip_geometry_cache_.display_titles.clear();
+    tab_strip_geometry_cache_.tooltip_labels.clear();
+    tab_strip_geometry_cache_.widths.reserve(tab_count);
+    tab_strip_geometry_cache_.display_titles.reserve(tab_count);
+    tab_strip_geometry_cache_.tooltip_labels.reserve(tab_count);
+    for (std::size_t i = 0; i < tab_count; ++i) {
+      tab_strip_geometry_cache_.display_titles.push_back(TabDisplayTitle(i));
+      tab_strip_geometry_cache_.tooltip_labels.push_back(TabTooltipLabel(i));
+      tab_strip_geometry_cache_.widths.push_back(std::clamp(
+          text_renderer_.MeasureWidth(tab_strip_geometry_cache_.display_titles.back()) + 58.0f,
+          132.0f, 220.0f));
+    }
+    tab_strip_geometry_cache_.valid = true;
   }
 
   const float tab_y = tab_strip.y + 2.0f;
@@ -197,10 +233,11 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
   const float right_reserve = std::clamp(tab_strip.w * 0.22f, 160.0f, 240.0f);
   const float max_tab_x = std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve);
   return BuildVisibleStripTabs(
-      widths, start_x, gap, max_tab_x,
+      tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(context_.current_project_state.tab_scroll_index, 0,
                                           std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1))),
-      tab_y, tab_height, {}, context_.current_project_state.active_tab_index, display_titles, tooltip_labels);
+      tab_y, tab_height, {}, context_.current_project_state.active_tab_index,
+      tab_strip_geometry_cache_.display_titles, tab_strip_geometry_cache_.tooltip_labels);
 }
 
 std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPanelTabs() const {

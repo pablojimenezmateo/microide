@@ -379,6 +379,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     util::PerformanceTrace::Scope prepare_scope("Application::WorkspacePrepareFrame");
     frame_token = workspace_shell_.PrepareFrameOnce(renderer_, width, height);
   }
+#if defined(__SANITIZE_ADDRESS__)
+  SDL_assert(frame_token.valid() &&
+             "Application::WorkspaceRenderClip requires PrepareFrameOnce() in current frame");
+#endif
   bool scene_texture_ready = false;
   {
     util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");

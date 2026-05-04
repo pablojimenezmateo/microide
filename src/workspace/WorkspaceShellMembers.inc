@@ -59,13 +59,23 @@
   using RenderInvalidation = workspace::RenderInvalidation;
   using EventResult = workspace::EventResult;
   struct FrameToken {
+    struct VisibleLineRange {
+      std::size_t start_line = 0;
+      std::size_t end_line = 0;
+      const editor::TextViewport* viewport = nullptr;
+    };
+
    public:
     FrameToken() = default;
+    bool valid() const { return frame_id_ != 0; }
+    const VisibleLineRange& visible_line_range() const { return visible_line_range_; }
 
    private:
     friend class WorkspaceShell;
-    explicit FrameToken(std::uint64_t frame_id) : frame_id_(frame_id) {}
+    explicit FrameToken(std::uint64_t frame_id, VisibleLineRange visible_line_range)
+        : frame_id_(frame_id), visible_line_range_(visible_line_range) {}
     std::uint64_t frame_id_ = 0;
+    VisibleLineRange visible_line_range_{};
   };
 
   enum class IdleHint {
@@ -1240,6 +1250,7 @@
   void RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderActiveWorkspaceSurface(SDL_Renderer* renderer,
                                     const WorkspaceLayout& layout,
+                                    const FrameToken& frame_token,
                                     bool draw_editor_caret,
                                     std::optional<SDL_FRect>* active_editor_pane_rect);
   void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
@@ -1312,6 +1323,16 @@
   void ClearTabDrag();
   SDL_FRect BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const;
   std::vector<BottomPanelTabModel> BuildBottomPanelTabs() const;
+
+  struct TabStripGeometryCache {
+    std::size_t tab_count = 0;
+    float window_width = 0.0f;
+    std::size_t active_tab_index = 0;
+    std::vector<float> widths;
+    std::vector<std::string> display_titles;
+    std::vector<std::string> tooltip_labels;
+    bool valid = false;
+  };
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
@@ -1431,6 +1452,7 @@
   std::size_t reload_plugins_invocation_count_ = 0;
   std::size_t render_compare_surface_invocation_count_ = 0;
   std::optional<WorkspaceLayout> prepared_frame_layout_;
+  mutable TabStripGeometryCache tab_strip_geometry_cache_;
   bool layout_dirty_ = true;
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;

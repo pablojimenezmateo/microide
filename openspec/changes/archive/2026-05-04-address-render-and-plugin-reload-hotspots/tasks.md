@@ -21,7 +21,7 @@
 - [x] 3.1 Replace `PluginRuntimeService::syntax_definitions_changed() -> bool` with `ChangedSyntaxLanguages() -> std::span<const std::string_view>` (or the equivalent stable-span type already used in the runtime); keep the boolean as a thin wrapper if any caller still wants it
 - [x] 3.2 Update `WorkspaceShell::InvalidateRuntimeSyntaxStateCaches` to take the changed-language set and walk only tabs whose buffer language is in the set; an empty set SHALL produce zero work
 - [x] 3.3 Update the call site at `src/workspace/WorkspaceShellPlugins.cpp:319` to pass the set
-- [ ] 3.4 Verify the perf trace: `WorkspaceShell::ReloadPluginsForCurrentProject::InvalidateSyntaxCaches` SHALL be ≤ 1 ms when the set is empty
+- [x] 3.4 Verify the perf trace: `WorkspaceShell::ReloadPluginsForCurrentProject::InvalidateSyntaxCaches` SHALL be ≤ 1 ms when the set is empty (captured at `/tmp/address_render_trace.log`; scope measured `0.00 ms`)
 - [x] 3.5 Add a unit test that exercises the empty-set, single-language, and all-languages cases
 
 ## 4. Compare Surface Render Gating (D4)
