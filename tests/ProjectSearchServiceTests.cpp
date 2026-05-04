@@ -335,6 +335,40 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
          "stopped project search should not publish a completion update afterwards");
 }
 
+void TestProjectSearchServiceNoMatchFinishesPromptly() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\nbeta\n");
+  WriteFile(root / "b.txt", "gamma\ndelta\n");
+
+  ProjectSearchService service;
+  const std::vector<std::filesystem::path> indexed_files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  const std::uint64_t run_id = service.Start(root, "zzz-not-present", {}, indexed_files);
+
+  bool saw_finished = false;
+  std::size_t total_results = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto update = service.TakePendingUpdate();
+    if (update.run_id != run_id) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      continue;
+    }
+    total_results += update.results.size();
+    if (update.finished) {
+      saw_finished = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  service.Stop();
+  Expect(saw_finished, "no-match project search should still publish completion promptly");
+  Expect(total_results == 0,
+         "no-match project search should not publish any intermediate or final results");
+}
+
 }  // namespace
 
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
@@ -356,6 +390,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceStopDiscardsLateUpdates);
   AddTest(tests, "ProjectSearchService/UsesIndexedFileSnapshotWhenProvided",
           TestProjectSearchServiceUsesIndexedFileSnapshotWhenProvided);
+  AddTest(tests, "ProjectSearchService/NoMatchFinishesPromptly",
+          TestProjectSearchServiceNoMatchFinishesPromptly);
 }
 
 }  // namespace microide::tests

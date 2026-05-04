@@ -152,6 +152,44 @@ void TestWorkspaceShellProjectSearchRerunClearsTruncation() {
          "rerunning project search should publish only the new query results");
 }
 
+void TestWorkspaceShellProjectSearchStreamsWhileRunning() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  std::string repeated_lines;
+  for (int line = 0; line < 25; ++line) {
+    repeated_lines += "alpha\n";
+  }
+  for (int file_index = 0; file_index < 60; ++file_index) {
+    const std::string label = file_index < 10 ? "0" + std::to_string(file_index)
+                                              : std::to_string(file_index);
+    WriteFile(root / ("file" + label + ".txt"), repeated_lines);
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+
+  bool saw_results_while_running = false;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
+    const bool running = WorkspaceShellTestAccess::ProjectSearchRunning(shell);
+    const std::size_t count = WorkspaceShellTestAccess::ProjectSearchResults(shell).size();
+    if (running && count > 0) {
+      saw_results_while_running = true;
+      break;
+    }
+    if (!running) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+
+  WaitForProjectSearch(shell);
+  Expect(saw_results_while_running,
+         "workspace search should display partial results before the full scan completes");
+}
+
 void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -188,6 +226,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchCaseModeCycleReruns);
   AddTest(tests, "WorkspaceShell/ProjectSearchRerunClearsTruncation",
           TestWorkspaceShellProjectSearchRerunClearsTruncation);
+  AddTest(tests, "WorkspaceShell/ProjectSearchStreamsWhileRunning",
+          TestWorkspaceShellProjectSearchStreamsWhileRunning);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickOpensResult",
           TestWorkspaceShellProjectSearchSidebarClickOpensResult);
 }

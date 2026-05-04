@@ -2,9 +2,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -79,12 +81,22 @@ class ProjectSearchService {
   void PublishFinished(std::uint64_t run_id, SearchCompletion completion);
   void PushWakeEvent() const;
 
+  struct SearchResultBuffer {
+    mutable std::shared_mutex mutex;
+    std::vector<ProjectSearchResult> results;
+    std::uint64_t search_id = 0;
+  };
+
   mutable std::mutex mutex_;
   util::TaskExecutor task_executor_;
   std::uint64_t next_run_id_ = 0;
   std::uint64_t active_run_id_ = 0;
+  std::uint64_t active_search_id_ = 0;
+  std::uint64_t next_search_id_ = 0;
   Uint32 wake_event_type_ = 0;
+  std::atomic_bool cancel_requested_{false};
   ProjectSearchUpdate pending_update_;
+  SearchResultBuffer result_buffer_;
 };
 
 }  // namespace microide::project

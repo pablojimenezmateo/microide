@@ -17,7 +17,10 @@ namespace microide::project {
 
 namespace {
 
-constexpr std::size_t kBatchSize = 32;
+#ifndef MICROIDE_SEARCH_BATCH_SIZE
+#define MICROIDE_SEARCH_BATCH_SIZE 20
+#endif
+constexpr std::size_t kBatchSize = MICROIDE_SEARCH_BATCH_SIZE;
 constexpr std::size_t kMaxResults = 200;
 
 bool QueryHasUppercase(std::string_view query) {
@@ -182,7 +185,14 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
     std::lock_guard lock(mutex_);
     run_id = ++next_run_id_;
     active_run_id_ = run_id;
+    active_search_id_ = ++next_search_id_;
+    {
+      std::unique_lock buffer_lock(result_buffer_.mutex);
+      result_buffer_.search_id = active_search_id_;
+      result_buffer_.results.clear();
+    }
   }
+  cancel_requested_.store(false, std::memory_order_relaxed);
 
   app::IncrementBackgroundTaskCount();
   task_executor_.Submit(
@@ -195,9 +205,16 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
 }
 
 void ProjectSearchService::Stop() {
+  cancel_requested_.store(true, std::memory_order_relaxed);
   {
     std::lock_guard lock(mutex_);
     active_run_id_ = 0;
+    active_search_id_ = ++next_search_id_;
+    {
+      std::unique_lock buffer_lock(result_buffer_.mutex);
+      result_buffer_.search_id = active_search_id_;
+      result_buffer_.results.clear();
+    }
     pending_update_ = {};
   }
 
@@ -217,6 +234,12 @@ void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::vector<std::filesystem::path> indexed_files,
                                       std::uint64_t run_id,
                                       const util::CancellationToken& token) {
+  if (token.IsCancellationRequested()) {
+    return;
+  }
+  if (cancel_requested_.load(std::memory_order_relaxed)) {
+    return;
+  }
   if (token.IsCancellationRequested()) {
     return;
   }
@@ -282,6 +305,9 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     if (token.IsCancellationRequested()) {
       return {};
     }
+    if (cancel_requested_.load(std::memory_order_relaxed)) {
+      return {};
+    }
 
     const std::string relative_path_string = relative_path.string();
     std::ifstream file(absolute_root / relative_path, std::ios::binary);
@@ -301,6 +327,9 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     std::string lowered_line;
     std::size_t line_index = 0;
     while (!token.IsCancellationRequested() && std::getline(file, line)) {
+      if (cancel_requested_.load(std::memory_order_relaxed)) {
+        return {};
+      }
       if (!line.empty() && line.back() == '\r') {
         line.pop_back();
       }
@@ -366,6 +395,21 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
     if (active_run_id_ != run_id) {
       return;
     }
+    {
+      std::shared_lock buffer_lock(result_buffer_.mutex);
+      if (active_search_id_ != result_buffer_.search_id) {
+        return;
+      }
+    }
+    {
+      std::unique_lock buffer_lock(result_buffer_.mutex);
+      for (const auto& result : batch) {
+        if (result_buffer_.results.size() >= kMaxResults) {
+          break;
+        }
+        result_buffer_.results.push_back(result);
+      }
+    }
     if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
       pending_update_ = {};
     }
@@ -385,6 +429,12 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletio
     std::lock_guard lock(mutex_);
     if (active_run_id_ != run_id) {
       return;
+    }
+    {
+      std::shared_lock buffer_lock(result_buffer_.mutex);
+      if (active_search_id_ != result_buffer_.search_id) {
+        return;
+      }
     }
     if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
       pending_update_ = {};
