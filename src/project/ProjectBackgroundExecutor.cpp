@@ -69,12 +69,10 @@ void ProjectBackgroundExecutor::Shutdown(std::chrono::milliseconds deadline) {
   cv_.notify_all();
 
   if (worker_.joinable()) {
-    // Try to join within deadline
-    const auto end_time = std::chrono::steady_clock::now() + deadline;
-    // std::thread doesn't support timed join directly; use detach on timeout.
-    // We can spin-wait on joinable with a sleep loop, but the simplest approach is
-    // to just join() and accept that it blocks up to deadline if the task cooperates.
+    // std::thread doesn't support timed join directly; the current implementation
+    // performs a blocking join and relies on tasks to cooperate with shutdown.
     // For well-behaved tasks this should be fast.
+    (void)deadline;
     worker_.join();
   }
 }

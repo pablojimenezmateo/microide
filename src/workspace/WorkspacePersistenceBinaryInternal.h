@@ -346,7 +346,8 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
       });
 }
 
-bool EncodeConversation(const PersistedConversationState& conversation, std::vector<std::byte>* out) {
+[[maybe_unused]] bool EncodeConversation(const PersistedConversationState& conversation,
+                                         std::vector<std::byte>* out) {
   if (out == nullptr) {
     return false;
   }
@@ -392,7 +393,8 @@ bool EncodeConversation(const PersistedConversationState& conversation, std::vec
   return true;
 }
 
-bool DecodeConversation(std::span<const std::byte> input, PersistedConversationState* conversation) {
+[[maybe_unused]] bool DecodeConversation(std::span<const std::byte> input,
+                                         PersistedConversationState* conversation) {
   if (conversation == nullptr) {
     return false;
   }
@@ -554,7 +556,7 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
          ReadSize(reader, &node->leaf_id) && reader.remaining() == 0;
 }
 
-bool EncodeEditorTab(const PersistedEditorTabState& tab, std::vector<std::byte>* out) {
+[[maybe_unused]] bool EncodeEditorTab(const PersistedEditorTabState& tab, std::vector<std::byte>* out) {
   if (out == nullptr) {
     return false;
   }
@@ -630,7 +632,7 @@ bool EncodeEditorTab(const PersistedEditorTabState& tab, std::vector<std::byte>*
   return true;
 }
 
-bool DecodeEditorTab(std::span<const std::byte> input, PersistedEditorTabState* tab) {
+[[maybe_unused]] bool DecodeEditorTab(std::span<const std::byte> input, PersistedEditorTabState* tab) {
   if (tab == nullptr) {
     return false;
   }
@@ -709,7 +711,8 @@ bool DecodeEditorTab(std::span<const std::byte> input, PersistedEditorTabState* 
       });
 }
 
-bool EncodeSidebarPolicy(const PersistedSidebarViewPolicy& policy, std::vector<std::byte>* out) {
+[[maybe_unused]] bool EncodeSidebarPolicy(const PersistedSidebarViewPolicy& policy,
+                                          std::vector<std::byte>* out) {
   if (out == nullptr) {
     return false;
   }
@@ -719,7 +722,8 @@ bool EncodeSidebarPolicy(const PersistedSidebarViewPolicy& policy, std::vector<s
          writer.WriteI32(policy.order);
 }
 
-bool DecodeSidebarPolicy(std::span<const std::byte> input, PersistedSidebarViewPolicy* policy) {
+[[maybe_unused]] bool DecodeSidebarPolicy(std::span<const std::byte> input,
+                                          PersistedSidebarViewPolicy* policy) {
   if (policy == nullptr) {
     return false;
   }
@@ -729,8 +733,8 @@ bool DecodeSidebarPolicy(std::span<const std::byte> input, PersistedSidebarViewP
          reader.ReadI32(&policy->order) && reader.remaining() == 0;
 }
 
-bool EncodeSettingPair(const std::pair<std::string, std::string>& setting,
-                       std::vector<std::byte>* out) {
+[[maybe_unused]] bool EncodeSettingPair(const std::pair<std::string, std::string>& setting,
+                                        std::vector<std::byte>* out) {
   if (out == nullptr) {
     return false;
   }
@@ -739,7 +743,8 @@ bool EncodeSettingPair(const std::pair<std::string, std::string>& setting,
   return writer.WriteString(setting.first) && writer.WriteString(setting.second);
 }
 
-bool DecodeSettingPair(std::span<const std::byte> input, std::pair<std::string, std::string>* setting) {
+[[maybe_unused]] bool DecodeSettingPair(std::span<const std::byte> input,
+                                        std::pair<std::string, std::string>* setting) {
   if (setting == nullptr) {
     return false;
   }
