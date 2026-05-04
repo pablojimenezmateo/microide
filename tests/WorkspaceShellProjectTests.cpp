@@ -175,6 +175,85 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
          "on-demand git sidebar refresh should include the modified file");
 }
 
+void TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::vector<std::filesystem::path> files;
+  files.reserve(300);
+  for (int i = 0; i < 300; ++i) {
+    const std::filesystem::path path = root / "src" / ("file_" + std::to_string(i) + ".cpp");
+    WriteFile(path, "int value() {\n  return 1;\n}\n");
+    files.push_back(path);
+  }
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add async git status fixture", "async git status fixture");
+  for (int i = 0; i < 120; ++i) {
+    WriteFile(files[static_cast<std::size_t>(i)], "int value() {\n  return 2;\n}\n");
+  }
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "non-blocking git refresh fixture should open");
+
+  const auto start = std::chrono::steady_clock::now();
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+          .count();
+  Expect(elapsed < 250,
+         "activating the git sidebar should dispatch status refresh without blocking the main thread");
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "activating git sidebar should transition immediately into refreshing state");
+}
+
+void TestWorkspaceShellProjectSwitchDiscardsStaleGitSidebarRefreshResult() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path old_root = temp_dir.path() / "old-project";
+  const std::filesystem::path new_root = temp_dir.path() / "new-project";
+  const std::filesystem::path old_file = old_root / "src" / "old_only.cpp";
+  WriteFile(old_file, "int value() {\n  return 1;\n}\n");
+  WriteFile(new_root / "src" / "new_only.cpp", "int fresh() {\n  return 3;\n}\n");
+
+  InitializeGitRepo(old_root);
+  CommitAll(old_root, "Add old project baseline", "old project baseline");
+  WriteFile(old_file, "int value() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(new_root);
+  CommitAll(new_root, "Add new project baseline", "new project baseline");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, old_root, false, false),
+         "old project should open for stale-refresh discard fixture");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "old project git sidebar should enter refreshing state");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, new_root, false, false),
+         "switching to a new project should succeed");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "new project git sidebar should also enter refreshing state");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "new project git sidebar refresh should settle after project switch");
+
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  const bool contains_old_entry =
+      std::any_of(entries.begin(), entries.end(),
+                  [&](const WorkspaceShell::GitSidebarEntry& entry) {
+                    return entry.path == old_file.lexically_normal();
+                  });
+  Expect(!contains_old_entry,
+         "stale git refresh results from the previous project should be discarded after switch");
+}
+
 void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
@@ -1501,6 +1580,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/ProjectOpenDefersGitSidebarRefreshUntilShown",
           TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
+  AddTest(tests, "WorkspaceShell/GitSidebarRefreshDispatchIsNonBlocking",
+          TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking);
+  AddTest(tests, "WorkspaceShell/ProjectSwitchDiscardsStaleGitSidebarRefreshResult",
+          TestWorkspaceShellProjectSwitchDiscardsStaleGitSidebarRefreshResult);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitignoredDirectories",
           TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
   AddTest(tests, "WorkspaceShell/FileFinderReflectsFileIndexUpdates",
