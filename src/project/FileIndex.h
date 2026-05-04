@@ -14,6 +14,8 @@ struct ProjectFile {
   std::filesystem::path relative_path;
   std::filesystem::file_time_type mtime{};
   std::uintmax_t size = 0;
+
+  bool operator==(const ProjectFile&) const = default;
 };
 
 class FileIndex {

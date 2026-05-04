@@ -63,6 +63,11 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
       applied_to_index = context_.current_project_state.file_index.ApplyBatch(batch);
     }
     LogProjectIndexBatch(context_.current_project_state.root, batch, applied_to_index);
+    if (batch.is_initial) {
+      project_background_executor_.PostLatest(
+          "project-file-monitor-arm",
+          [this]() { project_file_monitor_.ArmPendingWatch(); });
+    }
     if (!batch.is_initial && applied_to_index) {
       file_index_has_pending_changes_.store(true, std::memory_order_release);
     }
@@ -87,6 +92,9 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     file_index_watcher_.reset();
     file_index_initial_build_in_flight_.store(false, std::memory_order_release);
     app::DecrementBackgroundTaskCountAndWake();
+    project_background_executor_.PostLatest(
+        "project-file-monitor-arm",
+        [this]() { project_file_monitor_.ArmPendingWatch(); });
     return false;
   }
   return true;

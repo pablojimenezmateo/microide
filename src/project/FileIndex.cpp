@@ -112,12 +112,42 @@ void FileIndex::Refresh() {
 
 bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
   util::PerformanceTrace::Scope perf_scope("FileIndex::ApplyBatch");
+  if (batch.is_initial) {
+    util::PerformanceTrace::Scope initial_scope("FileIndex::ApplyBatch::InitialBulkLoad");
+    std::vector<ProjectFile> rebuilt;
+    rebuilt.reserve(batch.changes.size());
+    for (const auto& change : batch.changes) {
+      if (change.kind != platform::IndexUpdateBatch::Kind::CreatedOrModified) {
+        continue;
+      }
+      const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
+      if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
+        continue;
+      }
+      ProjectFile file = ToProjectFile(change.entry);
+      file.relative_path = relative_path;
+      rebuilt.push_back(std::move(file));
+    }
+
+    std::sort(rebuilt.begin(), rebuilt.end(), LessProjectFile);
+    rebuilt.erase(std::unique(rebuilt.begin(), rebuilt.end(),
+                              [](const ProjectFile& lhs, const ProjectFile& rhs) {
+                                return lhs.relative_path == rhs.relative_path;
+                              }),
+                  rebuilt.end());
+
+    std::unique_lock lock(files_mutex_);
+    if (files_ == rebuilt) {
+      return false;
+    }
+    files_ = std::move(rebuilt);
+    exclude_hidden_cache_.needs_refresh = true;
+    include_hidden_cache_.needs_refresh = true;
+    return true;
+  }
+
   std::unique_lock lock(files_mutex_);
   bool changed = false;
-  if (batch.is_initial) {
-    changed = !files_.empty();
-    files_.clear();
-  }
   for (const auto& change : batch.changes) {
     const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
     if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {

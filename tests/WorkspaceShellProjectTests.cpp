@@ -516,10 +516,8 @@ void TestWorkspaceShellProjectOpenDefersProjectWatcherArming() {
          "watcher deferral fixture should open the project");
 
   const auto next_delay = WorkspaceShellTestAccess::ProjectFileMonitorNextPollDelay(shell);
-  Expect(next_delay.has_value(),
-         "cold project open should leave the project watcher with deferred arming work");
-  Expect(*next_delay == std::chrono::milliseconds(1),
-         "cold project open should rearm the project watcher lazily on the next poll tick");
+  Expect(!next_delay.has_value() || *next_delay != std::chrono::milliseconds(1),
+         "cold project open should not expose the old synthetic 1ms project-watcher rearm tick");
 }
 
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
@@ -1553,6 +1551,12 @@ void TestWorkspaceShellProjectWatcherIgnoresGitMetadataLockfiles() {
   WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "git-metadata watcher fixture should open the project");
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
   WriteFile(root / ".git" / "index.lock", "lock\n");
   Expect(!WaitForProjectReload(shell, std::chrono::milliseconds(400)),
@@ -1574,6 +1578,12 @@ void TestWorkspaceShellFileIndexUpdatesDoNotReloadCleanBuffers() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "index-only reload fixture should open the project");
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
   WorkspaceShellTestAccess::ResetReloadCleanOpenBuffersFromDiskInvocationCount(shell);
   WorkspaceShellTestAccess::SetFileIndexHasPendingChanges(shell, true);
