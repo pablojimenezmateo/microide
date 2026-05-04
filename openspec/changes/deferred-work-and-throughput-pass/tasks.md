@@ -65,8 +65,8 @@
 - [x] 8.2 Wire `FileIndexWatcher` to call `IncrementTaskCount()` when initial index build starts and `DecrementTaskCount()` when `IndexReady` fires
 - [x] 8.3 Wire `ProjectBackgroundExecutor` git dispatch to call `IncrementTaskCount()` on `Post()` and `DecrementTaskCount()` on result delivery via SDL user event
 - [x] 8.4 Wire search worker to call `IncrementTaskCount()` on search start and `DecrementTaskCount()` on worker exit (whether complete or cancelled)
-- [ ] 8.5 Add `IdleHint` enum (`Full`, `CaretOnly`, `Idle`) as the return type of `PrepareFrameOnce`; derive it from: `in_flight_background_task_count_ > 0 → Full`; `caret_visible && caret_blink_pending → CaretOnly`; otherwise `Idle`
-- [ ] 8.6 Replace the zero-delay `SDL_PollEvent` loop in `Application` with an `IdleHint`-driven strategy: `Full → SDL_PollEvent`; `CaretOnly → SDL_WaitEventTimeout(caret_remaining_ms)`; `Idle → SDL_WaitEvent`
+- [x] 8.5 Add `IdleHint` enum (`Full`, `CaretOnly`, `Idle`) as the return type of `PrepareFrameOnce`; derive it from: `in_flight_background_task_count_ > 0 → Full`; `caret_visible && caret_blink_pending → CaretOnly`; otherwise `Idle`
+- [x] 8.6 Replace the zero-delay `SDL_PollEvent` loop in `Application` with an `IdleHint`-driven strategy: `Full → SDL_PollEvent`; `CaretOnly → SDL_WaitEventTimeout(caret_remaining_ms)`; `Idle → SDL_WaitEvent`
 - [x] 8.7 Add unit tests: assert `IdleHint == Idle` when task count is 0 and no caret is active; assert `IdleHint == Full` while a task is in flight; assert the counter never reaches -1 (ASAN assertion fires on underflow)
 - [ ] 8.8 Run the `idle_soak_30s` harness scenario and verify the event-loop statistics show near-zero wake rate after all background work settles
 

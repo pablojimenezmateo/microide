@@ -7,6 +7,7 @@
 #include <optional>
 #include <vector>
 
+#include "app/BackgroundTaskCounter.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
 
 namespace microide::workspace {
@@ -624,6 +625,27 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
     }
   }
   return next_delay;
+}
+
+WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
+  if (app::GetBackgroundTaskCount() > 0) {
+    return IdleWaitState{
+        .hint = IdleHint::Full,
+        .caret_remaining_ms = 0,
+    };
+  }
+
+  if (const auto caret_delay = NextCaretBlinkDelayMs(); caret_delay.has_value()) {
+    return IdleWaitState{
+        .hint = IdleHint::CaretOnly,
+        .caret_remaining_ms = *caret_delay,
+    };
+  }
+
+  return IdleWaitState{
+      .hint = IdleHint::Idle,
+      .caret_remaining_ms = 0,
+  };
 }
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {

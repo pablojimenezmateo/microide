@@ -125,28 +125,39 @@ int Application::Run() {
     }
 
     SDL_Event event;
-    const std::optional<Uint32> next_delay = workspace_shell_.NextAnimationDelayMs();
-    const bool has_event =
-        next_delay.has_value() ? SDL_WaitEventTimeout(&event, static_cast<Sint32>(*next_delay))
-                               : SDL_WaitEvent(&event);
+    const workspace::WorkspaceShell::IdleWaitState idle_wait_state =
+        workspace_shell_.CurrentIdleWaitState();
+    bool has_event = false;
+    switch (idle_wait_state.hint) {
+      case workspace::WorkspaceShell::IdleHint::Full:
+        has_event = SDL_PollEvent(&event);
+        break;
+      case workspace::WorkspaceShell::IdleHint::CaretOnly:
+        has_event = SDL_WaitEventTimeout(
+            &event, static_cast<Sint32>(std::max<Uint32>(1, idle_wait_state.caret_remaining_ms)));
+        break;
+      case workspace::WorkspaceShell::IdleHint::Idle:
+        has_event = SDL_WaitEvent(&event);
+        break;
+    }
     if (!has_event) {
-      if (next_delay.has_value()) {
-        const auto scheduled = workspace_shell_.HandleScheduledWake();
-        if (scheduled.handled) {
-          if (scheduled.redraw.full) {
-            full_redraw_pending = true;
-            dirty_rects.clear();
-            redraw_reason = "scheduled-full";
-          } else {
-            full_redraw_pending = false;
-            dirty_rects = scheduled.redraw.rects;
-            redraw_reason = "scheduled-partial";
-          }
-        }
-        continue;
+      if (idle_wait_state.hint == workspace::WorkspaceShell::IdleHint::Idle) {
+        SDL_Log("SDL_WaitEvent failed: %s", SDL_GetError());
+        break;
       }
-      SDL_Log("SDL_WaitEvent failed: %s", SDL_GetError());
-      break;
+      const auto scheduled = workspace_shell_.HandleScheduledWake();
+      if (scheduled.handled) {
+        if (scheduled.redraw.full) {
+          full_redraw_pending = true;
+          dirty_rects.clear();
+          redraw_reason = "scheduled-full";
+        } else {
+          full_redraw_pending = false;
+          dirty_rects = scheduled.redraw.rects;
+          redraw_reason = "scheduled-partial";
+        }
+      }
+      continue;
     }
 
     do {

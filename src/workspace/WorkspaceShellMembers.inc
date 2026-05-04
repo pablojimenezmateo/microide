@@ -68,6 +68,17 @@
     std::uint64_t frame_id_ = 0;
   };
 
+  enum class IdleHint {
+    Full,
+    CaretOnly,
+    Idle,
+  };
+
+  struct IdleWaitState {
+    IdleHint hint = IdleHint::Idle;
+    Uint32 caret_remaining_ms = 0;
+  };
+
   WorkspaceShell();
 
   static std::vector<std::string> DocumentedCommandUsages();
@@ -80,6 +91,7 @@
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
+  IdleWaitState CurrentIdleWaitState() const;
   std::optional<Uint32> NextAnimationDelayMs() const;
   bool ConsumePostRenderFullRedrawRequest();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
