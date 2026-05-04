@@ -31,6 +31,12 @@ std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
   return WorkspaceCommandSpecs();
 }
 
+WorkspaceShell::~WorkspaceShell() {
+  // Drain project background work before member teardown to avoid races on
+  // git sidebar refresh state during shell destruction.
+  project_background_executor_.Shutdown();
+}
+
 WorkspaceShell::SidebarMode WorkspaceShell::SidebarModeForViewId(std::string_view view_id) const {
   if (view_id.empty()) {
     return SidebarMode::None;

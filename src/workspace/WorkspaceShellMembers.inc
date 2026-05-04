@@ -80,6 +80,7 @@
   };
 
   WorkspaceShell();
+  ~WorkspaceShell();
 
   static std::vector<std::string> DocumentedCommandUsages();
   bool Initialize(const std::filesystem::path& project_root);

@@ -108,9 +108,10 @@ void SidebarCoordinator::ShowGit() {
   state_.directory_tree.RefreshGitStatuses();
   if (operations_.request_git_refresh != nullptr) {
     operations_.request_git_refresh();
-  } else {
-    RefreshGit();
   }
+  // Ensure the first open has concrete entries immediately (tooltip/actions),
+  // while async refresh still updates with the latest snapshot when available.
+  RefreshGit();
   ShowMode(SidebarMode::Git, false);
   RevealSelectedGitLine();
 }
