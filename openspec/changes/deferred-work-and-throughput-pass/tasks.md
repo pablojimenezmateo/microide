@@ -40,7 +40,7 @@
 - [ ] 5.4 Update all render phases that currently call `EditorTabService::ActiveViewport()` independently to read `visible_line_range` from the `FrameToken` instead; remove the now-redundant viewport calls
 - [ ] 5.5 Add `TabStripGeometryCache` struct (tab widths, positions, overflow offset) keyed by `{tab_count, window_width, active_tab_index}`; populate on first use and after any key change; store alongside the tab-strip render state
 - [ ] 5.6 Add ASAN-mode assertion in `Application::WorkspaceRenderClip` that `PrepareFrameOnce` has been called in the current frame (guards against layout-not-computed bugs at startup and after window show/hide)
-- [ ] 5.7 Add architectural lint rule to `tests/ArchitectureInvariantsTests.cpp`: hard-fail if render TUs covered by the existing lint call `ComputeLayout()` or access `context_.window_size` directly (geometry is mediated through `FrameToken`)
+- [x] 5.7 Add architectural lint rule to `tests/ArchitectureInvariantsTests.cpp`: hard-fail if render TUs covered by the existing lint call `ComputeLayout()` or access `context_.window_size` directly (geometry is mediated through `FrameToken`)
 - [x] 5.8 Add unit tests: assert `ComputeLayout` call count is 0 when dirty flag is clear for 10 consecutive frames; assert count is 1 on the frame after a resize event
 
 ## 6. PCRE2 JIT Compilation And Pattern Cache (D4)

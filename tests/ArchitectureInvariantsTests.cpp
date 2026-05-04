@@ -371,6 +371,35 @@ RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root)
   return result;
 }
 
+RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "render surface geometry access";
+  result.hard_fail = true;
+
+  const std::array<std::string_view, 6> render_tus = {
+      "src/workspace/WorkspaceShellRenderOverlay.cpp",
+      "src/workspace/WorkspaceShellRenderTextInput.cpp",
+      "src/workspace/WorkspaceShellRenderSidebar.cpp",
+      "src/workspace/WorkspaceShellRenderBottomPanel.cpp",
+      "src/workspace/WorkspaceShellHoverPopup.cpp",
+      "src/workspace/WorkspaceShellHoverTargets.cpp",
+  };
+  const std::regex compute_layout_pattern(R"(\bComputeLayout\s*\()");
+  const std::regex direct_window_size_pattern(R"(context_\.window_size\b)");
+  for (const std::string_view relative_path : render_tus) {
+    const std::filesystem::path path = repo_root / relative_path;
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    AppendViolations(result, path, text, compute_layout_pattern,
+                     "render geometry must come from FrameToken/prepared layout, not ComputeLayout");
+    AppendViolations(result, path, text, direct_window_size_pattern,
+                     "render geometry must not read context_.window_size directly");
+  }
+  return result;
+}
+
 RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace coordinator translation unit size";
@@ -817,6 +846,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
   results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShellTestAccess.h", 600));
   results.push_back(CheckRenderSurfaceStateAccess(repo_root));
+  results.push_back(CheckRenderSurfaceGeometryAccess(repo_root));
   results.push_back(CheckNoSynchronousSubprocessWaitInWorkspace(repo_root));
   results.push_back(CheckLspDidOpenIsNonBlocking(repo_root));
 
