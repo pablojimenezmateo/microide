@@ -801,6 +801,23 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
          "file finder should still open matches after deferred index cache build");
 }
 
+void TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  WorkspaceShellTestAccess::ResetPrepareFrameLayoutComputeCount(shell);
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project should open from welcome state");
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(WorkspaceShellTestAccess::PrepareFrameLayoutComputeCount(shell) > 0,
+         "opening a project from welcome should invalidate cached layout and recompute geometry");
+}
+
 void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1817,6 +1834,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome);
   AddTest(tests, "WorkspaceShell/FilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild",
           TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild);
+  AddTest(tests, "WorkspaceShell/ProjectOpenFromWelcomeInvalidatesCachedLayout",
+          TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout);
   AddTest(tests, "WorkspaceShell/OverlayOutsideClickRestoresPrimaryFocus",
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",

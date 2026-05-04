@@ -89,6 +89,29 @@ void TestDirectoryTreeTracksMaterializationIndependentlyFromIgnoredStatus() {
          "expanding should materialize all immediate children");
 }
 
+void TestDirectoryTreeShowsHiddenIgnoredEntries() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / ".gitignore", ".env.local\n.cache/\n");
+  WriteFile(root / ".env.local", "TOKEN=abc\n");
+  WriteFile(root / ".cache" / "stamp.txt", "ok\n");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+
+  const auto* hidden_file = FindEntry(tree, root / ".env.local");
+  Expect(hidden_file != nullptr,
+         "hidden ignored files should remain visible in the tree model");
+  Expect(hidden_file != nullptr && hidden_file->ignored,
+         "hidden ignored files should be tagged as ignored");
+
+  const auto* hidden_dir = FindEntry(tree, root / ".cache");
+  Expect(hidden_dir != nullptr,
+         "hidden ignored directories should remain visible in the tree model");
+  Expect(hidden_dir != nullptr && hidden_dir->ignored,
+         "hidden ignored directories should be tagged as ignored");
+}
+
 }  // namespace
 
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
@@ -96,6 +119,8 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeTracksIgnoredStatusIndependentlyFromVisibility);
   AddTest(tests, "DirectoryTree/TracksMaterializationIndependentlyFromIgnoredStatus",
           TestDirectoryTreeTracksMaterializationIndependentlyFromIgnoredStatus);
+  AddTest(tests, "DirectoryTree/ShowsHiddenIgnoredEntries",
+          TestDirectoryTreeShowsHiddenIgnoredEntries);
 }
 
 }  // namespace microide::tests

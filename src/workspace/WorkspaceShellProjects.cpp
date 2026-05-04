@@ -117,11 +117,20 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
   for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
     if (ProjectCatalogRoot(i) == normalized_root) {
-      return SwitchProject(i, log_feedback);
+      const bool switched = SwitchProject(i, log_feedback);
+      if (switched) {
+        MarkLayoutDirty();
+      }
+      return switched;
     }
   }
 
-  return MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback);
+  const bool opened =
+      MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback);
+  if (opened) {
+    MarkLayoutDirty();
+  }
+  return opened;
 }
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
@@ -134,8 +143,11 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
     EnsureActiveProjectVisible();
     return true;
   }
-
-  return MakeProjectCatalogService().Switch(index);
+  const bool switched = MakeProjectCatalogService().Switch(index);
+  if (switched) {
+    MarkLayoutDirty();
+  }
+  return switched;
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {

@@ -311,6 +311,10 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     }
 
     const bool ignored = matcher.Ignored(relative, is_directory);
+    if (path.filename().string().starts_with('.') && !ignored) {
+      iterator.increment(error);
+      continue;
+    }
 
     if (is_directory) {
       IgnoreMatcher child_matcher = matcher;
