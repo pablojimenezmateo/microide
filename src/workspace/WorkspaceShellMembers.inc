@@ -1311,6 +1311,7 @@
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
   const WindowChromeState& CurrentWindowChromeState() const;
+  void MarkLayoutDirty();
   void RequestFullRedraw();
   void RequestRedrawRect(const SDL_FRect& rect);
   void RequestWindowRedraw();
@@ -1417,6 +1418,8 @@
   std::size_t reload_plugins_invocation_count_ = 0;
   std::size_t render_compare_surface_invocation_count_ = 0;
   std::optional<WorkspaceLayout> prepared_frame_layout_;
+  bool layout_dirty_ = true;
+  std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
   std::uint64_t prepared_frame_id_ = 0;
   WorkspaceOutputChannels output_channels_;

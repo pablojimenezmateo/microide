@@ -68,14 +68,27 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const BottomPanelSurfaceViewModel panel_vm =
       RenderViewModelBuilder(context_).BuildBottomPanelSurface();
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
-  project_state.sidebar.width = ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
-  project_state.panel.height =
+  const float clamped_sidebar_width =
+      ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
+  const float clamped_panel_height =
       ClampBottomPanelHeight(project_state.panel.height, static_cast<float>(height));
+  if (clamped_sidebar_width != project_state.sidebar.width ||
+      clamped_panel_height != project_state.panel.height) {
+    layout_dirty_ = true;
+  }
+  project_state.sidebar.width = clamped_sidebar_width;
+  project_state.panel.height = clamped_panel_height;
 
-  const WorkspaceLayout layout =
-      ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
-                    panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
-                    project_state.sidebar.width, project_state.panel.height);
+  WorkspaceLayout layout;
+  if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
+    layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
+                           panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
+                           project_state.sidebar.width, project_state.panel.height);
+    ++prepare_frame_layout_compute_count_;
+    layout_dirty_ = false;
+  } else {
+    layout = *prepared_frame_layout_;
+  }
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {

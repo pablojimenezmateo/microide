@@ -34,14 +34,14 @@
 
 ## 5. Layout And Geometry Cache (D3)
 
-- [ ] 5.1 Add `layout_dirty_` bool flag (default `true`) to the workspace render coordinator; set it in the window-resize event handler, the divider-drag event handler, and all sidebar/panel-toggle event handlers; clear it after `ComputeLayout()` completes in `PrepareFrameOnce`
-- [ ] 5.2 Guard `ComputeLayout()` in `PrepareFrameOnce` with the dirty flag: skip the call when `!layout_dirty_`; verify with a perf-trace that `ComputeLayout` is absent from the trace for a typing frame with no geometry change
+- [x] 5.1 Add `layout_dirty_` bool flag (default `true`) to the workspace render coordinator; set it in the window-resize event handler, the divider-drag event handler, and all sidebar/panel-toggle event handlers; clear it after `ComputeLayout()` completes in `PrepareFrameOnce`
+- [x] 5.2 Guard `ComputeLayout()` in `PrepareFrameOnce` with the dirty flag: skip the call when `!layout_dirty_`; verify with a perf-trace that `ComputeLayout` is absent from the trace for a typing frame with no geometry change
 - [ ] 5.3 Add `visible_line_range` (start line, end line, viewport) POD field to `FrameToken`; populate it once from `EditorTabService::ActiveViewport()` in `PrepareFrameOnce`; set to sentinel when no editor tab is active
 - [ ] 5.4 Update all render phases that currently call `EditorTabService::ActiveViewport()` independently to read `visible_line_range` from the `FrameToken` instead; remove the now-redundant viewport calls
 - [ ] 5.5 Add `TabStripGeometryCache` struct (tab widths, positions, overflow offset) keyed by `{tab_count, window_width, active_tab_index}`; populate on first use and after any key change; store alongside the tab-strip render state
 - [ ] 5.6 Add ASAN-mode assertion in `Application::WorkspaceRenderClip` that `PrepareFrameOnce` has been called in the current frame (guards against layout-not-computed bugs at startup and after window show/hide)
 - [ ] 5.7 Add architectural lint rule to `tests/ArchitectureInvariantsTests.cpp`: hard-fail if render TUs covered by the existing lint call `ComputeLayout()` or access `context_.window_size` directly (geometry is mediated through `FrameToken`)
-- [ ] 5.8 Add unit tests: assert `ComputeLayout` call count is 0 when dirty flag is clear for 10 consecutive frames; assert count is 1 on the frame after a resize event
+- [x] 5.8 Add unit tests: assert `ComputeLayout` call count is 0 when dirty flag is clear for 10 consecutive frames; assert count is 1 on the frame after a resize event
 
 ## 6. PCRE2 JIT Compilation And Pattern Cache (D4)
 

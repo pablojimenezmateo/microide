@@ -38,7 +38,13 @@ bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
 
 }  // namespace
 
+void WorkspaceShell::MarkLayoutDirty() {
+  layout_dirty_ = true;
+}
+
 void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
+  const int previous_width = window_presentation_.logical_width;
+  const int previous_height = window_presentation_.logical_height;
   presentation_scale_x_ =
       std::isfinite(state.scale_x) && state.scale_x > 0.0f ? state.scale_x : 1.0f;
   presentation_scale_y_ =
@@ -52,6 +58,10 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   state.scale_x = presentation_scale_x_;
   state.scale_y = presentation_scale_y_;
   window_presentation_ = std::move(state);
+  if (window_presentation_.logical_width != previous_width ||
+      window_presentation_.logical_height != previous_height) {
+    MarkLayoutDirty();
+  }
 }
 
 render::TextClipPadding WorkspaceShell::PartialRedrawClipPadding() const {
@@ -128,6 +138,7 @@ void WorkspaceShell::RequestSidebarRedraw() {
 
 void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
     const WorkspaceLayout& previous_layout) {
+  MarkLayoutDirty();
   const auto current_layout = CurrentWorkspaceLayout();
   if (!current_layout.has_value()) {
     RequestWindowRedraw();
@@ -330,6 +341,7 @@ void WorkspaceShell::RequestBottomPanelCommandRedraw() {
 
 void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
     const WorkspaceLayout& previous_layout) {
+  MarkLayoutDirty();
   const auto current_layout = CurrentWorkspaceLayout();
   if (!current_layout.has_value()) {
     RequestWindowRedraw();
@@ -348,6 +360,7 @@ void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
 
 void WorkspaceShell::RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible) {
   if (bottom_panel_was_visible != BottomPanelVisible()) {
+    MarkLayoutDirty();
     RequestFullRedraw();
     return;
   }

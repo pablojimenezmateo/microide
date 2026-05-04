@@ -1639,6 +1639,37 @@ void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
   Expect(!retained_shell.ConsumePostRenderFullRedrawRequest(),
          "bottom-panel resize should settle after the bounded follow-up redraws");
 }
+
+void TestWorkspaceShellPrepareFrameSkipsLayoutWhenNotDirty() {
+  EnsureDummySdlVideo();
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  WorkspaceShellTestAccess::ResetPrepareFrameLayoutComputeCount(shell);
+
+  for (int i = 0; i < 10; ++i) {
+    shell.Render(canvas.renderer(), 1280, 720);
+  }
+  Expect(WorkspaceShellTestAccess::PrepareFrameLayoutComputeCount(shell) == 0,
+         "PrepareFrameOnce should skip ComputeLayout while the layout-dirty flag is clear");
+}
+
+void TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize() {
+  EnsureDummySdlVideo();
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  SoftwareCanvas canvas(1400, 900);
+  shell.Render(canvas.renderer(), 1280, 720);
+  WorkspaceShellTestAccess::ResetPrepareFrameLayoutComputeCount(shell);
+
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1400, 900);
+  shell.Render(canvas.renderer(), 1400, 900);
+  Expect(WorkspaceShellTestAccess::PrepareFrameLayoutComputeCount(shell) == 1,
+         "PrepareFrameOnce should recompute layout once on the frame after a resize");
+}
 #endif
 
 }  // namespace
@@ -1705,6 +1736,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender);
   AddTest(tests, "WorkspaceShell/BottomPanelResizeRequestsFullRedrawAndSettleFrames",
           TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames);
+  AddTest(tests, "WorkspaceShell/PrepareFrameSkipsLayoutWhenNotDirty",
+          TestWorkspaceShellPrepareFrameSkipsLayoutWhenNotDirty);
+  AddTest(tests, "WorkspaceShell/PrepareFrameRecomputesLayoutAfterResize",
+          TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize);
 #endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);

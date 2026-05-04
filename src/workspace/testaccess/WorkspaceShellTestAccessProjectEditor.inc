@@ -207,6 +207,13 @@
   static void SetWindowSize(WorkspaceShell& shell, int width, int height) {
     shell.window_presentation_.logical_width = width;
     shell.window_presentation_.logical_height = height;
+    shell.MarkLayoutDirty();
+  }
+  static std::size_t PrepareFrameLayoutComputeCount(const WorkspaceShell& shell) {
+    return shell.prepare_frame_layout_compute_count_;
+  }
+  static void ResetPrepareFrameLayoutComputeCount(WorkspaceShell& shell) {
+    shell.prepare_frame_layout_compute_count_ = 0;
   }
   static void SetWindowChromeEnabled(WorkspaceShell& shell,
                                      bool enabled,
