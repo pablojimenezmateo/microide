@@ -14,7 +14,7 @@ class LifecycleCoordinator {
     std::function<void()> reset_startup_state;
     std::function<void()> initialize_project_search_runtime;
     std::function<void()> initialize_task_runtime;
-    std::function<void()> initialize_provider_bridge_manager;
+    std::function<void()> initialize_ai_provider_runtime;
     std::function<void()> register_wake_events;
     std::function<void()> restore_user_config;
     std::function<void()> refresh_available_colorscheme_names;
@@ -31,7 +31,7 @@ class LifecycleCoordinator {
     std::function<void()> save_workspace_session;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> shutdown_task_runtime;
-    std::function<void()> shutdown_provider_bridge_manager;
+    std::function<void()> shutdown_ai_provider_runtime;
     std::function<void()> clear_terminal_tabs;
     std::function<void()> destroy_cursors;
   };

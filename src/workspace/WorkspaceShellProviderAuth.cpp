@@ -59,15 +59,12 @@ bool WorkspaceShell::SetProviderApiKey(std::string_view provider_id,
     }
     return false;
   }
-  // If there is a running bridge for this provider, restart it with the new key.
-  const ExternalAgentSpec* agent =
-      external_agent_registry_.FindAgent(std::string(provider_id));
-  if (agent != nullptr && !agent->command.empty()) {
-    provider_bridge_manager_.StartBridge(agent->id,
-                                         agent->command,
-                                         std::string(api_key),
-                                         context_.current_project_state.root);
-  }
+  const AiRuntimeLaunchContext launch_context{
+      .cwd = context_.current_project_state.root,
+      .secret = std::string(api_key),
+  };
+  (void)ai_provider_runtime_service_.RequestAuthCheck(provider->id, launch_context, nullptr);
+  (void)ai_provider_runtime_service_.RequestModelList(provider->id, launch_context, nullptr);
   return true;
 }
 
@@ -80,7 +77,7 @@ bool WorkspaceShell::ClearProviderApiKey(std::string_view provider_id,
   const std::string key = provider != nullptr ? ProviderApiKeyStorageKey(*provider)
                                                : std::string(provider_id) + ".api_key";
   secret_storage_.Delete(key);
-  provider_bridge_manager_.StopBridge(std::string(provider_id));
+  ai_provider_runtime_service_.StopRuntime(provider_id);
   return true;
 }
 
@@ -89,14 +86,17 @@ ProviderAuthStatus WorkspaceShell::GetProviderAuthStatus(std::string_view provid
   if (provider == nullptr) {
     return ProviderAuthStatus::Unknown;
   }
+  const ProviderAuthStatus runtime_status = ai_provider_runtime_service_.GetAuthStatus(provider->id);
   if (!ResolveProviderApiKey(*provider).has_value()) {
+    if (provider->type == "external" && provider->api_key_name.empty()) {
+      return runtime_status == ProviderAuthStatus::Unknown ? ProviderAuthStatus::KeyPresent
+                                                           : runtime_status;
+    }
     return ProviderAuthStatus::KeyMissing;
   }
-  const ProviderAuthStatus bridge_status =
-      provider_bridge_manager_.GetAuthStatus(std::string(provider_id));
-  if (bridge_status != ProviderAuthStatus::Unknown &&
-      bridge_status != ProviderAuthStatus::KeyMissing) {
-    return bridge_status;
+  if (runtime_status != ProviderAuthStatus::Unknown &&
+      runtime_status != ProviderAuthStatus::KeyMissing) {
+    return runtime_status;
   }
   return ProviderAuthStatus::KeyPresent;
 }

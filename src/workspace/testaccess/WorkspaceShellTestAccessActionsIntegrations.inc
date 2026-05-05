@@ -30,21 +30,39 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     return shell.GetProviderAuthStatus(provider_id);
   }
   static void RequestProviderAuthCheck(WorkspaceShell& shell, std::string_view provider_id) {
-    shell.provider_bridge_manager_.RequestAuthCheck(std::string(provider_id));
+    const AiProviderSpec* provider =
+        shell.ai_provider_registry_.FindProvider(std::string(provider_id));
+    if (provider == nullptr) {
+      return;
+    }
+    shell.ai_provider_runtime_service_.RequestAuthCheck(
+        provider_id,
+        AiRuntimeLaunchContext{.cwd = shell.context_.current_project_state.root,
+                               .secret = shell.ResolveProviderApiKey(*provider)},
+        nullptr);
   }
   static void RequestProviderModelList(WorkspaceShell& shell, std::string_view provider_id) {
-    shell.provider_bridge_manager_.RequestModelList(std::string(provider_id));
+    const AiProviderSpec* provider =
+        shell.ai_provider_registry_.FindProvider(std::string(provider_id));
+    if (provider == nullptr) {
+      return;
+    }
+    shell.ai_provider_runtime_service_.RequestModelList(
+        provider_id,
+        AiRuntimeLaunchContext{.cwd = shell.context_.current_project_state.root,
+                               .secret = shell.ResolveProviderApiKey(*provider)},
+        nullptr);
   }
   static std::vector<std::string> ProviderModels(const WorkspaceShell& shell,
                                                  std::string_view provider_id) {
-    return shell.provider_bridge_manager_.GetModels(std::string(provider_id));
+    return shell.ai_provider_runtime_service_.GetModels(provider_id);
   }
   static ProviderCapabilities GetProviderCapabilities(const WorkspaceShell& shell,
                                                       std::string_view provider_id) {
-    return shell.provider_bridge_manager_.GetCapabilities(std::string(provider_id));
+    return shell.ai_provider_runtime_service_.GetCapabilities(provider_id);
   }
-  static void ConsumeProviderBridgeUpdates(WorkspaceShell& shell) {
-    shell.ConsumeProviderBridgeUpdates();
+  static void ConsumeAiRuntimeUpdates(WorkspaceShell& shell) {
+    shell.ConsumeAiRuntimeUpdates();
   }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
   static void ConsumePluginAsyncProcessCallbacks(WorkspaceShell& shell) {
@@ -59,7 +77,7 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     shell.ConsumePluginAsyncProcessCallbacks();
     return shell.plugin_runtime_.Host().PendingAsyncProcessCount() == 0;
   }
-  static bool WaitForProviderBridgeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
+  static bool WaitForAiRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
     const auto any_in_flight = [&]() {
       const auto project_busy = [](const WorkspaceShell::ProjectWorkspaceState& project) {
         return project.panel.chat.request_in_flight || project.inline_completion.request_in_flight;
@@ -75,11 +93,11 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     };
     const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
     while (any_in_flight() && SDL_GetTicks() <= deadline) {
-      shell.ConsumeProviderBridgeUpdates();
+      shell.ConsumeAiRuntimeUpdates();
       shell.HandleScheduledWake();
       SDL_Delay(5);
     }
-    shell.ConsumeProviderBridgeUpdates();
+    shell.ConsumeAiRuntimeUpdates();
     return !any_in_flight();
   }
   static bool WaitForTaskRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {

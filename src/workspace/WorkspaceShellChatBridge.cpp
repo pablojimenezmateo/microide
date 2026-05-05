@@ -152,12 +152,12 @@ std::string ToolPermissionDecisionLabel(ToolPermissionLevel permission) {
 }
 
 ProjectWorkspaceState* FindProjectForChatRequest(WorkspaceContext& context,
-                                                 std::string_view agent_id,
+                                                 std::string_view provider_id,
                                                  std::string_view request_id,
                                                  bool* active_project) {
   if (context.current_project_state.panel.chat.request_in_flight &&
-      context.current_project_state.panel.chat.pending_bridge_agent_id == agent_id &&
-      context.current_project_state.panel.chat.pending_bridge_request_id == request_id) {
+      context.current_project_state.panel.chat.pending_provider_id == provider_id &&
+      context.current_project_state.panel.chat.pending_request_id == request_id) {
     if (active_project != nullptr) {
       *active_project = true;
     }
@@ -170,8 +170,8 @@ ProjectWorkspaceState* FindProjectForChatRequest(WorkspaceContext& context,
       continue;
     }
     if (!project->panel.chat.request_in_flight ||
-        project->panel.chat.pending_bridge_agent_id != agent_id ||
-        project->panel.chat.pending_bridge_request_id != request_id) {
+        project->panel.chat.pending_provider_id != provider_id ||
+        project->panel.chat.pending_request_id != request_id) {
       continue;
     }
     if (active_project != nullptr) {
@@ -188,26 +188,26 @@ ProjectWorkspaceState* FindProjectForChatRequest(WorkspaceContext& context,
 
 bool ApplyInlineBridgeUpdate(ProjectWorkspaceState* project,
                              bool active,
-                             const WorkspaceProviderBridgeManager::ChatUpdate& update,
+                             const AiRuntimeEvent& update,
                              bool* request_focus_redraw) {
   if (project == nullptr) {
     return false;
   }
   InlineCompletionState& inline_completion = project->inline_completion;
   if (!inline_completion.request_in_flight ||
-      inline_completion.pending_bridge_agent_id != update.agent_id ||
-      inline_completion.pending_bridge_request_id != update.request_id) {
+      inline_completion.pending_provider_id != update.provider_id ||
+      inline_completion.pending_request_id != update.request_id) {
     return false;
   }
-  if (update.kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Chunk) {
+  if (update.kind == AiRuntimeEvent::Kind::Chunk) {
     inline_completion.text += update.chunk;
-  } else if (update.kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Done) {
+  } else if (update.kind == AiRuntimeEvent::Kind::Completed) {
     inline_completion.text += update.chunk;
     inline_completion.request_in_flight = false;
     inline_completion.visible = update.terminal_status == "succeeded" && !inline_completion.text.empty();
     inline_completion.error = update.terminal_status == "succeeded" ? std::string{} : update.status_text;
-    inline_completion.pending_bridge_agent_id.clear();
-    inline_completion.pending_bridge_request_id.clear();
+    inline_completion.pending_provider_id.clear();
+    inline_completion.pending_request_id.clear();
   }
   if (active && request_focus_redraw != nullptr) {
     *request_focus_redraw = true;
@@ -217,10 +217,10 @@ bool ApplyInlineBridgeUpdate(ProjectWorkspaceState* project,
 
 }  // namespace
 
-void WorkspaceShell::ConsumeProviderBridgeUpdates() {
+void WorkspaceShell::ConsumeAiRuntimeUpdates() {
   ExpirePendingToolApprovals();
   while (true) {
-    const auto update = provider_bridge_manager_.ConsumeChatUpdate();
+    const auto update = ai_provider_runtime_service_.ConsumeEvent();
     if (!update.has_value()) {
       break;
     }
@@ -228,7 +228,7 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
 
     bool active_project = false;
     if (ProjectWorkspaceState* chat_project =
-            FindProjectForChatRequest(context_, update->agent_id, update->request_id,
+            FindProjectForChatRequest(context_, update->provider_id, update->request_id,
                                       &active_project);
         chat_project != nullptr) {
       ChatPanelState& chat = chat_project->panel.chat;
@@ -236,7 +236,7 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
           chat_project->conversations.GetConversation(chat.request_conversation_id);
       Message* assistant = FindMessage(conversation, chat.pending_assistant_message_id);
 
-      if (update->kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Chunk) {
+      if (update->kind == AiRuntimeEvent::Kind::Chunk) {
         if (assistant != nullptr) {
           UpdateMessageContent(conversation, chat.pending_assistant_message_id, update->chunk);
         }
@@ -246,7 +246,7 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
         }
         RequestChromeRedraw();
         handled = true;
-      } else if (update->kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::ToolCall) {
+      } else if (update->kind == AiRuntimeEvent::Kind::ToolCall) {
         if (assistant != nullptr) {
           const std::string arguments_summary =
               !update->arguments_summary.empty()
@@ -274,7 +274,7 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
           }
 
           const ToolPermissionLevel permission =
-              mcp_tool_registry_.CheckPermission(update->tool_id, update->agent_id);
+              mcp_tool_registry_.CheckPermission(update->tool_id, update->provider_id);
           const std::string capability_scope =
               !update->capability_scope.empty() ? update->capability_scope : update->tool_id;
           const bool remembered = std::any_of(
@@ -286,8 +286,8 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
           chat.pending_tool_approval = ChatPanelState::PendingToolApproval{
               .conversation_id = chat.request_conversation_id,
               .assistant_message_id = chat.pending_assistant_message_id,
-              .bridge_agent_id = chat.pending_bridge_agent_id,
-              .bridge_request_id = chat.pending_bridge_request_id,
+              .provider_id = chat.pending_provider_id,
+              .request_id = chat.pending_request_id,
               .tool_call_id = update->tool_call_id,
               .tool_id = update->tool_id,
               .display_name = !update->display_name.empty() ? update->display_name
@@ -316,9 +316,9 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
           };
 
           const auto deny_tool = [&](std::string reason, std::string decision) {
-            provider_bridge_manager_.SendToolDenied(
-                chat.pending_bridge_agent_id, chat.pending_bridge_request_id, update->tool_call_id,
-                reason);
+            ai_provider_runtime_service_.SendToolDenied(chat.pending_provider_id,
+                                                        chat.pending_request_id,
+                                                        update->tool_call_id, reason);
             finish_tool_event("Denied", std::move(decision), reason, {});
             chat.pending_tool_approval.reset();
             chat.status_text = reason;
@@ -339,9 +339,9 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
                         "failed");
               return;
             }
-            provider_bridge_manager_.SendToolResult(
-                chat.pending_bridge_agent_id, chat.pending_bridge_request_id, update->tool_call_id,
-                output_json);
+            ai_provider_runtime_service_.SendToolResult(chat.pending_provider_id,
+                                                        chat.pending_request_id,
+                                                        update->tool_call_id, output_json);
             finish_tool_event("Completed", std::move(decision), {}, ToolOutputSummary(output_json));
             chat.pending_tool_approval.reset();
             chat.status_text = "Tool completed";
@@ -372,7 +372,7 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
         }
         RequestChromeRedraw();
         handled = true;
-      } else if (update->kind == WorkspaceProviderBridgeManager::ChatUpdate::Kind::Done) {
+      } else if (update->kind == AiRuntimeEvent::Kind::Completed) {
         const RequestStatus terminal_status = ParseBridgeTerminalStatus(update->terminal_status);
         const std::int64_t duration_ms =
             chat.request_started_ticks == 0
@@ -393,8 +393,8 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
           }
         }
         if (chat.pending_tool_approval.has_value() &&
-            chat.pending_tool_approval->bridge_agent_id == update->agent_id &&
-            chat.pending_tool_approval->bridge_request_id == update->request_id) {
+            chat.pending_tool_approval->provider_id == update->provider_id &&
+            chat.pending_tool_approval->request_id == update->request_id) {
           if (ToolEvent* tool_event =
                   FindToolEvent(assistant, chat.pending_tool_approval->tool_call_id);
               tool_event != nullptr && tool_event->finished_at.empty()) {
@@ -413,8 +413,8 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
         }
         if (context_.prompts.surface_visible &&
             context_.prompts.surface.action == PromptSurfaceState::Action::ApproveChatTool &&
-            context_.prompts.surface.bridge_agent_id == update->agent_id &&
-            context_.prompts.surface.bridge_request_id == update->request_id) {
+            context_.prompts.surface.provider_id == update->provider_id &&
+            context_.prompts.surface.request_id == update->request_id) {
           DismissPromptSurface(true);
         }
         chat.request_in_flight = false;
@@ -423,8 +423,8 @@ void WorkspaceShell::ConsumeProviderBridgeUpdates() {
                                                         : RequestStatusText(terminal_status);
         chat.request_conversation_id.clear();
         chat.pending_assistant_message_id.clear();
-        chat.pending_bridge_agent_id.clear();
-        chat.pending_bridge_request_id.clear();
+        chat.pending_provider_id.clear();
+        chat.pending_request_id.clear();
         chat.active_request = ChatPanelState::RequestSnapshot{};
         if (active_project) {
           chat.scroll_row = std::numeric_limits<int>::max();

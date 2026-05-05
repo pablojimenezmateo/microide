@@ -246,6 +246,7 @@ void WorkspaceShell::RebuildPhase4Registries() {
 
 void WorkspaceShell::RebuildPhase5Registries() {
   ai_provider_registry_ = AiProviderRegistry{};
+  ai_provider_runtime_service_.ClearRuntimes();
   inline_completion_registry_.Clear();
   external_agent_registry_.Clear();
   mcp_tool_registry_.Clear();
@@ -263,14 +264,27 @@ void WorkspaceShell::RebuildPhase5Registries() {
     ai_provider_registry_.Register(spec);
   }
   for (const auto& agent : host.ContributedExternalAgents()) {
-    external_agent_registry_.RegisterAgent(ExternalAgentSpec{
+    ExternalAgentSpec agent_spec{
         .id = agent.id,
         .label = agent.label,
         .protocol = agent.protocol,
         .command = agent.command,
         .capabilities = agent.capabilities,
         .plugin_id = agent.plugin_id,
-    });
+    };
+    if (ai_provider_registry_.FindProvider(agent.id) == nullptr) {
+      AiProviderSpec synthetic_provider;
+      synthetic_provider.id = agent.id;
+      synthetic_provider.label = agent.label;
+      synthetic_provider.type = "external";
+      synthetic_provider.plugin_id = agent.plugin_id;
+      ai_provider_registry_.Register(synthetic_provider);
+    }
+    external_agent_registry_.RegisterAgent(agent_spec);
+    if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent.id);
+        provider != nullptr) {
+      ai_provider_runtime_service_.RegisterSidecarRuntime(*provider, agent_spec);
+    }
   }
   for (const auto& tool : host.ContributedMcpTools()) {
     mcp_tool_registry_.RegisterTool(McpToolSpec{

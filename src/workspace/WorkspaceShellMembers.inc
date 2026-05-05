@@ -1145,7 +1145,7 @@
                          std::string_view session_id,
                          std::string* error_message = nullptr);
   bool StartChatRequest(std::string message, std::string* error_message = nullptr);
-  void ConsumeProviderBridgeUpdates();
+  void ConsumeAiRuntimeUpdates();
   void ExpirePendingToolApprovals();
   bool ResolveChatToolApprovalPrompt(bool allow, bool remember_for_session);
   void ShowPendingToolApprovalPrompt(ProjectWorkspaceState& project);
@@ -1482,11 +1482,11 @@
   VirtualDocumentRegistry virtual_document_registry_;
   ReviewCommentsRegistry review_comments_registry_;
   AiProviderRegistry ai_provider_registry_;
+  AiProviderRuntimeService ai_provider_runtime_service_;
   InlineCompletionRegistry inline_completion_registry_;
   ExternalAgentRegistry external_agent_registry_;
   McpToolRegistry mcp_tool_registry_;
   AiContextManager ai_context_manager_;
-  WorkspaceProviderBridgeManager provider_bridge_manager_;
   PersistenceService persistence_service_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;

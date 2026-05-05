@@ -37,8 +37,8 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_project_search_updates;
     std::function<bool(Uint32)> task_runtime_handles_event;
     std::function<void()> consume_task_runtime_updates;
-    std::function<bool(Uint32)> provider_bridge_handles_event;
-    std::function<void()> consume_provider_bridge_updates;
+    std::function<bool(Uint32)> ai_runtime_handles_event;
+    std::function<void()> consume_ai_runtime_updates;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> consume_git_sidebar_refresh;
     std::function<void()> consume_lsp_callbacks;

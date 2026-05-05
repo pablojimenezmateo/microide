@@ -182,8 +182,8 @@ struct ChatPanelState {
   struct PendingToolApproval {
     std::string conversation_id;
     std::string assistant_message_id;
-    std::string bridge_agent_id;
-    std::string bridge_request_id;
+    std::string provider_id;
+    std::string request_id;
     std::string tool_call_id;
     std::string tool_id;
     std::string display_name;
@@ -211,8 +211,8 @@ struct ChatPanelState {
   bool request_in_flight = false;
   Uint64 request_started_ticks = 0;
   std::string status_text;
-  std::string pending_bridge_agent_id;
-  std::string pending_bridge_request_id;
+  std::string pending_provider_id;
+  std::string pending_request_id;
   RequestSnapshot active_request;
   std::optional<PendingToolApproval> pending_tool_approval;
   std::vector<RememberedToolApproval> remembered_tool_approvals;
@@ -229,8 +229,8 @@ struct InlineCompletionState {
   std::string provider_id;
   std::string model_id;
   std::string error;
-  std::string pending_bridge_agent_id;
-  std::string pending_bridge_request_id;
+  std::string pending_provider_id;
+  std::string pending_request_id;
 };
 
 struct DebugSessionState {

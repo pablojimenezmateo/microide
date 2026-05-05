@@ -57,8 +57,8 @@ struct PromptSurfaceState {
   std::filesystem::path path;
   editor::SingleLineEditor input;
   std::string detail;
-  std::string bridge_agent_id;
-  std::string bridge_request_id;
+  std::string provider_id;
+  std::string request_id;
   std::string tool_call_id;
   std::string tool_id;
   std::string capability_scope;

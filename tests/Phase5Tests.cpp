@@ -41,11 +41,11 @@ bool WaitForShellCondition(WorkspaceShell& shell, Predicate&& ready, int timeout
   const Uint64 deadline =
       SDL_GetTicks() + static_cast<Uint64>(timeout_ms > 0 ? timeout_ms : 0);
   while (!ready() && SDL_GetTicks() <= deadline) {
-    WorkspaceShellTestAccess::ConsumeProviderBridgeUpdates(shell);
+    WorkspaceShellTestAccess::ConsumeAiRuntimeUpdates(shell);
     WorkspaceShellTestAccess::HandleScheduledWake(shell);
     std::this_thread::yield();
   }
-  WorkspaceShellTestAccess::ConsumeProviderBridgeUpdates(shell);
+  WorkspaceShellTestAccess::ConsumeAiRuntimeUpdates(shell);
   WorkspaceShellTestAccess::HandleScheduledWake(shell);
   return ready();
 }
@@ -276,7 +276,7 @@ return ide.plugin({
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat hello from tests"),
          "chat command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "chat bridge request should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
@@ -296,7 +296,7 @@ return ide.plugin({
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
          "inline-complete command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "inline completion bridge request should complete");
   Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
              WorkspaceShellTestAccess::InlineCompletion(shell).text == "inline_tail",
@@ -532,7 +532,7 @@ return ide.plugin({
          "tool approval prompt should describe the requested tool scope");
 
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "chat tool request should complete after approval");
   const auto approved_messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(approved_messages.size() == 2 &&
@@ -547,7 +547,7 @@ return ide.plugin({
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat use the echo tool again"),
          "second chat command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "remembered approval should allow the second tool call to complete");
   Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "remembered session approvals should skip the prompt on later requests");

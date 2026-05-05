@@ -140,8 +140,8 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.path = path.lexically_normal();
   prompts_.surface.input.SetText(std::move(input));
   prompts_.surface.detail.clear();
-  prompts_.surface.bridge_agent_id.clear();
-  prompts_.surface.bridge_request_id.clear();
+  prompts_.surface.provider_id.clear();
+  prompts_.surface.request_id.clear();
   prompts_.surface.tool_call_id.clear();
   prompts_.surface.tool_id.clear();
   prompts_.surface.capability_scope.clear();
@@ -164,8 +164,8 @@ void PromptSurfaceService::OpenExternalUrlPrompt(std::string url) {
   prompts_.surface.path.clear();
   prompts_.surface.input.SetText({});
   prompts_.surface.detail = std::move(url);
-  prompts_.surface.bridge_agent_id.clear();
-  prompts_.surface.bridge_request_id.clear();
+  prompts_.surface.provider_id.clear();
+  prompts_.surface.request_id.clear();
   prompts_.surface.tool_call_id.clear();
   prompts_.surface.tool_id.clear();
   prompts_.surface.capability_scope.clear();

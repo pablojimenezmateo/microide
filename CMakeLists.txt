@@ -375,6 +375,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceAuthProvider.cpp
   src/workspace/WorkspaceSecretStorage.cpp
   src/workspace/WorkspaceAiProvider.cpp
+  src/workspace/WorkspaceAiProviderRuntime.cpp
   src/workspace/WorkspaceInlineCompletion.cpp
   src/workspace/WorkspaceConversation.cpp
   src/workspace/WorkspaceExternalAgent.cpp

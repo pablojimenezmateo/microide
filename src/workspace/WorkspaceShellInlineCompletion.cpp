@@ -12,18 +12,6 @@ std::string GenerateRuntimeMessageId(std::string_view prefix) {
   return std::string(prefix) + "-" + std::to_string(counter++);
 }
 
-const ExternalAgentSpec* SelectAgentForCapability(const ExternalAgentRegistry& registry,
-                                                  const std::string& capability) {
-  if (const AgentSelection* selection = registry.GetSelection(capability);
-      selection != nullptr && !selection->preferred_agent.empty()) {
-    if (const auto* agent = registry.FindAgent(selection->preferred_agent); agent != nullptr) {
-      return agent;
-    }
-  }
-  const auto agents = registry.FindByCapability(capability);
-  return agents.empty() ? nullptr : agents.front();
-}
-
 }  // namespace
 
 void WorkspaceShell::ConsumeLspCallbacks() {
@@ -44,17 +32,19 @@ bool WorkspaceShell::RequestInlineCompletion(std::string* error_message) {
   if (viewport == nullptr) {
     return false;
   }
-  const ExternalAgentSpec* agent =
-      SelectAgentForCapability(external_agent_registry_, "inline-completion");
-  if (agent == nullptr || agent->protocol != "stdio") {
+  const std::vector<std::string> provider_ids =
+      ai_provider_runtime_service_.ProviderIdsForWorkflow(AiRuntimeWorkflow::InlineCompletion);
+  if (provider_ids.empty()) {
     if (error_message != nullptr) {
-      *error_message = "No stdio inline completion agent is available";
+      *error_message = "No inline completion provider runtime is available";
     }
     return false;
   }
-  if (agent->command.empty()) {
+  const std::string provider_id = provider_ids.front();
+  const AiProviderSpec* provider = ai_provider_registry_.FindProvider(provider_id);
+  if (provider == nullptr) {
     if (error_message != nullptr) {
-      *error_message = "Inline completion agent command is empty";
+      *error_message = "Unknown inline completion provider runtime";
     }
     return false;
   }
@@ -64,11 +54,11 @@ bool WorkspaceShell::RequestInlineCompletion(std::string* error_message) {
   context_.current_project_state.inline_completion.request_in_flight = true;
   context_.current_project_state.inline_completion.start_line = viewport->cursor_line();
   context_.current_project_state.inline_completion.start_column = viewport->cursor_column();
-  context_.current_project_state.inline_completion.provider_id = agent->id;
+  context_.current_project_state.inline_completion.provider_id = provider->id;
   context_.current_project_state.inline_completion.text.clear();
   context_.current_project_state.inline_completion.error.clear();
-  context_.current_project_state.inline_completion.pending_bridge_agent_id.clear();
-  context_.current_project_state.inline_completion.pending_bridge_request_id.clear();
+  context_.current_project_state.inline_completion.pending_provider_id.clear();
+  context_.current_project_state.inline_completion.pending_request_id.clear();
 
   std::ostringstream prompt;
   prompt << "Complete the code at line " << (viewport->cursor_line() + 1) << ", column "
@@ -77,32 +67,32 @@ bool WorkspaceShell::RequestInlineCompletion(std::string* error_message) {
   for (std::size_t i = 0; i < lines.size(); ++i) {
     prompt << lines[i] << '\n';
   }
-  if (!provider_bridge_manager_.IsBridgeRunning(agent->id) &&
-      !provider_bridge_manager_.StartBridge(agent->id,
-                                            agent->command,
-                                            {},
-                                            context_.current_project_state.root)) {
+  const std::string request_id = GenerateRuntimeMessageId("runtime-inline");
+  context_.current_project_state.inline_completion.pending_provider_id = provider->id;
+  context_.current_project_state.inline_completion.pending_request_id = request_id;
+  if (!ai_provider_runtime_service_.StartRequest(
+          AiRuntimeRequest{
+              .workflow = AiRuntimeWorkflow::InlineCompletion,
+              .provider_id = provider->id,
+              .request_id = request_id,
+              .messages = {AiRuntimeMessage{.role = "user", .content = prompt.str()}},
+              .model_id = {},
+              .system_prompt = {},
+              .tool_mode = "no_tools",
+              .tools = {},
+          },
+          AiRuntimeLaunchContext{
+              .cwd = context_.current_project_state.root,
+              .secret = ResolveProviderApiKey(*provider),
+          },
+          error_message)) {
     context_.current_project_state.inline_completion.request_in_flight = false;
+    context_.current_project_state.inline_completion.pending_provider_id.clear();
+    context_.current_project_state.inline_completion.pending_request_id.clear();
     if (error_message != nullptr) {
-      *error_message = "Failed to start inline completion agent bridge";
-    }
-    return false;
-  }
-  const std::string request_id = GenerateRuntimeMessageId("bridge-inline");
-  context_.current_project_state.inline_completion.pending_bridge_agent_id = agent->id;
-  context_.current_project_state.inline_completion.pending_bridge_request_id = request_id;
-  if (!provider_bridge_manager_.SendChat(agent->id,
-                                         request_id,
-                                         {{"user", prompt.str()}},
-                                         {},
-                                         {},
-                                         "no_tools",
-                                         {})) {
-    context_.current_project_state.inline_completion.request_in_flight = false;
-    context_.current_project_state.inline_completion.pending_bridge_agent_id.clear();
-    context_.current_project_state.inline_completion.pending_bridge_request_id.clear();
-    if (error_message != nullptr) {
-      *error_message = "Failed to send inline completion request to agent bridge";
+      *error_message = error_message->empty()
+                           ? "Failed to send inline completion request to provider runtime"
+                           : *error_message;
     }
     return false;
   }

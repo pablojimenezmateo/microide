@@ -139,8 +139,8 @@ void WorkspaceShell::ShowPendingToolApprovalPrompt(ProjectWorkspaceState& projec
   context_.prompts.surface.detail =
       JoinSummaryParts({pending.capability_scope.empty() ? pending.tool_id : pending.capability_scope,
                         "Args: " + args_detail, context_detail});
-  context_.prompts.surface.bridge_agent_id = pending.bridge_agent_id;
-  context_.prompts.surface.bridge_request_id = pending.bridge_request_id;
+  context_.prompts.surface.provider_id = pending.provider_id;
+  context_.prompts.surface.request_id = pending.request_id;
   context_.prompts.surface.tool_call_id = pending.tool_call_id;
   context_.prompts.surface.tool_id = pending.display_name.empty() ? pending.tool_id
                                                                   : pending.display_name;
@@ -175,8 +175,8 @@ bool WorkspaceShell::ResolveChatToolApprovalPrompt(bool allow, bool remember_for
 
   ChatPanelState& chat = project->panel.chat;
   const auto pending = *chat.pending_tool_approval;
-  if (pending.bridge_agent_id != context_.prompts.surface.bridge_agent_id ||
-      pending.bridge_request_id != context_.prompts.surface.bridge_request_id ||
+  if (pending.provider_id != context_.prompts.surface.provider_id ||
+      pending.request_id != context_.prompts.surface.request_id ||
       pending.tool_call_id != context_.prompts.surface.tool_call_id) {
     DismissPromptSurface(true);
     return false;
@@ -188,9 +188,8 @@ bool WorkspaceShell::ResolveChatToolApprovalPrompt(bool allow, bool remember_for
   const Uint64 now = SDL_GetTicks();
 
   if (!allow) {
-    provider_bridge_manager_.SendToolDenied(
-        pending.bridge_agent_id, pending.bridge_request_id, pending.tool_call_id,
-        "Tool approval denied");
+    ai_provider_runtime_service_.SendToolDenied(pending.provider_id, pending.request_id,
+                                                pending.tool_call_id, "Tool approval denied");
     if (tool_event != nullptr) {
       tool_event->status = "Denied";
       tool_event->permission_decision = "denied";
@@ -228,8 +227,8 @@ bool WorkspaceShell::ResolveChatToolApprovalPrompt(bool allow, bool remember_for
     const bool succeeded = plugin_runtime_.Host().InvokeMcpTool(
         pending.tool_id, pending.arguments_json, &output_json, &error_message);
     if (succeeded) {
-      provider_bridge_manager_.SendToolResult(
-          pending.bridge_agent_id, pending.bridge_request_id, pending.tool_call_id, output_json);
+      ai_provider_runtime_service_.SendToolResult(pending.provider_id, pending.request_id,
+                                                  pending.tool_call_id, output_json);
       if (tool_event != nullptr) {
         tool_event->status = "Completed";
         tool_event->finished_at = CurrentUtcTimestamp();
@@ -242,8 +241,8 @@ bool WorkspaceShell::ResolveChatToolApprovalPrompt(bool allow, bool remember_for
     } else {
       const std::string denied_reason =
           error_message.empty() ? std::string("Tool execution failed") : error_message;
-      provider_bridge_manager_.SendToolDenied(
-          pending.bridge_agent_id, pending.bridge_request_id, pending.tool_call_id, denied_reason);
+      ai_provider_runtime_service_.SendToolDenied(pending.provider_id, pending.request_id,
+                                                  pending.tool_call_id, denied_reason);
       if (tool_event != nullptr) {
         tool_event->status = "Failed";
         tool_event->finished_at = CurrentUtcTimestamp();
@@ -285,14 +284,13 @@ void WorkspaceShell::ExpirePendingToolApprovals() {
                                : static_cast<std::int64_t>(now - pending.requested_ticks);
       event->error = "Tool approval timed out";
     }
-    provider_bridge_manager_.SendToolDenied(
-        pending.bridge_agent_id, pending.bridge_request_id, pending.tool_call_id,
-        "Tool approval timed out");
+    ai_provider_runtime_service_.SendToolDenied(pending.provider_id, pending.request_id,
+                                                pending.tool_call_id, "Tool approval timed out");
     chat.pending_tool_approval.reset();
     if (context_.prompts.surface_visible &&
         context_.prompts.surface.action == PromptSurfaceState::Action::ApproveChatTool &&
-        context_.prompts.surface.bridge_agent_id == pending.bridge_agent_id &&
-        context_.prompts.surface.bridge_request_id == pending.bridge_request_id &&
+        context_.prompts.surface.provider_id == pending.provider_id &&
+        context_.prompts.surface.request_id == pending.request_id &&
         context_.prompts.surface.tool_call_id == pending.tool_call_id) {
       DismissPromptSurface(true);
     }

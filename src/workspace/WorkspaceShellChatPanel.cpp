@@ -29,14 +29,6 @@ std::string NextConversationTitle(const ConversationRegistry& registry) {
   return count == 0 ? "Chat" : "Chat " + std::to_string(count + 1);
 }
 
-bool AgentSupportsCapability(const ExternalAgentSpec* agent, std::string_view capability) {
-  if (agent == nullptr) {
-    return false;
-  }
-  return std::find(agent->capabilities.begin(), agent->capabilities.end(), capability) !=
-         agent->capabilities.end();
-}
-
 }  // namespace
 
 void WorkspaceShell::ShowChatPanel() {
@@ -147,8 +139,8 @@ bool WorkspaceShell::DeleteActiveChatConversation() {
 std::vector<const AiProviderSpec*> WorkspaceShell::ChatProviders() const {
   std::vector<const AiProviderSpec*> providers;
   for (const AiProviderSpec& provider : ai_provider_registry_.Specs()) {
-    const ExternalAgentSpec* agent = external_agent_registry_.FindAgent(provider.id);
-    if (AgentSupportsCapability(agent, "chat")) {
+    if (ai_provider_runtime_service_.ProviderSupportsWorkflow(provider.id,
+                                                             AiRuntimeWorkflow::Chat)) {
       providers.push_back(&provider);
     }
   }
@@ -157,7 +149,8 @@ std::vector<const AiProviderSpec*> WorkspaceShell::ChatProviders() const {
 
 std::vector<std::string> WorkspaceShell::ChatModelsForConversation(
     const Conversation& conversation) const {
-  std::vector<std::string> models = provider_bridge_manager_.GetModels(conversation.provider_id);
+  std::vector<std::string> models =
+      ai_provider_runtime_service_.GetModels(conversation.provider_id);
   if (models.empty()) {
     if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(conversation.provider_id);
         provider != nullptr) {

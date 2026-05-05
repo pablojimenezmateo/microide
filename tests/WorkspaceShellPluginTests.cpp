@@ -1915,7 +1915,7 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
          ("repo llm plugin should enable the built-in chat command: " +
           DescribePluginState(shell))
              .c_str());
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "repo llm chat command should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
@@ -1934,7 +1934,7 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
          "repo llm plugin should enable the built-in inline completion command");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "repo llm inline completion should complete");
   Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
              WorkspaceShellTestAccess::InlineCompletion(shell).text == "llm_inline_suggestion",
@@ -2000,7 +2000,7 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain provider bridge"),
          "openai plugin should drive the built-in chat command");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "openai plugin chat should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(messages.size() == 2 && messages.back().content == "openai reply",
@@ -2025,7 +2025,7 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
          "plugin reload should preserve the configured API key");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain reload"),
          "openai plugin should still answer after reload");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "openai plugin chat after reload should complete");
 
   server.process.Shutdown();
@@ -2094,7 +2094,7 @@ return ide.plugin({
   const Uint64 prompt_deadline = SDL_GetTicks() + 2000;
   while (!WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
          SDL_GetTicks() <= prompt_deadline) {
-    WorkspaceShellTestAccess::ConsumeProviderBridgeUpdates(shell);
+    WorkspaceShellTestAccess::ConsumeAiRuntimeUpdates(shell);
     WorkspaceShellTestAccess::HandleScheduledWake(shell);
     SDL_Delay(5);
   }
@@ -2102,7 +2102,7 @@ return ide.plugin({
          "native OpenAI tool calls should surface the host approval prompt");
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 0);
 
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "native OpenAI tool-call request should complete after approval");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(messages.size() == 2 && messages.back().content == "openai tool reply" &&
@@ -2157,7 +2157,7 @@ void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
          "user config API keys should make anthropic readable before validation");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain anthropic bridge"),
          "anthropic plugin should drive the built-in chat command");
-  Expect(WorkspaceShellTestAccess::WaitForProviderBridgeIdle(shell),
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "anthropic plugin chat should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(messages.size() == 2 && messages.back().content == "anthropic reply",

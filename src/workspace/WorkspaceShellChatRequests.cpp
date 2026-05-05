@@ -55,26 +55,6 @@ std::string SerializeToolMode(ToolMode mode) {
   return "ask";
 }
 
-const ExternalAgentSpec* SelectAgentForCapability(const ExternalAgentRegistry& registry,
-                                                  const std::string& capability) {
-  if (const AgentSelection* selection = registry.GetSelection(capability);
-      selection != nullptr && !selection->preferred_agent.empty()) {
-    if (const auto* agent = registry.FindAgent(selection->preferred_agent); agent != nullptr) {
-      return agent;
-    }
-  }
-  const auto agents = registry.FindByCapability(capability);
-  return agents.empty() ? nullptr : agents.front();
-}
-
-bool AgentSupportsCapability(const ExternalAgentSpec* agent, std::string_view capability) {
-  if (agent == nullptr) {
-    return false;
-  }
-  return std::find(agent->capabilities.begin(), agent->capabilities.end(), capability) !=
-         agent->capabilities.end();
-}
-
 ToolEvent* FindToolEvent(Message* message, std::string_view call_id) {
   if (message == nullptr) {
     return nullptr;
@@ -97,7 +77,7 @@ bool WorkspaceShell::CancelActiveChatRequest() {
     return false;
   }
 
-  provider_bridge_manager_.CancelRequest(chat.pending_bridge_agent_id, chat.pending_bridge_request_id);
+  ai_provider_runtime_service_.CancelRequest(chat.pending_provider_id, chat.pending_request_id);
   const std::int64_t duration_ms =
       chat.request_started_ticks == 0
           ? 0
@@ -130,8 +110,8 @@ bool WorkspaceShell::CancelActiveChatRequest() {
 
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::ApproveChatTool &&
-      context_.prompts.surface.bridge_agent_id == chat.pending_bridge_agent_id &&
-      context_.prompts.surface.bridge_request_id == chat.pending_bridge_request_id) {
+      context_.prompts.surface.provider_id == chat.pending_provider_id &&
+      context_.prompts.surface.request_id == chat.pending_request_id) {
     DismissPromptSurface(false);
   }
   chat.pending_tool_approval.reset();
@@ -140,8 +120,8 @@ bool WorkspaceShell::CancelActiveChatRequest() {
   chat.status_text = "Cancelled";
   chat.request_conversation_id.clear();
   chat.pending_assistant_message_id.clear();
-  chat.pending_bridge_agent_id.clear();
-  chat.pending_bridge_request_id.clear();
+  chat.pending_provider_id.clear();
+  chat.pending_request_id.clear();
   chat.active_request = ChatPanelState::RequestSnapshot{};
   RequestSidebarRedraw();
   RequestChromeRedraw();
@@ -178,39 +158,33 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
     conversation = ActiveConversation();
   }
 
-  const ExternalAgentSpec* agent = nullptr;
-  if (conversation != nullptr && !conversation->provider_id.empty()) {
-    const ExternalAgentSpec* preferred =
-        external_agent_registry_.FindAgent(conversation->provider_id);
-    if (AgentSupportsCapability(preferred, "chat")) {
-      agent = preferred;
-    }
+  std::string provider_id = conversation != nullptr ? conversation->provider_id : std::string{};
+  if (provider_id.empty() ||
+      !ai_provider_runtime_service_.ProviderSupportsWorkflow(provider_id, AiRuntimeWorkflow::Chat)) {
+    const std::vector<std::string> provider_ids =
+        ai_provider_runtime_service_.ProviderIdsForWorkflow(AiRuntimeWorkflow::Chat);
+    provider_id = provider_ids.empty() ? std::string{} : provider_ids.front();
   }
-  if (agent == nullptr) {
-    agent = SelectAgentForCapability(external_agent_registry_, "chat");
-  }
-  if (agent == nullptr || agent->protocol != "stdio") {
+  const AiProviderSpec* provider = ai_provider_registry_.FindProvider(provider_id);
+  if (provider == nullptr) {
     if (error_message != nullptr) {
-      *error_message = "No stdio chat agent is available";
+      *error_message = "No chat provider runtime is available";
     }
     return false;
   }
 
-  if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent->id);
-      provider != nullptr) {
-    const ProviderAuthStatus auth_status = GetProviderAuthStatus(provider->id);
-    if (auth_status == ProviderAuthStatus::KeyMissing ||
-        auth_status == ProviderAuthStatus::KeyInvalid) {
-      if (error_message != nullptr) {
-        *error_message = ChatAuthBannerText(conversation);
-      }
-      return false;
+  const ProviderAuthStatus auth_status = GetProviderAuthStatus(provider->id);
+  if (auth_status == ProviderAuthStatus::KeyMissing ||
+      auth_status == ProviderAuthStatus::KeyInvalid) {
+    if (error_message != nullptr) {
+      *error_message = ChatAuthBannerText(conversation);
     }
+    return false;
   }
 
   const std::string user_id = GenerateRuntimeMessageId("user");
   const std::string assistant_id = GenerateRuntimeMessageId("assistant");
-  conversation->provider_id = agent->id;
+  conversation->provider_id = provider->id;
   conversation->draft.clear();
   {
     Message user_msg;
@@ -226,7 +200,7 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
     assistant_msg.id = assistant_id;
     assistant_msg.role = MessageRole::Assistant;
     assistant_msg.timestamp = CurrentUtcTimestamp();
-    assistant_msg.model = !conversation->model_id.empty() ? conversation->model_id : agent->id;
+    assistant_msg.model = !conversation->model_id.empty() ? conversation->model_id : provider->id;
     assistant_msg.status = RequestStatus::Running;
     context_.current_project_state.conversations.AddMessage(conversation->id, assistant_msg);
   }
@@ -237,14 +211,14 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
   context_.current_project_state.panel.chat.request_in_flight = true;
   context_.current_project_state.panel.chat.request_started_ticks = SDL_GetTicks();
   context_.current_project_state.panel.chat.active_request = ChatPanelState::RequestSnapshot{
-      .provider_id = agent->id,
+      .provider_id = provider->id,
       .model_id = conversation != nullptr ? conversation->model_id : std::string{},
       .tool_mode = conversation != nullptr ? conversation->tool_mode : ToolMode::NoTools,
       .context_policy = ai_context_manager_.policy(),
       .context_items = ai_context_manager_.GetContext(),
   };
   context_.current_project_state.panel.chat.pending_tool_approval.reset();
-  context_.current_project_state.panel.chat.status_text = "Waiting for " + agent->label;
+  context_.current_project_state.panel.chat.status_text = "Waiting for " + provider->label;
   LoadChatComposerViewport(&context_.current_project_state.panel.chat.composer, {});
   const auto mark_failed = [&](std::string_view reason) {
     conversation->status = RequestStatus::Failed;
@@ -258,69 +232,36 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
     context_.current_project_state.panel.chat.status_text = std::string(reason);
   };
 
-  if (agent->command.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "Chat agent command is empty";
-    }
-    mark_failed("Chat agent command is empty");
-    context_.current_project_state.panel.chat.request_in_flight = false;
-    context_.current_project_state.panel.chat.request_started_ticks = 0;
-    context_.current_project_state.panel.chat.request_conversation_id.clear();
-    context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
-    return false;
-  }
-
-  std::string api_key;
-  if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent->id);
-      provider != nullptr) {
-    api_key = ResolveProviderApiKey(*provider).value_or("");
-  }
-  if (!provider_bridge_manager_.IsBridgeRunning(agent->id) &&
-      !provider_bridge_manager_.StartBridge(agent->id,
-                                            agent->command,
-                                            api_key,
-                                            context_.current_project_state.root)) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to start chat agent bridge";
-    }
-    mark_failed("Failed to start chat agent bridge");
-    context_.current_project_state.panel.chat.request_in_flight = false;
-    context_.current_project_state.panel.chat.request_started_ticks = 0;
-    context_.current_project_state.panel.chat.request_conversation_id.clear();
-    context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
-    return false;
-  }
-
-  std::vector<std::pair<std::string, std::string>> bridge_messages;
+  std::vector<AiRuntimeMessage> runtime_messages;
   if (conversation != nullptr) {
     for (const auto& msg : conversation->messages) {
       if (msg.role == MessageRole::User && msg.id != user_id) {
-        bridge_messages.emplace_back("user", msg.content);
+        runtime_messages.push_back(AiRuntimeMessage{.role = "user", .content = msg.content});
       } else if (msg.role == MessageRole::Assistant &&
                  msg.status == RequestStatus::Succeeded) {
-        bridge_messages.emplace_back("assistant", msg.content);
+        runtime_messages.push_back(AiRuntimeMessage{.role = "assistant", .content = msg.content});
       } else if (msg.id == user_id) {
-        bridge_messages.emplace_back("user", msg.content);
+        runtime_messages.push_back(AiRuntimeMessage{.role = "user", .content = msg.content});
         break;
       }
     }
   }
-  if (bridge_messages.empty() || bridge_messages.back().first != "user") {
-    bridge_messages.emplace_back("user", message);
+  if (runtime_messages.empty() || runtime_messages.back().role != "user") {
+    runtime_messages.push_back(AiRuntimeMessage{.role = "user", .content = message});
   }
 
-  const std::string request_id = GenerateRuntimeMessageId("bridge-req");
+  const std::string request_id = GenerateRuntimeMessageId("runtime-req");
   const std::string model_id = conversation != nullptr ? conversation->model_id : "";
   const std::string system_prompt = conversation != nullptr ? conversation->system_prompt : "";
   const ToolMode tool_mode = conversation != nullptr ? conversation->tool_mode : ToolMode::NoTools;
   const std::string tool_mode_str = SerializeToolMode(tool_mode);
-  std::vector<WorkspaceProviderBridgeManager::ToolSpec> bridge_tools;
+  std::vector<AiRuntimeToolSpec> runtime_tools;
   if (tool_mode != ToolMode::NoTools) {
-    for (const McpToolSpec* tool : mcp_tool_registry_.GetAvailableTools(agent->id)) {
+    for (const McpToolSpec* tool : mcp_tool_registry_.GetAvailableTools(provider->id)) {
       if (tool == nullptr) {
         continue;
       }
-      bridge_tools.push_back(WorkspaceProviderBridgeManager::ToolSpec{
+      runtime_tools.push_back(AiRuntimeToolSpec{
           .id = tool->id,
           .display_name = !tool->name.empty() ? tool->name : tool->id,
           .description = tool->description,
@@ -329,25 +270,38 @@ bool WorkspaceShell::StartChatRequest(std::string message, std::string* error_me
     }
   }
 
-  context_.current_project_state.panel.chat.pending_bridge_agent_id = agent->id;
-  context_.current_project_state.panel.chat.pending_bridge_request_id = request_id;
-  if (!provider_bridge_manager_.SendChat(agent->id,
-                                         request_id,
-                                         bridge_messages,
-                                         model_id,
-                                         system_prompt,
-                                         tool_mode_str,
-                                         bridge_tools)) {
+  context_.current_project_state.panel.chat.pending_provider_id = provider->id;
+  context_.current_project_state.panel.chat.pending_request_id = request_id;
+  const AiRuntimeLaunchContext launch_context{
+      .cwd = context_.current_project_state.root,
+      .secret = ResolveProviderApiKey(*provider),
+  };
+  if (!ai_provider_runtime_service_.StartRequest(
+          AiRuntimeRequest{
+              .workflow = AiRuntimeWorkflow::Chat,
+              .provider_id = provider->id,
+              .request_id = request_id,
+              .messages = std::move(runtime_messages),
+              .model_id = model_id,
+              .system_prompt = system_prompt,
+              .tool_mode = tool_mode_str,
+              .tools = std::move(runtime_tools),
+          },
+          launch_context, error_message)) {
+    const std::string failure_reason =
+        error_message == nullptr || error_message->empty()
+            ? std::string("Failed to send chat request to provider runtime")
+            : *error_message;
     if (error_message != nullptr) {
-      *error_message = "Failed to send chat request to agent bridge";
+      *error_message = failure_reason;
     }
-    mark_failed("Failed to send chat request to agent bridge");
+    mark_failed(failure_reason);
     context_.current_project_state.panel.chat.request_in_flight = false;
     context_.current_project_state.panel.chat.request_started_ticks = 0;
     context_.current_project_state.panel.chat.request_conversation_id.clear();
     context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
-    context_.current_project_state.panel.chat.pending_bridge_agent_id.clear();
-    context_.current_project_state.panel.chat.pending_bridge_request_id.clear();
+    context_.current_project_state.panel.chat.pending_provider_id.clear();
+    context_.current_project_state.panel.chat.pending_request_id.clear();
     context_.current_project_state.panel.chat.active_request = ChatPanelState::RequestSnapshot{};
     return false;
   }
@@ -378,34 +332,28 @@ bool WorkspaceShell::RetryActiveChatRequest(std::string* error_message) {
   }
   const std::string message = last_user_it->content;
 
-  const ExternalAgentSpec* agent = nullptr;
-  if (!conversation->provider_id.empty()) {
-    const ExternalAgentSpec* preferred =
-        external_agent_registry_.FindAgent(conversation->provider_id);
-    if (AgentSupportsCapability(preferred, "chat")) {
-      agent = preferred;
-    }
+  std::string provider_id = conversation->provider_id;
+  if (provider_id.empty() ||
+      !ai_provider_runtime_service_.ProviderSupportsWorkflow(provider_id, AiRuntimeWorkflow::Chat)) {
+    const std::vector<std::string> provider_ids =
+        ai_provider_runtime_service_.ProviderIdsForWorkflow(AiRuntimeWorkflow::Chat);
+    provider_id = provider_ids.empty() ? std::string{} : provider_ids.front();
   }
-  if (agent == nullptr) {
-    agent = SelectAgentForCapability(external_agent_registry_, "chat");
-  }
-  if (agent == nullptr || agent->protocol != "stdio") {
+  const AiProviderSpec* provider = ai_provider_registry_.FindProvider(provider_id);
+  if (provider == nullptr) {
     if (error_message != nullptr) {
-      *error_message = "No stdio chat agent is available";
+      *error_message = "No chat provider runtime is available";
     }
     return false;
   }
 
-  if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent->id);
-      provider != nullptr) {
-    const ProviderAuthStatus auth_status = GetProviderAuthStatus(provider->id);
-    if (auth_status == ProviderAuthStatus::KeyMissing ||
-        auth_status == ProviderAuthStatus::KeyInvalid) {
-      if (error_message != nullptr) {
-        *error_message = ChatAuthBannerText(conversation);
-      }
-      return false;
+  const ProviderAuthStatus auth_status = GetProviderAuthStatus(provider->id);
+  if (auth_status == ProviderAuthStatus::KeyMissing ||
+      auth_status == ProviderAuthStatus::KeyInvalid) {
+    if (error_message != nullptr) {
+      *error_message = ChatAuthBannerText(conversation);
     }
+    return false;
   }
 
   const std::string assistant_id = GenerateRuntimeMessageId("assistant");
@@ -413,7 +361,7 @@ bool WorkspaceShell::RetryActiveChatRequest(std::string* error_message) {
   assistant_msg.id = assistant_id;
   assistant_msg.role = MessageRole::Assistant;
   assistant_msg.timestamp = CurrentUtcTimestamp();
-  assistant_msg.model = !conversation->model_id.empty() ? conversation->model_id : agent->id;
+  assistant_msg.model = !conversation->model_id.empty() ? conversation->model_id : provider->id;
   assistant_msg.status = RequestStatus::Running;
   context_.current_project_state.conversations.AddMessage(conversation->id, assistant_msg);
 
@@ -424,14 +372,14 @@ bool WorkspaceShell::RetryActiveChatRequest(std::string* error_message) {
   context_.current_project_state.panel.chat.request_in_flight = true;
   context_.current_project_state.panel.chat.request_started_ticks = SDL_GetTicks();
   context_.current_project_state.panel.chat.active_request = ChatPanelState::RequestSnapshot{
-      .provider_id = agent->id,
+      .provider_id = provider->id,
       .model_id = conversation->model_id,
       .tool_mode = conversation->tool_mode,
       .context_policy = ai_context_manager_.policy(),
       .context_items = ai_context_manager_.GetContext(),
   };
   context_.current_project_state.panel.chat.pending_tool_approval.reset();
-  context_.current_project_state.panel.chat.status_text = "Retrying with " + agent->label;
+  context_.current_project_state.panel.chat.status_text = "Retrying with " + provider->label;
   const auto mark_failed = [&](std::string_view reason) {
     conversation->status = RequestStatus::Failed;
     for (auto& item : conversation->messages) {
@@ -444,50 +392,31 @@ bool WorkspaceShell::RetryActiveChatRequest(std::string* error_message) {
     context_.current_project_state.panel.chat.status_text = std::string(reason);
   };
 
-  std::string api_key;
-  if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent->id);
-      provider != nullptr) {
-    api_key = ResolveProviderApiKey(*provider).value_or("");
-  }
-  if (!provider_bridge_manager_.IsBridgeRunning(agent->id) &&
-      !provider_bridge_manager_.StartBridge(agent->id, agent->command, api_key,
-                                            context_.current_project_state.root)) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to start chat agent bridge";
-    }
-    mark_failed("Failed to start chat agent bridge");
-    context_.current_project_state.panel.chat.request_in_flight = false;
-    context_.current_project_state.panel.chat.request_started_ticks = 0;
-    context_.current_project_state.panel.chat.request_conversation_id.clear();
-    context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
-    return false;
-  }
-
-  std::vector<std::pair<std::string, std::string>> bridge_messages;
+  std::vector<AiRuntimeMessage> runtime_messages;
   for (const auto& msg : conversation->messages) {
     if (msg.role == MessageRole::User) {
-      bridge_messages.emplace_back("user", msg.content);
+      runtime_messages.push_back(AiRuntimeMessage{.role = "user", .content = msg.content});
       if (msg.id == last_user_it->id) {
         break;
       }
     } else if (msg.role == MessageRole::Assistant &&
                msg.status == RequestStatus::Succeeded) {
-      bridge_messages.emplace_back("assistant", msg.content);
+      runtime_messages.push_back(AiRuntimeMessage{.role = "assistant", .content = msg.content});
     }
   }
-  if (bridge_messages.empty() || bridge_messages.back().first != "user") {
-    bridge_messages.emplace_back("user", message);
+  if (runtime_messages.empty() || runtime_messages.back().role != "user") {
+    runtime_messages.push_back(AiRuntimeMessage{.role = "user", .content = message});
   }
 
-  const std::string request_id = GenerateRuntimeMessageId("bridge-req");
+  const std::string request_id = GenerateRuntimeMessageId("runtime-req");
   const std::string tool_mode_str = SerializeToolMode(conversation->tool_mode);
-  std::vector<WorkspaceProviderBridgeManager::ToolSpec> bridge_tools;
+  std::vector<AiRuntimeToolSpec> runtime_tools;
   if (conversation->tool_mode != ToolMode::NoTools) {
-    for (const McpToolSpec* tool : mcp_tool_registry_.GetAvailableTools(agent->id)) {
+    for (const McpToolSpec* tool : mcp_tool_registry_.GetAvailableTools(provider->id)) {
       if (tool == nullptr) {
         continue;
       }
-      bridge_tools.push_back(WorkspaceProviderBridgeManager::ToolSpec{
+      runtime_tools.push_back(AiRuntimeToolSpec{
           .id = tool->id,
           .display_name = !tool->name.empty() ? tool->name : tool->id,
           .description = tool->description,
@@ -495,21 +424,38 @@ bool WorkspaceShell::RetryActiveChatRequest(std::string* error_message) {
       });
     }
   }
-  context_.current_project_state.panel.chat.pending_bridge_agent_id = agent->id;
-  context_.current_project_state.panel.chat.pending_bridge_request_id = request_id;
-  if (!provider_bridge_manager_.SendChat(agent->id, request_id, bridge_messages,
-                                         conversation->model_id, conversation->system_prompt,
-                                         tool_mode_str, bridge_tools)) {
+  context_.current_project_state.panel.chat.pending_provider_id = provider->id;
+  context_.current_project_state.panel.chat.pending_request_id = request_id;
+  const AiRuntimeLaunchContext launch_context{
+      .cwd = context_.current_project_state.root,
+      .secret = ResolveProviderApiKey(*provider),
+  };
+  if (!ai_provider_runtime_service_.StartRequest(
+          AiRuntimeRequest{
+              .workflow = AiRuntimeWorkflow::Chat,
+              .provider_id = provider->id,
+              .request_id = request_id,
+              .messages = std::move(runtime_messages),
+              .model_id = conversation->model_id,
+              .system_prompt = conversation->system_prompt,
+              .tool_mode = tool_mode_str,
+              .tools = std::move(runtime_tools),
+          },
+          launch_context, error_message)) {
+    const std::string failure_reason =
+        error_message == nullptr || error_message->empty()
+            ? std::string("Failed to send chat request to provider runtime")
+            : *error_message;
     if (error_message != nullptr) {
-      *error_message = "Failed to send chat request to agent bridge";
+      *error_message = failure_reason;
     }
-    mark_failed("Failed to send chat request to agent bridge");
+    mark_failed(failure_reason);
     context_.current_project_state.panel.chat.request_in_flight = false;
     context_.current_project_state.panel.chat.request_started_ticks = 0;
     context_.current_project_state.panel.chat.request_conversation_id.clear();
     context_.current_project_state.panel.chat.pending_assistant_message_id.clear();
-    context_.current_project_state.panel.chat.pending_bridge_agent_id.clear();
-    context_.current_project_state.panel.chat.pending_bridge_request_id.clear();
+    context_.current_project_state.panel.chat.pending_provider_id.clear();
+    context_.current_project_state.panel.chat.pending_request_id.clear();
     context_.current_project_state.panel.chat.active_request = ChatPanelState::RequestSnapshot{};
     return false;
   }
