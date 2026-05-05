@@ -17,8 +17,6 @@ namespace {
 constexpr float kMergeToolbarHeight = 36.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
-constexpr float kMinMergePaneWidth = 140.0f;
-
 std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
   if (!lhs.has_value()) {
     return rhs;
@@ -113,16 +111,19 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
                                       ? (kWorkspaceScrollbarThickness +
                                          kWorkspaceScrollbarInset)
                                       : 0.0f;
+    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float min_pane_width = 8.0f + char_width;
     const float content_width = std::max(
-        kMinMergePaneWidth * 3.0f,
+        min_pane_width * 3.0f,
         rect.w - reserved_width - layout.gutter_width * 3.0f - layout.divider_width * 2.0f -
             16.0f);
     const float min_fraction =
-        std::min(1.0f / 3.0f, kMinMergePaneWidth / std::max(content_width, 1.0f));
+        std::min(1.0f / 3.0f, min_pane_width / std::max(content_width, 1.0f));
     const float left_fraction =
         std::clamp(merge_tab.left_divider_fraction, min_fraction, 1.0f - min_fraction * 2.0f);
     const float right_fraction = std::clamp(merge_tab.right_divider_fraction,
                                             left_fraction + min_fraction, 1.0f - min_fraction);
+    layout.min_divider_fraction = min_fraction;
     layout.left_width = std::floor(content_width * left_fraction);
     layout.center_width = std::floor(content_width * (right_fraction - left_fraction));
     layout.right_width = std::max(0.0f, content_width - layout.left_width - layout.center_width);

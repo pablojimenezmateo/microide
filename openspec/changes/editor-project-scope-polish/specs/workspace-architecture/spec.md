@@ -2,7 +2,7 @@
 
 ### Requirement: Project-Scoped Workspace State Has Project Ownership
 
-Workspace state that varies by project or influences project-local workflows SHALL be owned by project state/services and persisted as project-scoped data. `WorkspaceShell` SHALL NOT hold shell-global copies of wrap mode, ignored-tree expansion state, compare/merge divider fractions, provider-session selection state, or equivalent per-project UI state.
+Workspace state that varies by project or influences project-local workflows SHALL be owned by project state/services and persisted as project-scoped data. `WorkspaceShell` SHALL NOT hold shell-global copies of wrap mode, ignored-tree expansion state, compare/merge divider fractions, or equivalent per-project UI state.
 
 #### Scenario: Switching projects restores independent workspace state
 - **WHEN** the user changes wrap mode, tree expansion, or compare divider placement in project A, switches to project B, and later returns to project A

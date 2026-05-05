@@ -305,24 +305,21 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
             });
           }
         };
-    SDL_Color left_color = theme_.text_secondary;
-    SDL_Color right_color = theme_.text_secondary;
+    const SDL_Color neutral_text_color = selected ? theme_.text_primary : theme_.text_secondary;
+    SDL_Color left_color = neutral_text_color;
+    SDL_Color right_color = neutral_text_color;
     SDL_Color marker_color = selected ? theme_.text_secondary : theme_.text_muted;
     char marker = ' ';
     switch (compare_row.kind) {
       case compare::CompareRowKind::Added:
-        right_color = theme_.diff_added;
         marker_color = theme_.diff_added;
         marker = '+';
         break;
       case compare::CompareRowKind::Deleted:
-        left_color = theme_.diff_deleted;
         marker_color = theme_.diff_deleted;
         marker = '-';
         break;
       case compare::CompareRowKind::Modified:
-        left_color = theme_.diff_modified;
-        right_color = theme_.diff_modified;
         marker_color = theme_.diff_modified;
         marker = '~';
         break;

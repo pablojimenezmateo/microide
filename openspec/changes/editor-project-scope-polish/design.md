@@ -1,8 +1,8 @@
 ## Context
 
-This change crosses several subsystems because the current rough edges share the same root cause: durable editor and workspace contracts are still incomplete. The editor still behaves as a single-caret, no-soft-wrap surface; `DirectoryTree`, `ProjectFileScanner`, and the project watcher all treat `.gitignore` as a hard hide-and-skip boundary; compare and merge layout still clamp divider motion through fixed minima; and AI provider access is built around `WorkspaceProviderBridgeManager`, which assumes a long-lived bridge subprocess per provider agent.
+This change crosses several subsystems because the current rough edges share the same root cause: durable editor and workspace contracts are still incomplete. The editor still behaves as a single-caret, no-soft-wrap surface; `DirectoryTree`, `ProjectFileScanner`, and the project watcher all treat `.gitignore` as a hard hide-and-skip boundary; and compare and merge layout still clamp divider motion through fixed minima.
 
-There is also evidence that some state boundaries are not yet as strict as the current architecture wants them to be: project-specific divider fractions, wrap-related settings, ignored-tree expansion state, and provider-session behavior need to live with project-owned services rather than accreting on the shell. The proposal therefore treats this as one coherence pass across editor behavior, project-scope ownership, tree enumeration, and provider runtime architecture.
+There is also evidence that some state boundaries are not yet as strict as the current architecture wants them to be: project-specific divider fractions, wrap-related settings, and ignored-tree expansion state need to live with project-owned services rather than accreting on the shell. The proposal therefore treats this as one coherence pass across editor behavior, project-scope ownership, and tree enumeration.
 
 ## Goals / Non-Goals
 
@@ -12,14 +12,12 @@ There is also evidence that some state boundaries are not yet as strict as the c
 - Move project-specific UI/data behavior behind project-owned services and persistence records rather than shell-global state
 - Reduce compare and merge visual contrast while preserving neutral foreground text readability
 - Allow pane dividers to move to content-derived minima instead of arbitrary conservative clamps
-- Replace the mandatory provider-bridge model with a transport-neutral host-owned provider runtime that can use direct providers without a bridge binary
 - Delete obsolete helper methods, adapters, and compatibility paths once the new seams are active
 
 **Non-Goals:**
 - Terminal soft-wrap changes or terminal-layout redesign
 - Column/block selection in the first multiple-cursor slice; the initial scope is discrete carets and selections
 - Making ignored descendants participate in search, AI context, blame, git scans, or background watchers by default
-- Replacing host-owned AI workflows with plugin-owned implementations
 - Allowing panes to collapse below content viability; the change removes arbitrary clamps, not all minima
 
 ## Decisions
@@ -57,7 +55,7 @@ Opening an ignored file is a direct path-open operation and does not “promote�
 
 ### D3. Project-owned services become the sole owner of project-scoped UI state
 
-Any state that changes per project, survives project switching, or influences project-local workflows will be owned by project state/services and persisted through the existing persistence pipeline. That includes wrap mode, ignored-directory expansion state, per-project compare/merge divider fractions, and any provider-session state that should not leak across projects. The shell keeps only host-global concerns such as window/event wiring and service lifetime.
+Any state that changes per project, survives project switching, or influences project-local workflows will be owned by project state/services and persisted through the existing persistence pipeline. That includes wrap mode, ignored-directory expansion state, and per-project compare/merge divider fractions. The shell keeps only host-global concerns such as window/event wiring and service lifetime.
 
 Divider motion will use content-derived minima instead of broad fixed clamps. Sidebar width, editor split extents, compare divider placement, and merge divider placement will be limited only by the minimum space required to keep the participating surfaces meaningful: gutter plus text column for compare/merge panes, viable editor viewport width for split panes, and viable sidebar row presentation for the project tree.
 
@@ -67,21 +65,7 @@ Divider motion will use content-derived minima instead of broad fixed clamps. Si
 - Leave divider/layout state on the shell because it is “UI state.” Rejected because the shell outlives project activation and is the wrong ownership boundary.
 - Remove minima entirely. Rejected because zero-area panes are not useful and would break hit targets and scrollbar math.
 
-### D4. AI provider access moves from bridge-first to runtime-first
-
-The durable contract exposed to chat and inline completion will become a host-owned provider runtime interface rather than a mandatory bridge subprocess manager. Direct API-backed providers will run through host-managed runtime adapters by default. Sidecar or subprocess-backed providers remain supported, but only as one transport strategy behind the runtime contract, not as the required architecture for all providers.
-
-The runtime interface covers: auth check, model discovery, streaming chat/completion output, tool-call round-trips, cancellation, and capability reporting. Callers do not branch on whether the provider is direct HTTP, in-process SDK-backed, or sidecar-backed.
-
-This change also creates a clean exit path from `WorkspaceProviderBridgeManager`-specific call sites: the existing newline-delimited JSON bridge protocol can survive as one adapter while the rest of the workspace stops depending on bridge-specific naming and lifecycle assumptions.
-
-**Why this shape:** the current bridge-first model adds process management complexity and naming confusion even for providers that can be handled directly and safely by the host.
-
-**Alternatives considered:**
-- Keep the bridge as the only supported provider contract. Rejected because it imposes avoidable runtime overhead and architectural coupling.
-- Force all providers in-process immediately. Rejected because some providers benefit from isolation or already exist behind a sidecar protocol.
-
-### D5. Diff/merge presentation adopts explicit low-contrast palette tokens
+### D4. Diff/merge presentation adopts explicit low-contrast palette tokens
 
 Compare and merge fills will move to explicit palette tokens with lower saturation and lower opacity, while foreground text stays neutral and independent of the row fill. The change is intentionally modest: it should reduce color cast and eye strain without obscuring added/removed/conflicted status.
 
@@ -97,17 +81,16 @@ The palette change stays in the shared diff/merge presentation path so editor/co
 
 - **[Risk] Multi-caret plus wrap complexity increases editor-state invariants** → Mitigation: define logical-position and display-position helpers centrally and back them with focused regression coverage before broad integration work.
 - **[Risk] Users may expect expanded ignored directories to participate in search or AI context automatically** → Mitigation: keep ignored-state badges/labels explicit and preserve the rule that expansion is for browsing only, while direct file open still works normally.
-- **[Risk] In-process providers increase host responsibility for networking and failures** → Mitigation: preserve sidecar transport as an optional adapter and keep the runtime asynchronous with the same wake-event delivery rules.
 - **[Risk] Smaller pane minima can expose layout bugs in narrow states** → Mitigation: derive minima from concrete surface needs, add resize regression tests, and keep resettable default fractions.
-- **[Risk] Legacy-path deletion can touch many files** → Mitigation: stage the cutover by introducing the new runtime/service seam first, then remove the bridge-specific and shell-scoped helpers once callers are migrated.
+- **[Risk] Legacy-path deletion can touch many files** → Mitigation: stage the cutover by introducing the new editor/tree/layout seams first, then remove obsolete shell-scoped helpers once callers are migrated.
 
 ## Migration Plan
 
-1. Add the new editor, ignored-tree, and provider-runtime contracts while preserving existing user-visible behavior where possible.
-2. Migrate editor, project tree, diff/merge, and AI callers onto the new seams and project-owned persistence records.
-3. Delete legacy helpers, bridge-first entry points, and shell-scoped accessors once all call sites are cut over.
-4. Update durable docs/specs and capture targeted performance evidence for wrapped typing/scrolling, ignored-tree open/expand, and provider-runtime responsiveness.
-5. If persisted field names or provider configuration records change, retain only the minimal one-shot import/upgrade path needed by `PersistenceService`; do not leave dual write paths in place.
+1. Add the new editor and ignored-tree contracts while preserving existing user-visible behavior where possible.
+2. Migrate editor, project tree, and diff/merge callers onto the new seams and project-owned persistence records.
+3. Delete legacy helpers and shell-scoped accessors once all call sites are cut over.
+4. Update durable docs/specs and capture targeted performance evidence for wrapped typing/scrolling and ignored-tree open/expand.
+5. If persisted field names change, retain only the minimal one-shot import/upgrade path needed by `PersistenceService`; do not leave dual write paths in place.
 
 ## Open Questions
 

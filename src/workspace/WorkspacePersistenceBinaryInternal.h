@@ -116,6 +116,7 @@ enum class EditorTabTag : std::uint16_t {
   CompareSelectedRow = 12,
   CompareScrollRow = 13,
   CompareHorizontalScroll = 14,
+  CompareDividerFraction = 25,
   MergeBasePath = 15,
   MergeIncomingPath = 16,
   MergeCurrentPath = 17,
@@ -586,6 +587,9 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
       !AppendRecord(EditorTabTag::CompareHorizontalScroll,
                     [&](PrimitiveWriter& w) { return WriteSize(w, tab.compare_horizontal_scroll); },
                     out) ||
+      !AppendRecord(EditorTabTag::CompareDividerFraction,
+                    [&](PrimitiveWriter& w) { return w.WriteF32(tab.compare_divider_fraction); },
+                    out) ||
       !AppendRecord(EditorTabTag::MergeBasePath,
                     [&](PrimitiveWriter& w) { return w.WritePath(tab.merge_base_path); }, out) ||
       !AppendRecord(EditorTabTag::MergeIncomingPath,
@@ -664,6 +668,8 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
             return ReadSize(reader, &tab->compare_scroll_row) && reader.remaining() == 0;
           case EditorTabTag::CompareHorizontalScroll:
             return ReadSize(reader, &tab->compare_horizontal_scroll) && reader.remaining() == 0;
+          case EditorTabTag::CompareDividerFraction:
+            return reader.ReadF32(&tab->compare_divider_fraction) && reader.remaining() == 0;
           case EditorTabTag::MergeBasePath:
             return reader.ReadPath(&tab->merge_base_path) && reader.remaining() == 0;
           case EditorTabTag::MergeIncomingPath:

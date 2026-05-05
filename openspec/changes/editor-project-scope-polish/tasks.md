@@ -15,32 +15,24 @@
 
 ## 3. Project-Scoped State And Pane Layout
 
-- [ ] 3.1 Audit remaining shell-scoped project behavior and move wrap mode, ignored-tree expansion state, divider fractions, and provider-session selection state into project-owned services/persistence
-- [ ] 3.2 Replace arbitrary sidebar, editor-split, compare, merge, and bottom-panel resize clamps with content-derived viable minima
-- [ ] 3.3 Delete legacy shell-global aliases and helper methods that become redundant after the project-scoped ownership cutover
+- [x] 3.1 Audit remaining shell-scoped project behavior and move wrap mode, ignored-tree expansion state, divider fractions, and equivalent per-project presentation state into project-owned services/persistence
+- [x] 3.2 Replace arbitrary sidebar, editor-split, compare, merge, and bottom-panel resize clamps with content-derived viable minima
+- [x] 3.3 Delete legacy shell-global aliases and helper methods that become redundant after the project-scoped ownership cutover
 
-## 4. AI Provider Runtime Cutover
+## 4. Diff And Merge Presentation
 
-- [ ] 4.1 Introduce a transport-neutral AI provider runtime interface covering auth, model discovery, streaming responses, tool calls, and cancellation
-- [ ] 4.2 Add a direct-provider adapter path for host-managed HTTP or in-process providers without a bridge subprocess
-- [ ] 4.3 Migrate chat, inline completion, provider auth, and tool approval flows to the runtime interface
-- [ ] 4.4 Keep sidecar-backed providers working through an adapter layer, then remove bridge-first call sites and obsolete `WorkspaceProviderBridge` helpers
+- [x] 4.1 Tune shared diff/merge palette tokens to low-contrast fills that preserve neutral foreground text
+- [x] 4.2 Update compare and merge divider math to respect the new content-derived minimum pane widths
 
-## 5. Diff And Merge Presentation
+## 5. Regression Coverage And Performance Evidence
 
-- [ ] 5.1 Tune shared diff/merge palette tokens to low-contrast fills that preserve neutral foreground text
-- [ ] 5.2 Update compare and merge divider math to respect the new content-derived minimum pane widths
+- [x] 5.1 Add editor regression tests for multi-caret edit grouping, undo/redo, wrapped caret motion, wrapped hit-testing, and ligature-free code rendering
+- [x] 5.2 Add project-tree and search regressions for visible ignored files, one-level ignored-directory expansion, and ignored-content exclusion from background tools
+- [x] 5.3 Add resize and render regressions for sidebar freedom, compare/merge divider minima, and low-contrast diff text legibility
+- [x] 5.4 Capture perf evidence for soft-wrap plus multi-caret editing and for ignored-directory initial open/expansion paths
 
-## 6. Regression Coverage And Performance Evidence
+## 6. Docs And Final Validation
 
-- [ ] 6.1 Add editor regression tests for multi-caret edit grouping, undo/redo, wrapped caret motion, wrapped hit-testing, and ligature-free code rendering
-- [ ] 6.2 Add project-tree and search regressions for visible ignored files, one-level ignored-directory expansion, and ignored-content exclusion from background tools
-- [ ] 6.3 Add AI runtime regressions for direct-provider flow, sidecar crash recovery, and non-blocking request delivery
-- [ ] 6.4 Add resize and render regressions for sidebar freedom, compare/merge divider minima, and low-contrast diff text legibility
-- [ ] 6.5 Capture perf evidence for soft-wrap plus multi-caret editing and for ignored-directory initial open/expansion paths
-
-## 7. Docs And Final Validation
-
-- [ ] 7.1 Update product, implementation, and active-work docs to reflect soft wrap in scope, lazy ignored-tree behavior, project-scoped ownership, and the provider-runtime contract
-- [ ] 7.2 Update durable specs/docs that still mention bridge-first AI access or soft wrap as a non-goal
-- [ ] 7.3 Run the targeted build/test matrix for editor, project tree, diff/merge, AI runtime, persistence, and resize paths, plus relevant sanitizer coverage
+- [x] 6.1 Update product, implementation, and active-work docs to reflect soft wrap in scope, lazy ignored-tree behavior, and project-scoped ownership
+- [x] 6.2 Update durable specs/docs that still mention soft wrap as a non-goal
+- [x] 6.3 Run the targeted build/test matrix for editor, project tree, diff/merge, persistence, and resize paths, plus relevant sanitizer coverage

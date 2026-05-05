@@ -197,6 +197,7 @@
     std::size_t left_visible_columns = 1;
     std::size_t right_visible_columns = 1;
     std::size_t visible_columns = 1;
+    float min_divider_fraction = 0.5f;
     bool show_vertical = false;
     bool show_horizontal = false;
   };
@@ -236,6 +237,7 @@
     float rows_y = 0.0f;
     int visible_rows = 1;
     std::size_t visible_columns = 1;
+    float min_divider_fraction = 1.0f / 3.0f;
     bool show_vertical = false;
     bool show_horizontal = false;
   };

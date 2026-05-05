@@ -618,7 +618,6 @@ These are not current project work unless deliberately promoted into their own p
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - cloud or collaboration features
 - recent-project and recent-file affordances
-- soft wrap
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
 
 ## Companion Docs

@@ -209,13 +209,16 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
         reserve_vertical ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
     const float reserved_height =
         reserve_horizontal ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
-    const float content_width =
-        std::max(40.0f,
-                 rect.w - reserved_width - layout.gutter_width * 2.0f - layout.divider_width -
-                     16.0f);
-    const float min_fraction = std::min(0.5f, 120.0f / std::max(content_width, 1.0f));
+    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float min_pane_width = 8.0f + char_width;
+    const float content_width = std::max(
+        min_pane_width * 2.0f,
+        rect.w - reserved_width - layout.gutter_width * 2.0f - layout.divider_width - 16.0f);
+    const float min_fraction =
+        std::min(0.5f, min_pane_width / std::max(content_width, 1.0f));
     const float divider_fraction =
         std::clamp(compare_tab.divider_fraction, min_fraction, 1.0f - min_fraction);
+    layout.min_divider_fraction = min_fraction;
     layout.left_width = std::floor(content_width * divider_fraction);
     layout.right_width = std::max(0.0f, content_width - layout.left_width);
     layout.center_x = layout.left_x + layout.gutter_width + layout.left_width;
@@ -225,7 +228,6 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
     layout.visible_rows = std::max(
         1, static_cast<int>(row_region_height / std::max(1.0f, layout.line_height)));
 
-    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
     const float left_pane_text_width = std::max(0.0f, layout.left_width - 8.0f);
     const float right_pane_text_width = std::max(0.0f, layout.right_width - 8.0f);
     layout.left_visible_columns = std::max<std::size_t>(

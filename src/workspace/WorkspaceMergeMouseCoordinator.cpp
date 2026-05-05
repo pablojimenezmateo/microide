@@ -14,8 +14,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kMinMergePaneWidth = 140.0f;
-
 bool MergeHoverStatesEqual(const std::optional<MergeHoverState>& lhs,
                            const std::optional<MergeHoverState>& rhs) {
   return lhs.has_value() == rhs.has_value() &&
@@ -298,8 +296,6 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
     const float content_width =
         std::max(1.0f, surface_layout.left_width + surface_layout.center_width +
                            surface_layout.right_width);
-    const float min_fraction =
-        std::min(1.0f / 3.0f, kMinMergePaneWidth / std::max(content_width, 1.0f));
     const float current_left_fraction = surface_layout.left_width / content_width;
     const float current_right_fraction =
         (surface_layout.left_width + surface_layout.center_width) / content_width;
@@ -310,7 +306,8 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
       merge_tab->left_divider_fraction =
-          std::clamp(raw_fraction, min_fraction, current_right_fraction - min_fraction);
+          std::clamp(raw_fraction, surface_layout.min_divider_fraction,
+                     current_right_fraction - surface_layout.min_divider_fraction);
     } else {
       const float divider_center_x =
           layout.editor_surface.x + 8.0f + surface_layout.gutter_width * 2.0f +
@@ -318,7 +315,9 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
       merge_tab->right_divider_fraction =
-          std::clamp(raw_fraction, current_left_fraction + min_fraction, 1.0f - min_fraction);
+          std::clamp(raw_fraction,
+                     current_left_fraction + surface_layout.min_divider_fraction,
+                     1.0f - surface_layout.min_divider_fraction);
     }
     state_.surface.focus = FocusTarget::Editor;
     return true;

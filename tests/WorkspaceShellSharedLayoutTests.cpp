@@ -65,10 +65,11 @@ void TestWorkspaceSharedLayoutHelpers() {
   Expect(layout.editor_surface.y == layout.editor_area.y + 27.0f,
          "editor surface should sit below the breadcrumb and divider");
 
-  Expect(ClampSidebarWidth(80.0f, 800.0f) == 160.0f, "sidebar width should clamp to the minimum");
+  Expect(ClampSidebarWidth(80.0f, 800.0f) == 80.0f,
+         "sidebar width should allow any width above the viable minimum");
   Expect(ClampSidebarWidth(700.0f, 800.0f) == 519.0f,
          "sidebar width should leave room for the minimum editor width");
-  Expect(ClampBottomPanelHeight(50.0f, 240.0f) == 96.0f,
+  Expect(ClampBottomPanelHeight(50.0f, 240.0f) == 52.0f,
          "bottom panel height should clamp to the available content height");
 }
 
@@ -397,9 +398,10 @@ void TestWorkspaceSharedEditorSplitLayout() {
   const auto clamped_vertical = ComputeEditorSplitAxisLayout(
       MakeRect(0.0f, 0.0f, 600.0f, 80.0f), true, std::vector<float>{0.9f, 0.05f, 0.05f});
   Expect(clamped_vertical.has_value(), "editor split layout should handle skewed fractions");
-  Expect(clamped_vertical->extents[0] <= 228.0f && clamped_vertical->extents[1] >= 179.0f &&
-             clamped_vertical->extents[2] >= 179.0f,
-         "editor split layout should cap an oversized leading pane and keep later panes near the shared minimum extent");
+  Expect(clamped_vertical->extents[0] > clamped_vertical->extents[1] &&
+             clamped_vertical->extents[1] >= clamped_vertical->min_pane_extent - 1.0f &&
+             clamped_vertical->extents[2] >= clamped_vertical->min_pane_extent - 1.0f,
+         "editor split layout should cap an oversized leading pane and keep later panes near the derived minimum extent");
 
   const auto even_horizontal = ComputeEditorSplitAxisLayout(
       MakeRect(0.0f, 0.0f, 120.0f, 240.0f), false, std::vector<float>{0.0f, 0.0f, 0.0f});

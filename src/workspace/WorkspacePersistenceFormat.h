@@ -48,6 +48,7 @@ struct PersistedEditorTabState {
   std::size_t compare_selected_row = 0;
   std::size_t compare_scroll_row = 0;
   std::size_t compare_horizontal_scroll = 0;
+  float compare_divider_fraction = 0.5f;
   std::filesystem::path merge_base_path;
   std::filesystem::path merge_incoming_path;
   std::filesystem::path merge_current_path;

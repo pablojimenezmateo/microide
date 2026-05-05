@@ -11,7 +11,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kMinComparePaneWidth = 120.0f;
 constexpr float kCompareScrollbarReserve = 12.0f;
 
 }  // namespace
@@ -179,17 +178,15 @@ bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
   compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
   if (interaction_state_.drag_target == DragTarget::CompareDivider) {
     const float content_width = std::max(
-        40.0f, layout.editor_surface.w -
+        1.0f, layout.editor_surface.w -
                    (surface_layout.show_vertical ? kCompareScrollbarReserve : 0.0f) -
                    surface_layout.gutter_width * 2.0f - surface_layout.divider_width - 16.0f);
-    const float min_fraction =
-        std::min(0.5f, kMinComparePaneWidth / std::max(content_width, 1.0f));
     const float desired_left_width =
         static_cast<float>(event.motion.x) - surface_layout.left_x - surface_layout.gutter_width -
         surface_layout.divider_width * 0.5f;
     compare_tab->divider_fraction =
-        std::clamp(desired_left_width / std::max(content_width, 1.0f), min_fraction,
-                   1.0f - min_fraction);
+        std::clamp(desired_left_width / content_width, surface_layout.min_divider_fraction,
+                   1.0f - surface_layout.min_divider_fraction);
     state_.surface.focus = FocusTarget::Editor;
     return true;
   }

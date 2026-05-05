@@ -374,7 +374,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           incoming_row, text_renderer_, theme_, surface.left_x + surface.gutter_width, y,
           merge_tab->model.incoming_lines[line_index], merge_tab->horizontal_scroll,
           surface.visible_columns,
-          incoming_conflict != nullptr ? theme_.diff_added : theme_.text_secondary, tokens);
+          selected_incoming ? theme_.text_primary : theme_.text_secondary, tokens);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
       text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
                                 FormatLineNumber(line_index + 1, line_number_buf));
@@ -403,7 +403,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           current_row, text_renderer_, theme_, surface.right_x + surface.gutter_width, y,
           merge_tab->model.current_lines[line_index], merge_tab->horizontal_scroll,
           surface.visible_columns,
-          current_conflict != nullptr ? theme_.diff_modified : theme_.text_secondary, tokens);
+          selected_current ? theme_.text_primary : theme_.text_secondary, tokens);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
       text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
                                 FormatLineNumber(line_index + 1, line_number_buf));

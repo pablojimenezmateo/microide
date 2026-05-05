@@ -17,10 +17,8 @@ constexpr float kResizeHandleThickness = kWorkspaceResizeHandleThickness;
 constexpr float kScrollbarThickness = kWorkspaceScrollbarThickness;
 constexpr float kScrollbarInset = kWorkspaceScrollbarInset;
 constexpr float kScrollbarMinThumbLength = kWorkspaceScrollbarMinThumbLength;
-constexpr float kMinSidebarWidth = kWorkspaceMinSidebarWidth;
 constexpr float kMaxSidebarWidth = kWorkspaceMaxSidebarWidth;
 constexpr float kMinEditorAreaWidth = kWorkspaceMinEditorAreaWidth;
-constexpr float kMinBottomPanelHeight = kWorkspaceMinBottomPanelHeight;
 constexpr float kMinEditorAreaHeight = kWorkspaceMinEditorAreaHeight;
 constexpr float kBottomPanelHeaderHeight = kWorkspaceBottomPanelHeaderHeight;
 constexpr float kBottomPanelCommandReserveHeight = kWorkspaceBottomPanelCommandReserveHeight;
@@ -43,7 +41,6 @@ constexpr float kPromptSurfaceButtonWidth = 108.0f;
 constexpr float kPromptSurfaceButtonHeight = 28.0f;
 constexpr float kPromptSurfaceButtonGap = 10.0f;
 constexpr float kEditorSplitDividerThickness = kWorkspaceEditorSplitDividerThickness;
-constexpr float kMinSplitPaneExtent = kWorkspaceMinSplitPaneExtent;
 
 }  // namespace
 
@@ -98,7 +95,6 @@ std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
   EditorSplitAxisLayout layout;
   layout.vertical = vertical;
   layout.divider_thickness = kEditorSplitDividerThickness;
-  layout.min_pane_extent = kMinSplitPaneExtent;
   layout.extents.resize(size_fractions.size(), 0.0f);
   layout.child_rects.reserve(size_fractions.size());
   if (size_fractions.size() > 1) {
@@ -108,6 +104,7 @@ std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
   layout.total_extent = std::max(
       0.0f, (vertical ? rect.w : rect.h) -
                 kEditorSplitDividerThickness * static_cast<float>(size_fractions.size() - 1));
+  layout.min_pane_extent = std::max(1.0f, std::floor(layout.total_extent * 0.12f));
   std::vector<float> weights(size_fractions.size(), 0.0f);
   float total_weight = 0.0f;
   for (std::size_t i = 0; i < size_fractions.size(); ++i) {
@@ -130,10 +127,11 @@ std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
                                               ? remaining_extent * (weights[i] / remaining_weight)
                                               : remaining_extent /
                                                     static_cast<float>(remaining_children));
-    if (remaining_extent > kMinSplitPaneExtent * static_cast<float>(remaining_children)) {
+    if (remaining_extent > layout.min_pane_extent * static_cast<float>(remaining_children)) {
       child_extent = std::clamp(
-          child_extent, kMinSplitPaneExtent,
-          remaining_extent - kMinSplitPaneExtent * static_cast<float>(remaining_children - 1));
+          child_extent, layout.min_pane_extent,
+          remaining_extent -
+              layout.min_pane_extent * static_cast<float>(remaining_children - 1));
     }
 
     layout.extents[i] = std::max(0.0f, child_extent);
@@ -160,16 +158,19 @@ bool Contains(const SDL_FRect& rect, float x, float y) {
 }
 
 float ClampSidebarWidth(float width, float window_width) {
+  const float viable_min_width =
+      kWorkspaceSidebarHorizontalInset * 2.0f + kWorkspaceSidebarRowHeight + 1.0f;
   const float max_width = std::min(
       kMaxSidebarWidth,
-      std::max(kMinSidebarWidth, window_width - kMinEditorAreaWidth - kDivider));
-  return std::clamp(width, kMinSidebarWidth, max_width);
+      std::max(viable_min_width, window_width - kMinEditorAreaWidth - kDivider));
+  return std::clamp(width, viable_min_width, max_width);
 }
 
 float ClampBottomPanelHeight(float height, float window_height) {
   const float content_height =
       std::max(0.0f, window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight);
-  const float min_height = std::min(kMinBottomPanelHeight, content_height);
+  const float viable_min_height = kBottomPanelHeaderHeight + kScrollbarThickness + 14.0f;
+  const float min_height = std::min(viable_min_height, content_height);
   const float max_height = std::max(min_height, content_height - kMinEditorAreaHeight);
   return std::clamp(height, min_height, max_height);
 }

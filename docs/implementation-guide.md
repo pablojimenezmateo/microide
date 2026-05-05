@@ -104,7 +104,6 @@ These are out of scope unless deliberately added as a separate phase:
 - account systems and sync
 - native GitHub-style review dashboards
 - recent-project and recent-file surfaces
-- soft wrap
 - native OS menu bar integration
 
 AI, chat, and inline completion are **in scope** as built-in, host-owned workflows. See

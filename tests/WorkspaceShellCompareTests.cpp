@@ -628,6 +628,51 @@ void TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible() {
          "widening the right compare pane should preserve more visible text on the right");
 }
 
+void TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path compare_source = root / "src" / "compare.cpp";
+  const std::filesystem::path base = root / "src" / "base.cpp";
+  const std::filesystem::path incoming = root / "src" / "incoming.cpp";
+  const std::filesystem::path current = root / "src" / "current.cpp";
+  const std::filesystem::path output = root / "src" / "output.cpp";
+
+  WriteFile(compare_source, "abcdefghijklmnopqrstuvwxyz0123456789\n");
+  WriteFile(base, "int answer() {\n  return 0;\n}\n");
+  WriteFile(incoming, "int answer() {\n  return 1;\n}\n");
+  WriteFile(current, "int answer() {\n  return 2;\n}\n");
+  WriteFile(output, "int answer() {\n  return 0;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add pane minima fixture", "pane minima fixture");
+  WriteFile(compare_source, "abcdefghijklmnopqrstuvwxyz9876543210\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, compare_source, "HEAD", "HEAD"),
+         "pane minima compare fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.divider_fraction = 0.0f;
+  const auto compare_left_min = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  compare.divider_fraction = 1.0f;
+  const auto compare_right_min = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(compare_left_min.left_visible_columns >= 1 && compare_left_min.right_visible_columns >= 1,
+         "compare layout should preserve one visible column per pane at minimum left fraction");
+  Expect(compare_right_min.left_visible_columns >= 1 && compare_right_min.right_visible_columns >= 1,
+         "compare layout should preserve one visible column per pane at minimum right fraction");
+
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "pane minima merge fixture should open");
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.left_divider_fraction = 0.0f;
+  merge.right_divider_fraction = 1.0f;
+  const auto merge_surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  Expect(merge_surface.visible_columns >= 1,
+         "merge layout should preserve one visible column at minimum divider fractions");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
@@ -661,6 +706,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareRenderKeepsDividerBorderOnUnchangedRows);
   AddTest(tests, "WorkspaceShell/ComparePaneResizeKeepsWiderPaneTextVisible",
           TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible);
+  AddTest(tests, "WorkspaceShell/CompareAndMergePaneMinimaPreserveVisibleColumns",
+          TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns);
 }
 
 }  // namespace microide::tests

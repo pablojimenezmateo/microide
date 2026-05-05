@@ -82,6 +82,7 @@ void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   compare.selected_row = expected_row;
   compare.scroll_row = 2;
   compare.horizontal_scroll = 4;
+  compare.divider_fraction = 0.68f;
   WorkspaceShellTestAccess::SaveSessionState(shell);
 
   WorkspaceShell restored;
@@ -108,6 +109,8 @@ void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
          "restored branch comparison should preserve vertical scroll");
   Expect(rebuilt.horizontal_scroll == 4,
          "restored branch comparison should preserve horizontal scroll");
+  Expect(std::fabs(rebuilt.divider_fraction - 0.68f) < 0.0001f,
+         "restored branch comparison should preserve divider fraction");
   Expect(rebuilt.persistable,
          "restored branch comparison should preserve its session-persistable flag");
 }

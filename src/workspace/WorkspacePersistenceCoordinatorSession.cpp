@@ -280,6 +280,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
             persisted_tab.compare_scroll_row,
             static_cast<std::size_t>(std::numeric_limits<int>::max())));
         compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+        compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
         compare_state.persistable = true;
         compare_tab = operations_.build_compare_tab_from_state(compare_path, compare_state);
       } else {
@@ -293,6 +294,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
           persisted_tab.compare_scroll_row,
           static_cast<std::size_t>(std::numeric_limits<int>::max())));
       compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+      compare_tab->compare->divider_fraction = persisted_tab.compare_divider_fraction;
       state.open_tabs.push_back(std::move(*compare_tab));
       ++restored_tab_index;
       continue;
@@ -618,6 +620,7 @@ PersistenceCoordinator::BuildPersistedCompareTabState(
   persisted_tab.compare_selected_row = tab.compare->selected_row;
   persisted_tab.compare_scroll_row = static_cast<std::size_t>(std::max(0, tab.compare->scroll_row));
   persisted_tab.compare_horizontal_scroll = tab.compare->horizontal_scroll;
+  persisted_tab.compare_divider_fraction = tab.compare->divider_fraction;
   return persisted_tab;
 }
 
