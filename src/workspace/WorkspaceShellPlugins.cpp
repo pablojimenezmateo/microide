@@ -260,8 +260,12 @@ void WorkspaceShell::RebuildPhase5Registries() {
     spec.type = provider.type;
     spec.api_key_name = provider.id + ".api_key";
     spec.models = provider.models;
+    spec.runtime = provider.runtime;
+    spec.base_url = provider.base_url;
+    spec.default_model = provider.default_model;
     spec.plugin_id = provider.plugin_id;
     ai_provider_registry_.Register(spec);
+    ai_provider_runtime_service_.RegisterDirectRuntime(spec);
   }
   for (const auto& agent : host.ContributedExternalAgents()) {
     ExternalAgentSpec agent_spec{

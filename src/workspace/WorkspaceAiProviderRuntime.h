@@ -4,7 +4,9 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -110,6 +112,7 @@ class AiProviderRuntimeService {
   void ClearRuntimes();
   void RegisterRuntime(std::unique_ptr<AiProviderRuntime> runtime);
   void RegisterSidecarRuntime(const AiProviderSpec& provider, const ExternalAgentSpec& agent);
+  void RegisterDirectRuntime(const AiProviderSpec& provider);
 
   std::vector<std::string> ProviderIdsForWorkflow(AiRuntimeWorkflow workflow) const;
   bool ProviderSupportsWorkflow(std::string_view provider_id, AiRuntimeWorkflow workflow) const;
@@ -142,6 +145,9 @@ class AiProviderRuntimeService {
 
  private:
   WorkspaceProviderBridgeManager bridge_manager_;
+  Uint32 direct_runtime_event_type_ = 0;
+  mutable std::mutex event_mutex_;
+  std::queue<AiRuntimeEvent> pending_events_;
   std::vector<std::string> runtime_order_;
   std::unordered_map<std::string, std::unique_ptr<AiProviderRuntime>> runtimes_;
 };

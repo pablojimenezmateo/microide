@@ -426,7 +426,8 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide PRIVATE src)
-target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET}
+                                       ${MICROIDE_CURL_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -522,7 +523,8 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide_tests PRIVATE src tests)
-target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET}
+                                             ${MICROIDE_CURL_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
