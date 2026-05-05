@@ -9,6 +9,7 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   if (context_.current_project_state.root.empty()) {
     return;
   }
+  const bool bottom_panel_was_visible = BottomPanelVisible();
   const bool panel_already_showing_terminal =
       context_.current_project_state.panel.content == PanelContentKind::Terminal;
   const std::filesystem::path working_directory = context_.current_project_state.root;
@@ -27,6 +28,13 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   }
   if (focus_terminal) {
     context_.current_project_state.surface.focus = FocusTarget::Panel;
+  }
+
+  MarkLayoutDirty();
+  if (BottomPanelVisible() != bottom_panel_was_visible) {
+    RequestWindowRedraw();
+  } else {
+    RequestBottomPanelRedraw();
   }
 }
 

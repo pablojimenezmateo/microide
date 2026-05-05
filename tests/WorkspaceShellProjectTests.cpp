@@ -492,7 +492,7 @@ void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
          "switching back should not restore stale transient selection state");
 }
 
-void TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden() {
+void TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "README.md", "project\n");
@@ -500,10 +500,32 @@ void TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "auto-terminal visibility fixture should open the project");
-  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
-         "opening a project should not automatically surface the terminal panel");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "opening a project should surface the terminal panel");
   Expect(WorkspaceShellTestAccess::TerminalLaunchLabels(shell).size() == 1,
-         "opening a project should still prepare a background terminal tab");
+         "opening a project should prepare one default terminal tab");
+}
+
+void TestWorkspaceShellTermCommandRequestsBottomPanelRedraw() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "project\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "term redraw fixture should open the project");
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::size_t tab_count_before = WorkspaceShellTestAccess::TerminalLaunchLabels(shell).size();
+
+  Expect(ExecuteCommand(shell, "term"),
+         "term command should execute");
+  const auto redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(redraw.full || !redraw.rects.empty(),
+         "term command should request a redraw for bottom-panel terminal updates");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "term command should keep the terminal panel visible");
+  Expect(WorkspaceShellTestAccess::TerminalLaunchLabels(shell).size() == tab_count_before + 1,
+         "term command should open exactly one additional terminal tab");
 }
 
 void TestWorkspaceShellProjectOpenDefersProjectWatcherArming() {
@@ -1827,8 +1849,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState);
   AddTest(tests, "WorkspaceShell/ProjectSwitchClearsTransientInteractionState",
           TestWorkspaceShellProjectSwitchClearsTransientInteractionState);
-  AddTest(tests, "WorkspaceShell/ProjectOpenKeepsAutoTerminalHidden",
-          TestWorkspaceShellProjectOpenKeepsAutoTerminalHidden);
+  AddTest(tests, "WorkspaceShell/ProjectOpenShowsDefaultTerminalPanel",
+          TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel);
+  AddTest(tests, "WorkspaceShell/TermCommandRequestsBottomPanelRedraw",
+          TestWorkspaceShellTermCommandRequestsBottomPanelRedraw);
   AddTest(tests, "WorkspaceShell/ProjectOpenDefersProjectWatcherArming",
           TestWorkspaceShellProjectOpenDefersProjectWatcherArming);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
