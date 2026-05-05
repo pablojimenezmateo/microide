@@ -1,3 +1,7 @@
+## Purpose
+
+Define the durable behavior and performance contract for compare and three-way merge editor surfaces.
+## Requirements
 ### Requirement: Unified Decorated Text-Grid Pipeline
 
 Editor, compare, and three-way merge surfaces SHALL render through one shared decorated text-grid pipeline that owns row fills, syntax runs, selection, diagnostic underlines, blame shadow text, and hunk decorations. Compare and merge surfaces SHALL NOT fork the editor's render path to add their own row-decoration layers.
@@ -65,3 +69,16 @@ Diff and merge code paths SHALL be covered by the `microide_diff_bench` utility 
 #### Scenario: Change touches diff hot path
 - **WHEN** a change modifies compare hunk construction, merge hunk construction, shared row-decoration build, or the compare/merge paint path
 - **THEN** the change record SHALL include `microide_diff_bench` before-and-after output demonstrating no regression beyond the documented variance, or SHALL call out and justify a knowing regression
+
+### Requirement: Low-Contrast Diff Decorations Preserve Text Legibility
+
+Compare and merge surfaces SHALL use low-contrast fill colors for added, removed, and conflicted rows. Foreground text color SHALL remain neutral and SHALL NOT inherit a red, green, or orange tint from the row decoration.
+
+#### Scenario: Added row keeps neutral text
+- **WHEN** a compare or merge row is rendered with an added-line decoration
+- **THEN** the row fill SHALL remain visually distinguishable while the text itself stays neutral and readable
+
+#### Scenario: Conflict row stays distinguishable without overpowering the text
+- **WHEN** a merge conflict row is rendered
+- **THEN** the conflict state SHALL remain visible through the low-contrast palette without overwhelming the foreground glyphs
+

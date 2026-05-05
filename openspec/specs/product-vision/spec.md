@@ -1,3 +1,7 @@
+## Purpose
+
+Define the durable product thesis, priority order, ownership boundaries, and non-goals for MicroIDE.
+## Requirements
 ### Requirement: Product Thesis
 
 MicroIDE SHALL be a native desktop IDE built in C++20 with SDL3, distributed as a single-window application with no GPU acceleration, positioned as a compact combination of a VSCode-shaped surface area and Zed-class responsiveness, with AI workflows as a first-class built-in capability.
@@ -45,3 +49,4 @@ The MicroIDE product SHALL treat AI workflows (chat, inline completion, MCP-back
 #### Scenario: Documentation lists AI as a non-goal
 - **WHEN** any durable doc (implementation guide, roadmap, guidelines) is reviewed
 - **THEN** it SHALL NOT list AI, chat, or inline completion as a non-goal, and any such entry SHALL be corrected in the same review
+
