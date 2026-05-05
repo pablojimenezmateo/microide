@@ -9,6 +9,21 @@ namespace microide::workspace {
 
 using namespace detail;
 
+std::string WorkspaceShell::HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const {
+  if (!last_mouse_position_valid_ || !Contains(project_tab_strip, last_mouse_x_, last_mouse_y_)) {
+    return {};
+  }
+
+  const auto visible_project_tabs = ComputeVisibleProjectTabs(project_tab_strip);
+  const auto hovered_project_tab = std::find_if(
+      visible_project_tabs.begin(), visible_project_tabs.end(),
+      [this](const VisibleStripTab& tab) { return Contains(tab.rect, last_mouse_x_, last_mouse_y_); });
+  if (hovered_project_tab == visible_project_tabs.end()) {
+    return {};
+  }
+  return hovered_project_tab->tooltip_label;
+}
+
 void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                         const WorkspaceLayout& layout) const {
   const auto draw_tab_close_button = [&](const SDL_FRect& rect, SDL_Color color,
@@ -160,6 +175,31 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       TruncateLabel(BreadcrumbLabel(), breadcrumb_text_width));
 }
 
+std::optional<SDL_FRect> WorkspaceShell::HoveredProjectTabTooltipRect(
+    const WorkspaceLayout& layout) const {
+  const std::string tooltip_label = HoveredProjectTabTooltipLabel(layout.project_tab_strip);
+  if (tooltip_label.empty()) {
+    return std::nullopt;
+  }
+
+  const auto visible_project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
+  const auto hovered_project_tab = std::find_if(
+      visible_project_tabs.begin(), visible_project_tabs.end(),
+      [this](const VisibleStripTab& tab) { return Contains(tab.rect, last_mouse_x_, last_mouse_y_); });
+  if (hovered_project_tab == visible_project_tabs.end()) {
+    return std::nullopt;
+  }
+
+  const auto tooltip = BuildTooltipLayout(
+      text_renderer_, tooltip_label, std::max(160.0f, layout.full.w - 24.0f));
+  const float center_x = hovered_project_tab->rect.x + hovered_project_tab->rect.w * 0.5f;
+  const float tooltip_x =
+      std::clamp(center_x - tooltip.rect.w * 0.5f, layout.full.x + 8.0f,
+                 layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
+  return MakeRect(tooltip_x, hovered_project_tab->rect.y + hovered_project_tab->rect.h + 6.0f,
+                  tooltip.rect.w, tooltip.rect.h);
+}
+
 std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLayout& layout) const {
   if (!last_mouse_position_valid_) {
     return std::nullopt;
@@ -211,24 +251,10 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredStatusTooltipRect(const Workspac
 
 void WorkspaceShell::RenderChromeTooltips(SDL_Renderer* renderer,
                                           const WorkspaceLayout& layout) const {
-  if (last_mouse_position_valid_) {
-    const auto visible_project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
-    const auto hovered_project_tab = std::find_if(
-        visible_project_tabs.begin(), visible_project_tabs.end(),
-        [this](const VisibleStripTab& tab) { return Contains(tab.rect, last_mouse_x_, last_mouse_y_); });
-    if (hovered_project_tab != visible_project_tabs.end() &&
-        !hovered_project_tab->tooltip_label.empty()) {
-      const auto tooltip = BuildTooltipLayout(text_renderer_, hovered_project_tab->tooltip_label,
-                                              std::max(160.0f, layout.full.w - 24.0f));
-      const float center_x = hovered_project_tab->rect.x + hovered_project_tab->rect.w * 0.5f;
-      const float tooltip_x =
-          std::clamp(center_x - tooltip.rect.w * 0.5f, layout.full.x + 8.0f,
-                     layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
-      const SDL_FRect tooltip_rect =
-          MakeRect(tooltip_x, hovered_project_tab->rect.y + hovered_project_tab->rect.h + 6.0f,
-                   tooltip.rect.w, tooltip.rect.h);
-      DrawTooltip(text_renderer_, renderer, theme_, tooltip_rect, tooltip.text);
-    }
+  if (const auto tooltip_rect = HoveredProjectTabTooltipRect(layout); tooltip_rect.has_value()) {
+    const std::string tooltip_label = HoveredProjectTabTooltipLabel(layout.project_tab_strip);
+    DrawTooltip(text_renderer_, renderer, theme_, *tooltip_rect,
+                BuildTooltipLayout(text_renderer_, tooltip_label, tooltip_rect->w).text);
   }
 
   if (const auto tooltip_rect = HoveredTabTooltipRect(layout); tooltip_rect.has_value()) {

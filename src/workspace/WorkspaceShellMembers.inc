@@ -1296,6 +1296,8 @@
   void EnsureActiveProjectVisible();
   std::vector<VisibleStripTab> ComputeVisibleProjectTabs(
       const SDL_FRect& project_tab_strip) const;
+  std::string HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const;
+  std::optional<SDL_FRect> HoveredProjectTabTooltipRect(const WorkspaceLayout& layout) const;
   float TabWidthForIndex(std::size_t index) const;
   void EnsureActiveTabVisible();
   std::vector<VisibleStripTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;

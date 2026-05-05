@@ -901,6 +901,85 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   SDL_DestroySurface(pixels);
 }
 
+void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "first-project";
+  const std::filesystem::path second_root = temp_dir.path() / "second-project";
+  const std::filesystem::path source = second_root / "src" / "deep" / "main.cpp";
+  WriteFile(first_root / "README.md", "first\n");
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  static constexpr int kCanvasWidth = 1280;
+  static constexpr int kCanvasHeight = 720;
+
+  const auto configure_shell = [&](WorkspaceShell& shell) {
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false),
+           "project tooltip retained redraw fixture should open the first project");
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false),
+           "project tooltip retained redraw fixture should open the second project");
+    WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+  };
+
+  WorkspaceShell retained_shell;
+  configure_shell(retained_shell);
+  SoftwareCanvas retained_canvas(kCanvasWidth, kCanvasHeight);
+  retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  const SDL_FRect project_tab_rect = WorkspaceShellTestAccess::ProjectTabRect(retained_shell, 1);
+  SDL_Event hover_event{};
+  hover_event.type = SDL_EVENT_MOUSE_MOTION;
+  hover_event.motion.x = project_tab_rect.x + project_tab_rect.w * 0.5f;
+  hover_event.motion.y = project_tab_rect.y + project_tab_rect.h * 0.5f;
+  const auto hover_result = retained_shell.HandleEvent(hover_event);
+  Expect(hover_result.handled, "hovering a project tab tooltip fixture should be handled");
+  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+                             hover_result.redraw);
+  Expect(WorkspaceShellTestAccess::HoveredProjectTabTooltipRect(retained_shell).has_value(),
+         "hovering a project tab should expose a tooltip rect");
+
+  const SDL_FRect editor_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(retained_shell);
+  SDL_Event dismiss_event{};
+  dismiss_event.type = SDL_EVENT_MOUSE_MOTION;
+  dismiss_event.motion.x = editor_rect.x + 20.0f;
+  dismiss_event.motion.y = editor_rect.y + 20.0f;
+  const auto dismiss_result = retained_shell.HandleEvent(dismiss_event);
+  Expect(dismiss_result.handled,
+         "moving away from a project tab tooltip should stay on a handled redraw path");
+  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+                             dismiss_result.redraw);
+
+  WorkspaceShell reference_shell;
+  configure_shell(reference_shell);
+  SDL_Event reference_hover_event = hover_event;
+  Expect(reference_shell.HandleEvent(reference_hover_event).handled,
+         "reference project tooltip fixture should handle hover motion");
+  SDL_Event reference_dismiss_event = dismiss_event;
+  Expect(reference_shell.HandleEvent(reference_dismiss_event).handled,
+         "reference project tooltip fixture should handle dismiss motion");
+  SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
+  reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
+
+  SDL_Surface* retained_pixels = SDL_RenderReadPixels(retained_canvas.renderer(), nullptr);
+  SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
+  const std::size_t pixel_differences =
+      CountPixelDifferences(retained_pixels, reference_pixels);
+
+  if (retained_pixels != nullptr) {
+    SDL_DestroySurface(retained_pixels);
+  }
+  if (reference_pixels != nullptr) {
+    SDL_DestroySurface(reference_pixels);
+  }
+
+  Expect(pixel_differences == 0,
+         "dismissing a project tab tooltip should leave retained redraw identical to a full redraw");
+}
+
 void TestWorkspaceShellPromptInputRendersSharedFramedField() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -1711,6 +1790,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabTooltipRendersAboveSidebar);
   AddTest(tests, "WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard",
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
+  AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
+          TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/PromptInputRendersSharedFramedField",
           TestWorkspaceShellPromptInputRendersSharedFramedField);
   AddTest(tests, "WorkspaceShell/ShortcutEditActionsReturnEditorInvalidation",

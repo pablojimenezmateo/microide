@@ -1326,6 +1326,36 @@ void TestWorkspaceShellWindowMouseLeaveClearsTabTooltip() {
          "window mouse leave should clear stale tab tooltip hover state");
 }
 
+void TestWorkspaceShellInWindowMouseMoveClearsProjectTabTooltipAndInvalidatesChrome() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "first-project";
+  const std::filesystem::path second_root = temp_dir.path() / "second-project";
+  const std::filesystem::path second_file = second_root / "src" / "deep" / "main.cpp";
+  WriteFile(first_root / "README.md", "first\n");
+  WriteFile(second_file, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false),
+         "first project should open");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false),
+         "second project should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect project_tab_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 1);
+  SendMouseMotion(shell, project_tab_rect.x + project_tab_rect.w * 0.5f,
+                  project_tab_rect.y + project_tab_rect.h * 0.5f, 0);
+  const std::string hovered_label_before =
+      WorkspaceShellTestAccess::HoveredProjectTabTooltipLabel(shell);
+  Expect(!hovered_label_before.empty(),
+         "project tab tooltip fixture should start with a hovered project tab label");
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect editor_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  SendMouseMotion(shell, editor_rect.x + 20.0f, editor_rect.y + 20.0f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredProjectTabTooltipLabel(shell).empty(),
+         "moving inside the window away from project tabs should clear project tab tooltip hover");
+}
+
 void TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1909,6 +1939,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/WindowMouseLeaveClearsTabTooltip",
           TestWorkspaceShellWindowMouseLeaveClearsTabTooltip);
+  AddTest(tests, "WorkspaceShell/InWindowMouseMoveClearsProjectTabTooltipAndInvalidatesChrome",
+          TestWorkspaceShellInWindowMouseMoveClearsProjectTabTooltipAndInvalidatesChrome);
   AddTest(tests, "WorkspaceShell/EditorSelectionWritesPrimaryBufferAndMiddleClickPastes",
           TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TextInputSurfaceTracksEditorOverlayAndPrompt",

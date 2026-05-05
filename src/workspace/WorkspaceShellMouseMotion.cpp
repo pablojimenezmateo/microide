@@ -23,7 +23,24 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
   };
   bool hover_visual_changed = false;
+  std::optional<SDL_FRect> previous_project_tab_tooltip_rect;
+  std::optional<SDL_FRect> previous_tab_tooltip_rect;
+  std::optional<SDL_FRect> previous_status_tooltip_rect;
+  std::string previous_project_tab_tooltip_label;
+  std::string previous_tab_tooltip_label;
+  std::string previous_status_tooltip_label;
   if (CurrentWindowRect().has_value()) {
+    const auto layout_before_state = CurrentWorkspaceLayout();
+    if (layout_before_state.has_value()) {
+      previous_project_tab_tooltip_label =
+          HoveredProjectTabTooltipLabel(layout_before_state->project_tab_strip);
+      previous_project_tab_tooltip_rect =
+          HoveredProjectTabTooltipRect(*layout_before_state);
+      previous_tab_tooltip_label = HoveredTabTooltipLabel(layout_before_state->tab_strip);
+      previous_tab_tooltip_rect = HoveredTabTooltipRect(*layout_before_state);
+      previous_status_tooltip_label = HoveredStatusTooltip(layout_before_state->breadcrumb);
+      previous_status_tooltip_rect = HoveredStatusTooltipRect(*layout_before_state);
+    }
     const std::optional<EditorHoverTarget> previous_hover_target = active_editor_hover_target_;
     const bool previous_action_hovered =
         last_mouse_position_valid_ && EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
@@ -53,6 +70,40 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
+  const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
+    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+  };
+  const auto request_tooltip_redraw_if_changed =
+      [this, &rects_equal](const std::string& previous_label,
+                           const std::optional<SDL_FRect>& previous_rect,
+                           const std::string& current_label,
+                           const std::optional<SDL_FRect>& current_rect) {
+        const bool same_rect = previous_rect.has_value() == current_rect.has_value() &&
+                               (!previous_rect.has_value() ||
+                                rects_equal(*previous_rect, *current_rect));
+        if (previous_label == current_label && same_rect) {
+          return false;
+        }
+        if (previous_rect.has_value()) {
+          RequestRedrawRect(*previous_rect);
+        }
+        if (current_rect.has_value()) {
+          RequestRedrawRect(*current_rect);
+        }
+        return true;
+      };
+  const bool chrome_tooltip_visual_changed =
+      request_tooltip_redraw_if_changed(previous_project_tab_tooltip_label,
+                                        previous_project_tab_tooltip_rect,
+                                        HoveredProjectTabTooltipLabel(layout.project_tab_strip),
+                                        HoveredProjectTabTooltipRect(layout)) ||
+      request_tooltip_redraw_if_changed(previous_tab_tooltip_label, previous_tab_tooltip_rect,
+                                        HoveredTabTooltipLabel(layout.tab_strip),
+                                        HoveredTabTooltipRect(layout)) ||
+      request_tooltip_redraw_if_changed(previous_status_tooltip_label,
+                                        previous_status_tooltip_rect,
+                                        HoveredStatusTooltip(layout.breadcrumb),
+                                        HoveredStatusTooltipRect(layout));
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
@@ -155,7 +206,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (!context_.interaction_state.mouse_selecting || (event.motion.state & SDL_BUTTON_LMASK) == 0) {
-    return hover_visual_changed;
+    return hover_visual_changed || chrome_tooltip_visual_changed;
   }
 
   if (!Contains(layout.editor_surface, event.motion.x, event.motion.y)) {

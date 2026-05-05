@@ -50,6 +50,10 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredTabTooltipRect(layout);
   }
+  static std::optional<SDL_FRect> HoveredProjectTabTooltipRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.HoveredProjectTabTooltipRect(layout);
+  }
   static std::vector<WorkspaceShell::VisibleStatusItem> VisibleStatusItems(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeVisibleStatusItems(layout.breadcrumb);
