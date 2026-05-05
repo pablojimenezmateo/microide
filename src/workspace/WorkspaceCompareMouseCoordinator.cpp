@@ -122,14 +122,12 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (event.button.button == SDL_BUTTON_MIDDLE && compare_tab->right_editable) {
       if (const std::optional<std::string> text = operations_.read_primary_selection_text();
           text.has_value()) {
-        const std::vector<std::string> before_lines = compare_tab->right_viewport.lines();
         const bool was_dirty = compare_tab->right_viewport.dirty();
         const std::size_t cursor_before_line = compare_tab->right_viewport.cursor_line();
         compare_tab->right_viewport.InsertText(*text);
         operations_.refresh_compare_tab_derived_state(*compare_tab);
         operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-        operations_.request_active_editable_change_redraw(before_lines,
-                                                          compare_tab->right_viewport.lines());
+        operations_.request_active_editable_last_change_redraw();
         if (compare_tab->right_viewport.dirty() != was_dirty) {
           operations_.request_active_editable_blame_neighborhood_redraw(
               cursor_before_line, compare_tab->right_viewport.cursor_line());
@@ -316,11 +314,8 @@ CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
-          .request_active_editable_change_redraw =
-              [this](const std::vector<std::string>& before_lines,
-                     const std::vector<std::string>& after_lines) {
-                RequestActiveEditableChangeRedraw(before_lines, after_lines);
-              },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
           .request_active_editable_blame_neighborhood_redraw =
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);

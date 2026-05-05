@@ -219,8 +219,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         merge_tab->result_viewport.InsertText(*text);
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
                                                               selection_before, cursor_before);
-        operations_.request_active_editable_change_redraw(before_lines,
-                                                          merge_tab->result_viewport.lines());
+        operations_.request_active_editable_last_change_redraw();
         if (merge_tab->result_viewport.dirty() != was_dirty) {
           operations_.request_active_editable_blame_neighborhood_redraw(
               cursor_before_line, merge_tab->result_viewport.cursor_line());
@@ -526,11 +525,8 @@ MergeMouseCoordinator WorkspaceShell::MakeMergeMouseCoordinator() {
                 UpdateMergeTrackingAfterViewportEdit(merge_tab, before_lines, selection_before,
                                                      cursor_before);
               },
-          .request_active_editable_change_redraw =
-              [this](const std::vector<std::string>& before_lines,
-                     const std::vector<std::string>& after_lines) {
-                RequestActiveEditableChangeRedraw(before_lines, after_lines);
-              },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
           .request_active_editable_blame_neighborhood_redraw =
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);

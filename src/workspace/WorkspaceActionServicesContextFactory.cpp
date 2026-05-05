@@ -268,6 +268,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               },
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
           .request_active_editable_change_redraw =
               [this](const std::vector<std::string>& before_lines,
                      const std::vector<std::string>& after_lines) {

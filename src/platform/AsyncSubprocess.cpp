@@ -136,6 +136,8 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
     return false;
   }
 
+  // Set stdin write-end and stdout read-end non-blocking for poll-based I/O.
+  fcntl(stdin_pipe[1], F_SETFL, O_NONBLOCK);
   // Set stdout read-end non-blocking for poll-based reads.
   fcntl(stdout_pipe[0], F_SETFL, O_NONBLOCK);
 
@@ -208,20 +210,45 @@ bool AsyncSubprocess::IsRunning() const {
 }
 
 bool AsyncSubprocess::Write(std::string_view data) {
-  std::lock_guard lock(impl_->state_mutex);
-  if (!impl_->running.load(std::memory_order_acquire) || impl_->stdin_fd < 0) {
-    return false;
-  }
   const char* ptr = data.data();
   std::size_t remaining = data.size();
   while (remaining > 0) {
-    const ssize_t written = write(impl_->stdin_fd, ptr, remaining);
+    int stdin_fd = -1;
+    {
+      std::lock_guard lock(impl_->state_mutex);
+      if (!impl_->running.load(std::memory_order_acquire) || impl_->stdin_fd < 0) {
+        return false;
+      }
+      stdin_fd = impl_->stdin_fd;
+    }
+
+    pollfd pfd{.fd = stdin_fd, .events = POLLOUT | POLLHUP, .revents = 0};
+    const int ready = poll(&pfd, 1, 100);
+    if (ready < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      CloseStdin();
+      return false;
+    }
+    if (ready == 0) {
+      continue;
+    }
+    if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      CloseStdin();
+      return false;
+    }
+
+    const ssize_t written = write(stdin_fd, ptr, remaining);
     if (written > 0) {
       ptr += written;
       remaining -= static_cast<std::size_t>(written);
       continue;
     }
     if (written < 0 && errno == EINTR) {
+      continue;
+    }
+    if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       continue;
     }
     impl_->CloseStdin();
@@ -231,84 +258,106 @@ bool AsyncSubprocess::Write(std::string_view data) {
 }
 
 std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int timeout_ms) {
-  std::lock_guard lock(impl_->state_mutex);
-  if (impl_->stdout_fd < 0) {
-    return std::nullopt;
+  int stdout_fd = -1;
+  pid_t current_pid = -1;
+  {
+    std::lock_guard lock(impl_->state_mutex);
+    if (impl_->stdout_fd < 0) {
+      return std::nullopt;
+    }
+    stdout_fd = impl_->stdout_fd;
+    current_pid = impl_->pid.load(std::memory_order_acquire);
   }
 
-  pollfd pfd{.fd = impl_->stdout_fd, .events = POLLIN | POLLHUP, .revents = 0};
-  const int ready = poll(&pfd, 1, timeout_ms);
-  if (ready < 0 && errno != EINTR) {
-    return std::nullopt;
-  }
-  if (ready == 0) {
-    return std::string{};  // timeout — no data yet
-  }
+  while (true) {
+    pollfd pfd{.fd = stdout_fd, .events = POLLIN | POLLHUP, .revents = 0};
+    const int ready = poll(&pfd, 1, timeout_ms);
+    if (ready < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return std::nullopt;
+    }
+    if (ready == 0) {
+      return std::string{};  // timeout — no data yet
+    }
 
-  if ((pfd.revents & POLLIN) == 0) {
-    // HUP with no data; reap and update running state.
-    const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
-    if (current_pid >= 0) {
-      int status = 0;
-      const pid_t result = waitpid(current_pid, &status, WNOHANG);
-      if (result == current_pid) {
-        impl_->running.store(false, std::memory_order_release);
-        impl_->Close();
-        impl_->pid.store(-1, std::memory_order_release);
-        if (WIFEXITED(status)) {
-          impl_->exit_code = WEXITSTATUS(status);
-        } else if (WIFSIGNALED(status)) {
-          impl_->exit_code = 128 + WTERMSIG(status);
-        } else {
-          impl_->exit_code = std::nullopt;
+    if ((pfd.revents & POLLIN) == 0) {
+      std::lock_guard lock(impl_->state_mutex);
+      if (impl_->stdout_fd == stdout_fd) {
+        impl_->CloseStdout();
+      }
+      if (current_pid >= 0 && impl_->pid.load(std::memory_order_acquire) == current_pid) {
+        int status = 0;
+        const pid_t result = waitpid(current_pid, &status, WNOHANG);
+        if (result == current_pid) {
+          impl_->running.store(false, std::memory_order_release);
+          impl_->Close();
+          impl_->pid.store(-1, std::memory_order_release);
+          if (WIFEXITED(status)) {
+            impl_->exit_code = WEXITSTATUS(status);
+          } else if (WIFSIGNALED(status)) {
+            impl_->exit_code = 128 + WTERMSIG(status);
+          } else {
+            impl_->exit_code = std::nullopt;
+          }
         }
       }
+      return std::nullopt;
     }
-    return std::nullopt;
-  }
 
-  std::string result;
-  result.resize(max_bytes);
-  const ssize_t n = read(impl_->stdout_fd, result.data(), max_bytes);
-  if (n > 0) {
-    result.resize(static_cast<std::size_t>(n));
-    return result;
-  }
-  if (n == 0 || (n < 0 && errno != EINTR)) {
-    impl_->CloseStdout();
-    const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
-    if (current_pid >= 0) {
-      int status = 0;
-      const pid_t result = waitpid(current_pid, &status, WNOHANG);
-      if (result == current_pid) {
-        impl_->running.store(false, std::memory_order_release);
-        impl_->Close();
-        impl_->pid.store(-1, std::memory_order_release);
-        if (WIFEXITED(status)) {
-          impl_->exit_code = WEXITSTATUS(status);
-        } else if (WIFSIGNALED(status)) {
-          impl_->exit_code = 128 + WTERMSIG(status);
-        } else {
-          impl_->exit_code = std::nullopt;
+    std::string result;
+    result.resize(max_bytes);
+    const ssize_t n = read(stdout_fd, result.data(), max_bytes);
+    if (n > 0) {
+      result.resize(static_cast<std::size_t>(n));
+      return result;
+    }
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+      std::lock_guard lock(impl_->state_mutex);
+      if (impl_->stdout_fd == stdout_fd) {
+        impl_->CloseStdout();
+      }
+      if (current_pid >= 0 && impl_->pid.load(std::memory_order_acquire) == current_pid) {
+        int status = 0;
+        const pid_t result = waitpid(current_pid, &status, WNOHANG);
+        if (result == current_pid) {
+          impl_->running.store(false, std::memory_order_release);
+          impl_->Close();
+          impl_->pid.store(-1, std::memory_order_release);
+          if (WIFEXITED(status)) {
+            impl_->exit_code = WEXITSTATUS(status);
+          } else if (WIFSIGNALED(status)) {
+            impl_->exit_code = 128 + WTERMSIG(status);
+          } else {
+            impl_->exit_code = std::nullopt;
+          }
         }
       }
+      return std::nullopt;
     }
-    return std::nullopt;
+    return std::string{};
   }
-  return std::string{};
 }
 
 std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout_ms) {
-  std::lock_guard lock(impl_->state_mutex);
-  if (impl_->stdout_fd < 0) {
-    return std::nullopt;
+  int stdout_fd = -1;
+  {
+    std::lock_guard lock(impl_->state_mutex);
+    if (impl_->stdout_fd < 0) {
+      return std::nullopt;
+    }
+    stdout_fd = impl_->stdout_fd;
   }
   std::string result;
   result.reserve(n);
 
   while (result.size() < n) {
     const std::size_t remaining = n - result.size();
-    pollfd pfd{.fd = impl_->stdout_fd, .events = POLLIN | POLLHUP, .revents = 0};
+    pollfd pfd{.fd = stdout_fd, .events = POLLIN | POLLHUP, .revents = 0};
     const int ready = poll(&pfd, 1, timeout_ms);
     if (ready <= 0) {
       if (ready < 0 && errno == EINTR) {
@@ -321,17 +370,22 @@ std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout
     }
     const std::size_t old_size = result.size();
     result.resize(old_size + remaining);
-    const ssize_t bytes_read =
-        read(impl_->stdout_fd, result.data() + old_size, remaining);
+    const ssize_t bytes_read = read(stdout_fd, result.data() + old_size, remaining);
     if (bytes_read > 0) {
       result.resize(old_size + static_cast<std::size_t>(bytes_read));
       continue;
     }
-    if (bytes_read == 0 || (bytes_read < 0 && errno != EINTR)) {
-      impl_->CloseStdout();
+    if (bytes_read < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+      result.resize(old_size);
+      continue;
+    }
+    if (bytes_read == 0 || bytes_read < 0) {
+      std::lock_guard lock(impl_->state_mutex);
+      if (impl_->stdout_fd == stdout_fd) {
+        impl_->CloseStdout();
+      }
       return std::nullopt;
     }
-    result.resize(old_size);
   }
   return result;
 }

@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
@@ -566,28 +567,60 @@ void WorkspaceActionContext::SelectAll() {
 }
 
 void WorkspaceActionContext::Undo() {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceActionContext::Undo");
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
-    const std::vector<std::string> before_lines = viewport->lines();
-    const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-    const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
-    if (viewport->Undo()) {
+    const std::size_t cursor_before_line = viewport->cursor_line();
+    std::vector<std::string> before_lines;
+    std::optional<editor::SelectionRange> selection_before;
+    std::optional<editor::TextPosition> cursor_before;
+    if (auto* merge_tab = operations_.active_merge_tab();
+        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+      before_lines = viewport->lines();
+      selection_before = viewport->selection_range();
+      cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+    }
+    bool changed = false;
+    {
+      util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::ViewportUndo");
+      changed = viewport->Undo();
+    }
+    if (changed) {
       if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Undo::RefreshCompareDerivedState");
         operations_.refresh_compare_tab_derived_state(*compare_tab);
         operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       }
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Undo::UpdateMergeTracking");
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, cursor_before);
+                                                              selection_before, *cursor_before);
       }
-      operations_.reset_caret_blink();
-      operations_.request_active_tab_redraw(false);
-      operations_.request_focused_editor_redraw();
-      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
+      {
+        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::ResetCaretBlink");
+        operations_.reset_caret_blink();
+      }
+      {
+        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::RequestTabRedraw");
+        operations_.request_active_tab_redraw(false);
+      }
+      {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Undo::RequestFocusedEditorRedraw");
+        operations_.request_focused_editor_redraw();
+      }
+      {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Undo::RequestLastChangeRedraw");
+        operations_.request_active_editable_last_change_redraw();
+      }
       if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::DirtyStateSideEffects");
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
         operations_.request_tab_strip_redraw();
       }
@@ -596,28 +629,60 @@ void WorkspaceActionContext::Undo() {
 }
 
 void WorkspaceActionContext::Redo() {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceActionContext::Redo");
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
-    const std::vector<std::string> before_lines = viewport->lines();
-    const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-    const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
-    if (viewport->Redo()) {
+    const std::size_t cursor_before_line = viewport->cursor_line();
+    std::vector<std::string> before_lines;
+    std::optional<editor::SelectionRange> selection_before;
+    std::optional<editor::TextPosition> cursor_before;
+    if (auto* merge_tab = operations_.active_merge_tab();
+        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+      before_lines = viewport->lines();
+      selection_before = viewport->selection_range();
+      cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+    }
+    bool changed = false;
+    {
+      util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::ViewportRedo");
+      changed = viewport->Redo();
+    }
+    if (changed) {
       if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Redo::RefreshCompareDerivedState");
         operations_.refresh_compare_tab_derived_state(*compare_tab);
         operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       }
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Redo::UpdateMergeTracking");
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, cursor_before);
+                                                              selection_before, *cursor_before);
       }
-      operations_.reset_caret_blink();
-      operations_.request_active_tab_redraw(false);
-      operations_.request_focused_editor_redraw();
-      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
+      {
+        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::ResetCaretBlink");
+        operations_.reset_caret_blink();
+      }
+      {
+        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::RequestTabRedraw");
+        operations_.request_active_tab_redraw(false);
+      }
+      {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Redo::RequestFocusedEditorRedraw");
+        operations_.request_focused_editor_redraw();
+      }
+      {
+        util::PerformanceTrace::Scope scope(
+            "WorkspaceActionContext::Redo::RequestLastChangeRedraw");
+        operations_.request_active_editable_last_change_redraw();
+      }
       if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+        util::PerformanceTrace::Scope scope("WorkspaceActionContext::Redo::DirtyStateSideEffects");
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
         operations_.request_tab_strip_redraw();
       }
@@ -661,9 +726,16 @@ void WorkspaceActionContext::CutSelection() {
         has_selection ? viewport->SelectedText() : viewport->CurrentLineTextForClipboard();
     if (!text.empty() && operations_.write_clipboard_text(text)) {
       operations_.write_primary_selection_text(text);
-      const std::vector<std::string> before_lines = viewport->lines();
-      const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-      const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      std::vector<std::string> before_lines;
+      std::optional<editor::SelectionRange> selection_before;
+      std::optional<editor::TextPosition> cursor_before;
+      if (auto* merge_tab = operations_.active_merge_tab();
+          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+        before_lines = viewport->lines();
+        selection_before = viewport->selection_range();
+        cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+      }
       if (has_selection) {
         viewport->DeleteSelectedText();
       } else {
@@ -677,14 +749,14 @@ void WorkspaceActionContext::CutSelection() {
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, cursor_before);
+                                                              selection_before, *cursor_before);
       }
       operations_.reset_caret_blink();
       operations_.request_active_tab_redraw(false);
       operations_.request_focused_editor_redraw();
-      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
+      operations_.request_active_editable_last_change_redraw();
       if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
         operations_.request_tab_strip_redraw();
       }
@@ -704,9 +776,16 @@ void WorkspaceActionContext::PasteClipboard() {
     }
     if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
       const bool was_dirty = viewport->dirty();
-      const std::vector<std::string> before_lines = viewport->lines();
-      const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-      const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
+      const std::size_t cursor_before_line = viewport->cursor_line();
+      std::vector<std::string> before_lines;
+      std::optional<editor::SelectionRange> selection_before;
+      std::optional<editor::TextPosition> cursor_before;
+      if (auto* merge_tab = operations_.active_merge_tab();
+          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+        before_lines = viewport->lines();
+        selection_before = viewport->selection_range();
+        cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+      }
       viewport->InsertText(*clipboard_text);
       if (auto* compare_tab = operations_.active_compare_tab();
           compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
@@ -716,14 +795,14 @@ void WorkspaceActionContext::PasteClipboard() {
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                              selection_before, cursor_before);
+                                                              selection_before, *cursor_before);
       }
       operations_.reset_caret_blink();
       operations_.request_active_tab_redraw(false);
       operations_.request_focused_editor_redraw();
-      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
+      operations_.request_active_editable_last_change_redraw();
       if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
+        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
         operations_.request_tab_strip_redraw();
       }

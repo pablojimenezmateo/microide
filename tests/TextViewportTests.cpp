@@ -228,6 +228,114 @@ void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
          "tail edits should only replay the local checkpoint window");
 }
 
+void TestTextViewportInsertNewlineCopiesLeadingIndentation() {
+  TextViewport viewport;
+  viewport.LoadContent("  const value = 1;", "/tmp/indent-newline.cpp");
+
+  viewport.MoveCursorTo(0, viewport.lines()[0].size());
+  viewport.InsertNewline();
+
+  Expect(viewport.line_count() == 2,
+         "newline indentation fixture should split the current line");
+  Expect(viewport.lines()[0] == "  const value = 1;",
+         "newline indentation fixture should keep the original line text");
+  Expect(viewport.lines()[1] == "  ",
+         "newline insertion should copy the previous line indentation");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "newline insertion should place the caret after the copied indentation");
+}
+
+void TestTextViewportInsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward() {
+  TextViewport viewport;
+  viewport.LoadContent("  const value = 1;", "/tmp/indent-newline-reset.cpp");
+
+  viewport.MoveCursorTo(0, viewport.lines()[0].size());
+  viewport.InsertNewline();
+  viewport.InsertNewline();
+
+  Expect(viewport.line_count() == 3,
+         "double-newline indentation fixture should produce an extra blank line");
+  Expect(viewport.lines()[1] == "  ",
+         "the first inserted line should keep the inherited indentation");
+  Expect(viewport.lines()[2].empty(),
+         "pressing Enter on a whitespace-only line should start the next line at column zero");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "pressing Enter on a whitespace-only line should move the caret to column zero");
+}
+
+void TestTextViewportMultiCaretNewlineCopiesIndentationPerCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("  alpha\n\tbeta\n", "/tmp/multi-caret-newline.cpp");
+  viewport.MoveCursorTo(0, viewport.lines()[0].size());
+  viewport.SetSecondaryCarets({{1, viewport.lines()[1].size()}});
+
+  viewport.InsertNewline();
+
+  Expect(viewport.line_count() == 5,
+         "multi-caret newline indentation fixture should split both touched lines");
+  Expect(viewport.lines()[0] == "  alpha" && viewport.lines()[1] == "  ",
+         "multi-caret newline should preserve and copy space indentation");
+  Expect(viewport.lines()[2] == "\tbeta" && viewport.lines()[3] == "\t",
+         "multi-caret newline should preserve and copy tab indentation");
+}
+
+void TestTextViewportLastAppliedEditTracksInsertUndoRedo() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n", "/tmp/applied-edit-insert.txt");
+  viewport.MoveCursorTo(0, 2);
+
+  viewport.InsertText("XYZ");
+
+  Expect(viewport.last_applied_edit().has_value(),
+         "single-range insert should publish an applied edit");
+  Expect(viewport.last_applied_edit()->range_before.start == microide::editor::TextPosition{0, 2} &&
+             viewport.last_applied_edit()->range_before.end ==
+                 microide::editor::TextPosition{0, 2},
+         "single-range insert should describe the pre-edit insertion point");
+  Expect(viewport.last_applied_edit()->replacement_text == "XYZ",
+         "single-range insert should publish the inserted text");
+
+  Expect(viewport.Undo(), "undo should succeed after an insert");
+  Expect(viewport.last_applied_edit().has_value(),
+         "undo should publish the reverse applied edit");
+  Expect(viewport.last_applied_edit()->range_before.start == microide::editor::TextPosition{0, 2} &&
+             viewport.last_applied_edit()->range_before.end ==
+                 microide::editor::TextPosition{0, 5},
+         "undo should describe the inserted range it removes");
+  Expect(viewport.last_applied_edit()->replacement_text.empty(),
+         "undo should publish empty replacement text for a pure deletion");
+
+  Expect(viewport.Redo(), "redo should succeed after an undo");
+  Expect(viewport.last_applied_edit().has_value(),
+         "redo should republish the forward applied edit");
+  Expect(viewport.last_applied_edit()->range_before.start == microide::editor::TextPosition{0, 2} &&
+             viewport.last_applied_edit()->range_before.end ==
+                 microide::editor::TextPosition{0, 2},
+         "redo should restore the forward insertion point");
+  Expect(viewport.last_applied_edit()->replacement_text == "XYZ",
+         "redo should restore the forward replacement text");
+}
+
+void TestTextViewportLastAppliedEditTracksMultilineReplacement() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/applied-edit-range.txt");
+
+  Expect(viewport.ReplaceRange(microide::editor::SelectionRange{
+                                   .start = microide::editor::TextPosition{0, 2},
+                                   .end = microide::editor::TextPosition{1, 2},
+                               },
+                               "X\nY"),
+         "multiline replacement fixture should apply");
+  Expect(viewport.last_applied_edit().has_value(),
+         "multiline replacement should publish an applied edit");
+  Expect(viewport.last_applied_edit()->range_before.start == microide::editor::TextPosition{0, 2} &&
+             viewport.last_applied_edit()->range_before.end ==
+                 microide::editor::TextPosition{1, 2},
+         "multiline replacement should preserve the original replaced range");
+  Expect(viewport.last_applied_edit()->replacement_text == "X\nY",
+         "multiline replacement should publish normalized replacement text");
+}
+
 void TestTextViewportUndoRedoPreservesLatestViewState() {
   TextViewport viewport;
   viewport.LoadContent("zero\none\ntwo\nthree\nfour\nfive\nsix\nseven\n", "/tmp/history.cpp");
@@ -519,6 +627,16 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportHighlightCheckpointsPreserveMultilineState);
   AddTest(tests, "TextViewport/EditingNearTailDoesNotRebuildFarCheckpoints",
           TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints);
+  AddTest(tests, "TextViewport/InsertNewlineCopiesLeadingIndentation",
+          TestTextViewportInsertNewlineCopiesLeadingIndentation);
+  AddTest(tests, "TextViewport/InsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward",
+          TestTextViewportInsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward);
+  AddTest(tests, "TextViewport/MultiCaretNewlineCopiesIndentationPerCaret",
+          TestTextViewportMultiCaretNewlineCopiesIndentationPerCaret);
+  AddTest(tests, "TextViewport/LastAppliedEditTracksInsertUndoRedo",
+          TestTextViewportLastAppliedEditTracksInsertUndoRedo);
+  AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",
+          TestTextViewportLastAppliedEditTracksMultilineReplacement);
   AddTest(tests, "TextViewport/UndoRedoPreservesLatestViewState",
           TestTextViewportUndoRedoPreservesLatestViewState);
   AddTest(tests, "TextViewport/UndoRedoPreservesSecondaryCarets",

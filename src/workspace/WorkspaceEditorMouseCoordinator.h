@@ -21,8 +21,7 @@ class EditorMouseCoordinator {
         compute_editor_scroll_layout;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> reset_caret_blink;
-    std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
-        request_active_editable_change_redraw;
+    std::function<void()> request_active_editable_last_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<void()> request_tab_strip_redraw;
     std::function<void()> request_focused_editor_redraw;

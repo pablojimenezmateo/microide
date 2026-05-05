@@ -1194,6 +1194,7 @@
   void PublishLspDiagnostics(ProjectWorkspaceState& state,
                              std::string uri,
                              std::vector<LspClient::Diagnostic> diagnostics);
+  void SyncLspForActiveEditableLastChange();
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
   void CloseAllTabs();
@@ -1358,6 +1359,7 @@
   void RequestSidebarLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBreadcrumbRedraw();
   void RequestTabStripRedraw();
+  void RequestActiveEditableLastChangeRedraw();
   void RequestEditorSurfaceRedraw();
   void RequestActiveTabRedraw(bool include_tree_sidebar = false);
   void RequestFocusedEditorRedraw();

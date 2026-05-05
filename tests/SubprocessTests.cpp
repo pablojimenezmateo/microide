@@ -1,9 +1,13 @@
 #include "TestSupport.h"
 
+#include "platform/AsyncSubprocess.h"
 #include "platform/Subprocess.h"
 
+#include <atomic>
+#include <chrono>
 #include <optional>
 #include <string>
+#include <thread>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -170,6 +174,56 @@ void TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin() {
   Expect(result.stderr_text.empty(),
          "stdin inheritance regression fixture should not emit stderr");
 }
+
+void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
+  microide::platform::AsyncSubprocess process;
+  Expect(process.Start({"cat"}),
+         "async subprocess concurrency fixture should start a cat process");
+
+  std::atomic<bool> stop_reader{false};
+  std::thread reader([&]() {
+    while (!stop_reader.load(std::memory_order_acquire)) {
+      const auto chunk = process.Read(4096, 50);
+      if (!chunk.has_value()) {
+        return;
+      }
+    }
+  });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  const auto start = std::chrono::steady_clock::now();
+  Expect(process.Write("ping\n"),
+         "async subprocess concurrency fixture should accept stdin while reads are pending");
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+  stop_reader.store(true, std::memory_order_release);
+  if (reader.joinable()) {
+    reader.join();
+  }
+
+  std::string echoed;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() <= deadline) {
+    const auto chunk = process.Read(4096, 50);
+    if (!chunk.has_value()) {
+      break;
+    }
+    if (chunk->empty()) {
+      continue;
+    }
+    echoed += *chunk;
+    if (echoed.find("ping\n") != std::string::npos) {
+      break;
+    }
+  }
+  process.Shutdown(0);
+
+  Expect(elapsed.count() < 500,
+         "async subprocess writes should not stall behind read timeouts on another thread");
+  Expect(echoed.find("ping\n") != std::string::npos,
+         "async subprocess concurrency fixture should echo the written payload");
+}
 #endif
 
 }  // namespace
@@ -182,6 +236,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestSubprocessAppliesEnvironmentOverrides);
   AddTest(tests, "Subprocess/WithoutExplicitStdinDoesNotInheritParentStdin",
           TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin);
+  AddTest(tests, "Subprocess/AsyncReadTimeoutDoesNotBlockConcurrentWrite",
+          TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite);
 #endif
 }
 

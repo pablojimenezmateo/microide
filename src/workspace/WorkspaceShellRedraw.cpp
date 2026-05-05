@@ -249,8 +249,71 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
   RequestEditorLineRangeRedraw(start_line, std::max(changed_span->new_end, start_line + 1));
 }
 
+void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
+  util::PerformanceTrace::Scope perf_scope(
+      "WorkspaceShell::RequestActiveEditableLastChangeRedraw");
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr) {
+    RequestFocusedEditorRedraw();
+    return;
+  }
+
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SyncLsp");
+    SyncLspForActiveEditableLastChange();
+  }
+  const auto& applied_edit = viewport->last_applied_edit();
+  if (!applied_edit.has_value()) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::FallbackFullRedraw");
+    RequestFocusedEditorRedraw();
+    return;
+  }
+
+  std::size_t start_line = 0;
+  std::size_t removed_lines = 0;
+  std::size_t inserted_lines = 0;
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::ComputeChangedSpan");
+    start_line = applied_edit->range_before.start.line;
+    removed_lines =
+        applied_edit->range_before.end.line >= applied_edit->range_before.start.line
+            ? applied_edit->range_before.end.line - applied_edit->range_before.start.line
+            : 0;
+    inserted_lines = static_cast<std::size_t>(
+        std::count(applied_edit->replacement_text.begin(), applied_edit->replacement_text.end(), '\n'));
+  }
+  if (removed_lines != inserted_lines) {
+    util::PerformanceTrace::Scope redraw_scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::FallbackLineCountMismatch");
+    RequestFocusedEditorRedraw();
+    return;
+  }
+
+  const std::size_t end_line = start_line + inserted_lines + 1;
+  if (ActiveTabIsCompare()) {
+    util::PerformanceTrace::Scope redraw_scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::ComparePartialRedraw");
+    RequestCompareRightLineRangeRedraw(start_line, end_line);
+    return;
+  }
+  if (ActiveTabIsMerge()) {
+    util::PerformanceTrace::Scope redraw_scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::MergePartialRedraw");
+    RequestMergeResultLineRangeRedraw(start_line, end_line);
+    return;
+  }
+  util::PerformanceTrace::Scope redraw_scope(
+      "WorkspaceShell::RequestActiveEditableLastChangeRedraw::EditorPartialRedraw");
+  RequestEditorLineRangeRedraw(start_line, end_line);
+}
+
 void WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
                                                                   std::size_t after_line) {
+  util::PerformanceTrace::Scope perf_scope(
+      "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw");
   const std::size_t min_line = std::min(before_line, after_line);
   const std::size_t max_line = std::max(before_line, after_line);
   const std::size_t start_line =
@@ -258,13 +321,19 @@ void WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw(std::size_t be
   const std::size_t end_line = max_line + kBlameNeighborhoodRadius + 1;
 
   if (ActiveTabIsCompare()) {
+    util::PerformanceTrace::Scope redraw_scope(
+        "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw::Compare");
     RequestCompareRightLineRangeRedraw(start_line, end_line);
     return;
   }
   if (ActiveTabIsMerge()) {
+    util::PerformanceTrace::Scope redraw_scope(
+        "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw::Merge");
     RequestMergeResultLineRangeRedraw(start_line, end_line);
     return;
   }
+  util::PerformanceTrace::Scope redraw_scope(
+      "WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw::Editor");
   RequestEditorLineRangeRedraw(start_line, end_line);
 }
 

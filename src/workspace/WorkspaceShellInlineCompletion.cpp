@@ -119,9 +119,17 @@ bool WorkspaceShell::AcceptInlineCompletion() {
     return false;
   }
 
-  const std::vector<std::string> before_lines = viewport->lines();
-  const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-  const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
+  const bool was_dirty = viewport->dirty();
+  const std::size_t cursor_before_line = viewport->cursor_line();
+  std::vector<std::string> before_lines;
+  std::optional<editor::SelectionRange> selection_before;
+  std::optional<editor::TextPosition> cursor_before;
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+    before_lines = viewport->lines();
+    selection_before = viewport->selection_range();
+    cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+  }
   viewport->ReplaceRange(
       editor::SelectionRange{
           .start = editor::TextPosition{
@@ -138,7 +146,13 @@ bool WorkspaceShell::AcceptInlineCompletion() {
   }
   if (auto* merge_tab = ActiveMergeTab();
       merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-    UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, cursor_before);
+    UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, *cursor_before);
+  }
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  if (viewport->dirty() != was_dirty) {
+    RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line, viewport->cursor_line());
+    RequestTabStripRedraw();
   }
   DismissInlineCompletion();
   RequestFocusedEditorRedraw();

@@ -2,7 +2,46 @@
 
 #include <limits>
 
+#include "util/PerformanceTrace.h"
+
 namespace microide::workspace {
+
+namespace {
+
+template <typename EditFn>
+bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
+                            editor::TextViewport& viewport,
+                            std::string_view scope_label,
+                            EditFn&& edit) {
+  util::PerformanceTrace::Scope edit_scope(scope_label);
+  const bool was_dirty = viewport.dirty();
+  const std::size_t cursor_before_line = viewport.cursor_line();
+  {
+    util::PerformanceTrace::Scope scope(
+        "KeyInputCoordinator::HandleDefaultEditorKeyDown::ViewportEdit");
+    edit();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "KeyInputCoordinator::HandleDefaultEditorKeyDown::ResetCaretBlink");
+    operations.reset_caret_blink();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "KeyInputCoordinator::HandleDefaultEditorKeyDown::RequestLastChangeRedraw");
+    operations.request_active_editable_last_change_redraw();
+  }
+  if (viewport.dirty() != was_dirty) {
+    util::PerformanceTrace::Scope scope(
+        "KeyInputCoordinator::HandleDefaultEditorKeyDown::DirtyStateSideEffects");
+    operations.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                 viewport.cursor_line());
+    operations.request_tab_strip_redraw();
+  }
+  return true;
+}
+
+}  // namespace
 
 bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
@@ -15,12 +54,11 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       }
       const bool was_dirty = viewport.dirty();
       const std::size_t cursor_before_line = viewport.cursor_line();
-      const std::vector<std::string> before_lines = viewport.lines();
       edit();
       operations_.refresh_compare_tab_derived_state(*compare_tab);
       operations_.sync_compare_selection_from_viewport(*compare_tab, true);
       operations_.reset_caret_blink();
-      operations_.request_active_editable_change_redraw(before_lines, viewport.lines());
+      operations_.request_active_editable_last_change_redraw();
       if (viewport.dirty() != was_dirty) {
         operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport.cursor_line());
@@ -209,7 +247,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
                                                           selection_before, cursor_before);
     operations_.reset_caret_blink();
-    operations_.request_active_editable_change_redraw(before_lines, viewport.lines());
+    operations_.request_active_editable_last_change_redraw();
     if (viewport.dirty() != was_dirty) {
       operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                     viewport.cursor_line());
@@ -330,70 +368,36 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       if (editable_viewport == nullptr) {
         return true;
       }
-      const bool was_dirty = editable_viewport->dirty();
-      const std::size_t cursor_before_line = editable_viewport->cursor_line();
-      const std::vector<std::string> before_lines = editable_viewport->lines();
-      editable_viewport->InsertTab();
-      operations_.reset_caret_blink();
-      operations_.request_active_editable_change_redraw(before_lines, editable_viewport->lines());
-      if (editable_viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      editable_viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
-      return true;
+      return ApplyDefaultEditorEdit(operations_, *editable_viewport,
+                                    "KeyInputCoordinator::HandleDefaultEditorKeyDown::InsertTab",
+                                    [&]() { editable_viewport->InsertTab(); });
     }
     case SDLK_RETURN:
     case SDLK_KP_ENTER: {
       if (editable_viewport == nullptr) {
         return true;
       }
-      const bool was_dirty = editable_viewport->dirty();
-      const std::size_t cursor_before_line = editable_viewport->cursor_line();
-      const std::vector<std::string> before_lines = editable_viewport->lines();
-      editable_viewport->InsertNewline();
-      operations_.reset_caret_blink();
-      operations_.request_active_editable_change_redraw(before_lines, editable_viewport->lines());
-      if (editable_viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      editable_viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
-      return true;
+      return ApplyDefaultEditorEdit(
+          operations_, *editable_viewport,
+          "KeyInputCoordinator::HandleDefaultEditorKeyDown::InsertNewline",
+          [&]() { editable_viewport->InsertNewline(); });
     }
     case SDLK_BACKSPACE: {
       if (editable_viewport == nullptr) {
         return true;
       }
-      const bool was_dirty = editable_viewport->dirty();
-      const std::size_t cursor_before_line = editable_viewport->cursor_line();
-      const std::vector<std::string> before_lines = editable_viewport->lines();
-      editable_viewport->Backspace();
-      operations_.reset_caret_blink();
-      operations_.request_active_editable_change_redraw(before_lines, editable_viewport->lines());
-      if (editable_viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      editable_viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
-      return true;
+      return ApplyDefaultEditorEdit(operations_, *editable_viewport,
+                                    "KeyInputCoordinator::HandleDefaultEditorKeyDown::Backspace",
+                                    [&]() { editable_viewport->Backspace(); });
     }
     case SDLK_DELETE: {
       if (editable_viewport == nullptr) {
         return true;
       }
-      const bool was_dirty = editable_viewport->dirty();
-      const std::size_t cursor_before_line = editable_viewport->cursor_line();
-      const std::vector<std::string> before_lines = editable_viewport->lines();
-      editable_viewport->DeleteForward();
-      operations_.reset_caret_blink();
-      operations_.request_active_editable_change_redraw(before_lines, editable_viewport->lines());
-      if (editable_viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      editable_viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
-      }
-      return true;
+      return ApplyDefaultEditorEdit(
+          operations_, *editable_viewport,
+          "KeyInputCoordinator::HandleDefaultEditorKeyDown::DeleteForward",
+          [&]() { editable_viewport->DeleteForward(); });
     }
     default:
       break;

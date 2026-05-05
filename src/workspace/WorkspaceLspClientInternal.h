@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -82,10 +83,13 @@ struct LspClient::Impl {
   platform::AsyncSubprocess proc;
   std::mutex mutex;
   std::mutex send_mutex;
+  std::condition_variable send_cv;
 
   // Reader thread state
   std::thread reader_thread;
   std::atomic<bool> stop_reader{false};
+  std::thread writer_thread;
+  std::atomic<bool> stop_writer{false};
 
   // Initialization thread state
   std::thread init_thread;
@@ -111,6 +115,7 @@ struct LspClient::Impl {
 
   std::unordered_map<std::string, int> document_versions;
   std::vector<std::string> deferred_messages;
+  std::deque<std::string> outbound_messages;
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
@@ -169,6 +174,44 @@ struct LspClient::Impl {
     return proc.Write(message);
   }
 
+  void StartWriterThreadLocked() {
+    if (writer_thread.joinable()) {
+      return;
+    }
+    stop_writer.store(false, std::memory_order_release);
+    writer_thread = std::thread([this]() { WriterMain(); });
+  }
+
+  void StopWriterThread() {
+    stop_writer.store(true, std::memory_order_release);
+    send_cv.notify_all();
+    if (writer_thread.joinable()) {
+      writer_thread.join();
+    }
+  }
+
+  void WriterMain() {
+    while (true) {
+      std::string message;
+      {
+        std::unique_lock lock(send_mutex);
+        send_cv.wait(lock, [this]() {
+          return stop_writer.load(std::memory_order_acquire) || !outbound_messages.empty();
+        });
+        if (stop_writer.load(std::memory_order_acquire) && outbound_messages.empty()) {
+          return;
+        }
+        message = std::move(outbound_messages.front());
+        outbound_messages.pop_front();
+      }
+
+      if (!SendSerializedMessageUnlocked(message)) {
+        SetLastError("failed to send message to language server");
+        return;
+      }
+    }
+  }
+
   bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false) {
     if (!allow_during_shutdown && shutting_down.load(std::memory_order_acquire)) {
       return false;
@@ -191,12 +234,18 @@ struct LspClient::Impl {
       deferred_messages.push_back(serialized);
       return true;
     }
-    return SendSerializedMessageUnlocked(serialized);
+    if (!proc.IsRunning()) {
+      return false;
+    }
+    outbound_messages.push_back(serialized);
+    send_cv.notify_one();
+    return true;
   }
 
   void ClearDeferredMessages() {
     std::lock_guard lock(send_mutex);
     deferred_messages.clear();
+    outbound_messages.clear();
   }
 
   void ResetProtocolState() {
@@ -544,16 +593,12 @@ struct LspClient::Impl {
         return;
       }
       initialized.store(true, std::memory_order_release);
-      for (const std::string& message : deferred_messages) {
-        if (!SendSerializedMessageUnlocked(message)) {
-          SetLastError("failed to flush deferred language server messages");
-          deferred_messages.clear();
-          ShutdownProcessOnce();
-          initializing.store(false, std::memory_order_release);
-          return;
-        }
+      StartWriterThreadLocked();
+      for (std::string& message : deferred_messages) {
+        outbound_messages.push_back(std::move(message));
       }
       deferred_messages.clear();
+      send_cv.notify_all();
     }
 
     stop_reader.store(false);
@@ -568,6 +613,7 @@ struct LspClient::Impl {
     stop_init.store(true);
     if (!initialized.load(std::memory_order_acquire)) {
       TraceLspLifecycle(language_id, proc.pid(), "preinit-cancel");
+      StopWriterThread();
       ShutdownProcessOnce(0);
       if (init_thread.joinable()) {
         init_thread.join();
@@ -587,6 +633,7 @@ struct LspClient::Impl {
     if (init_thread.joinable()) {
       init_thread.join();
     }
+    StopWriterThread();
     ClearDeferredMessages();
 
     using namespace util;

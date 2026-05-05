@@ -210,6 +210,8 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
                                                      cursor_before);
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
           .request_active_editable_change_redraw =
               [this](const std::vector<std::string>& before_lines,
                      const std::vector<std::string>& after_lines) {

@@ -353,33 +353,40 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
         return false;
       }
       {
-    editor::TextViewport* viewport = operations_.active_editable_viewport();
-    if (viewport == nullptr) {
-      return false;
-    }
-    const bool was_dirty = viewport->dirty();
-    const std::vector<std::string> before_lines = viewport->lines();
-    const std::optional<editor::SelectionRange> selection_before = viewport->selection_range();
-    const editor::TextPosition cursor_before{viewport->cursor_line(), viewport->cursor_column()};
-    viewport->InsertText(input);
-    if (auto* compare_tab = operations_.active_compare_tab();
-        compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-      operations_.refresh_compare_tab_derived_state(*compare_tab);
-      operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-    }
-    if (auto* merge_tab = operations_.active_merge_tab();
-        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
-                                                            selection_before, cursor_before);
-    }
-    operations_.reset_caret_blink();
-    operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
-    if (viewport->dirty() != was_dirty) {
-      operations_.request_active_editable_blame_neighborhood_redraw(cursor_before.line,
-                                                                    viewport->cursor_line());
-      operations_.request_tab_strip_redraw();
-    }
-    return true;
+        editor::TextViewport* viewport = operations_.active_editable_viewport();
+        if (viewport == nullptr) {
+          return false;
+        }
+        const bool was_dirty = viewport->dirty();
+        const std::size_t cursor_before_line = viewport->cursor_line();
+        std::vector<std::string> before_lines;
+        std::optional<editor::SelectionRange> selection_before;
+        std::optional<editor::TextPosition> cursor_before;
+        if (auto* merge_tab = operations_.active_merge_tab();
+            merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+          before_lines = viewport->lines();
+          selection_before = viewport->selection_range();
+          cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+        }
+        viewport->InsertText(input);
+        if (auto* compare_tab = operations_.active_compare_tab();
+            compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+          operations_.refresh_compare_tab_derived_state(*compare_tab);
+          operations_.sync_compare_selection_from_viewport(*compare_tab, true);
+        }
+        if (auto* merge_tab = operations_.active_merge_tab();
+            merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+          operations_.update_merge_tracking_after_viewport_edit(*merge_tab, before_lines,
+                                                                selection_before, *cursor_before);
+        }
+        operations_.reset_caret_blink();
+        operations_.request_active_editable_last_change_redraw();
+        if (viewport->dirty() != was_dirty) {
+          operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                        viewport->cursor_line());
+          operations_.request_tab_strip_redraw();
+        }
+        return true;
       }
     case TextInputSurface::Terminal:
       if (auto* terminal_tab = operations_.active_terminal_tab(); terminal_tab != nullptr) {

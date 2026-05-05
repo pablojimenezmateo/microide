@@ -38,6 +38,11 @@ struct SelectionRange {
   TextPosition end;
 };
 
+struct AppliedEdit {
+  SelectionRange range_before;
+  std::string replacement_text;
+};
+
 class TextViewport {
  public:
   using LineEnding = util::LineEnding;
@@ -131,6 +136,7 @@ class TextViewport {
   void ClearSecondaryCarets();
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
+  const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
   std::string SelectedText() const;
   std::string CurrentLineTextForClipboard() const;
   bool DeleteSelectedText();
@@ -238,11 +244,14 @@ class TextViewport {
                                                          const ViewState& before_state,
                                                          const std::vector<std::string>& after_lines,
                                                          const ViewState& after_state);
+  static std::optional<AppliedEdit> BuildAppliedEditForHistoryEntry(const HistoryEntry& entry,
+                                                                    bool forward);
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo);
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
                      const std::vector<std::string>& replacement,
                      bool record_undo);
+  std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
   void InvalidateDerivedCaches();
   void InvalidateDerivedCaches(std::size_t start_line);
   void InvalidateVisualColumnCache();
@@ -302,6 +311,7 @@ class TextViewport {
   mutable std::size_t highlight_state_advances_ = 0;
   mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
+  std::optional<AppliedEdit> last_applied_edit_;
 };
 
 }  // namespace microide::editor

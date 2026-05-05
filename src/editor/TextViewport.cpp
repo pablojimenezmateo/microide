@@ -37,6 +37,10 @@ bool TextPositionLess(const TextPosition& lhs, const TextPosition& rhs) {
   return lhs.column < rhs.column;
 }
 
+bool IsIndentCharacter(char c) {
+  return c == ' ' || c == '\t';
+}
+
 }  // namespace
 
 TextViewport::TextViewport() {
@@ -315,7 +319,9 @@ void TextViewport::InsertNewline() {
   const SelectionRange range = selection_range().value_or(
       SelectionRange{TextPosition{cursor_line_, cursor_column_},
                      TextPosition{cursor_line_, cursor_column_}});
-  (void)ApplyRangeEdit(range, "\n", true);
+  const std::string newline_text =
+      "\n" + AutoIndentForNewline(cursor_line_, cursor_column_);
+  (void)ApplyRangeEdit(range, newline_text, true);
 }
 
 void TextViewport::InsertTab() {
@@ -333,6 +339,7 @@ void TextViewport::InsertTab() {
 }
 
 void TextViewport::Backspace() {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::Backspace");
   if (document_->lines.empty()) {
     return;
   }
@@ -371,6 +378,7 @@ void TextViewport::Backspace() {
 }
 
 void TextViewport::DeleteForward() {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::DeleteForward");
   if (document_->lines.empty()) {
     return;
   }
@@ -409,6 +417,7 @@ void TextViewport::DeleteForward() {
 }
 
 bool TextViewport::Undo() {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::Undo");
   if (document_->undo_stack.empty()) {
     return false;
   }
@@ -416,12 +425,20 @@ bool TextViewport::Undo() {
   HistoryEntry entry = std::move(document_->undo_stack.back());
   document_->undo_stack.pop_back();
   entry.after_state = CaptureViewState();
-  ApplyHistoryEntry(entry, false);
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::Undo::ApplyHistoryEntry");
+    ApplyHistoryEntry(entry, false);
+  }
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::Undo::BuildAppliedEdit");
+    last_applied_edit_ = BuildAppliedEditForHistoryEntry(entry, false);
+  }
   document_->redo_stack.push_back(std::move(entry));
   return true;
 }
 
 bool TextViewport::Redo() {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::Redo");
   if (document_->redo_stack.empty()) {
     return false;
   }
@@ -429,7 +446,14 @@ bool TextViewport::Redo() {
   HistoryEntry entry = std::move(document_->redo_stack.back());
   document_->redo_stack.pop_back();
   entry.before_state = CaptureViewState();
-  ApplyHistoryEntry(entry, true);
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::Redo::ApplyHistoryEntry");
+    ApplyHistoryEntry(entry, true);
+  }
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::Redo::BuildAppliedEdit");
+    last_applied_edit_ = BuildAppliedEditForHistoryEntry(entry, true);
+  }
   document_->undo_stack.push_back(std::move(entry));
   return true;
 }
@@ -1308,7 +1332,63 @@ TextViewport::HistoryEntry TextViewport::BuildHistoryEntryForDocumentChange(
   };
 }
 
+std::optional<AppliedEdit> TextViewport::BuildAppliedEditForHistoryEntry(
+    const TextViewport::HistoryEntry& entry,
+    bool forward) {
+  const std::vector<std::string>& before_lines = forward ? entry.before_lines : entry.after_lines;
+  const std::vector<std::string>& after_lines = forward ? entry.after_lines : entry.before_lines;
+  if (before_lines.empty() || after_lines.empty()) {
+    return std::nullopt;
+  }
+
+  const std::string& before_first = before_lines.front();
+  const std::string& after_first = after_lines.front();
+  std::size_t common_prefix = 0;
+  const std::size_t max_prefix = std::min(before_first.size(), after_first.size());
+  while (common_prefix < max_prefix && before_first[common_prefix] == after_first[common_prefix]) {
+    ++common_prefix;
+  }
+
+  const std::string& before_last = before_lines.back();
+  const std::string& after_last = after_lines.back();
+  std::size_t common_suffix = 0;
+  const std::size_t max_suffix = std::min(before_last.size(), after_last.size());
+  while (common_suffix < max_suffix &&
+         before_last[before_last.size() - 1 - common_suffix] ==
+             after_last[after_last.size() - 1 - common_suffix]) {
+    if ((before_lines.size() == 1 && common_prefix + common_suffix >= before_first.size()) ||
+        (after_lines.size() == 1 && common_prefix + common_suffix >= after_first.size())) {
+      break;
+    }
+    ++common_suffix;
+  }
+
+  std::vector<std::string> replacement_lines = after_lines;
+  replacement_lines.front().erase(0, common_prefix);
+  if (common_suffix > 0) {
+    replacement_lines.back().erase(replacement_lines.back().size() - common_suffix);
+  }
+
+  return AppliedEdit{
+      .range_before =
+          SelectionRange{
+              .start =
+                  TextPosition{
+                      .line = entry.start_line,
+                      .column = common_prefix,
+                  },
+              .end =
+                  TextPosition{
+                      .line = entry.start_line + before_lines.size() - 1,
+                      .column = before_last.size() - common_suffix,
+                  },
+          },
+      .replacement_text = util::SerializeLines(replacement_lines, util::LineEnding::LF),
+  };
+}
+
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
+  last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.push_back("");
@@ -1332,8 +1412,10 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
     const std::size_t line = std::min(it->line, document_->lines.size() - 1);
     const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+    const std::string replacement =
+        text == "\n" ? "\n" + AutoIndentForNewline(line, column) : std::string(text);
     const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(
-        SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, text);
+        SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, replacement);
     if (!entry.has_value()) {
       if (!(line == primary_before.line && column == primary_before.column)) {
         updated_secondary_carets.push_back(TextPosition{line, column});
@@ -1368,16 +1450,39 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   document_->dirty = true;
   EnsureCursorVisible();
 
+  const HistoryEntry aggregate_entry =
+      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
   if (record_undo) {
-    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
-                                                        document_->lines, CaptureViewState()));
+    PushHistoryEntry(aggregate_entry);
   } else {
     document_->redo_stack.clear();
   }
   return true;
 }
 
+std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t column) const {
+  if (line >= document_->lines.size()) {
+    return {};
+  }
+
+  const std::string& current_line = document_->lines[line];
+  const std::size_t clamped_column = TextLayout::ClampTextColumn(current_line, column);
+  const auto first_non_indent = std::find_if(
+      current_line.begin(), current_line.end(),
+      [](char c) { return !IsIndentCharacter(c); });
+  if (first_non_indent == current_line.end()) {
+    return {};
+  }
+
+  const std::size_t indent_columns =
+      std::min<std::size_t>(static_cast<std::size_t>(first_non_indent - current_line.begin()),
+                            clamped_column);
+  return current_line.substr(0, indent_columns);
+}
+
 bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
+  last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.push_back("");
@@ -1454,9 +1559,11 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   document_->dirty = true;
   EnsureCursorVisible();
 
+  const HistoryEntry aggregate_entry =
+      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
   if (record_undo) {
-    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
-                                                        document_->lines, CaptureViewState()));
+    PushHistoryEntry(aggregate_entry);
   } else {
     document_->redo_stack.clear();
   }
@@ -1464,6 +1571,7 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
 }
 
 bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
+  last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.push_back("");
@@ -1537,9 +1645,11 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   document_->dirty = true;
   EnsureCursorVisible();
 
+  const HistoryEntry aggregate_entry =
+      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
   if (record_undo) {
-    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
-                                                        document_->lines, CaptureViewState()));
+    PushHistoryEntry(aggregate_entry);
   } else {
     document_->redo_stack.clear();
   }
@@ -1556,10 +1666,12 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
 
   const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
   if (!entry.has_value()) {
+    last_applied_edit_.reset();
     return false;
   }
 
   ApplyHistoryEntry(*entry, true);
+  last_applied_edit_ = BuildAppliedEditForHistoryEntry(*entry, true);
   if (record_undo) {
     HistoryEntry saved_entry = *entry;
     saved_entry.after_state = CaptureViewState();
@@ -1581,6 +1693,7 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
 
   const HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
   ApplyHistoryEntry(entry, true);
+  last_applied_edit_ = BuildAppliedEditForHistoryEntry(entry, true);
   if (record_undo) {
     HistoryEntry saved_entry = entry;
     saved_entry.after_state = CaptureViewState();

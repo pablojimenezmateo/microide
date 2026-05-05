@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -187,6 +188,7 @@ LspClient* WorkspaceShell::LspClientForViewport(const editor::TextViewport& view
 void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
                                            LspClient& client,
                                            std::string_view language_id) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::EnsureLspDocumentOpen");
   if (viewport.path().empty() || language_id.empty()) {
     return;
   }
@@ -194,7 +196,8 @@ void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
   if (client.HasOpenDocument(uri)) {
     return;
   }
-  client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
+  const std::string full_text = SerializeViewportText(viewport);
+  client.DidOpen(uri, std::string(language_id), full_text);
 }
 
 void WorkspaceShell::PublishLspDiagnostics(ProjectWorkspaceState& state,
@@ -264,6 +267,66 @@ void WorkspaceShell::SyncLspForActiveEditableChange(const std::vector<std::strin
               LspClient::Position{static_cast<int>(end_line), static_cast<int>(end_column)},
       },
       full_text);
+}
+
+void WorkspaceShell::SyncLspForActiveEditableLastChange() {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::SyncLspForActiveEditableLastChange");
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return;
+  }
+
+  std::string language_id;
+  LspClient* client = nullptr;
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::SyncLspForActiveEditableLastChange::ResolveClient");
+    client = LspClientForViewport(*viewport, &language_id);
+  }
+  if (client == nullptr) {
+    return;
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::SyncLspForActiveEditableLastChange::EnsureDocumentOpen");
+    EnsureLspDocumentOpen(*viewport, *client, language_id);
+  }
+
+  const std::string uri = FileUriForPath(viewport->path());
+  const auto& applied_edit = viewport->last_applied_edit();
+  if (!applied_edit.has_value()) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::SyncLspForActiveEditableLastChange::FullSyncNoAppliedEdit");
+    const std::string full_text =
+        util::SerializeLines(viewport->lines(), viewport->line_ending());
+    client->DidChange(uri, full_text);
+    return;
+  }
+
+  if (!client->SupportsIncrementalSync()) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceShell::SyncLspForActiveEditableLastChange::FullSyncNoIncrementalSupport");
+    const std::string full_text =
+        util::SerializeLines(viewport->lines(), viewport->line_ending());
+    client->DidChange(uri, full_text);
+    return;
+  }
+
+  util::PerformanceTrace::Scope scope(
+      "WorkspaceShell::SyncLspForActiveEditableLastChange::IncrementalSync");
+  client->DidChangeIncremental(
+      uri,
+      LspClient::Range{
+          .start = LspClient::Position{
+              static_cast<int>(applied_edit->range_before.start.line),
+              static_cast<int>(applied_edit->range_before.start.column),
+          },
+          .end = LspClient::Position{
+              static_cast<int>(applied_edit->range_before.end.line),
+              static_cast<int>(applied_edit->range_before.end.column),
+          },
+      },
+      applied_edit->replacement_text);
 }
 
 }  // namespace microide::workspace

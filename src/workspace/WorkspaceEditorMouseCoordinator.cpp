@@ -130,10 +130,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         text.has_value()) {
       const bool was_dirty = viewport->dirty();
       const std::size_t cursor_before_line = viewport->cursor_line();
-      const std::vector<std::string> before_lines = viewport->lines();
       viewport->InsertText(*text);
       operations_.reset_caret_blink();
-      operations_.request_active_editable_change_redraw(before_lines, viewport->lines());
+      operations_.request_active_editable_last_change_redraw();
       if (viewport->dirty() != was_dirty) {
         operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
@@ -339,11 +338,8 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
               },
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
-          .request_active_editable_change_redraw =
-              [this](const std::vector<std::string>& before_lines,
-                     const std::vector<std::string>& after_lines) {
-                RequestActiveEditableChangeRedraw(before_lines, after_lines);
-              },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
           .request_active_editable_blame_neighborhood_redraw =
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
