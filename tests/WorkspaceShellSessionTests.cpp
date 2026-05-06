@@ -2,7 +2,6 @@
 
 #include "platform/AppDirectories.h"
 #include "workspace/WorkspaceShellTestAccess.h"
-#include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "project/GitCompareService.h"
 
@@ -38,12 +37,6 @@ float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
     max_height = std::max(max_height, rect.h);
   }
   return max_height;
-}
-
-std::filesystem::path ProjectStateDirectoryFor(const std::filesystem::path& project_root) {
-  const std::filesystem::path state_root =
-      microide::platform::ResolveAppDirectory(microide::platform::UserDirectoryKind::State, "microide");
-  return state_root / "projects" / microide::workspace::ProjectStateDirectoryName(project_root);
 }
 
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
@@ -115,163 +108,6 @@ void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
          "restored branch comparison should preserve its session-persistable flag");
 }
 
-void TestWorkspaceShellImportsLegacyUserConfigAndArchivesSource() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path home = temp_dir.path() / "home";
-  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
-  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
-  std::filesystem::create_directories(home);
-  std::filesystem::create_directories(xdg_state_home);
-  std::filesystem::create_directories(xdg_config_home);
-  ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
-
-  const std::filesystem::path config_root =
-      microide::platform::ResolveAppDirectory(microide::platform::UserDirectoryKind::Config, "microide");
-  const std::filesystem::path legacy_path = config_root / "user.config";
-  WriteFile(legacy_path,
-            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-                .ui_scale = 1.6f,
-                .settings = {},
-                .disabled_keybinding_ids = {},
-            }));
-
-  WorkspaceShell shell;
-  Expect(WorkspaceShellTestAccess::RestoreUserConfig(shell),
-         "legacy user config should import successfully");
-  Expect(std::fabs(shell.UiScale() - 1.6f) < 0.0001f,
-         "imported user config should update ui scale");
-  Expect(std::filesystem::exists(legacy_path.string() + ".legacy"),
-         "legacy user config should be archived");
-  Expect(std::filesystem::exists(config_root / "config"),
-         "structured user config should be written to the new target path");
-}
-
-void TestWorkspaceShellImportsLegacyProjectStateAndArchivesSource() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path sample = root / "main.cpp";
-  WriteFile(sample, "int main() { return 0; }\n");
-
-  const std::filesystem::path home = temp_dir.path() / "home";
-  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
-  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
-  std::filesystem::create_directories(home);
-  std::filesystem::create_directories(xdg_state_home);
-  std::filesystem::create_directories(xdg_config_home);
-  ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
-
-  const std::filesystem::path project_state_dir = ProjectStateDirectoryFor(root);
-  const std::filesystem::path legacy_path = project_state_dir / "project.state";
-  WriteFile(legacy_path,
-            microide::workspace::SerializeProjectConfig(
-                microide::workspace::PersistedProjectConfigState{
-                    .editor_tab_size = 7,
-                    .editor_indent_width = 3,
-                    .editor_soft_tabs = true,
-                    .colorscheme_name = "default",
-                    .project_base_color = std::nullopt,
-                    .settings = {},
-                    .sidebar_policies = {},
-                }));
-
-  WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  Expect(WorkspaceShellTestAccess::RestoreConfigState(shell),
-         "legacy project.state should import successfully");
-  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
-  Expect(state.editor_preferences.tab_size == 7 &&
-             state.editor_preferences.indent_width == 3 &&
-             state.editor_preferences.soft_tabs,
-         "imported project config should apply editor preferences");
-  Expect(std::filesystem::exists(legacy_path.string() + ".legacy"),
-         "legacy project.state should be archived");
-  Expect(std::filesystem::exists(project_state_dir / "config"),
-         "structured project config should be written to the new target path");
-}
-
-void TestWorkspaceShellImportsLegacyWorkspaceSessionAndArchivesSource() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path first_root = temp_dir.path() / "project-a";
-  const std::filesystem::path second_root = temp_dir.path() / "project-b";
-  WriteFile(first_root / "a.txt", "alpha\n");
-  WriteFile(second_root / "b.txt", "beta\n");
-
-  const std::filesystem::path home = temp_dir.path() / "home";
-  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
-  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
-  std::filesystem::create_directories(home);
-  std::filesystem::create_directories(xdg_state_home);
-  std::filesystem::create_directories(xdg_config_home);
-  ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
-
-  const std::filesystem::path state_root =
-      microide::platform::ResolveAppDirectory(microide::platform::UserDirectoryKind::State, "microide");
-  const std::filesystem::path legacy_path = state_root / "session.workspace";
-  WriteFile(legacy_path,
-            microide::workspace::SerializeWorkspaceSession(
-                microide::workspace::PersistedWorkspaceSessionState{
-                    .project_roots = {first_root, second_root},
-                    .active_project_index = 1,
-                }));
-
-  WorkspaceShell shell;
-  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(shell),
-         "legacy workspace session should import successfully");
-  Expect(WorkspaceShellTestAccess::ProjectCount(shell) == 2 &&
-             WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 1,
-         "imported workspace session should restore project catalog state");
-  Expect(std::filesystem::exists(legacy_path.string() + ".legacy"),
-         "legacy session.workspace should be archived");
-  Expect(std::filesystem::exists(state_root / "workspace-session"),
-         "structured workspace session should be written to the new target path");
-}
-
-void TestWorkspaceShellImportsLegacyChatConversationsAndArchivesSource() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path root = temp_dir.path() / "project";
-  WriteFile(root / "main.cpp", "int main() { return 0; }\n");
-
-  const std::filesystem::path home = temp_dir.path() / "home";
-  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
-  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
-  std::filesystem::create_directories(home);
-  std::filesystem::create_directories(xdg_state_home);
-  std::filesystem::create_directories(xdg_config_home);
-  ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
-
-  const std::filesystem::path project_state_dir = ProjectStateDirectoryFor(root);
-  const std::filesystem::path legacy_path = project_state_dir / "chat.conversations";
-  WriteFile(legacy_path,
-            "chat-active-conversation conv-1\n"
-            "conv-begin conv-1\n"
-            "conv-schema 5\n"
-            "conv-title Chat\n"
-            "msg-begin msg-1\n"
-            "msg-role assistant\n"
-            "msg-content reply\n"
-            "conv-end\n");
-
-  WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  Expect(WorkspaceShellTestAccess::RestoreSessionState(shell),
-         "legacy chat conversations should import into project session");
-  const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
-  Expect(state.conversations.conversations().size() == 1 &&
-             state.panel.chat.conversation_id == "conv-1",
-         "imported chat conversations should restore active conversation");
-  Expect(std::filesystem::exists(legacy_path.string() + ".legacy"),
-         "legacy chat.conversations should be archived");
-  Expect(std::filesystem::exists(project_state_dir / "session"),
-         "structured project session should be written to the target path");
-}
 
 void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
   TemporaryDirectory temp_dir;
@@ -1606,14 +1442,6 @@ void TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice() {
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
-  AddTest(tests, "WorkspaceShell/ImportsLegacyUserConfigAndArchivesSource",
-          TestWorkspaceShellImportsLegacyUserConfigAndArchivesSource);
-  AddTest(tests, "WorkspaceShell/ImportsLegacyProjectStateAndArchivesSource",
-          TestWorkspaceShellImportsLegacyProjectStateAndArchivesSource);
-  AddTest(tests, "WorkspaceShell/ImportsLegacyWorkspaceSessionAndArchivesSource",
-          TestWorkspaceShellImportsLegacyWorkspaceSessionAndArchivesSource);
-  AddTest(tests, "WorkspaceShell/ImportsLegacyChatConversationsAndArchivesSource",
-          TestWorkspaceShellImportsLegacyChatConversationsAndArchivesSource);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",
           TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState);
   AddTest(tests, "WorkspaceShell/ReopenFileReloadsCleanEditorTab",

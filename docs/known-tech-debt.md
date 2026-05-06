@@ -68,15 +68,11 @@ What is still open:
   the watcher wiring lands.
 - Git dispatch (`GitOperations::Status`, `Blame`, `Log`) still runs synchronously on the tab/sidebar
   activation path; the `ProjectBackgroundExecutor` exists but migration is deferred (tasks 3.2–3.6).
-- `WorkspaceTabCoordinatorShellBridge` and `WorkspaceToolDownloader` still call `RunSubprocess`
-  synchronously; tracked separately as formatter and tool-validator follow-ups.
 
 Recommended follow-up:
 - Wire `FileIndexWatcher` to project open in the workspace coordinator (task 2.2) and update the
   file-finder and search call sites to consume `ProjectFileIndex::Snapshot()` (tasks 2.4–2.5).
 - Migrate git sidebar dispatch through `ProjectBackgroundExecutor` (tasks 3.2–3.4).
-- Only move formatter and tool-validator calls async after the git dispatch migration lands and
-  profiling confirms they are on a latency-sensitive path.
 
 ## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 
@@ -221,9 +217,9 @@ are good candidates for the next openspec tech-debt pass:
 2. The `WorkspaceShell*.cpp` companion files (~70 translation units defined against
    `WorkspaceShellMembers.inc`) keep behavior on the shell namespace even though the header was
    slimmed. Any new behavior should land on a service, not a new `WorkspaceShell*.cpp` companion.
-3. `WorkspacePersistenceLegacyFormat.cpp` and the surrounding one-shot importer should be deleted
-   in the scheduled `legacy-persistence-cleanup` follow-up (release +2). Do not extend the legacy
-   parser; only the structured format gets new fields.
+3. Legacy persistence importer follow-up:
+   - Closed in `codebase-cleanup-perf-and-debt`; `WorkspacePersistenceLegacyFormat.*` was deleted
+     and persistence now stays on structured records only.
 4. Architectural-lint coverage gap:
    - Closed in this change: discovered render-unit scanning is active, plugin/coordinator size
      checks are hard-fail, and the shell test-access header now has an explicit cap check.

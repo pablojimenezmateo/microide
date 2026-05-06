@@ -204,6 +204,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/IgnoreMatcher.cpp
   src/project/PatternCache.cpp
   src/project/ProjectBackgroundExecutor.cpp
+  src/project/SubprocessHelper.cpp
   src/project/ProjectSearchService.cpp
   src/project/ProjectRoot.cpp
   src/render/DebugTextBackend.cpp
@@ -314,7 +315,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/TerminalPanelService.cpp
   src/workspace/WorkspaceTaskRuntime.cpp
-  src/workspace/WorkspacePersistenceLegacyFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/PersistenceService.cpp
@@ -484,6 +484,7 @@ add_executable(microide_tests
   tests/BackgroundTaskCounterTests.cpp
   tests/FileIndexWatcherTests.cpp
   tests/PatternCacheTests.cpp
+  tests/WorkspaceToolDownloaderTests.cpp
   tests/PersistedRecordDumpTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
@@ -579,18 +580,6 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(PersistedRecordReaderFuzz)
 
-  add_executable(LegacyImporterFuzz
-    src/util/Parse.cpp
-    src/util/StringUtil.cpp
-    src/workspace/WorkspaceCommandParsing.cpp
-    src/workspace/WorkspacePathUtils.cpp
-    src/workspace/WorkspaceProjectPresentation.cpp
-    src/workspace/WorkspacePersistenceLegacyFormat.cpp
-    src/workspace/WorkspaceTextSearch.cpp
-    tests/fuzz/LegacyImporterFuzz.cpp
-  )
-  microide_configure_fuzz_target(LegacyImporterFuzz)
-
   add_executable(SearchRegexFuzz
     tests/fuzz/SearchRegexFuzz.cpp
   )
@@ -623,7 +612,11 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   endif()
 
   target_include_directories(microide_perf PRIVATE src tests)
-  target_link_libraries(microide_perf PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+  target_link_libraries(microide_perf PRIVATE
+    ${MICROIDE_SDL3_TARGET}
+    ${MICROIDE_PCRE2_TARGET}
+    ${MICROIDE_CURL_TARGET}
+  )
   if(NOT MICROIDE_LUA_TARGET STREQUAL "")
     target_link_libraries(microide_perf PRIVATE ${MICROIDE_LUA_TARGET})
   endif()

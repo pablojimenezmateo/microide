@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <future>
 
-#include "platform/Subprocess.h"
+#include "project/SubprocessHelper.h"
 
 namespace microide::workspace {
 
@@ -22,7 +23,7 @@ std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& ur
   return std::nullopt;
 }
 
-std::optional<std::string> ComputeSha256(const std::filesystem::path& path) {
+std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& path) {
   auto parse_digest = [](const std::string& stdout_text) -> std::optional<std::string> {
     const std::size_t split = stdout_text.find_first_of(" \t\r\n");
     if (split == std::string::npos) {
@@ -32,13 +33,13 @@ std::optional<std::string> ComputeSha256(const std::filesystem::path& path) {
   };
 
   const platform::SubprocessResult sha256sum =
-      platform::RunSubprocess({"sha256sum", path.string()});
+      project::RunSubprocess({"sha256sum", path.string()});
   if (sha256sum.success()) {
     return parse_digest(sha256sum.stdout_text);
   }
 
   const platform::SubprocessResult shasum =
-      platform::RunSubprocess({"shasum", "-a", "256", path.string()});
+      project::RunSubprocess({"shasum", "-a", "256", path.string()});
   if (shasum.success()) {
     return parse_digest(shasum.stdout_text);
   }
@@ -72,11 +73,21 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   }
 
   const std::filesystem::path cached_path = cache_dir_ / tool_id;
+  auto compute_sha256_async =
+      [this](const std::filesystem::path& path) -> std::optional<std::string> {
+    auto promise = std::make_shared<std::promise<std::optional<std::string>>>();
+    std::future<std::optional<std::string>> future = promise->get_future();
+    background_executor_.Post([promise, path]() {
+      promise->set_value(ComputeSha256Blocking(path));
+    });
+    return future.get();
+  };
+
   if (std::filesystem::exists(cached_path)) {
     if (expected_sha256.empty()) {
       return cached_path;
     }
-    if (const auto cached_sha = ComputeSha256(cached_path);
+    if (const auto cached_sha = compute_sha256_async(cached_path);
         cached_sha.has_value() && *cached_sha == expected_sha256) {
       return cached_path;
     }
@@ -113,7 +124,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
   }
 
   if (!expected_sha256.empty()) {
-    const auto digest = ComputeSha256(cached_path);
+    const auto digest = compute_sha256_async(cached_path);
     if (!digest.has_value() || *digest != expected_sha256) {
       std::error_code remove_error;
       std::filesystem::remove(cached_path, remove_error);

@@ -52,6 +52,8 @@ struct SidebarSurfaceViewModel {
   SidebarMode mode = SidebarMode::Tree;
   int scroll_row = 0;
   bool project_search_editing = false;
+  std::string query_fallback_text;
+  std::string replace_fallback_text;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

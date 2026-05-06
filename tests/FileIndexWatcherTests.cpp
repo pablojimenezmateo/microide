@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -459,6 +460,43 @@ void TestFileIndexWatcherUnwatchDuringBootstrapIsSafe() {
   }
 }
 
+void TestFileIndexWatcherPollDiffSingleTickEmitsUniqueCreateModifyDelete() {
+  using Snapshot = microide::platform::detail::FileIndexSnapshot;
+  const auto t0 = std::filesystem::file_time_type::clock::now();
+
+  Snapshot previous;
+  previous[std::filesystem::path("modify.txt")] = {t0, 10};
+  previous[std::filesystem::path("delete.txt")] = {t0, 20};
+  previous[std::filesystem::path("same.txt")] = {t0, 30};
+
+  Snapshot current;
+  current[std::filesystem::path("modify.txt")] = {t0 + std::chrono::seconds(1), 11};
+  current[std::filesystem::path("create.txt")] = {t0 + std::chrono::seconds(2), 40};
+  current[std::filesystem::path("same.txt")] = {t0, 30};
+
+  const std::vector<IndexUpdateBatch::Change> changes =
+      microide::platform::detail::BuildPollSnapshotDiff(previous, current);
+  Expect(changes.size() == 3,
+         "single-tick poll diff should emit exactly one create, one modify, and one delete");
+
+  std::set<std::filesystem::path> created_or_modified;
+  std::set<std::filesystem::path> deleted;
+  for (const auto& change : changes) {
+    if (change.kind == IndexUpdateBatch::Kind::CreatedOrModified) {
+      created_or_modified.insert(change.entry.relative_path);
+    } else if (change.kind == IndexUpdateBatch::Kind::Deleted) {
+      deleted.insert(change.entry.relative_path);
+    }
+  }
+
+  Expect(created_or_modified.size() == 2 &&
+             created_or_modified.contains(std::filesystem::path("create.txt")) &&
+             created_or_modified.contains(std::filesystem::path("modify.txt")),
+         "poll diff should contain exactly one create and one modify entry");
+  Expect(deleted.size() == 1 && deleted.contains(std::filesystem::path("delete.txt")),
+         "poll diff should contain exactly one delete entry");
+}
+
 }  // namespace
 
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
@@ -482,6 +520,8 @@ void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests) {
           TestFileIndexWatcherWatchReturnsPromptly);
   AddTest(tests, "FileIndexWatcher/UnwatchDuringBootstrapIsSafe",
           TestFileIndexWatcherUnwatchDuringBootstrapIsSafe);
+  AddTest(tests, "FileIndexWatcher/PollDiffSingleTickEmitsUniqueCreateModifyDelete",
+          TestFileIndexWatcherPollDiffSingleTickEmitsUniqueCreateModifyDelete);
 }
 
 }  // namespace microide::tests

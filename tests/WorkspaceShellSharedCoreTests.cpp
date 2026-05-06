@@ -6,7 +6,6 @@
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePathUtils.h"
-#include "workspace/WorkspacePersistenceLegacyFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceShell.h"
@@ -34,8 +33,6 @@ using microide::workspace::BuildWorkspaceTabTextModel;
 using microide::workspace::CollapseWhitespace;
 using microide::workspace::CommandCompletionCandidate;
 using microide::workspace::CommonPrefix;
-using microide::workspace::DecodeSessionNodePath;
-using microide::workspace::EncodeSessionNodePath;
 using microide::workspace::FindBuiltinSidebarView;
 using microide::workspace::FindSidebarView;
 using microide::workspace::FindWorkspaceActionByCommand;
@@ -50,11 +47,7 @@ using microide::workspace::MenuId;
 using microide::workspace::MenuSpec;
 using microide::workspace::ParseCommandLine;
 using microide::workspace::ParseSidebarViewRequest;
-using microide::workspace::ParseProjectConfigText;
-using microide::workspace::ParseProjectSessionText;
 using microide::workspace::ParseUiScaleValue;
-using microide::workspace::ParseUserConfigText;
-using microide::workspace::ParseWorkspaceSessionText;
 using microide::workspace::PathEqualsOrWithin;
 using microide::workspace::PersistedEditorTabState;
 using microide::workspace::PersistedEditorViewState;
@@ -68,10 +61,6 @@ using microide::workspace::PersistedWorkspaceSessionState;
 using microide::workspace::QuoteCommandArg;
 using microide::workspace::RelativePathLabel;
 using microide::workspace::ReplacePathPrefix;
-using microide::workspace::SerializeProjectConfig;
-using microide::workspace::SerializeProjectSession;
-using microide::workspace::SerializeUserConfig;
-using microide::workspace::SerializeWorkspaceSession;
 using microide::workspace::SidebarViewIds;
 using microide::workspace::SidebarViewRequest;
 using microide::workspace::SidebarViewSpec;
@@ -127,18 +116,6 @@ void TestWorkspaceSharedUiScaleParsing() {
   Expect(!invalid.has_value(), "invalid ui scale should fail");
 }
 
-void TestWorkspaceSharedSessionEncoding() {
-  const std::vector<std::size_t> path = {0, 3, 12};
-  const std::string encoded = EncodeSessionNodePath(path);
-  Expect(encoded == "0/3/12", "session path encoding mismatch");
-
-  const auto decoded = DecodeSessionNodePath(encoded);
-  Expect(decoded.has_value(), "session path decoding should succeed");
-  Expect(*decoded == path, "decoded session path should match original");
-
-  const auto root = DecodeSessionNodePath(".");
-  Expect(root.has_value() && root->empty(), "root session path should decode to empty path");
-}
 
 void TestWorkspaceSharedQuoteAndLineEndings() {
   Expect(QuoteCommandArg("plain-token") == "plain-token", "plain token should not be quoted");
@@ -485,234 +462,6 @@ void TestWorkspaceSharedChromeTextModel() {
          "merge breadcrumb helper should include both merge sides");
 }
 
-void TestWorkspaceSharedPersistenceSerializers() {
-  PersistedUserConfigState user_config{
-      .ui_scale = 1.75f,
-      .settings = {},
-      .disabled_keybinding_ids = {},
-  };
-  PersistedUserConfigState parsed_user_config{
-      .ui_scale = 1.0f,
-      .settings = {},
-      .disabled_keybinding_ids = {},
-  };
-  Expect(ParseUserConfigText(SerializeUserConfig(user_config), &parsed_user_config),
-         "user-config serializer should round-trip");
-  Expect(parsed_user_config.ui_scale == 1.75f,
-         "user-config serializer should preserve ui scale");
-
-  PersistedProjectConfigState project_config{
-      .editor_tab_size = 8,
-      .editor_indent_width = 2,
-      .editor_soft_tabs = true,
-      .colorscheme_name = "sunny-day custom",
-      .project_base_color = SDL_Color{0x12, 0x34, 0x56, 0xff},
-      .settings = {},
-      .sidebar_policies = {},
-  };
-  PersistedProjectConfigState parsed_project_config;
-  Expect(ParseProjectConfigText(SerializeProjectConfig(project_config), &parsed_project_config),
-         "project-config serializer should round-trip");
-  Expect(parsed_project_config.editor_tab_size == 8,
-         "project-config serializer should preserve tab size");
-  Expect(parsed_project_config.editor_indent_width == 2,
-         "project-config serializer should preserve indent width");
-  Expect(parsed_project_config.editor_soft_tabs,
-         "project-config serializer should preserve soft-tab mode");
-  Expect(parsed_project_config.colorscheme_name == "sunny-day custom",
-         "project-config serializer should preserve quoted colorscheme names");
-  Expect(parsed_project_config.project_base_color.has_value() &&
-             parsed_project_config.project_base_color->r == 0x12 &&
-             parsed_project_config.project_base_color->g == 0x34 &&
-             parsed_project_config.project_base_color->b == 0x56,
-         "project-config serializer should preserve project base colors");
-
-  PersistedEditorTabState compare_tab;
-  compare_tab.kind = "compare";
-  compare_tab.compare_path = "/tmp/project/src/compare.txt";
-  compare_tab.compare_left_path = "/tmp/project/src/compare.txt";
-  compare_tab.compare_right_path = "/tmp/project/src/compare.txt";
-  compare_tab.compare_commit_hash = "abcdef123456";
-  compare_tab.compare_commit_short_hash = "abcdef1";
-  compare_tab.compare_right_ref = "WORKTREE";
-  compare_tab.compare_right_label = "Working tree";
-  compare_tab.compare_selected_row = 3;
-  compare_tab.compare_scroll_row = 4;
-  compare_tab.compare_horizontal_scroll = 5;
-
-  PersistedEditorTabState merge_tab;
-  merge_tab.kind = "merge";
-  merge_tab.merge_base_path = "/tmp/project/base.txt";
-  merge_tab.merge_incoming_path = "/tmp/project/incoming.txt";
-  merge_tab.merge_current_path = "/tmp/project/current.txt";
-  merge_tab.merge_output_path = "/tmp/project/result.txt";
-  merge_tab.merge_selected_hunk = 1;
-  merge_tab.merge_scroll_row = 6;
-  merge_tab.merge_horizontal_scroll = 7;
-  merge_tab.merge_left_divider_fraction = 0.25f;
-  merge_tab.merge_right_divider_fraction = 0.75f;
-  merge_tab.merge_hunk_choices = {"base", "incoming", "both"};
-
-  PersistedEditorTabState editor_tab;
-  editor_tab.kind = "editor";
-  editor_tab.active_leaf_id = 9;
-  editor_tab.views.push_back(PersistedEditorViewState{
-      .leaf_id = 9,
-      .path = "/tmp/project/src/main.cpp",
-      .cursor_line = 12,
-      .cursor_column = 4,
-      .scroll_line = 8,
-      .horizontal_scroll = 2,
-      .dirty_snapshot = false,
-      .line_ending = microide::editor::TextViewport::LineEnding::LF,
-      .buffer_lines = {},
-  });
-  editor_tab.split_nodes.push_back(PersistedSplitNodeState{
-      .path = {},
-      .orientation = "leaf",
-      .size_fraction = 1.0f,
-      .leaf_id = 9,
-  });
-
-  PersistedProjectSessionState project_session;
-  project_session.sidebar_visible = false;
-  project_session.sidebar_width = 320.0f;
-  project_session.bottom_panel_height = 208.0f;
-  project_session.active_tab_index = 2;
-  project_session.tabs = {compare_tab, merge_tab, editor_tab};
-  project_session.chat.active_conversation_id = "conv-1";
-  project_session.chat.conversations.push_back(PersistedConversationState{
-      .schema_version = 5,
-      .id = "conv-1",
-      .title = "Chat",
-      .provider_id = "openai.chat",
-      .model_id = "gpt-4.1-mini",
-      .status = "succeeded",
-      .tool_mode = "ask",
-      .draft = "draft text",
-      .system_prompt = "be concise",
-      .created_at = "2026-04-24T10:00:00Z",
-      .updated_at = "2026-04-24T10:01:00Z",
-      .last_request_duration_ms = 345,
-      .messages =
-          {
-              PersistedMessageState{
-                  .id = "msg-1",
-                  .role = "assistant",
-                  .content = "reply",
-                  .timestamp = "2026-04-24T10:01:00Z",
-                  .provider_id = "openai.chat",
-                  .model = "gpt-4.1-mini",
-                  .status = "succeeded",
-                  .request_duration_ms = 345,
-                  .error = {},
-                  .tool_events =
-                      {
-                          PersistedMessageState::PersistedToolEventState{
-                              .call_id = "tool-1",
-                              .tool_id = "phase5.echo",
-                              .display_name = "Echo",
-                              .arguments_summary = "{\"ping\":1}",
-                              .status = "completed",
-                              .permission_decision = "session",
-                              .capability_scope = "phase5.echo",
-                              .started_at = "2026-04-24T10:00:00Z",
-                              .finished_at = "2026-04-24T10:00:01Z",
-                              .duration_ms = 12,
-                              .error = {},
-                              .output_summary = "{\"pong\":1}",
-                          },
-                      },
-              },
-          },
-  });
-  PersistedProjectSessionState parsed_project_session;
-  Expect(ParseProjectSessionText(SerializeProjectSession(project_session), &parsed_project_session),
-         "project-session serializer should round-trip");
-  Expect(!parsed_project_session.sidebar_visible,
-         "project-session serializer should preserve sidebar visibility");
-  Expect(std::fabs(parsed_project_session.sidebar_width - 320.0f) < 0.001f,
-         "project-session serializer should preserve sidebar width");
-  Expect(std::fabs(parsed_project_session.bottom_panel_height - 208.0f) < 0.001f,
-         "project-session serializer should preserve bottom-panel height");
-  Expect(parsed_project_session.active_tab_index == 2,
-         "project-session serializer should preserve the active tab index");
-  Expect(parsed_project_session.tabs.size() == 3,
-         "project-session serializer should preserve every tab kind");
-  Expect(parsed_project_session.tabs[0].compare_right_label == "Working tree" &&
-             parsed_project_session.tabs[0].compare_horizontal_scroll == 5,
-         "project-session serializer should preserve compare-tab metadata");
-  Expect(parsed_project_session.tabs[1].merge_hunk_choices.size() == 3 &&
-             parsed_project_session.tabs[1].merge_hunk_choices[2] == "both",
-         "project-session serializer should preserve merge choices");
-  Expect(parsed_project_session.tabs[2].views.size() == 1 &&
-             parsed_project_session.tabs[2].split_nodes.size() == 1,
-         "project-session serializer should preserve editor views and split nodes");
-  Expect(parsed_project_session.chat.active_conversation_id == "conv-1" &&
-             parsed_project_session.chat.conversations.size() == 1,
-         "project-session serializer should preserve chat session identity");
-  Expect(parsed_project_session.chat.conversations.front().schema_version == 5 &&
-             parsed_project_session.chat.conversations.front().system_prompt == "be concise" &&
-             parsed_project_session.chat.conversations.front().last_request_duration_ms == 345,
-         "project-session serializer should preserve conversation schema and timing fields");
-  Expect(parsed_project_session.chat.conversations.front().messages.size() == 1 &&
-             parsed_project_session.chat.conversations.front().messages.front().request_duration_ms ==
-                 345 &&
-             parsed_project_session.chat.conversations.front().messages.front().tool_events.size() ==
-                 1 &&
-             parsed_project_session.chat.conversations.front()
-                     .messages.front()
-                     .tool_events.front()
-                     .permission_decision == "session",
-         "project-session serializer should preserve per-message durations and tool events");
-
-  PersistedWorkspaceSessionState workspace_session{
-      .project_roots = {"/tmp/project-a", "/tmp/project b"},
-      .active_project_index = 1,
-  };
-  PersistedWorkspaceSessionState parsed_workspace_session;
-  Expect(ParseWorkspaceSessionText(SerializeWorkspaceSession(workspace_session),
-                                   &parsed_workspace_session),
-         "workspace-session serializer should round-trip");
-  Expect(parsed_workspace_session.project_roots.size() == 2,
-         "workspace-session serializer should preserve every project root");
-  Expect(parsed_workspace_session.project_roots[1] == "/tmp/project b",
-         "workspace-session serializer should preserve quoted project roots");
-  Expect(parsed_workspace_session.active_project_index == 1,
-         "workspace-session serializer should preserve the active project index");
-}
-
-void TestWorkspaceSharedProjectSessionV3ChatMigration() {
-  const std::string legacy_session =
-      "version 3\n"
-      "sidebar-visible 1\n"
-      "sidebar-width 288\n"
-      "bottom-panel-height 184\n"
-      "active-tab 0\n"
-      "chat-active-conversation conv-1\n"
-      "conv-begin conv-1\n"
-      "conv-title Chat\n"
-      "conv-provider openai.chat\n"
-      "conv-model gpt-4.1-mini\n"
-      "conv-status succeeded\n"
-      "conv-tool-mode ask\n"
-      "conv-draft draft text\n"
-      "msg-begin msg-1\n"
-      "msg-role assistant\n"
-      "msg-status succeeded\n"
-      "msg-content reply\n"
-      "conv-end\n";
-
-  PersistedProjectSessionState parsed;
-  Expect(ParseProjectSessionText(legacy_session, &parsed),
-         "project-session parser should accept version 3 chat payloads");
-  Expect(parsed.chat.conversations.size() == 1 &&
-             parsed.chat.conversations.front().schema_version == 1,
-         "version 3 chat payloads should migrate to the default conversation schema");
-  Expect(parsed.chat.conversations.front().system_prompt.empty() &&
-             parsed.chat.conversations.front().last_request_duration_ms == 0,
-         "version 3 chat payloads should default missing phase-1 fields deterministically");
-}
 
 void TestWorkspaceReadmeCommandDocsStayInSync() {
   const std::string readme = ReadFile(TestRoot().parent_path() / "README.md");
@@ -750,7 +499,6 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ParseCommandLineIncompleteState",
           TestWorkspaceSharedParseCommandLineIncompleteState);
   AddTest(tests, "WorkspaceShared/UiScaleParsing", TestWorkspaceSharedUiScaleParsing);
-  AddTest(tests, "WorkspaceShared/SessionEncoding", TestWorkspaceSharedSessionEncoding);
   AddTest(tests, "WorkspaceShared/QuoteAndLineEndings", TestWorkspaceSharedQuoteAndLineEndings);
   AddTest(tests, "WorkspaceShared/SplitSyntaxLines", TestWorkspaceSharedSplitSyntaxLines);
   AddTest(tests, "WorkspaceShared/SerializeLines", TestWorkspaceSharedSerializeLines);
@@ -771,10 +519,6 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/Utf8Metrics", TestWorkspaceSharedUtf8Metrics);
   AddTest(tests, "WorkspaceShared/CollapseWhitespace", TestWorkspaceSharedCollapseWhitespace);
   AddTest(tests, "WorkspaceShared/ChromeTextModel", TestWorkspaceSharedChromeTextModel);
-  AddTest(tests, "WorkspaceShared/PersistenceSerializers",
-          TestWorkspaceSharedPersistenceSerializers);
-  AddTest(tests, "WorkspaceShared/ProjectSessionV3ChatMigration",
-          TestWorkspaceSharedProjectSessionV3ChatMigration);
   AddTest(tests, "Workspace/ReadmeCommandDocsStayInSync",
           TestWorkspaceReadmeCommandDocsStayInSync);
 }

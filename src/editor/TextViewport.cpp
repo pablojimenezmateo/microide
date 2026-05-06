@@ -476,11 +476,13 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     return 0;
   }
 
-  const std::vector<std::string> before_lines = document_->lines;
   const ViewState before_state = CaptureViewState();
   const std::string lowered_needle = ToLower(needle);
   const std::string lowered_replacement = ToLower(replacement);
   std::size_t replacements = 0;
+  std::size_t first_changed_line = document_->lines.size();
+  std::size_t last_changed_line = 0;
+  std::vector<std::string> before_changed_lines;
 
   // Build the final document state in one pass per line, bypassing ApplyRangeEdit
   // so that InvalidateDerivedCaches / RefreshEncoding are called once at the end
@@ -506,6 +508,15 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
       offset = lowered_line.find(lowered_needle, offset + replacement.size());
     }
     new_line.append(current_line, copy_from);
+    if (first_changed_line == document_->lines.size()) {
+      first_changed_line = line_index;
+    } else if (line_index > last_changed_line + 1) {
+      for (std::size_t gap = last_changed_line + 1; gap < line_index; ++gap) {
+        before_changed_lines.push_back(document_->lines[gap]);
+      }
+    }
+    before_changed_lines.push_back(current_line);
+    last_changed_line = line_index;
     current_line = std::move(new_line);
   }
 
@@ -515,8 +526,14 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     RefreshEncoding();
     InvalidateLayoutCaches();
     EnsureCursorVisible();
-    PushHistoryEntry(BuildHistoryEntryForDocumentChange(
-        before_lines, before_state, document_->lines, CaptureViewState()));
+    const ViewState after_state = CaptureViewState();
+    PushHistoryEntry(HistoryEntry{
+        .start_line = first_changed_line,
+        .before_lines = std::move(before_changed_lines),
+        .after_lines = SliceLines(document_->lines, first_changed_line, last_changed_line + 1),
+        .before_state = before_state,
+        .after_state = after_state,
+    });
   }
   return replacements;
 }
@@ -751,7 +768,15 @@ std::string TextViewport::SelectedText() const {
     return document_->lines[start.line].substr(start.column, end.column - start.column);
   }
 
-  std::string text = document_->lines[start.line].substr(start.column);
+  std::size_t total_bytes = document_->lines[start.line].size() - start.column;
+  for (std::size_t line = start.line + 1; line < end.line; ++line) {
+    total_bytes += 1 + document_->lines[line].size();
+  }
+  total_bytes += 1 + end.column;
+
+  std::string text;
+  text.reserve(total_bytes);
+  text += document_->lines[start.line].substr(start.column);
   text.push_back('\n');
   for (std::size_t line = start.line + 1; line < end.line; ++line) {
     text += document_->lines[line];
@@ -766,7 +791,9 @@ std::string TextViewport::CurrentLineTextForClipboard() const {
     return {};
   }
 
-  std::string text = document_->lines[cursor_line_];
+  std::string text;
+  text.reserve(document_->lines[cursor_line_].size() + 1);
+  text += document_->lines[cursor_line_];
   text.push_back('\n');
   return text;
 }

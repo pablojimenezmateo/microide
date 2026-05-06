@@ -63,6 +63,7 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests);
 void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests);
 void RegisterPatternCacheTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -237,6 +238,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterBackgroundTaskCounterTests(tests);
   microide::tests::RegisterFileIndexWatcherTests(tests);
   microide::tests::RegisterPatternCacheTests(tests);
+  microide::tests::RegisterWorkspaceToolDownloaderTests(tests);
 
   bool ran_any = false;
   std::size_t selected_count = 0;

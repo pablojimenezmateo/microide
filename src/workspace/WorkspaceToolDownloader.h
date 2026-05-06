@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "project/ProjectBackgroundExecutor.h"
+
 namespace microide::workspace {
 
 // Tool download progress callback.
@@ -49,6 +51,7 @@ class ToolDownloader {
  private:
   std::filesystem::path cache_dir_;
   OnProgress on_progress_;
+  project::ProjectBackgroundExecutor background_executor_;
 };
 
 }  // namespace microide::workspace

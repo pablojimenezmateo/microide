@@ -1,12 +1,15 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
+#include <future>
 
 #include "editor/RuntimeSyntaxRegistry.h"
-#include "platform/Subprocess.h"
+#include "project/SubprocessHelper.h"
 #include "util/StringUtil.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -125,13 +128,24 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
   if (const FormatterSpec* formatter =
           filetype.empty() ? nullptr : formatter_registry_.FindFormatter(filetype);
       formatter != nullptr && !formatter->command.empty()) {
-    const platform::SubprocessResult result =
-        platform::RunSubprocess(formatter->command,
-                                platform::SubprocessOptions{
-                                    .cwd = context_.current_project_state.root,
-                                    .stdin_text = text,
-                                    .environment_overrides = {},
-                                });
+    const std::filesystem::path formatter_cwd = context_.current_project_state.root;
+    const std::vector<std::string> formatter_command = formatter->command;
+    const std::string formatter_input = text;
+    auto formatter_promise = std::make_shared<std::promise<platform::SubprocessResult>>();
+    std::future<platform::SubprocessResult> formatter_future = formatter_promise->get_future();
+    project_background_executor_.Post(
+        [formatter_promise, formatter_cwd, formatter_command, formatter_input]() mutable {
+      platform::SubprocessResult subprocess_result =
+          project::RunSubprocess(formatter_command,
+                                 platform::SubprocessOptions{
+                                     .cwd = formatter_cwd,
+                                     .stdin_text = formatter_input,
+                                     .environment_overrides = {},
+                                 });
+      formatter_promise->set_value(std::move(subprocess_result));
+    });
+    platform::SubprocessResult result = formatter_future.get();
+
     if (!result.success()) {
       if (error_message != nullptr) {
         *error_message = "formatter '" + formatter->id + "' failed";
@@ -139,7 +153,7 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
           *error_message += ": " + result.stderr_text;
         }
       }
-      return false;
+      return true;
     }
     if (!result.stdout_text.empty()) {
       text = result.stdout_text;

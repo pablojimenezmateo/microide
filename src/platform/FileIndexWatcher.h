@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -54,5 +55,15 @@ class FileIndexWatcher {
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
+
+namespace detail {
+
+using FileIndexSnapshot =
+    std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::uintmax_t>>;
+
+std::vector<IndexUpdateBatch::Change> BuildPollSnapshotDiff(const FileIndexSnapshot& previous,
+                                                            const FileIndexSnapshot& current);
+
+}  // namespace detail
 
 }  // namespace microide::platform

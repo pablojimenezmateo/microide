@@ -113,13 +113,6 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       return fallback;
     };
 
-    const std::string_view query_text =
-        editing_query ? ps.edit_buffer.text() : ps.query.text();
-    const std::string_view replace_text =
-        editing_replace ? ps.edit_buffer.text() : ps.replace_text.text();
-    const std::string query_fallback = "search> " + std::string(query_text);
-    const std::string replace_fallback = "replace> " + std::string(replace_text);
-
     const SDL_FRect query_rect = ProjectSearchQueryRect(layout.sidebar);
     const SDL_FRect replace_rect = ProjectSearchReplaceRect(layout.sidebar);
     DrawTextFieldFrame(renderer, theme_, query_rect,
@@ -131,13 +124,14 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         std::max(1.0f, query_rect.w - 12.0f),
         editing_query ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
-        sidebar_display_text(TextInputSurface::SidebarSearchQuery, query_fallback));
+        sidebar_display_text(TextInputSurface::SidebarSearchQuery, sidebar_vm.query_fallback_text));
     DrawSingleLineTextTail(
         renderer, replace_rect.x + 6.0f, replace_rect.y + 2.0f,
         std::max(1.0f, replace_rect.w - 12.0f),
         editing_replace ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
-        sidebar_display_text(TextInputSurface::SidebarSearchReplace, replace_fallback));
+        sidebar_display_text(TextInputSurface::SidebarSearchReplace,
+                             sidebar_vm.replace_fallback_text));
     const auto draw_search_button = [&](const SDL_FRect& rect,
                                         std::string_view label,
                                         bool active) {

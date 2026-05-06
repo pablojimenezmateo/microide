@@ -57,6 +57,12 @@ These are implemented and should not be treated as open migration work:
 
 ## Active Phases
 
+Update (2026-05-06): `codebase-cleanup-perf-and-debt` shipped focused cleanup slices across render,
+editor, subprocess, and persistence paths: sidebar query/replace fallback text now materializes in
+`RenderViewModelBuilder`, clipboard and replace-all flows reduced large transient allocations,
+formatter and tool SHA verification dispatch now run through background execution seams, and the
+legacy persistence importer was removed in favor of structured-record-only persistence.
+
 ### 1. Plugin Platform Expansion
 
 This is the dominant current phase and will be large.

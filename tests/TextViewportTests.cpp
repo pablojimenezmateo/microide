@@ -5,6 +5,7 @@
 #include "editor/TextViewport.h"
 
 #include <algorithm>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -444,6 +445,25 @@ void TestTextViewportMultiCaretDeleteCurrentLineIsAtomic() {
          "undo should restore all deleted lines atomically");
 }
 
+void TestTextViewportSelectAllCopiesLargeDocumentRoundTrip() {
+  TextViewport viewport;
+  std::string content;
+  content.reserve(10000 * 16);
+  for (int i = 0; i < 10000; ++i) {
+    if (!content.empty()) {
+      content.push_back('\n');
+    }
+    content += "line ";
+    content += std::to_string(i);
+  }
+
+  viewport.LoadContent(content, "/tmp/copy-large.txt");
+  viewport.SelectAll();
+
+  const std::string copied = viewport.SelectedText();
+  Expect(copied == content, "select-all copy should round-trip a 10k-line document");
+}
+
 void TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-rows.txt");
@@ -513,6 +533,48 @@ void TestTextViewportMaxVisualColumnsUpdatesIncrementally() {
   viewport.ReplaceRange({{1, 0}, {1, viewport.lines()[1].size()}}, "tiny");
   Expect(viewport.max_visual_columns() == 6,
          "shrinking the former widest line should recompute the new maximum width");
+}
+
+void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
+  TextViewport viewport;
+  std::string content;
+  content.reserve(50000 * 16);
+  for (int i = 0; i < 50000; ++i) {
+    if (!content.empty()) {
+      content.push_back('\n');
+    }
+    content += "row ";
+    content += std::to_string(i);
+    if (i % 10000 == 0) {
+      content += " target";
+    }
+  }
+  viewport.LoadContent(content, "/tmp/replace-all-large.txt");
+
+  const std::size_t replaced = viewport.ReplaceAll("TARGET", "hit");
+  Expect(replaced == 5, "replace-all should update sparse case-insensitive matches");
+  Expect(viewport.lines()[0].find("hit") != std::string::npos &&
+             viewport.lines()[10000].find("hit") != std::string::npos &&
+             viewport.lines()[20000].find("hit") != std::string::npos &&
+             viewport.lines()[30000].find("hit") != std::string::npos &&
+             viewport.lines()[40000].find("hit") != std::string::npos,
+         "replace-all should rewrite each sparse matching line");
+
+  Expect(viewport.Undo(), "undo should succeed after replace-all on a large sparse document");
+  Expect(viewport.lines()[0].find("target") != std::string::npos &&
+             viewport.lines()[10000].find("target") != std::string::npos &&
+             viewport.lines()[20000].find("target") != std::string::npos &&
+             viewport.lines()[30000].find("target") != std::string::npos &&
+             viewport.lines()[40000].find("target") != std::string::npos,
+         "undo should restore sparse replace-all lines");
+
+  Expect(viewport.Redo(), "redo should succeed after undoing sparse replace-all");
+  Expect(viewport.lines()[0].find("hit") != std::string::npos &&
+             viewport.lines()[10000].find("hit") != std::string::npos &&
+             viewport.lines()[20000].find("hit") != std::string::npos &&
+             viewport.lines()[30000].find("hit") != std::string::npos &&
+             viewport.lines()[40000].find("hit") != std::string::npos,
+         "redo should reapply sparse replace-all changes");
 }
 
 void TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader() {
@@ -647,6 +709,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportMultiCaretBackspaceAndDeleteForward);
   AddTest(tests, "TextViewport/MultiCaretDeleteCurrentLineIsAtomic",
           TestTextViewportMultiCaretDeleteCurrentLineIsAtomic);
+  AddTest(tests, "TextViewport/SelectAllCopiesLargeDocumentRoundTrip",
+          TestTextViewportSelectAllCopiesLargeDocumentRoundTrip);
   AddTest(tests, "TextViewport/SoftWrapExposesVisualRowsAndWrappedCaret",
           TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret);
   AddTest(tests, "TextViewport/SoftWrapMoveCursorVerticalUsesWrappedRows",
@@ -655,6 +719,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
   AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",
           TestTextViewportMaxVisualColumnsUpdatesIncrementally);
+  AddTest(tests, "TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument",
+          TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",
           TestRuntimeSyntaxDetectFiletypeDisambiguatesCppHeader);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource",

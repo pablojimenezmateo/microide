@@ -161,6 +161,30 @@ bool MatchesCodeAt(std::string_view text,
   return true;
 }
 
+std::vector<std::size_t> FindCodeLiteralOccurrences(std::string_view text,
+                                                    std::string_view literal) {
+  std::vector<std::size_t> offsets;
+  if (literal.empty()) {
+    return offsets;
+  }
+  const auto is_code = BuildCodeMask(text);
+  std::size_t pos = text.find(literal);
+  while (pos != std::string::npos) {
+    bool in_code = true;
+    for (std::size_t i = 0; i < literal.size(); ++i) {
+      if (pos + i >= is_code.size() || !is_code[pos + i]) {
+        in_code = false;
+        break;
+      }
+    }
+    if (in_code) {
+      offsets.push_back(pos);
+    }
+    pos = text.find(literal, pos + 1);
+  }
+  return offsets;
+}
+
 std::vector<std::size_t> FindTryCatchStoViolations(std::string_view text) {
   std::vector<std::size_t> violations;
   const auto is_code = BuildCodeMask(text);
@@ -227,6 +251,33 @@ void AppendViolations(RuleResult& result,
     result.violations.push_back(Violation{
         .path = path,
         .line = LineNumberAt(text, static_cast<std::size_t>(it->position())),
+        .message = std::string(message),
+    });
+  }
+}
+
+void AppendCodeMaskRegexViolations(RuleResult& result,
+                                   const std::filesystem::path& path,
+                                   const std::string& text,
+                                   const std::regex& pattern,
+                                   std::string_view message) {
+  const auto is_code = BuildCodeMask(text);
+  for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    const std::size_t start = static_cast<std::size_t>(it->position());
+    const std::size_t len = static_cast<std::size_t>(it->length());
+    bool in_code = true;
+    for (std::size_t i = 0; i < len; ++i) {
+      if (start + i >= is_code.size() || !is_code[start + i]) {
+        in_code = false;
+        break;
+      }
+    }
+    if (!in_code) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = LineNumberAt(text, start),
         .message = std::string(message),
     });
   }
@@ -817,6 +868,147 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   return result;
 }
 
+RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "legacy persistence symbols";
+  result.hard_fail = true;
+  const std::array<std::string_view, 8> forbidden = {
+      "WorkspacePersistenceLegacyFormat", "EncodeSessionNodePath", "DecodeSessionNodePath",
+      "ParseUserConfigText",             "ParseProjectConfigText", "ParseProjectSessionText",
+      "ParseWorkspaceSessionText",       "WorkspacePersistenceLegacyImporter",
+  };
+
+  for (const auto& root_dir : {repo_root / "src", repo_root / "tests", repo_root / "tools"}) {
+    if (!std::filesystem::exists(root_dir)) {
+      continue;
+    }
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root_dir)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      const std::string ext = entry.path().extension().string();
+      if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".cc" && ext != ".cxx" &&
+          ext != ".inc") {
+        continue;
+      }
+      const std::string text = ReadText(entry.path());
+      for (const std::string_view symbol : forbidden) {
+        for (const std::size_t pos : FindCodeLiteralOccurrences(text, symbol)) {
+          result.violations.push_back(Violation{
+              .path = entry.path(),
+              .line = LineNumberAt(text, pos),
+              .message = "remove legacy persistence symbol: " + std::string(symbol),
+          });
+        }
+      }
+    }
+  }
+  return result;
+}
+
+RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "synchronous subprocess call in workspace";
+  result.hard_fail = true;
+  const std::regex pattern(R"(\bplatform::RunSubprocess\s*\()");
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, pattern,
+        "workspace code must not run synchronous subprocesses; use ProjectBackgroundExecutor");
+  }
+  return result;
+}
+
+RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "render translation units do not materialize search fallback strings";
+  result.hard_fail = true;
+  const std::filesystem::path sidebar_path = repo_root / "src/workspace/WorkspaceShellRenderSidebar.cpp";
+  const std::string text = ReadText(sidebar_path);
+  AppendViolations(
+      result, sidebar_path, text, std::regex(R"(std::string\s*\(\s*"search>\s*"\s*\)\s*\+)"),
+      "render code must use RenderViewModelBuilder query_fallback_text");
+  AppendViolations(
+      result, sidebar_path, text, std::regex(R"(std::string\s*\(\s*"replace>\s*"\s*\)\s*\+)"),
+      "render code must use RenderViewModelBuilder replace_fallback_text");
+  AppendViolations(
+      result, sidebar_path, text, std::regex(R"("search>\s*"\s*\+)"),
+      "render code must not concatenate search fallback text in render path");
+  AppendViolations(
+      result, sidebar_path, text, std::regex(R"("replace>\s*"\s*\+)"),
+      "render code must not concatenate replace fallback text in render path");
+  return result;
+}
+
+RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "TextViewport ReplaceAll full document copy";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/TextViewport.cpp";
+  const std::string text = ReadText(path);
+  const std::size_t replace_all_pos = text.find("std::size_t TextViewport::ReplaceAll(");
+  if (replace_all_pos == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "could not locate TextViewport::ReplaceAll body for invariant scan",
+    });
+    return result;
+  }
+  const std::size_t body_start = text.find('{', replace_all_pos);
+  if (body_start == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = LineNumberAt(text, replace_all_pos),
+        .message = "could not locate ReplaceAll body start",
+    });
+    return result;
+  }
+  std::size_t depth = 1;
+  std::size_t body_end = body_start + 1;
+  for (; body_end < text.size() && depth > 0; ++body_end) {
+    if (text[body_end] == '{') {
+      ++depth;
+    } else if (text[body_end] == '}') {
+      --depth;
+    }
+  }
+  const std::string body = text.substr(body_start, body_end - body_start);
+  const auto is_code = BuildCodeMask(body);
+  const std::array<std::regex, 2> patterns = {
+      std::regex(R"(std::vector<std::string>\s+\w+\s*=\s*document_->lines\s*;)"),
+      std::regex(R"(auto\s+\w+\s*=\s*document_->lines\s*;)"),
+  };
+  for (const auto& pattern : patterns) {
+    for (std::sregex_iterator it(body.begin(), body.end(), pattern), end; it != end; ++it) {
+      const std::size_t local_start = static_cast<std::size_t>(it->position());
+      const std::size_t local_len = static_cast<std::size_t>(it->length());
+      bool in_code = true;
+      for (std::size_t i = 0; i < local_len; ++i) {
+        if (local_start + i >= is_code.size() || !is_code[local_start + i]) {
+          in_code = false;
+          break;
+        }
+      }
+      if (!in_code) {
+        continue;
+      }
+      const std::size_t absolute = body_start + local_start;
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = LineNumberAt(text, absolute),
+          .message = "ReplaceAll must not copy document_->lines into a full vector",
+      });
+    }
+  }
+  return result;
+}
+
 void ReportRule(const RuleResult& result) {
   if (result.violations.empty()) {
     return;
@@ -849,6 +1041,10 @@ void TestArchitectureInvariants() {
   results.push_back(CheckRenderSurfaceGeometryAccess(repo_root));
   results.push_back(CheckNoSynchronousSubprocessWaitInWorkspace(repo_root));
   results.push_back(CheckLspDidOpenIsNonBlocking(repo_root));
+  results.push_back(CheckNoLegacyPersistenceSymbols(repo_root));
+  results.push_back(CheckNoSynchronousSubprocessInWorkspace(repo_root));
+  results.push_back(CheckRenderTuDoesNotMaterializeStrings(repo_root));
+  results.push_back(CheckTextViewportNoFullDocCopy(repo_root));
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {
@@ -886,11 +1082,39 @@ catch (const std::exception&) {
          "scanner should catch nested/multiline try std::sto usage");
 }
 
+void TestArchitectureInvariantTargetedScannerFixtures() {
+  TemporaryDirectory temp_dir;
+  const auto& root = temp_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  std::filesystem::create_directories(root / "src/editor");
+  std::filesystem::create_directories(root / "tests");
+  std::filesystem::create_directories(root / "tools");
+
+  WriteFile(root / "src/workspace/NeedsExecutor.cpp",
+            "void F(){ platform::RunSubprocess({\"echo\"}, {}); }\n");
+  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+            "std::string F(){ return std::string(\"search> \") + std::string(\"x\"); }\n");
+  WriteFile(root / "src/editor/TextViewport.cpp",
+            "struct TextViewport{ bool F(){ std::vector<std::string> before = document_->lines; return !before.empty(); } };");
+  WriteFile(root / "tests/LegacySymbolFixture.cpp", "void X(){ WorkspacePersistenceLegacyFormat x; }\n");
+
+  Expect(!CheckNoLegacyPersistenceSymbols(root).violations.empty(),
+         "legacy-persistence rule should catch legacy symbols");
+  Expect(!CheckNoSynchronousSubprocessInWorkspace(root).violations.empty(),
+         "workspace subprocess rule should catch synchronous subprocess calls");
+  Expect(!CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
+         "render materialization rule should catch string construction in render TU");
+  Expect(!CheckTextViewportNoFullDocCopy(root).violations.empty(),
+         "TextViewport rule should catch full document copies");
+}
+
 }  // namespace
 
 void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ArchitectureInvariants/SoftChecks", TestArchitectureInvariants);
   AddTest(tests, "ArchitectureInvariants/TryCatchStoScanner", TestTryCatchStoScanner);
+  AddTest(tests, "ArchitectureInvariants/TargetedScannerFixtures",
+          TestArchitectureInvariantTargetedScannerFixtures);
 }
 
 }  // namespace microide::tests

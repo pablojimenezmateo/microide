@@ -156,6 +156,19 @@ The 2026-05-02 `deferred-work-and-throughput-pass` added four further invariants
   `IdleHint`-driven strategy: `Full` hint → `SDL_PollEvent`; `CaretOnly` hint →
   `SDL_WaitEventTimeout(caret_remaining_ms)`; `Idle` hint → `SDL_WaitEvent`.
 
+The 2026-05-06 `codebase-cleanup-perf-and-debt` adds four further hard invariants:
+
+- No legacy persistence symbols (`WorkspacePersistenceLegacyFormat`, `EncodeSessionNodePath`,
+  `DecodeSessionNodePath`, `ParseUserConfigText`, `ParseProjectConfigText`,
+  `ParseProjectSessionText`, `ParseWorkspaceSessionText`) anywhere in `src/`, `tests/`, or
+  `tools/`; this prevents accidental resurrection of the deleted importer path.
+- No `platform::RunSubprocess(...)` calls in `src/workspace/*.cpp`; workspace subprocess work must
+  route through `ProjectBackgroundExecutor` to keep shell-thread latency predictable.
+- Render translation units (`WorkspaceShellRender*.cpp`) must not materialize new strings in hot
+  paths; string assembly belongs in `RenderViewModelBuilder` so per-frame rendering stays lean.
+- `TextViewport` non-const mutation paths must not copy `document_->lines` wholesale; undo and
+  edit flows should capture only the affected ranges to avoid large-buffer copy regressions.
+
 The durable contracts these rules implement live in
 `openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`,
 and `openspec/specs/shared-edit-primitives/spec.md`. Update those specs in the same change when a

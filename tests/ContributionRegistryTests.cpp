@@ -3,7 +3,7 @@
 #include "plugin/PluginHost.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
-#include "workspace/WorkspacePersistenceLegacyFormat.h"
+#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceStatusRegistry.h"
@@ -31,16 +31,12 @@ using microide::workspace::KeybindingContext;
 using microide::workspace::MenuId;
 using microide::workspace::OrderedSidebarViews;
 using microide::workspace::ParseKeyChord;
-using microide::workspace::ParseProjectConfigText;
 using microide::workspace::ParseSettingValue;
-using microide::workspace::ParseUserConfigText;
 using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::ResolveKeybindings;
 using microide::workspace::ResolveStatusItems;
-using microide::workspace::SerializeProjectConfig;
 using microide::workspace::SerializeSettingValue;
-using microide::workspace::SerializeUserConfig;
 using microide::workspace::SettingType;
 using microide::workspace::SidebarViewPolicy;
 
@@ -448,40 +444,6 @@ void TestSidebarReorderViews() {
 // Persistence – settings and keybinding overrides
 // ---------------------------------------------------------------------------
 
-void TestUserConfigPersistsSettings() {
-  PersistedUserConfigState state;
-  state.ui_scale = 1.25f;
-  state.settings.emplace_back("ui.scale", "1.25");
-  state.disabled_keybinding_ids.push_back("redo-y");
-  const std::string serialised = SerializeUserConfig(state);
-
-  PersistedUserConfigState parsed;
-  Expect(ParseUserConfigText(serialised, &parsed), "should parse successfully");
-  Expect(!parsed.settings.empty(), "settings should round-trip");
-  Expect(parsed.settings.front().first == "ui.scale", "setting id should round-trip");
-  Expect(parsed.settings.front().second == "1.25", "setting value should round-trip");
-  Expect(!parsed.disabled_keybinding_ids.empty(), "disabled keybindings should round-trip");
-  Expect(parsed.disabled_keybinding_ids.front() == "redo-y",
-         "disabled binding id should match");
-}
-
-void TestProjectConfigPersistsSidebarPolicies() {
-  PersistedProjectConfigState state;
-  state.sidebar_policies.push_back({"git", true, 0});
-  state.sidebar_policies.push_back({"tree", false, 1});
-  state.settings.emplace_back("editor.tab_size", "2");
-  const std::string serialised = SerializeProjectConfig(state);
-
-  PersistedProjectConfigState parsed;
-  Expect(ParseProjectConfigText(serialised, &parsed), "should parse successfully");
-  Expect(parsed.sidebar_policies.size() == 2, "two sidebar policies should round-trip");
-  Expect(parsed.sidebar_policies[0].view_id == "git", "first policy id should be git");
-  Expect(parsed.sidebar_policies[0].hidden == true, "git policy hidden should be true");
-  Expect(parsed.sidebar_policies[1].view_id == "tree", "second policy id should be tree");
-  Expect(!parsed.settings.empty(), "project settings should round-trip");
-  Expect(parsed.settings.front().first == "editor.tab_size", "setting id should match");
-  Expect(parsed.settings.front().second == "2", "setting value should match");
-}
 
 // ---------------------------------------------------------------------------
 // Settings get callback
@@ -578,9 +540,6 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SidebarRegistry/OrderedNoPolicy", TestSidebarOrderedViewsNoPolicy);
   AddTest(tests, "SidebarRegistry/HideView", TestSidebarHideView);
   AddTest(tests, "SidebarRegistry/ReorderViews", TestSidebarReorderViews);
-  AddTest(tests, "Persistence/UserConfigSettings", TestUserConfigPersistsSettings);
-  AddTest(tests, "Persistence/ProjectConfigSidebarPolicies",
-          TestProjectConfigPersistsSidebarPolicies);
   AddTest(tests, "SettingsRegistry/GetCallback", TestPluginSettingsGetCallback);
 }
 

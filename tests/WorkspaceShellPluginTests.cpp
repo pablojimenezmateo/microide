@@ -1,8 +1,9 @@
 #include "TestSupport.h"
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "persistence/PersistedRecordWriter.h"
 #include "platform/AsyncSubprocess.h"
-#include "workspace/WorkspacePersistenceLegacyFormat.h"
+#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <chrono>
@@ -39,6 +40,17 @@ std::filesystem::path RepoPluginsRoot() {
 
 void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
+}
+
+void WriteStructuredUserConfig(
+    const std::filesystem::path& config_home,
+    const microide::workspace::PersistedUserConfigState& state) {
+  std::vector<std::byte> body;
+  Expect(microide::workspace::EncodeUserConfigRecord(state, &body),
+         "plugin test fixtures should encode user config records");
+  const std::filesystem::path config_path = config_home / "microide" / "config";
+  Expect(microide::persistence::PersistedRecordWriter::WriteFile(config_path, body, 1u),
+         "plugin test fixtures should persist structured user config records");
 }
 
 std::optional<std::string> ReadAsyncLine(microide::platform::AsyncSubprocess& process,
@@ -496,6 +508,124 @@ return ide.plugin({
          "saving an editor buffer should run the host save pipeline");
   Expect(ReadFile(source) == "BETA\n",
          "save participants should run before formatters and persist the transformed text");
+}
+
+void TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      plugins_root, "save-pipeline-fail",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "save-pipeline-fail",
+  setup = function(ctx)
+    ctx.formatters.add({
+      id = "todo-fail",
+      language_id = "todo",
+      label = "TODO Fail",
+      command = { "sh", "-c", "cat >/dev/null; echo formatter-broke >&2; exit 3" }
+    })
+  end
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "save-pipeline-fail", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\b[A-Z_]+\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "formatter failure fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText("beta\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "save should proceed when formatter exits non-zero");
+  Expect(ReadFile(source) == "beta\n",
+         "formatter failure should persist the unformatted edited buffer");
+  Expect(!editor.dirty(),
+         "formatter failure should still clear dirty state when save succeeds");
+}
+
+void TestWorkspaceShellSavePipelineOverlappingSavesCoalesceCorrectly() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      plugins_root, "save-pipeline-overlap",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "save-pipeline-overlap",
+  setup = function(ctx)
+    ctx.formatters.add({
+      id = "todo-slow-uppercase",
+      language_id = "todo",
+      label = "TODO Slow Uppercase",
+      command = { "sh", "-c", "sleep 0.2; tr '[:lower:]' '[:upper:]'" }
+    })
+  end
+})
+)");
+  WritePluginSyntax(
+      plugins_root, "save-pipeline-overlap", "todo.lua",
+      R"(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = {
+    { pattern = "\\b[A-Z_]+\\b", group = "keyword" }
+  }
+}
+)");
+
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "overlapping save fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText("beta\n");
+  const std::size_t tab_index = WorkspaceShellTestAccess::ActiveTabIndex(shell);
+
+  bool first_save_ok = false;
+  std::thread first_save([&]() {
+    first_save_ok = WorkspaceShellTestAccess::SaveTab(shell, tab_index);
+  });
+  SDL_Delay(20);
+  const bool second_save_ok = WorkspaceShellTestAccess::SaveTab(shell, tab_index);
+  first_save.join();
+
+  Expect(first_save_ok && second_save_ok,
+         "overlapping saves should both complete successfully");
+  Expect(ReadFile(source) == "BETA\n",
+         "overlapping saves should preserve formatted persisted text");
 }
 
 void TestWorkspaceShellPhase4RegistriesReloadWithPlugins() {
@@ -1886,11 +2016,12 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
   CopyRepoPlugin(plugins_root, "llm");
-  WriteFile(config_home / "microide" / "config",
-            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-                .settings = {},
-                .disabled_keybinding_ids = {},
-            }));
+  WriteStructuredUserConfig(
+      config_home,
+      microide::workspace::PersistedUserConfigState{
+          .settings = {},
+          .disabled_keybinding_ids = {},
+      });
   ScopedEnvVar home("HOME", home_dir.string());
   // Prepend the fake codex bin dir so command -v codex resolves to our stub
   // even when sh -l sources /etc/profile (which may add /usr/local/bin where
@@ -1970,16 +2101,17 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
   CopyRepoPlugin(plugins_root, "openai");
 
   FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-  WriteFile(config_home / "microide" / "config",
-            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-                .settings =
-                    {
-                        {"openai.api_key", "secret-openai"},
-                        {"openai.base_url", server.base_url},
-                        {"openai.model", "gpt-4.1-mini"},
-                    },
-                .disabled_keybinding_ids = {},
-            }));
+  WriteStructuredUserConfig(
+      config_home,
+      microide::workspace::PersistedUserConfigState{
+          .settings =
+              {
+                  {"openai.api_key", "secret-openai"},
+                  {"openai.base_url", server.base_url},
+                  {"openai.model", "gpt-4.1-mini"},
+              },
+          .disabled_keybinding_ids = {},
+      });
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
@@ -2058,15 +2190,16 @@ return ide.plugin({
 )lua");
 
   FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-  WriteFile(config_home / "microide" / "config",
-            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-                .settings =
-                    {
-                        {"openai.base_url", server.base_url},
-                        {"openai.model", "gpt-4.1-mini"},
-                    },
-                .disabled_keybinding_ids = {},
-            }));
+  WriteStructuredUserConfig(
+      config_home,
+      microide::workspace::PersistedUserConfigState{
+          .settings =
+              {
+                  {"openai.base_url", server.base_url},
+                  {"openai.model", "gpt-4.1-mini"},
+              },
+          .disabled_keybinding_ids = {},
+      });
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
@@ -2118,16 +2251,17 @@ void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
   CopyRepoPlugin(plugins_root, "anthropic");
 
   FakeProviderServer server = StartFakeProviderServer(project_root, "anthropic");
-  WriteFile(config_home / "microide" / "config",
-            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-                .settings =
-                    {
-                        {"anthropic.api_key", "secret-anthropic"},
-                        {"anthropic.base_url", server.base_url},
-                        {"anthropic.model", "claude-sonnet-4-6"},
-                    },
-                .disabled_keybinding_ids = {},
-            }));
+  WriteStructuredUserConfig(
+      config_home,
+      microide::workspace::PersistedUserConfigState{
+          .settings =
+              {
+                  {"anthropic.api_key", "secret-anthropic"},
+                  {"anthropic.base_url", server.base_url},
+                  {"anthropic.model", "claude-sonnet-4-6"},
+              },
+          .disabled_keybinding_ids = {},
+      });
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
@@ -2174,16 +2308,17 @@ void TestWorkspaceShellRepoDeepSeekPluginUsesOpenAiCompatibilityRuntime() {
   // Use the OpenAI fixture endpoint because DeepSeek follows the OpenAI-compatible path.
   FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
 
-  WriteFile(config_home / "microide" / "config",
-            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
-                .settings =
-                    {
-                        {"deepseek.api_key", "secret-openai"},
-                        {"deepseek.base_url", server.base_url},
-                        {"deepseek.model", "deepseek-chat"},
-                    },
-                .disabled_keybinding_ids = {},
-            }));
+  WriteStructuredUserConfig(
+      config_home,
+      microide::workspace::PersistedUserConfigState{
+          .settings =
+              {
+                  {"deepseek.api_key", "secret-openai"},
+                  {"deepseek.base_url", server.base_url},
+                  {"deepseek.model", "deepseek-chat"},
+              },
+          .disabled_keybinding_ids = {},
+      });
   ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
 
   WorkspaceShell shell;
@@ -2546,6 +2681,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginStatusItemsRenderAndRedraw);
   AddTest(tests, "WorkspaceShell/SavePipelineRunsParticipantsBeforeFormatter",
           TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter);
+  AddTest(tests, "WorkspaceShell/SavePipelineFormatterFailureLeavesBufferUnchanged",
+          TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged);
+  AddTest(tests, "WorkspaceShell/SavePipelineOverlappingSavesCoalesceCorrectly",
+          TestWorkspaceShellSavePipelineOverlappingSavesCoalesceCorrectly);
   AddTest(tests, "WorkspaceShell/Phase4RegistriesReloadWithPlugins",
           TestWorkspaceShellPhase4RegistriesReloadWithPlugins);
   AddTest(tests, "WorkspaceShell/VirtualDocumentsOpenAndRefresh",

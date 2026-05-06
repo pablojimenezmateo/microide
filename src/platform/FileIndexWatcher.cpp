@@ -137,6 +137,47 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
 
 }  // namespace
 
+std::vector<IndexUpdateBatch::Change> detail::BuildPollSnapshotDiff(
+    const FileIndexSnapshot& previous,
+    const FileIndexSnapshot& current) {
+  std::vector<IndexUpdateBatch::Change> changes;
+  auto prev_it = previous.begin();
+  auto curr_it = current.begin();
+  while (prev_it != previous.end() || curr_it != current.end()) {
+    if (curr_it == current.end() ||
+        (prev_it != previous.end() && prev_it->first < curr_it->first)) {
+      IndexUpdateBatch::Change change;
+      change.kind = IndexUpdateBatch::Kind::Deleted;
+      change.entry.relative_path = prev_it->first;
+      changes.push_back(std::move(change));
+      ++prev_it;
+      continue;
+    }
+    if (prev_it == previous.end() || curr_it->first < prev_it->first) {
+      IndexUpdateBatch::Change change;
+      change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+      change.entry.relative_path = curr_it->first;
+      change.entry.mtime = curr_it->second.first;
+      change.entry.size = curr_it->second.second;
+      changes.push_back(std::move(change));
+      ++curr_it;
+      continue;
+    }
+
+    if (prev_it->second != curr_it->second) {
+      IndexUpdateBatch::Change change;
+      change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+      change.entry.relative_path = curr_it->first;
+      change.entry.mtime = curr_it->second.first;
+      change.entry.size = curr_it->second.second;
+      changes.push_back(std::move(change));
+    }
+    ++prev_it;
+    ++curr_it;
+  }
+  return changes;
+}
+
 // ============================================================
 // Platform-specific backends
 // ============================================================
@@ -540,39 +581,8 @@ struct FileIndexWatcher::Impl {
 
       const auto current = build_snapshot();
 
-      std::vector<IndexUpdateBatch::Change> changes;
-
-      // Check for created/modified
-      for (const auto& [rel, mtime_size] : current) {
-        const auto prev_it = snapshot.find(rel);
-        if (prev_it == snapshot.end()) {
-          // Created
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-          change.entry.relative_path = rel;
-          change.entry.mtime = mtime_size.first;
-          change.entry.size = mtime_size.second;
-          changes.push_back(std::move(change));
-        } else if (prev_it->second != mtime_size) {
-          // Modified
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-          change.entry.relative_path = rel;
-          change.entry.mtime = mtime_size.first;
-          change.entry.size = mtime_size.second;
-          changes.push_back(std::move(change));
-        }
-      }
-
-      // Check for deleted
-      for (const auto& [rel, mtime_size] : snapshot) {
-        if (current.find(rel) == current.end()) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::Deleted;
-          change.entry.relative_path = rel;
-          changes.push_back(std::move(change));
-        }
-      }
+      std::vector<IndexUpdateBatch::Change> changes =
+          detail::BuildPollSnapshotDiff(snapshot, current);
 
       snapshot = current;
 
@@ -793,27 +803,8 @@ struct FileIndexWatcher::Impl {
       }
 
       const auto current = build_snapshot();
-      std::vector<IndexUpdateBatch::Change> changes;
-
-      for (const auto& [rel, mtime_size] : current) {
-        const auto prev_it = snapshot.find(rel);
-        if (prev_it == snapshot.end() || prev_it->second != mtime_size) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-          change.entry.relative_path = rel;
-          change.entry.mtime = mtime_size.first;
-          change.entry.size = mtime_size.second;
-          changes.push_back(std::move(change));
-        }
-      }
-      for (const auto& [rel, mtime_size] : snapshot) {
-        if (current.find(rel) == current.end()) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::Deleted;
-          change.entry.relative_path = rel;
-          changes.push_back(std::move(change));
-        }
-      }
+      std::vector<IndexUpdateBatch::Change> changes =
+          detail::BuildPollSnapshotDiff(snapshot, current);
 
       snapshot = current;
 
@@ -1070,27 +1061,8 @@ struct FileIndexWatcher::Impl {
       }
 
       const auto current = build_snapshot();
-      std::vector<IndexUpdateBatch::Change> changes;
-
-      for (const auto& [rel, mtime_size] : current) {
-        const auto prev_it = snapshot.find(rel);
-        if (prev_it == snapshot.end() || prev_it->second != mtime_size) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-          change.entry.relative_path = rel;
-          change.entry.mtime = mtime_size.first;
-          change.entry.size = mtime_size.second;
-          changes.push_back(std::move(change));
-        }
-      }
-      for (const auto& [rel, mtime_size] : snapshot) {
-        if (current.find(rel) == current.end()) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::Deleted;
-          change.entry.relative_path = rel;
-          changes.push_back(std::move(change));
-        }
-      }
+      std::vector<IndexUpdateBatch::Change> changes =
+          detail::BuildPollSnapshotDiff(snapshot, current);
 
       snapshot = current;
 
@@ -1185,27 +1157,8 @@ struct FileIndexWatcher::Impl {
       }
 
       const auto current = build_snapshot();
-      std::vector<IndexUpdateBatch::Change> changes;
-
-      for (const auto& [rel, mtime_size] : current) {
-        const auto prev_it = snapshot.find(rel);
-        if (prev_it == snapshot.end() || prev_it->second != mtime_size) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-          change.entry.relative_path = rel;
-          change.entry.mtime = mtime_size.first;
-          change.entry.size = mtime_size.second;
-          changes.push_back(std::move(change));
-        }
-      }
-      for (const auto& [rel, mtime_size] : snapshot) {
-        if (current.find(rel) == current.end()) {
-          IndexUpdateBatch::Change change;
-          change.kind = IndexUpdateBatch::Kind::Deleted;
-          change.entry.relative_path = rel;
-          changes.push_back(std::move(change));
-        }
-      }
+      std::vector<IndexUpdateBatch::Change> changes =
+          detail::BuildPollSnapshotDiff(snapshot, current);
 
       snapshot = current;
 

@@ -90,12 +90,34 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
 }
 
 SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
+  const auto& project_search = context_.current_project_state.overlay.workflow.project_search;
+  const bool editing_query =
+      project_search.editing && project_search.edit_field == ProjectSearchEditField::Query;
+  const bool editing_replace =
+      project_search.editing && project_search.edit_field == ProjectSearchEditField::Replace;
+  const std::string_view query_text =
+      editing_query ? project_search.edit_buffer.text() : project_search.query.text();
+  const std::string_view replace_text =
+      editing_replace ? project_search.edit_buffer.text() : project_search.replace_text.text();
+
+  std::string query_fallback_text;
+  query_fallback_text.reserve(8 + query_text.size());
+  query_fallback_text += "search> ";
+  query_fallback_text += query_text;
+
+  std::string replace_fallback_text;
+  replace_fallback_text.reserve(9 + replace_text.size());
+  replace_fallback_text += "replace> ";
+  replace_fallback_text += replace_text;
+
   return SidebarSurfaceViewModel{
       .visible = context_.current_project_state.sidebar.visible,
       .mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id),
       .scroll_row = context_.current_project_state.sidebar.scroll_row,
       .project_search_editing =
           context_.current_project_state.overlay.workflow.project_search.editing,
+      .query_fallback_text = std::move(query_fallback_text),
+      .replace_fallback_text = std::move(replace_fallback_text),
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }
