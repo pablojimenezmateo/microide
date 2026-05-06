@@ -327,6 +327,9 @@
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Messages();
   }
+  static int PluginPendingAsyncProcessCount(const WorkspaceShell& shell) {
+    return shell.plugin_runtime_.Host().PendingAsyncProcessCount();
+  }
   static const std::vector<std::string>& PluginErrors(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Errors();
   }

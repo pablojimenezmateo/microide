@@ -364,6 +364,7 @@ void TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
 
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),

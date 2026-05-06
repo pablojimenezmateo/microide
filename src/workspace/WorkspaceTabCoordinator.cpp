@@ -58,7 +58,6 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
       state_(current_project_state),
       operations_(std::move(operations)) {}
 
-
 bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     return tab.compare->right_editable && tab.compare->right_viewport.dirty();
@@ -420,7 +419,6 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
   }
 }
 
-
 void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
   operations_.invalidate_editor_blame_path(path);
   for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
@@ -490,7 +488,6 @@ bool TabCoordinator::OpenUntitled() {
   operations_.request_active_tab_redraw(false);
   return true;
 }
-
 bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   std::string perf_label = "TabCoordinator::OpenFileInNewTab";
   if (util::PerformanceTrace::Enabled()) {
@@ -600,7 +597,6 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
   operations_.request_active_tab_redraw(false);
   return true;
 }
-
 void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                                std::string_view content) {
   if (virtual_path.empty()) {
@@ -646,7 +642,6 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
     operations_.request_active_tab_redraw(false);
   }
 }
-
 void TabCoordinator::Close(std::size_t index) {
   if (index >= state_.open_tabs.size()) {
     return;
@@ -732,7 +727,6 @@ void TabCoordinator::Close(std::size_t index) {
     operations_.request_tab_strip_redraw();
   }
 }
-
 bool TabCoordinator::MoveActiveTo(std::size_t index) {
   if (state_.active_tab_index >= state_.open_tabs.size() || index >= state_.open_tabs.size()) {
     return false;
@@ -753,7 +747,6 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   operations_.request_tab_strip_redraw();
   return true;
 }
-
 bool TabCoordinator::ReopenActive() {
   if (state_.active_tab_index >= state_.open_tabs.size()) {
     return false;

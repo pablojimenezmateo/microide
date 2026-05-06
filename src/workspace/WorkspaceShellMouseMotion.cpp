@@ -78,6 +78,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                            const std::optional<SDL_FRect>& previous_rect,
                            const std::string& current_label,
                            const std::optional<SDL_FRect>& current_rect) {
+        const auto padded_rect = [](const SDL_FRect& rect) {
+          static constexpr float kTooltipRedrawPaddingPx = 1.0f;
+          return MakeRect(rect.x - kTooltipRedrawPaddingPx, rect.y - kTooltipRedrawPaddingPx,
+                          rect.w + 2.0f * kTooltipRedrawPaddingPx,
+                          rect.h + 2.0f * kTooltipRedrawPaddingPx);
+        };
         const bool same_rect = previous_rect.has_value() == current_rect.has_value() &&
                                (!previous_rect.has_value() ||
                                 rects_equal(*previous_rect, *current_rect));
@@ -85,10 +91,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           return false;
         }
         if (previous_rect.has_value()) {
-          RequestRedrawRect(*previous_rect);
+          RequestRedrawRect(padded_rect(*previous_rect));
         }
         if (current_rect.has_value()) {
-          RequestRedrawRect(*current_rect);
+          RequestRedrawRect(padded_rect(*current_rect));
         }
         return true;
       };

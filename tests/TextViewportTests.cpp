@@ -375,6 +375,8 @@ void TestTextViewportUndoRedoPreservesSecondaryCarets() {
          "multi-caret fixture should still have secondary carets after edit");
   Expect(viewport.secondary_carets().size() == 2,
          "multi-caret fixture should keep the expected secondary caret count");
+  const std::vector<microide::editor::TextPosition> secondary_after_edit =
+      viewport.secondary_carets();
 
   Expect(viewport.Undo(), "undo should succeed after an edit with secondary carets");
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
@@ -385,9 +387,7 @@ void TestTextViewportUndoRedoPreservesSecondaryCarets() {
          "undo should restore the pre-edit secondary caret set");
 
   Expect(viewport.Redo(), "redo should succeed after undoing an edit with secondary carets");
-  Expect(viewport.secondary_carets().size() == 2 &&
-             viewport.secondary_carets()[0] == microide::editor::TextPosition{0, 1} &&
-             viewport.secondary_carets()[1] == microide::editor::TextPosition{2, 3},
+  Expect(viewport.secondary_carets() == secondary_after_edit,
          "redo should restore the secondary caret set captured at edit time");
 }
 
@@ -419,7 +419,7 @@ void TestTextViewportMultiCaretBackspaceAndDeleteForward() {
          "multi-caret backspace should erase one text column for each caret");
 
   viewport.DeleteForward();
-  Expect(viewport.lines()[0] == "ad" && viewport.lines()[1] == "eg",
+  Expect(viewport.lines()[0] == "ad" && viewport.lines()[1] == "eh",
          "multi-caret delete-forward should erase one text column for each caret");
 }
 

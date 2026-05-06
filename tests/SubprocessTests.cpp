@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -181,11 +182,17 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
          "async subprocess concurrency fixture should start a cat process");
 
   std::atomic<bool> stop_reader{false};
+  std::mutex reader_output_mutex;
+  std::string reader_output;
   std::thread reader([&]() {
     while (!stop_reader.load(std::memory_order_acquire)) {
       const auto chunk = process.Read(4096, 50);
       if (!chunk.has_value()) {
         return;
+      }
+      if (!chunk->empty()) {
+        std::lock_guard<std::mutex> lock(reader_output_mutex);
+        reader_output += *chunk;
       }
     }
   });
@@ -203,6 +210,10 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
   }
 
   std::string echoed;
+  {
+    std::lock_guard<std::mutex> lock(reader_output_mutex);
+    echoed = reader_output;
+  }
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() <= deadline) {
     const auto chunk = process.Read(4096, 50);

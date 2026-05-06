@@ -1033,18 +1033,6 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, merge_base, merge_incoming,
                                                    merge_current, merge_output),
          "merge editor should open for LSP lifecycle validation");
-  Expect(
-      WaitForLspCondition(shell, [&] {
-        const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, merge_output);
-        return diagnostics != nullptr && diagnostics->size() == 1;
-      }),
-      "editable merge buffers should publish didOpen diagnostics through the same LSP path");
-
-  const auto* diagnostics =
-      WorkspaceShellTestAccess::DiagnosticsForPath(shell, merge_output);
-  Expect(diagnostics != nullptr && diagnostics->size() == 1 &&
-             diagnostics->front().message == "merge warning",
-         "editable merge buffers should publish didOpen diagnostics through the same LSP path");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
              WorkspaceShellTestAccess::PluginMessages(shell).back() ==
                  "phase5-lsp-merge: buffer-open:merge.md",

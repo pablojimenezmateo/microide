@@ -114,12 +114,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
     }
     case ActionId::CopyRelativePath:
     case ActionId::CopyAbsolutePath: {
+      if (source != ActionSource::ContextMenu) {
+        return DispatchResult::Unhandled;
+      }
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
       const std::filesystem::path path = context_.ResolveTreeActionPath(source);
       if (path.empty()) {
-        return reject("No path selected");
+        return DispatchResult::Unhandled;
       }
 
       std::string clipboard_text;

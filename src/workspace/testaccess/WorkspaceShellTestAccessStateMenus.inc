@@ -263,6 +263,9 @@
   static bool FocusIsPanel(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Panel;
   }
+  static void SetFocusSidebar(WorkspaceShell& shell) {
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Sidebar;
+  }
   static void ResetCaretBlink(WorkspaceShell& shell) { shell.ResetCaretBlink(); }
   static void SetCaretBlinkEpochMs(WorkspaceShell& shell, Uint64 epoch_ms) {
     shell.caret_blink_epoch_ms_ = epoch_ms;

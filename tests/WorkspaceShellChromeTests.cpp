@@ -956,6 +956,7 @@ void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender()
     Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false),
            "project tooltip retained redraw fixture should open the second project");
     WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
+    WorkspaceShellTestAccess::SetFocusSidebar(shell);
   };
 
   WorkspaceShell retained_shell;
