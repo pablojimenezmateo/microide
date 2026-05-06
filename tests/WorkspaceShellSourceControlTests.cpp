@@ -2,6 +2,7 @@
 
 #include "workspace/WorkspaceShellTestAccess.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -162,6 +163,126 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
          "clicking a git sidebar entry should open the selected comparison target");
 }
 
+void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path alpha = root / "src" / "alpha.cpp";
+  const std::filesystem::path beta = root / "src" / "beta.cpp";
+  WriteFile(alpha, "int alpha() {\n  return 1;\n}\n");
+  WriteFile(beta, "int beta() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  RequireCommandSuccess(
+      "git -C '" + EscapedRepoPath(root) + "' checkout -b feature/outgoing-base >/dev/null 2>/dev/null",
+      "git checkout feature branch");
+
+  WriteFile(alpha, "int alpha() {\n  return 10;\n}\n");
+  CommitAll(root, "feature alpha", "feature alpha");
+  WriteFile(beta, "int beta() {\n  return 20;\n}\n");
+  CommitAll(root, "feature beta", "feature beta");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+
+  auto count_outgoing = [&]() {
+    return static_cast<int>(std::count_if(
+        WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
+        WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
+        [](const WorkspaceShell::GitSidebarEntry& entry) {
+          return entry.section == WorkspaceShell::GitSidebarEntry::Section::Outgoing;
+        }));
+  };
+
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  Expect(state.sidebar.git.base_ref == "main",
+         "auto outgoing base should resolve the repository base branch");
+  Expect(count_outgoing() == 2,
+         "auto outgoing base should include both feature-branch commits");
+
+  state.sidebar.git.outgoing_base_choice = microide::workspace::OutgoingBaseChoice{
+      .kind = microide::workspace::OutgoingBaseChoice::Kind::PreviousCommit,
+      .custom_ref = {},
+  };
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(state.sidebar.git.base_ref == "HEAD~1",
+         "previous-commit outgoing base should use HEAD~1");
+  Expect(count_outgoing() == 1,
+         "previous-commit outgoing base should only include the newest commit delta");
+  Expect(std::any_of(WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
+                     WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
+                     [&](const WorkspaceShell::GitSidebarEntry& entry) {
+                       return entry.section == WorkspaceShell::GitSidebarEntry::Section::Outgoing &&
+                              entry.relative_path == std::filesystem::path("src/beta.cpp");
+                     }),
+         "previous-commit outgoing base should preserve the latest outgoing file");
+
+  state.sidebar.git.outgoing_base_choice = microide::workspace::OutgoingBaseChoice{
+      .kind = microide::workspace::OutgoingBaseChoice::Kind::SpecificRef,
+      .custom_ref = "HEAD~2",
+  };
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(state.sidebar.git.base_ref == "HEAD~2",
+         "specific-ref outgoing base should preserve the exact ref string");
+  Expect(count_outgoing() == 2,
+         "specific-ref outgoing base should pass the custom ref through unchanged");
+}
+
+void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "README.md", "hello\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  WorkspaceShellTestAccess::CurrentProjectState(shell).sidebar.git.outgoing_base_choice =
+      microide::workspace::OutgoingBaseChoice{
+          .kind = microide::workspace::OutgoingBaseChoice::Kind::SpecificRef,
+          .custom_ref = "origin/release/2026-04",
+      };
+
+  const auto button_rect = WorkspaceShellTestAccess::GitSidebarOutgoingBaseButtonRect(shell);
+  Expect(button_rect.has_value(),
+         "git outgoing base fixture should expose the outgoing header button");
+
+  const float click_x = button_rect->x + button_rect->w * 0.5f;
+  const float click_y = button_rect->y + button_rect->h * 0.5f;
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
+         "clicking the outgoing base button should be handled");
+
+  const auto labels =
+      WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::GitOutgoingBase);
+  Expect(labels.size() == 3 && labels[0] == "Auto (base branch)" &&
+             labels[1] == "Previous commit (HEAD~1)" && labels[2] == "Specific ref...",
+         "outgoing base menu should expose the three base-selection choices");
+
+  const auto specific_ref_rect = WorkspaceShellTestAccess::PopupMenuItemRect(
+      shell, WorkspaceShell::MenuId::GitOutgoingBase, "Specific ref...");
+  Expect(specific_ref_rect.has_value(),
+         "outgoing base menu should expose the specific-ref prompt entry");
+  Expect(SendMouseDown(shell, specific_ref_rect->x + specific_ref_rect->w * 0.5f,
+                       specific_ref_rect->y + specific_ref_rect->h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the specific-ref outgoing base entry should be handled");
+
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "specific-ref outgoing base entry should open the prompt surface");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceTitle(shell) == "Outgoing Base Ref",
+         "specific-ref outgoing base prompt should use the dedicated title");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "origin/release/2026-04",
+         "specific-ref outgoing base prompt should prefill the saved custom ref");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -171,6 +292,10 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
   AddTest(tests, "WorkspaceShell/OpeningGitSidebarEntryAlsoInvalidatesSidebarSelection",
           TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection);
+  AddTest(tests, "WorkspaceShell/GitOutgoingBaseChoiceRefreshesOutgoingEntries",
+          TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries);
+  AddTest(tests, "WorkspaceShell/GitOutgoingBaseButtonOpensMenuAndPrompt",
+          TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt);
 }
 
 }  // namespace microide::tests

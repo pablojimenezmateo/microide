@@ -181,11 +181,13 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
   session.source = "lsp";
   session.error = "Loading...";
   ShowOverlay(OverlayMode::Completion);
+  BeginTrackedLspRequest();
   client->RequestCompletionAsync(
       FileUriForPath(viewport->path()),
       LspClient::Position{static_cast<int>(viewport->cursor_line()),
                           static_cast<int>(viewport->cursor_column())},
       [this](std::optional<std::vector<LspClient::CompletionItem>> items) {
+        FinishTrackedLspRequest();
         auto& current_session = context_.current_project_state.overlay.workflow.completion;
         current_session.items.clear();
         current_session.selected_index = 0;
@@ -307,6 +309,7 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
   session.source = "lsp";
   session.error = "Loading...";
   ShowOverlay(OverlayMode::CodeActions);
+  BeginTrackedLspRequest();
   client->RequestCodeActionAsync(
       FileUriForPath(viewport->path()),
       LspClient::Range{
@@ -316,6 +319,7 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
                                      static_cast<int>(range.end.column)},
       },
       [this](std::optional<std::vector<LspClient::CodeAction>> actions) {
+        FinishTrackedLspRequest();
         auto& current_session = context_.current_project_state.overlay.workflow.code_actions;
         current_session.items.clear();
         current_session.selected_index = 0;
@@ -388,11 +392,13 @@ bool WorkspaceShell::GoToLspDefinition(std::string* error_message) {
     return false;
   }
   EnsureLspDocumentOpen(*viewport, *client, language_id);
+  BeginTrackedLspRequest();
   client->RequestGoToDefinitionAsync(
       FileUriForPath(viewport->path()),
       LspClient::Position{static_cast<int>(viewport->cursor_line()),
                           static_cast<int>(viewport->cursor_column())},
       [this](std::optional<std::vector<LspClient::Location>> locations) {
+        FinishTrackedLspRequest();
         if (!locations.has_value() || locations->empty()) {
           output_channels_.AppendLine("lsp.definition", "LSP Definition", "No definition found");
           ShowOutputChannel("lsp.definition");
@@ -440,12 +446,14 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
     return false;
   }
   EnsureLspDocumentOpen(*viewport, *client, language_id);
+  BeginTrackedLspRequest();
   client->RequestFindReferencesAsync(
       FileUriForPath(viewport->path()),
       LspClient::Position{static_cast<int>(viewport->cursor_line()),
                           static_cast<int>(viewport->cursor_column())},
       true,
       [this](std::optional<std::vector<LspClient::Location>> locations) {
+        FinishTrackedLspRequest();
         output_channels_.Clear("lsp.references");
         if (!locations.has_value() || locations->empty()) {
           output_channels_.AppendLine("lsp.references", "LSP References", "No references found");

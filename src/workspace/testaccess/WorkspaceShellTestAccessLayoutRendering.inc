@@ -90,6 +90,10 @@
             shell.GitSidebarDiscardAllButtonRect(layout.sidebar),
             shell.GitSidebarRefreshButtonRect(layout.sidebar)};
   }
+  static std::optional<SDL_FRect> GitSidebarOutgoingBaseButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.GitSidebarOutgoingBaseButtonRect(layout.sidebar);
+  }
   static std::array<SDL_FRect, 2> GitSidebarEntryActionRects(WorkspaceShell& shell,
                                                              std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);

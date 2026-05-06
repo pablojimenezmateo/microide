@@ -11,6 +11,32 @@
 
 namespace microide::workspace {
 
+namespace {
+
+std::string SerializeOutgoingBaseChoiceKind(OutgoingBaseChoice::Kind kind) {
+  switch (kind) {
+    case OutgoingBaseChoice::Kind::Auto:
+      return "auto";
+    case OutgoingBaseChoice::Kind::PreviousCommit:
+      return "previous_commit";
+    case OutgoingBaseChoice::Kind::SpecificRef:
+      return "specific_ref";
+  }
+  return "auto";
+}
+
+OutgoingBaseChoice::Kind ParseOutgoingBaseChoiceKind(std::string_view value) {
+  if (value == "previous_commit") {
+    return OutgoingBaseChoice::Kind::PreviousCommit;
+  }
+  if (value == "specific_ref") {
+    return OutgoingBaseChoice::Kind::SpecificRef;
+  }
+  return OutgoingBaseChoice::Kind::Auto;
+}
+
+}  // namespace
+
 bool ParseUserConfigText(std::string_view text, PersistedUserConfigState* state) {
   if (state == nullptr) {
     return false;
@@ -214,6 +240,14 @@ bool ParseProjectSessionText(std::string_view text, PersistedProjectSessionState
       if (const auto parsed = util::ParseFloat(tokens[1].text); parsed.has_value()) {
         state->bottom_panel_height = *parsed;
       }
+      continue;
+    }
+    if (command == "outgoing-base-kind" && tokens.size() == 2) {
+      state->outgoing_base_choice.kind = ParseOutgoingBaseChoiceKind(tokens[1].text);
+      continue;
+    }
+    if (command == "outgoing-base-custom-ref" && tokens.size() == 2) {
+      state->outgoing_base_choice.custom_ref = tokens[1].text;
       continue;
     }
     if (command == "active-tab" && tokens.size() == 2) {
@@ -563,6 +597,13 @@ std::string SerializeProjectSession(const PersistedProjectSessionState& state) {
   stream << "sidebar-visible " << (state.sidebar_visible ? 1 : 0) << '\n';
   stream << "sidebar-width " << state.sidebar_width << '\n';
   stream << "bottom-panel-height " << state.bottom_panel_height << '\n';
+  stream << "outgoing-base-kind "
+         << QuoteCommandArg(SerializeOutgoingBaseChoiceKind(state.outgoing_base_choice.kind))
+         << '\n';
+  if (!state.outgoing_base_choice.custom_ref.empty()) {
+    stream << "outgoing-base-custom-ref "
+           << QuoteCommandArg(state.outgoing_base_choice.custom_ref) << '\n';
+  }
 
   for (const auto& tab : state.tabs) {
     stream << "tab-begin\n";

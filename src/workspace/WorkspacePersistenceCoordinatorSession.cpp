@@ -211,6 +211,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
   persisted_session.sidebar_visible = CurrentProjectState().sidebar.visible;
   persisted_session.sidebar_width = CurrentProjectState().sidebar.width;
   persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
+  persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
   persisted_session.active_tab_index = CurrentProjectState().active_tab_index;
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ParseSessionFile");
@@ -515,6 +516,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.sidebar.visible = persisted_session.sidebar_visible;
     state.sidebar.width = persisted_session.sidebar_width;
     state.panel.height = persisted_session.bottom_panel_height;
+    state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
   }
 
   // Restore conversations; convert any non-terminal states to failed.
@@ -571,6 +573,7 @@ void PersistenceCoordinator::SaveSessionState() {
   persisted_session.sidebar_visible = CurrentProjectState().sidebar.visible;
   persisted_session.sidebar_width = CurrentProjectState().sidebar.width;
   persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
+  persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
   persisted_session.active_tab_index = 0;
 
   auto& state = CurrentProjectState();

@@ -5,6 +5,7 @@
 #include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
 #include "project/GitStatusService.h"
+#include "workspace/WorkspaceGitOutgoingBase.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -30,6 +31,8 @@ using microide::project::GitStagePath;
 using microide::project::GitUnstagePath;
 using microide::project::ReadGitFileAtCommit;
 using microide::project::ResolveGitBaseReference;
+using microide::workspace::OutgoingBaseChoice;
+using microide::workspace::ResolveGitOutgoingBase;
 
 struct CompareSummary {
   int unchanged = 0;
@@ -223,6 +226,56 @@ void TestGitOutgoingBranchFiles() {
   }
   Expect(saw_modified && saw_added,
          "outgoing branch list should include both changed files");
+}
+
+void TestGitOutgoingBaseChoiceResolution() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "src" / "alpha.cpp", "int alpha() {\n  return 1;\n}\n");
+  WriteFile(repo_path / "src" / "beta.cpp", "int beta() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base fixture", "base fixture");
+  RequireCommandSuccess(
+      "git -C '" + EscapedRepoPath(repo_path) +
+          "' checkout -b feature/outgoing-base >/dev/null 2>/dev/null",
+      "git checkout feature branch");
+
+  WriteFile(repo_path / "src" / "alpha.cpp", "int alpha() {\n  return 10;\n}\n");
+  CommitAll(repo_path, "feature alpha", "feature alpha");
+  WriteFile(repo_path / "src" / "beta.cpp", "int beta() {\n  return 20;\n}\n");
+  CommitAll(repo_path, "feature beta", "feature beta");
+
+  const auto auto_base = ResolveGitOutgoingBase(
+      repo_path, OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::Auto, .custom_ref = {}});
+  Expect(auto_base.repo_available && auto_base.base_ref == "main" &&
+             auto_base.base_label == "main",
+         "auto outgoing base should resolve the repository base branch");
+  const auto auto_outgoing = CollectGitBranchOutgoingFiles(repo_path, auto_base.base_ref);
+  Expect(auto_outgoing.size() == 2,
+         "auto outgoing base should include both commits ahead of the base branch");
+
+  const auto previous_commit = ResolveGitOutgoingBase(
+      repo_path,
+      OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::PreviousCommit, .custom_ref = {}});
+  Expect(previous_commit.repo_available && previous_commit.base_ref == "HEAD~1" &&
+             previous_commit.base_label == "HEAD~1",
+         "previous-commit outgoing base should map to HEAD~1");
+  const auto previous_outgoing =
+      CollectGitBranchOutgoingFiles(repo_path, previous_commit.base_ref);
+  Expect(previous_outgoing.size() == 1 &&
+             previous_outgoing.front().relative_path == std::filesystem::path("src/beta.cpp"),
+         "previous-commit outgoing base should limit results to the latest commit delta");
+
+  const auto specific_ref = ResolveGitOutgoingBase(
+      repo_path,
+      OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::SpecificRef, .custom_ref = "HEAD~2"});
+  Expect(specific_ref.repo_available && specific_ref.base_ref == "HEAD~2" &&
+             specific_ref.base_label == "HEAD~2",
+         "specific-ref outgoing base should preserve the exact ref string");
+  const auto specific_outgoing = CollectGitBranchOutgoingFiles(repo_path, specific_ref.base_ref);
+  Expect(specific_outgoing.size() == 2,
+         "specific-ref outgoing base should pass the custom ref through unchanged");
 }
 
 void TestGitResolvePrBaseReferenceFromGhMergeBase() {
@@ -455,6 +508,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/CompareFixture", TestGitCompareFixture);
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
+  AddTest(tests, "Git/OutgoingBaseChoiceResolution", TestGitOutgoingBaseChoiceResolution);
   AddTest(tests, "Git/ResolvePrBaseReferenceFromGhMergeBase",
           TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);

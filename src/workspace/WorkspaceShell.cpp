@@ -106,6 +106,45 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     return sidebar_mode_menu_items_;
   }
 
+  if (id == MenuId::GitOutgoingBase) {
+    static const auto kItems = std::to_array<MenuItemSpec>({
+        MenuItemSpec{
+            .action = ActionId::Colorscheme,
+            .label = "Auto (base branch)",
+            .accelerator = {},
+            .args = {},
+            .arg_count = 0,
+            .separator = false,
+            .checkable = false,
+            .submenu = MenuId::None,
+            .command_name = {},
+        },
+        MenuItemSpec{
+            .action = ActionId::Colorscheme,
+            .label = "Previous commit (HEAD~1)",
+            .accelerator = {},
+            .args = {},
+            .arg_count = 0,
+            .separator = false,
+            .checkable = false,
+            .submenu = MenuId::None,
+            .command_name = {},
+        },
+        MenuItemSpec{
+            .action = ActionId::Colorscheme,
+            .label = "Specific ref...",
+            .accelerator = {},
+            .args = {},
+            .arg_count = 0,
+            .separator = false,
+            .checkable = false,
+            .submenu = MenuId::None,
+            .command_name = {},
+        },
+    });
+    return kItems;
+  }
+
   const MenuSpec* menu = FindWorkspaceMenuSpec(id);
   if (menu == nullptr) {
     return {};
@@ -163,6 +202,32 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
   }
 
   return items;
+}
+
+bool WorkspaceShell::ExecuteCustomMenuItem(MenuId id, std::size_t item_index) {
+  if (id != MenuId::GitOutgoingBase) {
+    return false;
+  }
+
+  switch (item_index) {
+    case 0:
+      SetGitOutgoingBaseChoice(OutgoingBaseChoice{
+          .kind = OutgoingBaseChoice::Kind::Auto,
+          .custom_ref = {},
+      });
+      return true;
+    case 1:
+      SetGitOutgoingBaseChoice(OutgoingBaseChoice{
+          .kind = OutgoingBaseChoice::Kind::PreviousCommit,
+          .custom_ref = {},
+      });
+      return true;
+    case 2:
+      OpenGitOutgoingBasePrompt();
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool WorkspaceShell::ExecuteCommandName(std::string_view command_name,
@@ -266,7 +331,19 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
   static constexpr float kItemPadding = 8.0f;
   static constexpr float kItemGap = 6.0f;
   static constexpr float kInset = 12.0f;
-  const auto items = ResolveStatusItems(plugin_runtime_.Host());
+  std::vector<StatusItemView> items = ResolveStatusItems(plugin_runtime_.Host());
+  if (const editor::TextViewport* viewport = ActiveEditableViewport();
+      viewport != nullptr && !viewport->path().empty()) {
+    items.insert(items.begin(), StatusItemView{
+                                 .id = "host.lsp",
+                                 .text = const_cast<WorkspaceShell*>(this)->ActiveLspStatusText(),
+                                 .tooltip =
+                                     const_cast<WorkspaceShell*>(this)->ActiveLspStatusTooltip(),
+                                 .alignment = StatusAlignment::Left,
+                                 .priority = 1000,
+                                 .plugin_id = {},
+                             });
+  }
 
   std::vector<VisibleStatusItem> visible;
   visible.reserve(items.size());

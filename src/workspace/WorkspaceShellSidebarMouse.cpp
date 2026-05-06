@@ -87,6 +87,12 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
           .open_discard_all_git_sidebar_prompt = [this]() { OpenDiscardAllGitSidebarPrompt(); },
           .git_sidebar_refresh_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarRefreshButtonRect(rect); },
+          .git_sidebar_outgoing_base_button_rect =
+              [this](const SDL_FRect& rect) { return GitSidebarOutgoingBaseButtonRect(rect); },
+          .open_anchored_menu =
+              [this](MenuId id, const SDL_FRect& rect) {
+                MakeMenuCoordinator().OpenAnchoredMenu(id, rect);
+              },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);

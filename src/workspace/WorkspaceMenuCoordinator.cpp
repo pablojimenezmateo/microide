@@ -119,6 +119,12 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
     return true;
   }
 
+  if (operations_.execute_custom_menu_item != nullptr &&
+      operations_.execute_custom_menu_item(menu_id, item_index)) {
+    CloseMenuBar();
+    return true;
+  }
+
   std::vector<std::string> args;
   args.reserve(item.arg_count);
   for (std::size_t i = 0; i < item.arg_count; ++i) {
@@ -256,6 +262,10 @@ MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
                   }
                 }
                 return std::nullopt;
+              },
+          .execute_custom_menu_item =
+              [this](MenuId id, std::size_t item_index) {
+                return ExecuteCustomMenuItem(id, item_index);
               },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {

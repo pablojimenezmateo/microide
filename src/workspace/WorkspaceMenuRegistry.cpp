@@ -24,7 +24,51 @@ MenuItemSpec MenuSeparator() {
       ActionId::Colorscheme, {}, {}, {}, 0, true, false, MenuId::None, {}};
 }
 
+std::string LspReadinessSuffix(const LspClient::ReadinessSnapshot& snapshot) {
+  using State = LspClient::ReadinessSnapshot::State;
+  switch (snapshot.state) {
+    case State::Idle:
+      return "No LSP";
+    case State::Starting:
+      return "LSP starting...";
+    case State::Indexing:
+      return snapshot.indexed_count > 0
+                 ? "LSP indexing " + std::to_string(snapshot.indexed_count) + "..."
+                 : "LSP indexing...";
+    case State::Ready:
+      return {};
+    case State::Failed:
+      return "LSP failed";
+  }
+  return {};
+}
+
 }  // namespace
+
+bool IsLspDrivenMenuAction(ActionId id) {
+  return id == ActionId::GoToDefinition || id == ActionId::FindReferences;
+}
+
+bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot) {
+  return snapshot.state == LspClient::ReadinessSnapshot::State::Ready;
+}
+
+std::string LspDrivenMenuActionLabel(ActionId id,
+                                     std::string_view ready_label,
+                                     const LspClient::ReadinessSnapshot& snapshot) {
+  if (!IsLspDrivenMenuAction(id) || IsLspMenuActionReady(snapshot)) {
+    return std::string(ready_label);
+  }
+
+  std::string label(ready_label);
+  const std::string suffix = LspReadinessSuffix(snapshot);
+  if (!suffix.empty()) {
+    label += " (";
+    label += suffix;
+    label += ")";
+  }
+  return label;
+}
 
 std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kFileItems = std::to_array<MenuItemSpec>({
@@ -118,6 +162,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
+      MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
       MenuSpec{MenuId::EditorContext, "Editor", kEditorContextItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},

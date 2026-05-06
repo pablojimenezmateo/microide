@@ -2,10 +2,12 @@
 
 #include "workspace/WorkspaceLspClient.h"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
@@ -121,6 +123,7 @@ struct LspClient::Impl {
   std::string language_id;
   std::string last_error;
   std::string last_error_snapshot;
+  LspClient::ReadinessSnapshot readiness_snapshot;
   std::atomic<bool> initialized{false};
   std::atomic<bool> supports_incremental_sync{false};
   std::atomic<Uint32> wake_event_type{0};
@@ -128,6 +131,9 @@ struct LspClient::Impl {
   void SetLastError(std::string message) {
     std::lock_guard lock(mutex);
     last_error = std::move(message);
+    readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Failed;
+    readiness_snapshot.message = last_error;
+    readiness_snapshot.indexed_count = 0;
   }
 
   std::string GetLastErrorCopy() {
@@ -255,6 +261,49 @@ struct LspClient::Impl {
     document_versions.clear();
     shutdown_response_received = false;
     shutdown_request_id = 0;
+    readiness_snapshot = LspClient::ReadinessSnapshot{};
+  }
+
+  static int ExtractIndexedCount(std::string_view text) {
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      if (!std::isdigit(static_cast<unsigned char>(text[i]))) {
+        continue;
+      }
+      int value = 0;
+      std::size_t cursor = i;
+      while (cursor < text.size() &&
+             std::isdigit(static_cast<unsigned char>(text[cursor]))) {
+        value = value * 10 + (text[cursor] - '0');
+        ++cursor;
+      }
+      return value;
+    }
+    return 0;
+  }
+
+  void SetProgressReadiness(const util::JsonValue& value) {
+    const std::string kind = value["kind"].IsString() ? value["kind"].AsString() : "";
+    const std::string title = value["title"].IsString() ? value["title"].AsString() : "";
+    const std::string message = value["message"].IsString() ? value["message"].AsString() : "";
+    const int percentage = value["percentage"].AsInt(0);
+
+    std::lock_guard lock(mutex);
+    if (kind == "end") {
+      readiness_snapshot.state = initialized.load(std::memory_order_acquire)
+                                     ? LspClient::ReadinessSnapshot::State::Ready
+                                     : LspClient::ReadinessSnapshot::State::Starting;
+      readiness_snapshot.message =
+          initialized.load(std::memory_order_acquire) ? "Ready" : "Starting...";
+      readiness_snapshot.indexed_count = 0;
+      return;
+    }
+
+    readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Indexing;
+    readiness_snapshot.message = !message.empty() ? message
+                               : !title.empty() ? title
+                                                : "Indexing...";
+    readiness_snapshot.indexed_count = std::max({ExtractIndexedCount(message),
+                                                 ExtractIndexedCount(title), percentage});
   }
 
   void ShutdownProcessOnce(int timeout_ms = 3000) {
@@ -440,6 +489,8 @@ struct LspClient::Impl {
           });
         }
         PushWakeEvent();
+      } else if (method == "$/progress") {
+        SetProgressReadiness(msg["params"]["value"]);
       }
     }
   }
@@ -459,6 +510,12 @@ struct LspClient::Impl {
   void DoInitializeBlocking() {
     util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
     initializing.store(true, std::memory_order_release);
+    {
+      std::lock_guard lock(mutex);
+      readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
+      readiness_snapshot.message = "Starting...";
+      readiness_snapshot.indexed_count = 0;
+    }
 
     using namespace util;
     JsonObject text_doc_sync;
@@ -604,6 +661,14 @@ struct LspClient::Impl {
     stop_reader.store(false);
     reader_thread = std::thread([this]() { ReaderMain(); });
 
+    {
+      std::lock_guard lock(mutex);
+      if (readiness_snapshot.state != LspClient::ReadinessSnapshot::State::Indexing) {
+        readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Ready;
+        readiness_snapshot.message = "Ready";
+        readiness_snapshot.indexed_count = 0;
+      }
+    }
     initializing.store(false, std::memory_order_release);
   }
 

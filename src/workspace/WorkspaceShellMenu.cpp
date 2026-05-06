@@ -22,7 +22,8 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
                           ? menu_bar.x + menu_bar.w - 8.0f
                           : window_buttons.front().rect.x - 8.0f;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (spec.id == MenuId::SidebarMode || spec.id == MenuId::EditorContext ||
+    if (spec.id == MenuId::SidebarMode || spec.id == MenuId::GitOutgoingBase ||
+        spec.id == MenuId::EditorContext ||
         spec.id == MenuId::EditorTabContext || spec.id == MenuId::TerminalContext ||
         spec.id == MenuId::TerminalTabContext) {
       continue;
@@ -167,13 +168,27 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
 }
 
 std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
+  const ActionSpec* command_action =
+      item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);
+  const ActionId effective_action =
+      command_action != nullptr ? command_action->id : item.action;
+
   if (!item.label.empty()) {
+    if (IsLspDrivenMenuAction(effective_action)) {
+      return LspDrivenMenuActionLabel(
+          effective_action, item.label,
+          const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot());
+    }
     return std::string(item.label);
   }
   if (!item.command_name.empty()) {
     if (const ActionSpec* action = FindActionByCommand(item.command_name);
         action != nullptr && !action->label.empty()) {
-      return std::string(action->label);
+      return IsLspDrivenMenuAction(effective_action)
+                 ? LspDrivenMenuActionLabel(
+                       effective_action, action->label,
+                       const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot())
+                 : std::string(action->label);
     }
     if (const ActionSpec* action = FindActionByCommand(item.command_name);
         action != nullptr && !action->command_name.empty()) {
@@ -183,7 +198,10 @@ std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   }
   if (const ActionSpec* action = FindActionSpec(item.action);
       action != nullptr && !action->label.empty()) {
-    return std::string(action->label);
+    return IsLspDrivenMenuAction(effective_action)
+               ? LspDrivenMenuActionLabel(effective_action, action->label,
+                                          const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot())
+               : std::string(action->label);
   }
   if (const ActionSpec* action = FindActionSpec(item.action);
       action != nullptr && !action->command_name.empty()) {
@@ -226,6 +244,11 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     const auto& plugin_commands = plugin_runtime_.Host().CommandNames();
     return std::find(plugin_commands.begin(), plugin_commands.end(),
                      std::string(item.command_name)) != plugin_commands.end();
+  }
+
+  if (IsLspDrivenMenuAction(effective_action) &&
+      !IsLspMenuActionReady(const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot())) {
+    return false;
   }
 
   if (effective_action == ActionId::Files) {

@@ -99,6 +99,8 @@ enum class ProjectSessionTag : std::uint16_t {
   ActiveTabIndex = 5,
   Tab = 6,
   ChatRegistry = 7,
+  OutgoingBaseKind = 8,
+  OutgoingBaseCustomRef = 9,
 };
 
 enum class EditorTabTag : std::uint16_t {

@@ -110,17 +110,9 @@ void SdlTtfTextBackend::RefreshMetrics() {
   const int font_height_pixels = TTF_GetFontHeight(font_);
   line_height_ = static_cast<float>(font_height_pixels) / scale_y;
 
-  static constexpr std::string_view kAdvanceProbe = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
-  int probe_width = 0;
-  int probe_height = 0;
-  if (TTF_GetStringSize(font_, kAdvanceProbe.data(), kAdvanceProbe.size(), &probe_width,
-                        &probe_height)) {
-    char_width_ = static_cast<float>(probe_width) /
-                  static_cast<float>(kAdvanceProbe.size()) / scale_x;
-  }
-
   int max_left_padding_pixels = 0;
   int max_right_padding_pixels = 0;
+  int max_advance_pixels = 0;
   for (unsigned char ch = 0x20; ch <= 0x7E; ++ch) {
     int minx = 0;
     int maxx = 0;
@@ -133,6 +125,11 @@ void SdlTtfTextBackend::RefreshMetrics() {
     max_left_padding_pixels = std::max(max_left_padding_pixels, std::max(0, -minx));
     max_right_padding_pixels =
         std::max(max_right_padding_pixels, std::max(0, maxx - std::max(advance, 0)));
+    max_advance_pixels = std::max(max_advance_pixels, std::max(0, advance));
+  }
+
+  if (max_advance_pixels > 0) {
+    char_width_ = static_cast<float>(max_advance_pixels) / scale_x;
   }
 
   if (char_width_ <= 0.0f) {

@@ -139,6 +139,11 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
                event.button.y)) {
     return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
   }
+  if (const auto button_rect = operations_.git_sidebar_outgoing_base_button_rect(layout.sidebar);
+      button_rect.has_value() && Contains(*button_rect, event.button.x, event.button.y)) {
+    operations_.open_anchored_menu(MenuId::GitOutgoingBase, *button_rect);
+    return true;
+  }
   if (event.button.y < operations_.git_sidebar_list_top(layout.sidebar) || local_y < 0.0f) {
     return true;
   }

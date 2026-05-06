@@ -167,6 +167,8 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.sidebar_visible = false;
   session.sidebar_width = 320.0f;
   session.bottom_panel_height = 208.0f;
+  session.outgoing_base_choice.kind = microide::workspace::OutgoingBaseChoice::Kind::SpecificRef;
+  session.outgoing_base_choice.custom_ref = "release/2.0";
   session.active_tab_index = 1;
   session.tabs = {editor_tab, compare_tab};
   session.chat = BuildChatFixture();
@@ -200,6 +202,10 @@ void TestPersistedStateConversationAndSessionRecordRoundTrip() {
              std::fabs(decoded_session.sidebar_width - 320.0f) < 0.0001f &&
              decoded_session.active_tab_index == 1,
          "project session top-level fields should round-trip");
+  Expect(decoded_session.outgoing_base_choice.kind ==
+             microide::workspace::OutgoingBaseChoice::Kind::SpecificRef &&
+             decoded_session.outgoing_base_choice.custom_ref == "release/2.0",
+         "project session outgoing base choice should round-trip");
   Expect(decoded_session.tabs.size() == 2 &&
              decoded_session.tabs[0].views.size() == 1 &&
              decoded_session.tabs[1].compare_right_ref == "WORKTREE",
@@ -247,6 +253,53 @@ void TestPersistedStateRecordDecodersSkipUnknownTags() {
          "known fields should remain intact when unknown tags are present");
 }
 
+void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
+  std::vector<std::byte> encoded;
+  std::vector<std::byte> payload;
+  microide::persistence::PrimitiveWriter writer(&payload);
+  Expect(writer.WriteU32(1), "project session schema payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(1, payload, &encoded),
+         "project session schema tag should append");
+
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteBool(true), "project session sidebar-visible payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(2, payload, &encoded),
+         "project session sidebar-visible tag should append");
+
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteF32(288.0f), "project session sidebar-width payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(3, payload, &encoded),
+         "project session sidebar-width tag should append");
+
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteF32(184.0f), "project session bottom-panel-height payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(4, payload, &encoded),
+         "project session bottom-panel-height tag should append");
+
+  payload.clear();
+  writer = microide::persistence::PrimitiveWriter(&payload);
+  Expect(writer.WriteU32(0), "project session active-tab payload should encode");
+  Expect(microide::persistence::AppendTaggedRecord(5, payload, &encoded),
+         "project session active-tab tag should append");
+
+  std::vector<std::byte> chat_record;
+  Expect(EncodeConversationRegistryRecord(PersistedChatState{}, &chat_record),
+         "empty chat registry should encode");
+  Expect(microide::persistence::AppendTaggedRecord(7, chat_record, &encoded),
+         "project session chat-registry tag should append");
+
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(encoded, &decoded),
+         "project session decoder should accept records without outgoing base fields");
+  Expect(decoded.outgoing_base_choice.kind ==
+             microide::workspace::OutgoingBaseChoice::Kind::Auto &&
+             decoded.outgoing_base_choice.custom_ref.empty(),
+         "missing outgoing base fields should default to Auto");
+}
+
 }  // namespace
 
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
@@ -256,6 +309,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateConversationAndSessionRecordRoundTrip);
   AddTest(tests, "PersistedStateRecord/DecodersSkipUnknownTags",
           TestPersistedStateRecordDecodersSkipUnknownTags);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto",
+          TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto);
 }
 
 }  // namespace microide::tests

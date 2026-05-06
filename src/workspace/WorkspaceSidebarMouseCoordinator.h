@@ -57,6 +57,8 @@ class SidebarMouseCoordinator {
     std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_discard_all_button_rect;
     std::function<void()> open_discard_all_git_sidebar_prompt;
     std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_refresh_button_rect;
+    std::function<std::optional<SDL_FRect>(const SDL_FRect&)> git_sidebar_outgoing_base_button_rect;
+    std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
     std::function<float(const SDL_FRect&)> git_sidebar_list_top;
     std::function<std::vector<GitSidebarLine>()> build_git_sidebar_lines;

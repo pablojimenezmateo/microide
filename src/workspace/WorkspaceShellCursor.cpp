@@ -395,6 +395,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (Contains(GitSidebarRefreshButtonRect(layout.sidebar), x, y)) {
         return CursorKind::Pointer;
       }
+      if (const auto button_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
+          button_rect.has_value() && Contains(*button_rect, x, y)) {
+        return CursorKind::Pointer;
+      }
       const auto lines = BuildGitSidebarLines();
       const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);

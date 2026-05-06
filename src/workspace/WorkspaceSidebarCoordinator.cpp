@@ -8,6 +8,7 @@
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "app/BackgroundTaskCounter.h"
 #include "project/GitCompareService.h"
@@ -379,6 +380,8 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
   }
 
   const std::filesystem::path project_root = context_.current_project_state.root;
+  const OutgoingBaseChoice outgoing_base_choice =
+      context_.current_project_state.sidebar.git.outgoing_base_choice;
   std::uint64_t generation = 0;
   {
     std::lock_guard lock(git_sidebar_refresh_mutex_);
@@ -389,7 +392,7 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
   context_.current_project_state.sidebar.git.refreshing = true;
   RequestSidebarRedraw();
   app::IncrementBackgroundTaskCount();
-  project_background_executor_.Post([this, project_root, generation]() {
+  project_background_executor_.Post([this, project_root, outgoing_base_choice, generation]() {
     GitSidebarState::RefreshSnapshot snapshot;
     snapshot.generation = generation;
 
@@ -404,11 +407,12 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
       });
     }
 
-    const auto base_ref = project::ResolveGitBaseReference(project_root);
-    if (base_ref.has_value()) {
-      snapshot.repo_available = true;
-      snapshot.base_ref = base_ref->ref;
-      snapshot.base_label = base_ref->label;
+    const ResolvedGitOutgoingBase resolved_base =
+        ResolveGitOutgoingBase(project_root, outgoing_base_choice);
+    snapshot.repo_available = resolved_base.repo_available;
+    snapshot.base_ref = resolved_base.base_ref;
+    snapshot.base_label = resolved_base.base_label;
+    if (!snapshot.base_ref.empty()) {
       const auto outgoing_entries =
           project::CollectGitBranchOutgoingFiles(project_root, snapshot.base_ref);
       for (const auto& entry : outgoing_entries) {
@@ -420,8 +424,6 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
             .staged = false,
         });
       }
-    } else {
-      snapshot.repo_available = std::filesystem::exists(project_root / ".git");
     }
 
     bool stored = false;

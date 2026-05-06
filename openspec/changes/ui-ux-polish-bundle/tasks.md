@@ -21,22 +21,22 @@
 
 ## 4. Outgoing Base Picker
 
-- [ ] 4.1 Add `OutgoingBaseChoice { enum Kind { Auto, PreviousCommit, SpecificRef }; std::string custom_ref; }` to `src/workspace/WorkspaceSidebarState.h`.
-- [ ] 4.2 Add a project-state field for `outgoing_base_choice` in the persisted record schema. Use `PersistedRecordReader/Writer`; treat missing field as `Auto`. Add a regression test that an older record loads with `Auto`.
-- [ ] 4.3 In `src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp`, branch on the choice: `Auto` → `ResolveGitBaseReference` (existing path); `PreviousCommit` → fixed `HEAD~1`; `SpecificRef` → use `custom_ref` directly. Pass the resolved string into `CollectGitBranchOutgoingFiles` unchanged.
-- [ ] 4.4 In `src/workspace/WorkspaceGitSidebarPresentation.cpp`, render a small chevron button to the right of the "Outgoing" header.
-- [ ] 4.5 Wire the chevron click to open an anchored popup menu via the `WorkspaceShellRenderMenus` infrastructure with three entries: `Auto (base branch)`, `Previous commit (HEAD~1)`, `Specific ref…`.
-- [ ] 4.6 The `Specific ref…` entry opens the existing prompt surface; on accept, write `OutgoingBaseChoice{SpecificRef, entered_string}` and persist.
-- [ ] 4.7 Add a unit test for `WorkspaceSidebarCoordinatorRefresh` covering each choice kind.
-- [ ] 4.8 Add a fixture test that a project's `OutgoingBaseChoice` round-trips through save/load.
+- [x] 4.1 Add `OutgoingBaseChoice { enum Kind { Auto, PreviousCommit, SpecificRef }; std::string custom_ref; }` to `src/workspace/WorkspaceSidebarState.h`.
+- [x] 4.2 Add a project-state field for `outgoing_base_choice` in the persisted record schema. Use `PersistedRecordReader/Writer`; treat missing field as `Auto`. Add a regression test that an older record loads with `Auto`.
+- [x] 4.3 In `src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp`, branch on the choice: `Auto` → `ResolveGitBaseReference` (existing path); `PreviousCommit` → fixed `HEAD~1`; `SpecificRef` → use `custom_ref` directly. Pass the resolved string into `CollectGitBranchOutgoingFiles` unchanged.
+- [x] 4.4 In `src/workspace/WorkspaceGitSidebarPresentation.cpp`, render a small chevron button to the right of the "Outgoing" header.
+- [x] 4.5 Wire the chevron click to open an anchored popup menu via the `WorkspaceShellRenderMenus` infrastructure with three entries: `Auto (base branch)`, `Previous commit (HEAD~1)`, `Specific ref…`.
+- [x] 4.6 The `Specific ref…` entry opens the existing prompt surface; on accept, write `OutgoingBaseChoice{SpecificRef, entered_string}` and persist.
+- [x] 4.7 Add a unit test for `WorkspaceSidebarCoordinatorRefresh` covering each choice kind.
+- [x] 4.8 Add a fixture test that a project's `OutgoingBaseChoice` round-trips through save/load.
 
 ## 5. LSP Readiness And Action Gating
 
-- [ ] 5.1 Expose `WorkspaceLspClient::ReadinessSnapshot()` returning `{ State, message, indexed_count }`. Implement under the existing client mutex; return by value.
-- [ ] 5.2 Add a status segment to the bottom panel render path that displays the snapshot's state and message. No new theme tokens.
-- [ ] 5.3 In `src/workspace/WorkspaceMenuRegistry.cpp`, mark `GoToDefinition`, `FindReferences`, and any other LSP-driven entries as enabled only when `state == Ready`. Provide labels like `"Go to Definition (LSP starting…)"` for the disabled state.
-- [ ] 5.4 In `src/workspace/WorkspaceShellAssist.cpp`, set a transient "lsp request in flight" flag when dispatching async LSP requests, cleared on completion or timeout. The bottom panel reads this flag.
-- [ ] 5.5 Add a unit test for the menu-availability path covering `Starting`, `Indexing`, `Ready`, and `Failed` states.
+- [x] 5.1 Expose `WorkspaceLspClient::ReadinessSnapshot()` returning `{ State, message, indexed_count }`. Implement under the existing client mutex; return by value.
+- [x] 5.2 Add a status segment to the bottom panel render path that displays the snapshot's state and message. No new theme tokens.
+- [x] 5.3 In `src/workspace/WorkspaceMenuRegistry.cpp`, mark `GoToDefinition`, `FindReferences`, and any other LSP-driven entries as enabled only when `state == Ready`. Provide labels like `"Go to Definition (LSP starting…)"` for the disabled state.
+- [x] 5.4 In `src/workspace/WorkspaceShellAssist.cpp`, set a transient "lsp request in flight" flag when dispatching async LSP requests, cleared on completion or timeout. The bottom panel reads this flag.
+- [x] 5.5 Add a unit test for the menu-availability path covering `Starting`, `Indexing`, `Ready`, and `Failed` states.
 
 ## 6. Diff Underline Dimming
 

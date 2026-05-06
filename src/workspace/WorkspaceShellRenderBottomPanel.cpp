@@ -202,6 +202,22 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                         theme_.chrome_background, header_label);
   }
 
+  if (const editor::TextViewport* viewport = ActiveEditableViewport();
+      viewport != nullptr && !viewport->path().empty()) {
+    const std::string lsp_status_text = ActiveLspStatusText();
+    const float status_width = text_renderer_.MeasureWidth(lsp_status_text);
+    const float status_right = visible_panel_tabs.empty()
+                                   ? panel_header.x + panel_header.w - 12.0f
+                                   : BottomPanelTerminalNewTabRect(panel_header).x - 12.0f;
+    const float status_x = status_right - status_width;
+    if (status_x > panel_header.x + std::min(panel_header.w * 0.5f, 220.0f)) {
+      DrawVCenteredTextOn(text_renderer_, renderer,
+                          MakeRect(status_x, panel_header.y,
+                                   std::max(0.0f, status_right - status_x), panel_header.h),
+                          0.0f, theme_.text_muted, theme_.chrome_background, lsp_status_text);
+    }
+  }
+
   const std::vector<std::string>* output_entries =
       output_panel ? OutputChannelEntries(panel_vm.output_channel_id)
                    : nullptr;

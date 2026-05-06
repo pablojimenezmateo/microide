@@ -1565,6 +1565,42 @@ void TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll() {
          "hydrated deferred tab should restore cursor and scroll metadata");
 }
 
+void TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  state.sidebar.git.outgoing_base_choice = microide::workspace::OutgoingBaseChoice{
+      .kind = microide::workspace::OutgoingBaseChoice::Kind::SpecificRef,
+      .custom_ref = "origin/release/2026-04",
+  };
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "outgoing base choice fixture should restore project session state");
+  const auto& restored_state = WorkspaceShellTestAccess::CurrentProjectState(restored);
+  Expect(restored_state.sidebar.git.outgoing_base_choice.kind ==
+             microide::workspace::OutgoingBaseChoice::Kind::SpecificRef &&
+             restored_state.sidebar.git.outgoing_base_choice.custom_ref ==
+                 "origin/release/2026-04",
+         "project session restore should preserve the outgoing base choice");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
@@ -1630,6 +1666,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs);
   AddTest(tests, "WorkspaceShell/DeferredTabHydrationPreservesCursorAndScroll",
           TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesOutgoingBaseChoice",
+          TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",

@@ -473,6 +473,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar,
                             true);
   } else if (sidebar_mode == SidebarMode::Git) {
+    const bool outgoing_base_menu_open =
+        context_.menu_state.menu_bar_open &&
+        context_.menu_state.active_menu_id == MenuId::GitOutgoingBase &&
+        context_.menu_state.active_menu_anchor_rect.has_value();
     draw_action_button(GitSidebarStageAllButtonRect(layout.sidebar), "Stage All",
                        CanStageAllGitSidebarEntries());
     draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
@@ -504,9 +508,29 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
 
       if (line.kind == GitSidebarLine::Kind::Header) {
+        float label_width = row_rect.w - 8.0f;
+        if (line.section == GitSidebarEntry::Section::Outgoing) {
+          if (const auto button_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
+              button_rect.has_value()) {
+            const bool hovered =
+                last_mouse_position_valid_ && Contains(*button_rect, last_mouse_x_, last_mouse_y_);
+            DrawFilledRect(renderer, *button_rect,
+                           outgoing_base_menu_open || hovered ? theme_.row_highlight
+                                                              : theme_.surface_background);
+            DrawRect(renderer, *button_rect,
+                     outgoing_base_menu_open ? theme_.accent
+                                             : hovered ? theme_.text_secondary : theme_.border);
+            DrawChevron(renderer, button_rect->x + button_rect->w * 0.5f,
+                        button_rect->y + button_rect->h * 0.5f, true,
+                        outgoing_base_menu_open || hovered ? theme_.text_primary
+                                                           : theme_.text_muted);
+            label_width =
+                std::max(0.0f, button_rect->x - row_rect.x - 8.0f);
+          }
+        }
         DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_muted,
                             theme_.surface_background,
-                            TruncateLabel(line.label, row_rect.w - 8.0f));
+                            TruncateLabel(line.label, label_width));
         continue;
       }
       if (line.kind == GitSidebarLine::Kind::Empty || line.entry_index < 0) {

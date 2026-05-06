@@ -14,6 +14,17 @@
 
 namespace microide::workspace {
 
+struct OutgoingBaseChoice {
+  enum class Kind {
+    Auto,
+    PreviousCommit,
+    SpecificRef,
+  };
+
+  Kind kind = Kind::Auto;
+  std::string custom_ref;
+};
+
 enum class SidebarMode {
   None,
   Tree,
@@ -90,6 +101,7 @@ struct GitSidebarState {
   std::vector<GitSidebarEntry> entries;
   std::string base_ref;
   std::string base_label;
+  OutgoingBaseChoice outgoing_base_choice;
   bool repo_available = false;
   bool refreshing = false;
   bool provider_backed = false;

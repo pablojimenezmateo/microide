@@ -342,6 +342,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabCoordinatorShellBridge.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceProjectStateCoordinator.cpp
+  src/workspace/WorkspaceGitOutgoingBase.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
   src/workspace/WorkspaceRootView.cpp
   src/workspace/WorkspaceShellBootstrapper.cpp

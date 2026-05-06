@@ -43,6 +43,9 @@ using microide::workspace::FindWorkspaceActionSpec;
 using microide::workspace::FindWorkspaceMenuSpec;
 using microide::workspace::FormatCommandCompletionToken;
 using microide::workspace::JoinCommandArguments;
+using microide::workspace::IsLspDrivenMenuAction;
+using microide::workspace::IsLspMenuActionReady;
+using microide::workspace::LspDrivenMenuActionLabel;
 using microide::workspace::MenuId;
 using microide::workspace::MenuSpec;
 using microide::workspace::ParseCommandLine;
@@ -298,6 +301,52 @@ void TestWorkspaceMenuRegistry() {
                                item.action == ActionId::CopyAbsolutePath;
                       }) != file_items.end(),
          "tree-context registry should expose file actions");
+}
+
+void TestWorkspaceMenuRegistryLspAvailabilityLabels() {
+  using Snapshot = microide::workspace::LspClient::ReadinessSnapshot;
+  using State = Snapshot::State;
+
+  const Snapshot starting{
+      .state = State::Starting,
+      .message = "Starting...",
+      .indexed_count = 0,
+  };
+  const Snapshot indexing{
+      .state = State::Indexing,
+      .message = "Indexing workspace",
+      .indexed_count = 42,
+  };
+  const Snapshot ready{
+      .state = State::Ready,
+      .message = "Ready",
+      .indexed_count = 0,
+  };
+  const Snapshot failed{
+      .state = State::Failed,
+      .message = "Startup failed",
+      .indexed_count = 0,
+  };
+
+  Expect(IsLspDrivenMenuAction(ActionId::GoToDefinition) &&
+             IsLspDrivenMenuAction(ActionId::FindReferences) &&
+             !IsLspDrivenMenuAction(ActionId::Completion),
+         "menu registry should only treat definition and references as LSP-gated actions");
+  Expect(!IsLspMenuActionReady(starting) && !IsLspMenuActionReady(indexing) &&
+             IsLspMenuActionReady(ready) && !IsLspMenuActionReady(failed),
+         "menu registry should only enable LSP-driven actions when the client is ready");
+  Expect(LspDrivenMenuActionLabel(ActionId::GoToDefinition, "Go to Definition", starting) ==
+             "Go to Definition (LSP starting...)",
+         "menu registry should explain starting LSP state in disabled labels");
+  Expect(LspDrivenMenuActionLabel(ActionId::FindReferences, "Find References", indexing) ==
+             "Find References (LSP indexing 42...)",
+         "menu registry should explain indexing LSP state in disabled labels");
+  Expect(LspDrivenMenuActionLabel(ActionId::GoToDefinition, "Go to Definition", ready) ==
+             "Go to Definition",
+         "menu registry should keep the ready label unchanged");
+  Expect(LspDrivenMenuActionLabel(ActionId::FindReferences, "Find References", failed) ==
+             "Find References (LSP failed)",
+         "menu registry should explain failed LSP state in disabled labels");
 }
 
 void TestWorkspaceSidebarRegistry() {
@@ -713,6 +762,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);
   AddTest(tests, "Workspace/MenuRegistry", TestWorkspaceMenuRegistry);
+  AddTest(tests, "Workspace/MenuRegistryLspAvailabilityLabels",
+          TestWorkspaceMenuRegistryLspAvailabilityLabels);
   AddTest(tests, "Workspace/SidebarRegistry", TestWorkspaceSidebarRegistry);
   AddTest(tests, "WorkspaceShared/PathAndCaseHelpers", TestWorkspaceSharedPathAndCaseHelpers);
   AddTest(tests, "WorkspaceShared/PathMutationHelpers", TestWorkspaceSharedPathMutationHelpers);

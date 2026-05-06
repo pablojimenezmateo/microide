@@ -170,6 +170,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Delete";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard All Changes";
+    case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
+      return "Outgoing Base Ref";
     case PromptSurfaceState::Action::OpenExternalUrl:
       return "Open External Link";
     case PromptSurfaceState::Action::ApproveChatTool:
@@ -194,6 +196,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Move " + label + " to trash?";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
+    case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
+      return "Compare outgoing files against this ref.";
     case PromptSurfaceState::Action::OpenExternalUrl:
       return "Open " + context_.prompts.surface.detail + " in your browser?";
     case PromptSurfaceState::Action::ApproveChatTool: {
@@ -208,6 +212,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
 
 std::string WorkspaceShell::PromptSurfaceDetail() const {
   switch (context_.prompts.surface.action) {
+    case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
     case PromptSurfaceState::Action::OpenExternalUrl:
     case PromptSurfaceState::Action::ApproveChatTool:
       return context_.prompts.surface.detail;
@@ -228,6 +233,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Delete", "Cancel"};
     case PromptSurfaceState::Action::DiscardGitChanges:
       return {"Discard All", "Cancel"};
+    case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
+      return {"Use Ref", "Cancel"};
     case PromptSurfaceState::Action::OpenExternalUrl:
       return {"Open Link", "Cancel"};
     case PromptSurfaceState::Action::ApproveChatTool:
@@ -290,6 +297,20 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     } else {
       ResolveChatToolApprovalPrompt(false, false);
     }
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::SetGitOutgoingBaseRef) {
+    const std::string ref = context_.prompts.surface.input.text();
+    if (ref.empty()) {
+      return;
+    }
+    MakePromptSurfaceService().DismissPromptSurface(false);
+    SetGitOutgoingBaseChoice(OutgoingBaseChoice{
+        .kind = OutgoingBaseChoice::Kind::SpecificRef,
+        .custom_ref = ref,
+    });
+    context_.current_project_state.surface.focus = FocusTarget::Sidebar;
     return;
   }
   EditorTabService editor_tabs = MakeEditorTabService();

@@ -240,6 +240,12 @@ struct DebugSessionState {
   std::string status_text;
 };
 
+struct LspUiState {
+  bool request_in_flight = false;
+  Uint64 request_started_ticks = 0;
+  Uint64 request_timeout_ticks = 0;
+};
+
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
   bool command_mode = false;
@@ -274,6 +280,7 @@ struct ProjectWorkspaceState {
   DebugSessionState debug_session;
   editor::DiagnosticsStore diagnostics_store;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
+  LspUiState lsp;
   std::string active_colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
   EditorPreferences editor_preferences;

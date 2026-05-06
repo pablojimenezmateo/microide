@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceLspClient.h"
 
 namespace microide::plugin {
 class PluginHost;
@@ -21,6 +22,7 @@ enum class MenuId {
   Edit,
   View,
   SidebarMode,
+  GitOutgoingBase,
   Search,
   EditorContext,
   EditorTabContext,
@@ -59,6 +61,11 @@ struct MenuSpec {
 std::span<const MenuSpec> WorkspaceMenuSpecs();
 const MenuSpec* FindWorkspaceMenuSpec(MenuId id);
 std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKind target);
+bool IsLspDrivenMenuAction(ActionId id);
+bool IsLspMenuActionReady(const LspClient::ReadinessSnapshot& snapshot);
+std::string LspDrivenMenuActionLabel(ActionId id,
+                                     std::string_view ready_label,
+                                     const LspClient::ReadinessSnapshot& snapshot);
 
 // Map a plugin menu string ("file", "edit", "view", "search") to a MenuId.
 // Returns MenuId::None for unrecognised values.

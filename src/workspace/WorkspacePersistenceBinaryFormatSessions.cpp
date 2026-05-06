@@ -2,6 +2,32 @@
 
 namespace microide::workspace {
 
+namespace {
+
+std::string SerializeOutgoingBaseChoiceKind(OutgoingBaseChoice::Kind kind) {
+  switch (kind) {
+    case OutgoingBaseChoice::Kind::Auto:
+      return "auto";
+    case OutgoingBaseChoice::Kind::PreviousCommit:
+      return "previous_commit";
+    case OutgoingBaseChoice::Kind::SpecificRef:
+      return "specific_ref";
+  }
+  return "auto";
+}
+
+OutgoingBaseChoice::Kind ParseOutgoingBaseChoiceKind(std::string_view value) {
+  if (value == "previous_commit") {
+    return OutgoingBaseChoice::Kind::PreviousCommit;
+  }
+  if (value == "specific_ref") {
+    return OutgoingBaseChoice::Kind::SpecificRef;
+  }
+  return OutgoingBaseChoice::Kind::Auto;
+}
+
+}  // namespace
+
 bool EncodeConversationRegistryRecord(const PersistedChatState& state,
                                       std::vector<std::byte>* out) {
   if (out == nullptr) {
@@ -75,6 +101,17 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                     [&](PrimitiveWriter& w) { return w.WriteF32(state.sidebar_width); }, out) ||
       !AppendRecord(ProjectSessionTag::BottomPanelHeight,
                     [&](PrimitiveWriter& w) { return w.WriteF32(state.bottom_panel_height); }, out) ||
+      !AppendRecord(ProjectSessionTag::OutgoingBaseKind,
+                    [&](PrimitiveWriter& w) {
+                      return w.WriteString(
+                          SerializeOutgoingBaseChoiceKind(state.outgoing_base_choice.kind));
+                    },
+                    out) ||
+      !AppendRecord(ProjectSessionTag::OutgoingBaseCustomRef,
+                    [&](PrimitiveWriter& w) {
+                      return w.WriteString(state.outgoing_base_choice.custom_ref);
+                    },
+                    out) ||
       !AppendRecord(ProjectSessionTag::ActiveTabIndex,
                     [&](PrimitiveWriter& w) { return WriteSize(w, state.active_tab_index); }, out)) {
     return false;
@@ -122,6 +159,17 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    return reader.ReadF32(&state->sidebar_width) && reader.remaining() == 0;
                  case ProjectSessionTag::BottomPanelHeight:
                    return reader.ReadF32(&state->bottom_panel_height) && reader.remaining() == 0;
+                 case ProjectSessionTag::OutgoingBaseKind: {
+                   std::string value;
+                   if (!reader.ReadString(&value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->outgoing_base_choice.kind = ParseOutgoingBaseChoiceKind(value);
+                   return true;
+                 }
+                 case ProjectSessionTag::OutgoingBaseCustomRef:
+                   return reader.ReadString(&state->outgoing_base_choice.custom_ref) &&
+                          reader.remaining() == 0;
                  case ProjectSessionTag::ActiveTabIndex:
                    return ReadSize(reader, &state->active_tab_index) && reader.remaining() == 0;
                  case ProjectSessionTag::Tab: {

@@ -295,6 +295,39 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
          "menu hover redraws should stay scoped to chrome");
 }
 
+void TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.md";
+  WriteFile(file, "# heading\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto initial_items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
+  const auto lsp_it = std::find_if(initial_items.begin(), initial_items.end(), [](const auto& item) {
+    return item.item.id == "host.lsp";
+  });
+  Expect(lsp_it != initial_items.end() && lsp_it->item.text == "LSP: No LSP server",
+         "status row should surface the host-owned LSP readiness text");
+
+  auto& project = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  project.lsp.request_in_flight = true;
+  project.lsp.request_started_ticks = SDL_GetTicks();
+  project.lsp.request_timeout_ticks = project.lsp.request_started_ticks + 1000;
+
+  const auto in_flight_items = WorkspaceShellTestAccess::VisibleStatusItems(shell);
+  const auto in_flight_it =
+      std::find_if(in_flight_items.begin(), in_flight_items.end(), [](const auto& item) {
+        return item.item.id == "host.lsp";
+      });
+  Expect(in_flight_it != in_flight_items.end() &&
+             in_flight_it->item.text == "LSP: working...",
+         "status row should surface transient in-flight LSP work");
+}
+
 void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1760,6 +1793,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
   AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",
           TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation);
+  AddTest(tests, "WorkspaceShell/StatusRowShowsLspReadinessAndInFlightState",
+          TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState);
   AddTest(tests, "WorkspaceShell/EditorCaretDirtyRectFollowsActiveCaret",
           TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
   AddTest(tests, "WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation",

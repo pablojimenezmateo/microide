@@ -13,6 +13,20 @@
 
 namespace microide::workspace {
 
+struct LspReadinessSnapshot {
+  enum class State {
+    Idle,
+    Starting,
+    Indexing,
+    Ready,
+    Failed,
+  };
+
+  State state = State::Idle;
+  std::string message;
+  int indexed_count = 0;
+};
+
 // Single LSP server connection with JSON-RPC 2.0.
 // All request methods are asynchronous: they return immediately and deliver
 // results via callbacks dispatched on the main thread through DrainCallbacks().
@@ -20,6 +34,8 @@ namespace microide::workspace {
 // main event loop when responses are ready.
 class LspClient {
  public:
+  using ReadinessSnapshot = LspReadinessSnapshot;
+
   struct Position {
     int line = 0;
     int character = 0;
@@ -102,6 +118,9 @@ class LspClient {
 
   // Last startup/runtime error message captured by the LSP client.
   const std::string& LastError() const;
+
+  // Current startup/readiness state for the server.
+  ReadinessSnapshot GetReadinessSnapshot() const;
 
   // Set callback for publishDiagnostics notifications (called on main thread).
   void SetDiagnosticsCallback(OnPublishDiagnostics callback);

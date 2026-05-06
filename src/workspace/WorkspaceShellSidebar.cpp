@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceGitSidebarPresentation.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarCoordinator.h"
 
@@ -37,6 +38,7 @@ constexpr float kGitSidebarListGap = 8.0f;
 constexpr float kGitSidebarSummaryLineHeight = 14.0f;
 constexpr float kGitSidebarEntryButtonGap = 4.0f;
 constexpr float kGitSidebarEntryButtonHoverPadding = 4.0f;
+constexpr float kGitSidebarHeaderMenuButtonSize = 16.0f;
 
 SDL_FRect ExpandRect(const SDL_FRect& rect, float padding) {
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
@@ -91,6 +93,30 @@ SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sideba
       std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
   return MakeRect(row_rect.x + button_width + kGitSidebarActionGap, row_rect.y, button_width,
                   row_rect.h);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
+    const SDL_FRect& sidebar_rect) const {
+  const auto lines = BuildGitSidebarLines();
+  const auto list_layout = ComputeGitSidebarListLayout(sidebar_rect, lines.size());
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    const auto& line = lines[i];
+    if (line.kind != GitSidebarLine::Kind::Header ||
+        line.section != GitSidebarEntry::Section::Outgoing) {
+      continue;
+    }
+
+    const int visible_row = static_cast<int>(i) - list_layout.scroll_row;
+    if (visible_row < 0 || visible_row >= list_layout.visible_rows) {
+      return std::nullopt;
+    }
+
+    const SDL_FRect row_rect = ScrollableListRowRect(list_layout, visible_row);
+    const float size = std::min(kGitSidebarHeaderMenuButtonSize, row_rect.h - 2.0f);
+    return MakeRect(row_rect.x + row_rect.w - size - 4.0f, row_rect.y + (row_rect.h - size) * 0.5f,
+                    size, size);
+  }
+  return std::nullopt;
 }
 
 std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
@@ -528,6 +554,20 @@ const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry()
     return nullptr;
   }
   return &context_.current_project_state.sidebar.git.entries[context_.current_project_state.sidebar.git.selected_index];
+}
+
+void WorkspaceShell::SetGitOutgoingBaseChoice(OutgoingBaseChoice choice) {
+  context_.current_project_state.sidebar.git.outgoing_base_choice = std::move(choice);
+  MakePersistenceCoordinator().SaveSessionState();
+  RequestGitSidebarRefresh();
+  ConsumeGitSidebarRefresh();
+}
+
+void WorkspaceShell::OpenGitOutgoingBasePrompt() {
+  OpenPromptSurface(PromptSurfaceState::Action::SetGitOutgoingBaseRef,
+                    PromptSurfaceState::Kind::TextInput,
+                    context_.current_project_state.root,
+                    context_.current_project_state.sidebar.git.outgoing_base_choice.custom_ref);
 }
 
 }  // namespace microide::workspace

@@ -561,6 +561,7 @@
   std::string MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
   bool IsMenuItemChecked(const MenuItemSpec& item) const;
+  bool ExecuteCustomMenuItem(MenuId id, std::size_t item_index);
   bool ExecuteCommandName(std::string_view command_name,
                           const std::vector<std::string>& args,
                           ActionSource source,
@@ -914,6 +915,7 @@
   SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
+  std::optional<SDL_FRect> GitSidebarOutgoingBaseButtonRect(const SDL_FRect& sidebar_rect) const;
   std::vector<std::string> GitSidebarSummaryLines() const;
   float GitSidebarListTop(const SDL_FRect& sidebar_rect) const;
   float GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const;
@@ -991,6 +993,8 @@
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
+  void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
+  void OpenGitOutgoingBasePrompt();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   bool EditorBlameFitsPane(const editor::TextViewport& viewport,
                            const SDL_FRect& rect,
@@ -1186,6 +1190,12 @@
   LspManager& CurrentLspManager();
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
+  LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
+  std::string ActiveLspStatusText(bool ensure_started = true);
+  std::string ActiveLspStatusTooltip(bool ensure_started = true);
+  void BeginTrackedLspRequest();
+  void FinishTrackedLspRequest();
+  void ExpireTrackedLspRequestIfNeeded();
   LspClient* LspClientForViewport(const editor::TextViewport& viewport,
                                   std::string* language_id = nullptr);
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,

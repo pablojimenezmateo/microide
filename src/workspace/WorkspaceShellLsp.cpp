@@ -14,6 +14,8 @@ namespace microide::workspace {
 
 namespace {
 
+constexpr Uint64 kLspRequestTimeoutMs = 10000;
+
 std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
   return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
 }
@@ -92,6 +94,27 @@ editor::DiagnosticSeverity DiagnosticSeverityFromLsp(int severity) {
   }
 }
 
+std::string LspReadinessMessage(const LspClient::ReadinessSnapshot& snapshot) {
+  using State = LspClient::ReadinessSnapshot::State;
+  switch (snapshot.state) {
+    case State::Idle:
+      return snapshot.message.empty() ? "Idle" : snapshot.message;
+    case State::Starting:
+      return snapshot.message.empty() ? "Starting..." : snapshot.message;
+    case State::Indexing:
+      if (!snapshot.message.empty()) {
+        return snapshot.message;
+      }
+      return snapshot.indexed_count > 0 ? "Indexing " + std::to_string(snapshot.indexed_count) + "..."
+                                        : "Indexing...";
+    case State::Ready:
+      return snapshot.message.empty() ? "Ready" : snapshot.message;
+    case State::Failed:
+      return snapshot.message.empty() ? "Failed" : snapshot.message;
+  }
+  return "Idle";
+}
+
 }  // namespace
 
 bool WorkspaceShell::HasActiveCompletionProvider() const {
@@ -136,6 +159,91 @@ bool WorkspaceShell::HasActiveReferencesProvider() const {
   }
   const std::string language_id = DetectActiveLanguageId(*viewport);
   return !language_id.empty() && CurrentLspManager().HasServer(language_id);
+}
+
+LspClient::ReadinessSnapshot WorkspaceShell::ActiveLspReadinessSnapshot(bool ensure_started) {
+  ExpireTrackedLspRequestIfNeeded();
+
+  LspClient::ReadinessSnapshot snapshot;
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    snapshot.message = "Idle";
+    return snapshot;
+  }
+
+  const std::string language_id = DetectActiveLanguageId(*viewport);
+  if (language_id.empty()) {
+    snapshot.message = "Idle";
+    return snapshot;
+  }
+
+  LspManager& manager = CurrentLspManager();
+  if (!manager.HasServer(language_id)) {
+    snapshot.message = "No LSP server";
+    return snapshot;
+  }
+
+  LspClient* client = ensure_started ? manager.GetServer(language_id)
+                                     : manager.FindStartedServer(language_id);
+  if (client == nullptr) {
+    const std::string error = manager.LastServerError(language_id);
+    if (!error.empty()) {
+      snapshot.state = LspClient::ReadinessSnapshot::State::Failed;
+      snapshot.message = error;
+      return snapshot;
+    }
+    snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
+    snapshot.message = "Starting...";
+    return snapshot;
+  }
+
+  return client->GetReadinessSnapshot();
+}
+
+std::string WorkspaceShell::ActiveLspStatusText(bool ensure_started) {
+  const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
+  if (context_.current_project_state.lsp.request_in_flight) {
+    return "LSP: working...";
+  }
+  return "LSP: " + LspReadinessMessage(snapshot);
+}
+
+std::string WorkspaceShell::ActiveLspStatusTooltip(bool ensure_started) {
+  const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
+  if (context_.current_project_state.lsp.request_in_flight) {
+    return "Language server request in progress";
+  }
+  return "Language server: " + LspReadinessMessage(snapshot);
+}
+
+void WorkspaceShell::BeginTrackedLspRequest() {
+  auto& lsp = context_.current_project_state.lsp;
+  lsp.request_in_flight = true;
+  lsp.request_started_ticks = SDL_GetTicks();
+  lsp.request_timeout_ticks = lsp.request_started_ticks + kLspRequestTimeoutMs;
+  RequestChromeRedraw();
+  RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::FinishTrackedLspRequest() {
+  auto& lsp = context_.current_project_state.lsp;
+  if (!lsp.request_in_flight) {
+    return;
+  }
+  lsp.request_in_flight = false;
+  lsp.request_started_ticks = 0;
+  lsp.request_timeout_ticks = 0;
+  RequestChromeRedraw();
+  RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::ExpireTrackedLspRequestIfNeeded() {
+  auto& lsp = context_.current_project_state.lsp;
+  if (!lsp.request_in_flight || lsp.request_timeout_ticks == 0 ||
+      SDL_GetTicks() < lsp.request_timeout_ticks) {
+    return;
+  }
+  FinishTrackedLspRequest();
 }
 
 LspManager& WorkspaceShell::EnsureProjectLspManager(ProjectWorkspaceState& state) {

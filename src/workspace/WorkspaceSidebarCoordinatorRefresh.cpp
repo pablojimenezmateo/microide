@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "project/GitStatusService.h"
+#include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -48,11 +49,12 @@ void SidebarCoordinator::RefreshGit() {
           .staged = entry.staged,
       });
     }
-    const auto base_ref = project::ResolveGitBaseReference(project_root_);
-    if (base_ref.has_value()) {
-      snapshot.repo_available = true;
-      snapshot.base_ref = base_ref->ref;
-      snapshot.base_label = base_ref->label;
+    const ResolvedGitOutgoingBase resolved_base = ResolveGitOutgoingBase(
+        project_root_, state_.sidebar.git.outgoing_base_choice);
+    snapshot.repo_available = resolved_base.repo_available;
+    snapshot.base_ref = resolved_base.base_ref;
+    snapshot.base_label = resolved_base.base_label;
+    if (!snapshot.base_ref.empty()) {
       const auto outgoing_entries =
           project::CollectGitBranchOutgoingFiles(project_root_, snapshot.base_ref);
       for (const auto& entry : outgoing_entries) {
@@ -64,8 +66,6 @@ void SidebarCoordinator::RefreshGit() {
             .staged = false,
         });
       }
-    } else {
-      snapshot.repo_available = std::filesystem::exists(project_root_ / ".git");
     }
   }
 

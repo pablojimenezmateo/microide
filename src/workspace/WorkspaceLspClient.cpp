@@ -19,11 +19,23 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
                       const std::string& language_id, const std::string& cwd) {
   util::StartupTrace::Scope trace_scope("LspClient::Start");
   impl_->last_error.clear();
+  {
+    std::lock_guard lock(impl_->mutex);
+    impl_->readiness_snapshot.state = ReadinessSnapshot::State::Starting;
+    impl_->readiness_snapshot.message = "Starting...";
+    impl_->readiness_snapshot.indexed_count = 0;
+  }
 
   {
     util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
     if (!impl_->proc.Start(command, cwd)) {
       impl_->last_error = "failed to start language server process";
+      {
+        std::lock_guard lock(impl_->mutex);
+        impl_->readiness_snapshot.state = ReadinessSnapshot::State::Failed;
+        impl_->readiness_snapshot.message = impl_->last_error;
+        impl_->readiness_snapshot.indexed_count = 0;
+      }
       return false;
     }
   }
@@ -64,6 +76,54 @@ const std::string& LspClient::LastError() const {
   std::lock_guard lock(impl_->mutex);
   impl_->last_error_snapshot = impl_->last_error;
   return impl_->last_error_snapshot;
+}
+
+LspClient::ReadinessSnapshot LspClient::GetReadinessSnapshot() const {
+  std::lock_guard lock(impl_->mutex);
+  LspClient::ReadinessSnapshot snapshot = impl_->readiness_snapshot;
+  if (!impl_->last_error.empty()) {
+    snapshot.state = LspClient::ReadinessSnapshot::State::Failed;
+    snapshot.message = impl_->last_error;
+    snapshot.indexed_count = 0;
+    return snapshot;
+  }
+  if (snapshot.state == LspClient::ReadinessSnapshot::State::Indexing) {
+    if (snapshot.message.empty()) {
+      snapshot.message = "Indexing...";
+    }
+    return snapshot;
+  }
+  if (impl_->initializing.load(std::memory_order_acquire)) {
+    snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
+    if (snapshot.message.empty()) {
+      snapshot.message = "Starting...";
+    }
+    snapshot.indexed_count = 0;
+    return snapshot;
+  }
+  if (impl_->initialized.load(std::memory_order_acquire)) {
+    snapshot.state = LspClient::ReadinessSnapshot::State::Ready;
+    if (snapshot.message.empty()) {
+      snapshot.message = "Ready";
+    }
+    snapshot.indexed_count = 0;
+    return snapshot;
+  }
+  if (impl_->proc.IsRunning()) {
+    snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
+    if (snapshot.message.empty()) {
+      snapshot.message = "Starting...";
+    }
+    snapshot.indexed_count = 0;
+    return snapshot;
+  }
+  if (!snapshot.message.empty()) {
+    return snapshot;
+  }
+  snapshot.state = LspClient::ReadinessSnapshot::State::Idle;
+  snapshot.message = "Idle";
+  snapshot.indexed_count = 0;
+  return snapshot;
 }
 
 void LspClient::SetDiagnosticsCallback(OnPublishDiagnostics callback) {

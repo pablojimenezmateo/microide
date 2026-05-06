@@ -11,6 +11,19 @@ namespace {
 
 using microide::workspace::LspClient;
 
+bool WaitForLspReadinessState(LspClient& client,
+                              LspClient::ReadinessSnapshot::State state,
+                              int timeout_ms = 1000) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (client.GetReadinessSnapshot().state == state) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return client.GetReadinessSnapshot().state == state;
+}
+
 void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -292,6 +305,97 @@ time.sleep(10)
   Expect(client.IsShutdownComplete(), "pre-init server shutdown should complete after explicit wait");
 }
 
+void TestWorkspaceLspClientReadinessSnapshotTracksProgress() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+import time
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        time.sleep(0.2)
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "initialized":
+        write_message({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": {
+                "token": "workspace-index",
+                "value": {"kind": "begin", "title": "Indexing", "message": "Indexed 42 files"},
+            },
+        })
+        time.sleep(0.1)
+        write_message({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": {
+                "token": "workspace-index",
+                "value": {"kind": "end", "message": "Done"},
+            },
+        })
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  const bool started = client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  Expect(started, "readiness snapshot fixture should start");
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Starting, 200),
+         "readiness snapshot should report starting before initialize completes");
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Indexing, 1000),
+         "readiness snapshot should report indexing during work-done progress");
+
+  const auto indexing_snapshot = client.GetReadinessSnapshot();
+  Expect(indexing_snapshot.indexed_count == 42,
+         "readiness snapshot should parse the indexed count from progress messages");
+
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 1000),
+         "readiness snapshot should return to ready after progress ends");
+  Expect(client.GetReadinessSnapshot().message == "Ready",
+         "ready readiness snapshot should use the canonical ready message");
+  client.Shutdown();
+}
+
 }  // namespace
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
@@ -305,6 +409,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientShutdownClosesStdinAfterExitNotification);
   AddTest(tests, "WorkspaceLspClient/BeginShutdownCancelsPreInitServerImmediately",
           TestWorkspaceLspClientBeginShutdownCancelsPreInitServerImmediately);
+  AddTest(tests, "WorkspaceLspClient/ReadinessSnapshotTracksProgress",
+          TestWorkspaceLspClientReadinessSnapshotTracksProgress);
 }
 
 }  // namespace microide::tests
