@@ -224,6 +224,18 @@ bool ParseAiProviderRegistration(lua_State* state,
   auto type_opt = ReadStringField(state, 1, "type");
   if (!id_opt || !label_opt || !type_opt) return false;
   std::vector<std::string> models;
+  std::string runtime;
+  std::string base_url;
+  std::string default_model;
+  if (auto value = ReadStringField(state, 1, "runtime")) {
+    runtime = std::move(*value);
+  }
+  if (auto value = ReadStringField(state, 1, "base_url")) {
+    base_url = std::move(*value);
+  }
+  if (auto value = ReadStringField(state, 1, "default_model")) {
+    default_model = std::move(*value);
+  }
   lua_getfield(state, 1, "models");
   if (lua_istable(state, -1)) {
     for (lua_Integer i = 1;; ++i) {
@@ -242,6 +254,9 @@ bool ParseAiProviderRegistration(lua_State* state,
       .label = std::move(*label_opt),
       .type = std::move(*type_opt),
       .models = std::move(models),
+      .runtime = std::move(runtime),
+      .base_url = std::move(base_url),
+      .default_model = std::move(default_model),
       .plugin_id = plugin_id,
   };
   if (error_message) error_message->clear();

@@ -1,3 +1,8 @@
+# ai-workflows Specification
+
+## Purpose
+Define the durable host-owned AI workflow contract for chat, inline completion, provider runtime integration, and MCP tool approvals.
+## Requirements
 ### Requirement: Host-Owned Chat Pane
 
 MicroIDE SHALL provide a host-owned chat pane with a conversation rail, provider and model selector, per-conversation multiline draft composer with retention, markdown transcript rendering with safe local-link opening and confirmed remote-link opening, and project-tab chat status summaries. The chat pane SHALL NOT be replaceable by a plugin.
@@ -12,7 +17,7 @@ MicroIDE SHALL provide a host-owned chat pane with a conversation rail, provider
 
 ### Requirement: Host-Owned Inline Completion
 
-MicroIDE SHALL provide host-owned ghost-text inline completion in the editor, with explicit accept and dismiss actions, driven through the AI provider bridge. Inline completion SHALL NOT block typing, SHALL cancel in-flight requests when the caret moves or the buffer changes, and SHALL degrade silently when a provider is unavailable.
+MicroIDE SHALL provide host-owned ghost-text inline completion in the editor, with explicit accept and dismiss actions, driven through the host-owned AI provider runtime. Inline completion SHALL NOT block typing, SHALL cancel in-flight requests when the caret moves or the buffer changes, and SHALL degrade silently when a provider is unavailable.
 
 #### Scenario: Typing during a pending inline request
 - **WHEN** an inline completion request is in flight and the user types a new character
@@ -22,17 +27,17 @@ MicroIDE SHALL provide host-owned ghost-text inline completion in the editor, wi
 - **WHEN** the configured inline-completion provider is unreachable or unauthenticated
 - **THEN** the editor SHALL continue to accept input normally, SHALL NOT display a modal error, and SHALL route the failure to the host-owned output channel for the provider
 
-### Requirement: Provider Bridge Contract
+### Requirement: AI Provider Runtime Contract
 
-AI providers SHALL be reachable through the host-owned `WorkspaceProviderBridge` contract, which SHALL support stdio-backed long-lived provider bridges and SHALL accept HTTP and ACP-compatible transports as additive options without changing the contract seen by chat and inline-completion callers.
+AI providers SHALL be reachable through the host-owned `AiProviderRuntime` contract managed by `AiProviderRuntimeService`. The default path SHALL support direct HTTP request execution with streamed event delivery, and sidecar/stdio providers SHALL be optional adapters behind the same contract.
 
-#### Scenario: Adding an HTTP provider
-- **WHEN** a new HTTP-backed provider is added
-- **THEN** it SHALL implement the same provider-bridge contract used by stdio providers, and chat and inline-completion code paths SHALL consume it without branching on transport
+#### Scenario: Adding a direct HTTP provider
+- **WHEN** a new OpenAI-compatible or Anthropic-style provider is added
+- **THEN** it SHALL implement the same runtime lifecycle used by chat and inline completion without requiring a bridge subprocess
 
-#### Scenario: Provider bridge crashes
-- **WHEN** a long-lived stdio provider bridge exits unexpectedly during a chat or inline-completion request
-- **THEN** the host SHALL surface the failure to the provider's output channel, mark pending requests as failed, and allow the next request to relaunch the bridge without restarting MicroIDE
+#### Scenario: Sidecar provider crashes
+- **WHEN** a sidecar-backed runtime exits unexpectedly during a chat or inline-completion request
+- **THEN** the host SHALL surface the failure to the provider output channel, mark pending requests as failed, and allow the next request to relaunch the runtime without restarting MicroIDE
 
 ### Requirement: Bounded AI Context Collection
 
@@ -60,8 +65,13 @@ MCP tool invocations SHALL pass through host-owned permission checks with per-ag
 
 ### Requirement: AI Surfaces Do Not Stall The Shell
 
-Chat, inline completion, MCP tool execution, and provider-bridge startup SHALL NOT stall render, typing, scrolling, or input handling. All AI work SHALL be delivered back to the shell through existing SDL wake-event routing.
+Chat, inline completion, MCP tool execution, provider-runtime startup, and provider streaming or cancellation work SHALL NOT stall render, typing, scrolling, or input handling. All AI work SHALL be delivered back to the shell through existing SDL wake-event routing.
 
 #### Scenario: Slow model response
 - **WHEN** a chat provider takes several seconds to stream a response
 - **THEN** MicroIDE SHALL continue to accept input, repaint on demand, and remain responsive to unrelated sidebar, editor, or terminal interactions, with the pending response delivered as it arrives
+
+#### Scenario: Provider metadata refresh is slow
+- **WHEN** a provider runtime takes several seconds to refresh auth state or enumerate models
+- **THEN** the shell SHALL remain responsive, and any status or model-list updates SHALL arrive asynchronously through the same wake-event routing used by other AI work
+

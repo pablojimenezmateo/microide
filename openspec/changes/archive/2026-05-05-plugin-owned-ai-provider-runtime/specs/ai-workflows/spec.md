@@ -1,16 +1,3 @@
-## ADDED Requirements
-
-### Requirement: AI Provider Runtime Contract
-MicroIDE SHALL route chat, inline completion, and provider-facing tool-call round-trips through a host-owned `AiProviderRuntime` contract. The default provider path SHALL support direct HTTP request execution plus streaming delivery, and sidecar execution SHALL be treated as an optional adapter behind the same contract rather than a caller-visible architecture.
-
-#### Scenario: Adding a direct HTTP provider
-- **WHEN** a new OpenAI-compatible or Anthropic-style provider is added
-- **THEN** it SHALL implement the AI provider runtime contract without requiring a stdio bridge binary, and chat and inline-completion callers SHALL consume it without transport-specific branching
-
-#### Scenario: Optional sidecar provider
-- **WHEN** a provider is implemented through a sidecar for isolation or legacy reasons
-- **THEN** the sidecar adapter SHALL expose the same runtime lifecycle, cancellation, streaming, and error semantics as a direct provider
-
 ## MODIFIED Requirements
 
 ### Requirement: Host-Owned Inline Completion
@@ -36,10 +23,3 @@ Chat, inline completion, MCP tool execution, provider-runtime startup, and provi
 #### Scenario: Provider metadata refresh is slow
 - **WHEN** a provider runtime takes several seconds to refresh auth state or enumerate models
 - **THEN** the shell SHALL remain responsive, and any status or model-list updates SHALL arrive asynchronously through the same wake-event routing used by other AI work
-
-## REMOVED Requirements
-
-### Requirement: Provider Bridge Contract
-**Reason**: The durable contract is no longer a bridge-specific interface. OpenAI, Claude, and DeepSeek are first-class direct HTTP and streaming providers, and sidecar execution is an optional adapter instead of the baseline architecture.
-
-**Migration**: Route chat, inline completion, auth status, model discovery, streaming events, tool-call round-trips, and cancellation through `AiProviderRuntime` and `AiProviderRuntimeService`. If a provider still requires a subprocess, implement it as a sidecar-backed runtime adapter rather than a caller-visible bridge contract.

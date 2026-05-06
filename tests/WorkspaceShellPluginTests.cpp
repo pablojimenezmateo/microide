@@ -41,14 +41,6 @@ void CopyRepoPlugin(const std::filesystem::path& root, std::string_view director
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
 }
 
-std::filesystem::path RepoRoot() {
-  return TestRoot().parent_path();
-}
-
-std::filesystem::path BuiltProviderBridgeBinary() {
-  return (RepoRoot() / "build" / "microide" / "microide_provider_bridge").lexically_normal();
-}
-
 std::optional<std::string> ReadAsyncLine(microide::platform::AsyncSubprocess& process,
                                          int timeout_ms = 2000) {
   std::string buffer;
@@ -1968,16 +1960,11 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
   CopyRepoPlugin(plugins_root, "openai");
 
   FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-  const std::filesystem::path bridge_binary = BuiltProviderBridgeBinary();
-  Expect(std::filesystem::is_regular_file(bridge_binary),
-         "openai plugin test requires the native provider bridge binary");
-
   WriteFile(config_home / "microide" / "config",
             microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
                 .settings =
                     {
                         {"openai.api_key", "secret-openai"},
-                        {"openai.binary", bridge_binary.string()},
                         {"openai.base_url", server.base_url},
                         {"openai.model", "gpt-4.1-mini"},
                     },
@@ -2004,14 +1991,14 @@ void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
          "openai plugin chat should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(messages.size() == 2 && messages.back().content == "openai reply",
-         "openai plugin should route chat requests through the native bridge");
+         "openai plugin should route chat requests through the host runtime");
 
   WorkspaceShellTestAccess::RequestProviderAuthCheck(shell, "openai.chat");
   Expect(WaitForProviderAuthStatus(shell, "openai.chat", ProviderAuthStatus::KeyValid),
-         "openai plugin auth checks should validate keys through the native bridge");
+         "openai plugin auth checks should validate keys through the host runtime");
   WorkspaceShellTestAccess::RequestProviderModelList(shell, "openai.chat");
   Expect(WaitForProviderModels(shell, "openai.chat", "gpt-4.1-mini"),
-         "openai plugin should enumerate models through the native bridge");
+         "openai plugin should enumerate models through the host runtime");
   const auto capabilities = WorkspaceShellTestAccess::GetProviderCapabilities(shell, "openai.chat");
   Expect(capabilities.chat && capabilities.system_prompt && capabilities.model_enumeration,
          "openai plugin bridge should negotiate provider capabilities");
@@ -2061,15 +2048,10 @@ return ide.plugin({
 )lua");
 
   FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-  const std::filesystem::path bridge_binary = BuiltProviderBridgeBinary();
-  Expect(std::filesystem::is_regular_file(bridge_binary),
-         "openai tool-call test requires the native provider bridge binary");
-
   WriteFile(config_home / "microide" / "config",
             microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
                 .settings =
                     {
-                        {"openai.binary", bridge_binary.string()},
                         {"openai.base_url", server.base_url},
                         {"openai.model", "gpt-4.1-mini"},
                     },
@@ -2126,16 +2108,11 @@ void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
   CopyRepoPlugin(plugins_root, "anthropic");
 
   FakeProviderServer server = StartFakeProviderServer(project_root, "anthropic");
-  const std::filesystem::path bridge_binary = BuiltProviderBridgeBinary();
-  Expect(std::filesystem::is_regular_file(bridge_binary),
-         "anthropic plugin test requires the native provider bridge binary");
-
   WriteFile(config_home / "microide" / "config",
             microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
                 .settings =
                     {
                         {"anthropic.api_key", "secret-anthropic"},
-                        {"anthropic.binary", bridge_binary.string()},
                         {"anthropic.base_url", server.base_url},
                         {"anthropic.model", "claude-sonnet-4-6"},
                     },
@@ -2161,14 +2138,64 @@ void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
          "anthropic plugin chat should complete");
   const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
   Expect(messages.size() == 2 && messages.back().content == "anthropic reply",
-         "anthropic plugin should route chat requests through the native bridge");
+         "anthropic plugin should route chat requests through the host runtime");
 
   WorkspaceShellTestAccess::RequestProviderAuthCheck(shell, "anthropic.chat");
   Expect(WaitForProviderAuthStatus(shell, "anthropic.chat", ProviderAuthStatus::KeyValid),
-         "anthropic plugin auth checks should validate keys through the native bridge");
+         "anthropic plugin auth checks should validate keys through the host runtime");
   WorkspaceShellTestAccess::RequestProviderModelList(shell, "anthropic.chat");
   Expect(WaitForProviderModels(shell, "anthropic.chat", "claude-sonnet-4-6"),
-         "anthropic plugin should enumerate models through the native bridge");
+         "anthropic plugin should enumerate models through the host runtime");
+
+  server.process.Shutdown();
+}
+
+void TestWorkspaceShellRepoDeepSeekPluginUsesOpenAiCompatibilityRuntime() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "deepseek runtime\n");
+  CopyRepoPlugin(plugins_root, "deepseek");
+
+  // Use the OpenAI fixture endpoint because DeepSeek follows the OpenAI-compatible path.
+  FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
+
+  WriteFile(config_home / "microide" / "config",
+            microide::workspace::SerializeUserConfig(microide::workspace::PersistedUserConfigState{
+                .settings =
+                    {
+                        {"deepseek.api_key", "secret-openai"},
+                        {"deepseek.base_url", server.base_url},
+                        {"deepseek.model", "deepseek-chat"},
+                    },
+                .disabled_keybinding_ids = {},
+            }));
+  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+
+  WorkspaceShell shell;
+  Expect(shell.Initialize({}),
+         "deepseek plugin test should restore user config before opening a project");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "deepseek plugin fixture should open the project");
+  Expect(WorkspaceShellTestAccess::AiProviders(shell).size() == 1 &&
+             WorkspaceShellTestAccess::AiProviders(shell).front().id == "deepseek.chat",
+         "deepseek plugin should register one host-owned AI provider");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain deepseek runtime"),
+         "deepseek plugin should drive the built-in chat command");
+  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
+         "deepseek plugin chat should complete");
+  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
+  Expect(messages.size() == 2 && messages.back().content == "openai reply",
+         "deepseek plugin should route chat requests through the OpenAI-compatible runtime");
+
+  WorkspaceShellTestAccess::RequestProviderModelList(shell, "deepseek.chat");
+  Expect(WaitForProviderModels(shell, "deepseek.chat", "gpt-4.1-mini"),
+         "deepseek plugin should enumerate models through the OpenAI-compatible runtime");
 
   server.process.Shutdown();
 }
@@ -2555,6 +2582,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRepoOpenAiPluginApprovesNativeToolCalls);
   AddTest(tests, "WorkspaceShell/RepoAnthropicPluginUsesNativeBridge",
           TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge);
+  AddTest(tests, "WorkspaceShell/RepoDeepSeekPluginUsesOpenAiCompatibilityRuntime",
+          TestWorkspaceShellRepoDeepSeekPluginUsesOpenAiCompatibilityRuntime);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

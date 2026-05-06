@@ -68,7 +68,7 @@ The current SDL shell already includes:
   asset watching, and plugin output logging
 - repo-owned Lua dogfood plugins for ESLint diagnostics and host-owned LLM chat or inline completion, exercising the same narrow host APIs exposed to user plugins
 - a host-owned chat pane with conversation rail, provider/model selector, multiline draft composer, markdown transcript rendering, and project-tab chat status summaries
-- ghost-text inline completion with accept/dismiss, backed by the AI provider bridge
+- ghost-text inline completion with accept/dismiss, backed by `AiProviderRuntimeService`
 - MCP tool invocations with per-agent permission levels, session-scoped approvals, and persisted transcript events
 - a native `microide_provider_bridge` binary for direct stdio-backed provider communication
 - shared shell render primitives for cards, tooltips, text fields, buttons, list rows, strip tabs,
@@ -170,7 +170,7 @@ whether the backend is external or built in.
 
 - `openspec/specs/product-vision/spec.md`: authoritative product thesis, in-scope capabilities, priority order, and non-goals
 - `openspec/specs/diff-merge-editor/spec.md`: durable behavioral contract for compare and merge tabs
-- `openspec/specs/ai-workflows/spec.md`: durable contract for chat, inline completion, MCP tools, and provider bridges
+- `openspec/specs/ai-workflows/spec.md`: durable contract for chat, inline completion, MCP tools, and AI provider runtimes
 - `openspec/specs/performance-budgets/spec.md`: durable latency, CPU, and measurement policy
 - `openspec/specs/host-platform-support/spec.md`: durable supported-host contract for Linux,
   macOS, and Windows host services

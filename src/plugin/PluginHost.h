@@ -237,6 +237,9 @@ class PluginHost {
     std::string label;
     std::string type;  // "cloud", "local", "external"
     std::vector<std::string> models;
+    std::string runtime;            // "sidecar", "openai_compat", "anthropic_messages"
+    std::string base_url;
+    std::string default_model;
     std::string plugin_id;
   };
 
