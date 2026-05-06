@@ -381,7 +381,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const std::string_view panel_display_text =
         (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
                                                                 : std::string_view(panel_fallback);
-    DrawSingleLineTextTail(renderer, prompt_rect.x + 6.0f, prompt_rect.y + 4.0f,
+    DrawSingleLineTextTail(
+        renderer, prompt_rect.x + 6.0f,
+        prompt_rect.y + std::floor((prompt_rect.h - text_renderer_.LineHeight()) * 0.5f),
                            std::max(1.0f, prompt_rect.w - 12.0f), theme_.text_primary,
                            theme_.surface_background, panel_display_text);
   }

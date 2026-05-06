@@ -175,16 +175,23 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
     return;
   }
 
+  if (CanUseFastAscii(text)) {
+    DrawFastAsciiString(renderer, x, y, color, text);
+    return;
+  }
+
   CacheEntry* entry = ResolveEntry(text, color, nullptr);
   if (entry == nullptr || entry->texture == nullptr) {
     return;
   }
 
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
   const SDL_FRect destination = SDL_FRect{
-      std::round(x),
-      std::round(y),
-      static_cast<float>(entry->width) / std::max(kMinPresentationScale, presentation_scale_x_),
-      static_cast<float>(entry->height) / std::max(kMinPresentationScale, presentation_scale_y_),
+      x,
+      y,
+      static_cast<float>(entry->width) / scale_x,
+      static_cast<float>(entry->height) / scale_y,
   };
   SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
 }
@@ -195,22 +202,29 @@ void SdlTtfTextBackend::DrawStringOn(SDL_Renderer* renderer,
                                      SDL_Color color,
                                      SDL_Color background,
                                      std::string_view text) {
+  (void) background;
   if (renderer == nullptr || renderer != renderer_ || text.empty()) {
     return;
   }
 
-  CacheEntry* entry = ResolveEntry(text, color, &background);
-  if (entry == nullptr || entry->texture == nullptr) {
-    return;
-  }
+  if (CanUseFastAscii(text)) {
+    DrawFastAsciiString(renderer, x, y, color, text);
+  } else {
+    CacheEntry* entry = ResolveEntry(text, color, nullptr);
+    if (entry == nullptr || entry->texture == nullptr) {
+      return;
+    }
 
-  const SDL_FRect destination = SDL_FRect{
-      std::round(x),
-      std::round(y),
-      static_cast<float>(entry->width) / std::max(kMinPresentationScale, presentation_scale_x_),
-      static_cast<float>(entry->height) / std::max(kMinPresentationScale, presentation_scale_y_),
-  };
-  SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
+    const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+    const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
+    const SDL_FRect destination = SDL_FRect{
+        x,
+        y,
+        static_cast<float>(entry->width) / scale_x,
+        static_cast<float>(entry->height) / scale_y,
+    };
+    SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
+  }
 }
 
 void SdlTtfTextBackend::ClearCache() {
@@ -235,6 +249,41 @@ bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
     }
   }
   return true;
+}
+
+void SdlTtfTextBackend::DrawFastAsciiString(SDL_Renderer* renderer,
+                                            float x,
+                                            float y,
+                                            SDL_Color color,
+                                            std::string_view text) {
+  if (renderer == nullptr || renderer != renderer_ || text.empty()) {
+    return;
+  }
+
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
+  const float cell_width = char_width_;
+
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const char ch = text[index];
+    if (ch == ' ') {
+      continue;
+    }
+
+    const std::string_view glyph_text(&text[index], 1);
+    CacheEntry* entry = ResolveEntry(glyph_text, color, nullptr);
+    if (entry == nullptr || entry->texture == nullptr) {
+      continue;
+    }
+
+    const SDL_FRect destination = SDL_FRect{
+        x + static_cast<float>(index) * cell_width,
+        y,
+        static_cast<float>(entry->width) / scale_x,
+        static_cast<float>(entry->height) / scale_y,
+    };
+    SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
+  }
 }
 
 std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
@@ -393,10 +442,7 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
     return &it->second;
   }
 
-  SDL_Surface* surface =
-      background == nullptr
-          ? TTF_RenderText_Blended(font_, text.data(), text.size(), color)
-          : TTF_RenderText_LCD(font_, text.data(), text.size(), color, *background);
+  SDL_Surface* surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
   if (surface == nullptr) {
     return nullptr;
   }

@@ -563,8 +563,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           BuildGitSidebarEntryTextModel(entry.relative_path, entry.staged);
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
-      const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
-      const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
+      const SDL_Color primary_color = theme_.text_primary;
+      const SDL_Color secondary_color = theme_.text_muted;
       DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 6.0f, right_edge,
                                   primary_color, secondary_color, row_background,
                                   text_model.primary_label, text_model.secondary_label, 1.0f);

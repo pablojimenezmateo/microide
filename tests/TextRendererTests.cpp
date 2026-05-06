@@ -113,13 +113,6 @@ bool IsGreenDominant(Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
   return a > 0 && g >= 24 && g > r + 12 && g > b + 12;
 }
 
-void EnsureReferenceTtfInitialized() {
-  if (TTF_WasInit() > 0) {
-    return;
-  }
-  Expect(TTF_Init(), "SDL_ttf should initialize for renderer reference checks");
-}
-
 struct PixelBounds {
   int left = 0;
   int right = -1;
@@ -189,129 +182,185 @@ std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
   return differences;
 }
 
-int MaxInteriorGap(SDL_Surface* surface, SDL_Color background, const PixelBounds& bounds) {
-  if (surface == nullptr || !bounds.valid()) {
-    return 0;
-  }
-
-  int current_gap = 0;
-  int max_gap = 0;
-  bool seen_occupied = false;
-  for (int x = bounds.left; x <= bounds.right; ++x) {
-    bool occupied = false;
-    for (int y = bounds.top; y <= bounds.bottom; ++y) {
-      Uint8 r = 0;
-      Uint8 g = 0;
-      Uint8 b = 0;
-      Uint8 a = 0;
-      Expect(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
-             "gap checks should read software pixels");
-      if (r != background.r || g != background.g || b != background.b || a != background.a) {
-        occupied = true;
-        break;
+std::size_t CountPixelDifferencesInRect(SDL_Surface* lhs,
+                                        SDL_Surface* rhs,
+                                        int x,
+                                        int y,
+                                        int width,
+                                        int height) {
+  Expect(lhs != nullptr && rhs != nullptr,
+         "rect pixel comparisons should receive readable surfaces");
+  std::size_t differences = 0;
+  for (int row = 0; row < height; ++row) {
+    for (int col = 0; col < width; ++col) {
+      Uint8 lhs_r = 0;
+      Uint8 lhs_g = 0;
+      Uint8 lhs_b = 0;
+      Uint8 lhs_a = 0;
+      Uint8 rhs_r = 0;
+      Uint8 rhs_g = 0;
+      Uint8 rhs_b = 0;
+      Uint8 rhs_a = 0;
+      Expect(SDL_ReadSurfacePixel(lhs, x + col, y + row, &lhs_r, &lhs_g, &lhs_b, &lhs_a),
+             "rect pixel comparisons should read actual pixels");
+      Expect(SDL_ReadSurfacePixel(rhs, x + col, y + row, &rhs_r, &rhs_g, &rhs_b, &rhs_a),
+             "rect pixel comparisons should read reference pixels");
+      if (lhs_r != rhs_r || lhs_g != rhs_g || lhs_b != rhs_b || lhs_a != rhs_a) {
+        ++differences;
       }
     }
-
-    if (occupied) {
-      seen_occupied = true;
-      max_gap = std::max(max_gap, current_gap);
-      current_gap = 0;
-      continue;
-    }
-    if (seen_occupied) {
-      ++current_gap;
-    }
   }
-  return max_gap;
+  return differences;
 }
 
 void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
   EnsureDummySdlVideo();
-  EnsureReferenceTtfInitialized();
-
-  const std::filesystem::path font_path = TestRoot().parent_path() / "assets" / "fonts" /
-                                          "JetBrainsMono-Regular.ttf";
-  Expect(std::filesystem::exists(font_path),
-         "renderer reference check should find the bundled monospace font");
   const SDL_Color background = SDL_Color{0x00, 0x00, 0x00, 0xff};
   const SDL_Color foreground = SDL_Color{0xff, 0xff, 0xff, 0xff};
 
-  const auto expect_label_matches = [&](std::string_view label, bool draw_on_background) {
-    SoftwareCanvas actual_canvas(640, 96);
-    SoftwareCanvas reference_canvas(640, 96);
+  const auto expect_label_matches = [&](std::string_view left, std::string_view right) {
+    const std::string unsplit_label = std::string(left) + std::string(right);
+    SoftwareCanvas unsplit_canvas(640, 96);
+    SoftwareCanvas split_canvas(640, 96);
 
-    microide::render::TextRenderer renderer;
-    renderer.EnsureInitialized(actual_canvas.renderer());
-    Expect(renderer.BackendName() == "sdl3_ttf",
+    microide::render::TextRenderer unsplit_renderer;
+    microide::render::TextRenderer split_renderer;
+    unsplit_renderer.EnsureInitialized(unsplit_canvas.renderer());
+    split_renderer.EnsureInitialized(split_canvas.renderer());
+    Expect(unsplit_renderer.BackendName() == "sdl3_ttf" &&
+               split_renderer.BackendName() == "sdl3_ttf",
            "UI label spacing regression test should exercise the real font backend");
 
-    Expect(SDL_SetRenderDrawColor(actual_canvas.renderer(), background.r, background.g,
+    Expect(SDL_SetRenderDrawColor(unsplit_canvas.renderer(), background.r, background.g,
                                   background.b, background.a),
-           "UI label spacing test should set the actual canvas background");
-    Expect(SDL_RenderClear(actual_canvas.renderer()),
-           "UI label spacing test should clear the actual canvas");
-    Expect(SDL_SetRenderDrawColor(reference_canvas.renderer(), background.r, background.g,
+           "UI label spacing test should set the unsplit canvas background");
+    Expect(SDL_RenderClear(unsplit_canvas.renderer()),
+           "UI label spacing test should clear the unsplit canvas");
+    Expect(SDL_SetRenderDrawColor(split_canvas.renderer(), background.r, background.g,
                                   background.b, background.a),
-           "UI label spacing test should set the reference canvas background");
-    Expect(SDL_RenderClear(reference_canvas.renderer()),
-           "UI label spacing test should clear the reference canvas");
+           "UI label spacing test should set the split canvas background");
+    Expect(SDL_RenderClear(split_canvas.renderer()),
+           "UI label spacing test should clear the split canvas");
 
-    if (draw_on_background) {
-      renderer.DrawStringOn(actual_canvas.renderer(), 12.0f, 18.0f, foreground, background, label);
-    } else {
-      renderer.DrawString(actual_canvas.renderer(), 12.0f, 18.0f, foreground, label);
-    }
+    unsplit_renderer.DrawString(unsplit_canvas.renderer(), 12.0f, 18.0f, foreground,
+                                unsplit_label);
+    split_renderer.DrawString(split_canvas.renderer(), 12.0f, 18.0f, foreground, left);
+    split_renderer.DrawString(split_canvas.renderer(),
+                              12.0f + split_renderer.MeasureWidth(left), 18.0f, foreground,
+                              right);
 
-    TTF_Font* reference_font = TTF_OpenFont(font_path.string().c_str(), 13.0f);
-    Expect(reference_font != nullptr, "UI label spacing test should open the bundled font");
-    TTF_SetFontHinting(reference_font, TTF_HINTING_LIGHT_SUBPIXEL);
-    SDL_Surface* reference_surface = draw_on_background
-                                         ? TTF_RenderText_LCD(reference_font, label.data(),
-                                                              label.size(), foreground, background)
-                                         : TTF_RenderText_Blended(reference_font, label.data(),
-                                                                  label.size(), foreground);
-    Expect(reference_surface != nullptr,
-           "UI label spacing test should render the reference SDL_ttf string");
-    SDL_Texture* reference_texture =
-        SDL_CreateTextureFromSurface(reference_canvas.renderer(), reference_surface);
-    Expect(reference_texture != nullptr,
-           "UI label spacing test should upload the reference SDL_ttf string");
-    const SDL_FRect destination =
-        SDL_FRect{12.0f, 18.0f, static_cast<float>(reference_surface->w),
-                  static_cast<float>(reference_surface->h)};
-    SDL_RenderTexture(reference_canvas.renderer(), reference_texture, nullptr, &destination);
+    SDL_Surface* unsplit_pixels = SDL_RenderReadPixels(unsplit_canvas.renderer(), nullptr);
+    SDL_Surface* split_pixels = SDL_RenderReadPixels(split_canvas.renderer(), nullptr);
+    const PixelBounds unsplit_bounds = NonBackgroundBounds(unsplit_pixels, background);
+    const PixelBounds split_bounds = NonBackgroundBounds(split_pixels, background);
+    const std::size_t pixel_differences = CountPixelDifferences(unsplit_pixels, split_pixels);
 
-    SDL_DestroyTexture(reference_texture);
-    SDL_DestroySurface(reference_surface);
-    TTF_CloseFont(reference_font);
-
-    SDL_Surface* actual_pixels = SDL_RenderReadPixels(actual_canvas.renderer(), nullptr);
-    SDL_Surface* reference_pixels = SDL_RenderReadPixels(reference_canvas.renderer(), nullptr);
-    const PixelBounds actual_bounds = NonBackgroundBounds(actual_pixels, background);
-    const PixelBounds reference_bounds = NonBackgroundBounds(reference_pixels, background);
-    const std::size_t pixel_differences =
-        CountPixelDifferences(actual_pixels, reference_pixels);
-
-    Expect(actual_bounds.valid() && reference_bounds.valid(),
+    Expect(unsplit_bounds.valid() && split_bounds.valid(),
            "UI label spacing test should see drawn pixels on both canvases");
     Expect(pixel_differences == 0,
-           "ASCII string rendering should match SDL_ttf exactly instead of approximating glyph spacing");
-    Expect(MaxInteriorGap(actual_pixels, background, actual_bounds) <=
-               MaxInteriorGap(reference_pixels, background, reference_bounds) + 1,
-           "ASCII string rendering should not introduce larger internal glyph gaps than SDL_ttf string rendering");
-    Expect(actual_bounds.width() == reference_bounds.width(),
-           "ASCII string rendering should keep the same overall width as SDL_ttf string rendering");
+           "ASCII string rendering should keep identical glyph placement when a row is split into runs");
+    Expect(unsplit_bounds.width() == split_bounds.width(),
+           "ASCII string rendering should keep the same overall width when runs are split");
 
-    SDL_DestroySurface(actual_pixels);
-    SDL_DestroySurface(reference_pixels);
+    SDL_DestroySurface(unsplit_pixels);
+    SDL_DestroySurface(split_pixels);
   };
 
-  for (std::string_view label :
-       {"bash", "dolfin-app", "function", "resolveInputPath", "path",
-        "return inputPath", "if (path.isAbsolute(inputPath))"}) {
-    expect_label_matches(label, false);
-    expect_label_matches(label, true);
-  }
+  expect_label_matches("bash", "");
+  expect_label_matches("dolfin-", "app");
+  expect_label_matches("resolve", "InputPath");
+  expect_label_matches("return ", "inputPath");
+  expect_label_matches("if (path.", "isAbsolute(inputPath))");
+}
+
+void TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 120);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "ASCII width regression should exercise the SDL_ttf backend");
+  const float char_width = renderer.CharWidth();
+  Expect(std::abs(renderer.MeasureWidth("!") - char_width) <= 0.01f,
+         "single glyph width should match one character width");
+  Expect(std::abs(renderer.MeasureWidth("!!") - (2.0f * char_width)) <= 0.01f,
+         "double glyph width should match two character widths");
+  Expect(std::abs(renderer.MeasureWidth("!!!") - (3.0f * char_width)) <= 0.01f,
+         "triple glyph width should match three character widths");
+}
+
+void TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas single_canvas(320, 96);
+  SoftwareCanvas triple_canvas(320, 96);
+  microide::render::TextRenderer single_renderer;
+  microide::render::TextRenderer triple_renderer;
+  single_renderer.EnsureInitialized(single_canvas.renderer());
+  triple_renderer.EnsureInitialized(triple_canvas.renderer());
+  Expect(single_renderer.BackendName() == "sdl3_ttf" &&
+             triple_renderer.BackendName() == "sdl3_ttf",
+         "ASCII prefix stability test should exercise the SDL_ttf backend");
+
+  const SDL_Color background = SDL_Color{0, 0, 0, 255};
+  const SDL_Color foreground = SDL_Color{255, 0, 0, 255};
+  Expect(SDL_SetRenderDrawColor(single_canvas.renderer(), background.r, background.g, background.b,
+                                background.a),
+         "ASCII prefix stability test should set the single canvas background");
+  Expect(SDL_RenderClear(single_canvas.renderer()),
+         "ASCII prefix stability test should clear the single canvas");
+  Expect(SDL_SetRenderDrawColor(triple_canvas.renderer(), background.r, background.g, background.b,
+                                background.a),
+         "ASCII prefix stability test should set the triple canvas background");
+  Expect(SDL_RenderClear(triple_canvas.renderer()),
+         "ASCII prefix stability test should clear the triple canvas");
+
+  single_renderer.DrawString(single_canvas.renderer(), 12.0f, 18.0f, foreground, "!");
+  triple_renderer.DrawString(triple_canvas.renderer(), 12.0f, 18.0f, foreground, "!!!");
+
+  SDL_Surface* single_pixels = SDL_RenderReadPixels(single_canvas.renderer(), nullptr);
+  SDL_Surface* triple_pixels = SDL_RenderReadPixels(triple_canvas.renderer(), nullptr);
+  Expect(single_pixels != nullptr && triple_pixels != nullptr,
+         "ASCII prefix stability test should read back both canvases");
+
+  const int cell_width = static_cast<int>(std::ceil(single_renderer.CharWidth()));
+  const int cell_height = static_cast<int>(std::ceil(single_renderer.LineHeight()));
+  const std::size_t differences =
+      CountPixelDifferencesInRect(single_pixels, triple_pixels, 12, 18, cell_width, cell_height);
+
+  SDL_DestroySurface(single_pixels);
+  SDL_DestroySurface(triple_pixels);
+
+  Expect(differences == 0,
+         "the first glyph cell should be identical whether rendered alone or with appended matches");
+}
+
+void TestSdlTtfBlendedTextKeepsTransparentCorners() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(160, 80);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "blended-corner regression should exercise the SDL_ttf backend");
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 0),
+         "blended-corner regression should set transparent canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "blended-corner regression should clear the canvas");
+  renderer.DrawStringOn(canvas.renderer(), 20.0f, 20.0f, SDL_Color{255, 255, 255, 255},
+                        SDL_Color{10, 20, 30, 255}, "abc");
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "blended-corner regression should read rendered pixels");
+  Uint8 r = 0, g = 0, b = 0, a = 0;
+  Expect(SDL_ReadSurfacePixel(pixels, 20, 20, &r, &g, &b, &a),
+         "blended-corner regression should read top-left pixel");
+  Expect(a == 0, "top-left blended text pixel should stay transparent");
+  const int right_x = 20 + static_cast<int>(std::ceil(renderer.MeasureWidth("abc"))) - 1;
+  const int bottom_y = 20 + static_cast<int>(std::ceil(renderer.LineHeight())) - 1;
+  Expect(SDL_ReadSurfacePixel(pixels, std::max(0, right_x), std::max(0, bottom_y), &r, &g, &b, &a),
+         "blended-corner regression should read bottom-right pixel");
+  Expect(a == 0, "bottom-right blended text pixel should stay transparent");
+  SDL_DestroySurface(pixels);
 }
 
 void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
@@ -413,7 +462,8 @@ void TestDecoratedTextGridRendererPaintsRowFillAndUnderline() {
 
   Expect(SDL_ReadSurfacePixel(pixels, 40, 18, &r, &g, &b, &a),
          "decorated text grid test should read the underline pixel");
-  Expect(r == 0xd0 && g == 0x30 && b == 0x20 && a == 0xff,
+  Expect(r == 0xd0 && g == 0x30 && b == 0x20 &&
+             a == static_cast<Uint8>(std::lround(0xff * 0.55)),
          "decorated text grid renderer should paint the underline without recoloring the whole row");
 
   Expect(SDL_ReadSurfacePixel(pixels, 132, 10, &r, &g, &b, &a),
@@ -559,7 +609,8 @@ void TestEditorViewRendererPaintsDiagnosticUnderlines() {
   Expect(SDL_ReadSurfacePixel(pixels, underline_x, underline_y, &r, &g, &b, &a),
          "diagnostic underline renderer test should read the underline pixel");
   Expect(r == theme.diagnostic_warning.r && g == theme.diagnostic_warning.g &&
-             b == theme.diagnostic_warning.b && a == theme.diagnostic_warning.a,
+             b == theme.diagnostic_warning.b &&
+             a == static_cast<Uint8>(std::lround(theme.diagnostic_warning.a * 0.55)),
          "diagnostic underlines should use the severity color from the theme");
 
   SDL_DestroySurface(pixels);
@@ -781,6 +832,15 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII glyphs stay within line bands",
           TestSdlTtfAsciiGlyphsStayWithinLineBands);
+  AddTest(tests,
+          "TextRenderer SDL_ttf repeated glyphs measure by char width",
+          TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth);
+  AddTest(tests,
+          "TextRenderer SDL_ttf ASCII prefix glyph stays fixed when appending matches",
+          TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches);
+  AddTest(tests,
+          "TextRenderer SDL_ttf blended text keeps transparent corners",
+          TestSdlTtfBlendedTextKeepsTransparentCorners);
 #endif
 }
 

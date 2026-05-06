@@ -51,11 +51,12 @@ void WorkspaceShell::DrawSingleLineTextTail(SDL_Renderer* renderer,
                                             SDL_Color foreground,
                                             SDL_Color background,
                                             std::string_view text) const {
+  (void) background;
   if (available_width <= 0.0f || text.empty()) {
     return;
   }
   if (text_renderer_.MeasureWidth(text) <= available_width) {
-    text_renderer_.DrawStringOn(renderer, x, y, foreground, background, text);
+    text_renderer_.DrawString(renderer, x, y, foreground, text);
     return;
   }
 
@@ -63,7 +64,7 @@ void WorkspaceShell::DrawSingleLineTextTail(SDL_Renderer* renderer,
   while (byte_offset < text.size()) {
     const std::string_view suffix = text.substr(byte_offset);
     if (text_renderer_.MeasureWidth(suffix) <= available_width) {
-      text_renderer_.DrawStringOn(renderer, x, y, foreground, background, suffix);
+      text_renderer_.DrawString(renderer, x, y, foreground, suffix);
       return;
     }
     byte_offset += util::Utf8SequenceLength(text, byte_offset);
@@ -193,7 +194,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::Command: {
       const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       const float text_x = prompt_rect.x + 6.0f;
-      const float text_y = prompt_rect.y + 4.0f;
+      const float text_y =
+          prompt_rect.y + std::floor((prompt_rect.h - text_renderer_.LineHeight()) * 0.5f);
       const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(*text_input_vm.command_input, "> ", available_width);
       return TextInputVisual{
@@ -243,7 +245,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
       const float text_x = input_rect.x + 6.0f;
-      const float text_y = input_rect.y + 4.0f;
+      const float text_y =
+          input_rect.y + std::floor((input_rect.h - text_renderer_.LineHeight()) * 0.5f);
       const float available_width = std::max(1.0f, input_rect.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(*text_input_vm.prompt_input, "", available_width);
       return TextInputVisual{
@@ -436,8 +439,8 @@ void WorkspaceShell::RenderSingleLineTextSelection(
                  MakeRect(sel_start_x, visual->text_y - 1.0f, sel_width,
                           text_renderer_.LineHeight()),
                  theme_.selection_fill);
-  text_renderer_.DrawStringOn(
-      renderer, sel_start_x, visual->text_y, theme_.text_primary, theme_.selection_fill,
+  text_renderer_.DrawString(
+      renderer, sel_start_x, visual->text_y, theme_.text_primary,
       display_sv.substr(sel_start_byte, sel_end_byte - sel_start_byte));
 }
 
@@ -522,23 +525,21 @@ void WorkspaceShell::RenderTextComposition(
 
   float segment_x = visual->cursor_x;
   if (!prefix.empty()) {
-    text_renderer_.DrawStringOn(renderer, segment_x,
-                                visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
-                                theme_.accent,
-                                visual->background, prefix);
+    text_renderer_.DrawString(renderer, segment_x,
+                              visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
+                              theme_.accent, prefix);
     segment_x += prefix_width;
   }
   if (!selected.empty()) {
-    text_renderer_.DrawStringOn(
+    text_renderer_.DrawString(
         renderer, segment_x, visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
-        theme_.text_primary, theme_.selection_fill, selected);
+        theme_.text_primary, selected);
     segment_x += selected_width;
   }
   if (!suffix.empty()) {
-    text_renderer_.DrawStringOn(renderer, segment_x,
-                                visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
-                                theme_.accent,
-                                visual->background, suffix);
+    text_renderer_.DrawString(renderer, segment_x,
+                              visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
+                              theme_.accent, suffix);
   }
 
   DrawFilledRect(renderer,

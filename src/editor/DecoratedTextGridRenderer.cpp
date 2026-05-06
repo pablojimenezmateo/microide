@@ -1,6 +1,7 @@
 #include "editor/DecoratedTextGridRenderer.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "util/StringUtil.h"
 
@@ -178,8 +179,11 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
     if (underline.rect.w <= 0.0f || underline.rect.h <= 0.0f) {
       continue;
     }
+    const Uint8 dim_alpha =
+        static_cast<Uint8>(std::clamp(std::lround(static_cast<double>(underline.color.a) * 0.55),
+                                      0l, 255l));
     SDL_SetRenderDrawColor(renderer, underline.color.r, underline.color.g, underline.color.b,
-                           underline.color.a);
+                           dim_alpha);
     SDL_RenderFillRect(renderer, &underline.rect);
   }
 }

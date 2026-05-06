@@ -301,7 +301,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
             }
             row_desc.underlines.push_back(editor::DecoratedUnderline{
                 .rect = MakeRect(start_x, y + surface.line_height - 2.0f, span_width, 1.0f),
-                .color = underline_color,
+                .color =
+                    SDL_Color{underline_color.r, underline_color.g, underline_color.b,
+                              static_cast<Uint8>(std::clamp(
+                                  std::lround(static_cast<double>(underline_color.a) * 0.55), 0l,
+                                  255l))},
             });
           }
         };

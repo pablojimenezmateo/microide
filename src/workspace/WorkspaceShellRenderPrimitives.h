@@ -160,7 +160,7 @@ inline void DrawButtonCentered(const render::TextRenderer& text_renderer,
   const float text_width = text_renderer.MeasureWidth(label);
   const float x = rect.x + std::floor(std::max(0.0f, rect.w - text_width) * 0.5f);
   const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
-  text_renderer.DrawStringOn(renderer, x, y, colors.text, colors.fill, label);
+  text_renderer.DrawString(renderer, x, y, colors.text, label);
 }
 
 inline void DrawSelectableRowBackground(SDL_Renderer* renderer,
