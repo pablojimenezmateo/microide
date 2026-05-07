@@ -758,19 +758,23 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   } else {
     const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
     const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
-    draw_action_button(collapse_rect, "Collapse", project_state.directory_tree.CanCollapseAll());
-    draw_action_button(refresh_rect, "Refresh", true);
+    const bool compact_tree_header = collapse_rect.w <= 24.0f || refresh_rect.w <= 24.0f;
+    draw_action_button(collapse_rect, compact_tree_header ? "C" : "Collapse",
+                       project_state.directory_tree.CanCollapseAll());
+    draw_action_button(refresh_rect, compact_tree_header ? "R" : "Refresh", true);
 
-    const std::string tree_root_label = ProjectLabel();
-    const float root_label_left = sidebar_mode_rect.x + sidebar_mode_rect.w + 10.0f;
-    const float root_label_right = collapse_rect.x - 10.0f;
-    const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
-    const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
-    if (!root_label.empty()) {
-      DrawCenteredTextOn(text_renderer_, renderer,
-                         MakeRect(root_label_left, layout.sidebar.y + 4.0f, root_label_max_width,
-                                  18.0f),
-                         theme_.chrome_text_secondary, theme_.chrome_background, root_label);
+    if (!compact_tree_header) {
+      const std::string tree_root_label = ProjectLabel();
+      const float root_label_left = sidebar_mode_rect.x + sidebar_mode_rect.w + 10.0f;
+      const float root_label_right = collapse_rect.x - 10.0f;
+      const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
+      const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
+      if (!root_label.empty()) {
+        DrawCenteredTextOn(text_renderer_, renderer,
+                           MakeRect(root_label_left, layout.sidebar.y + 4.0f, root_label_max_width,
+                                    18.0f),
+                           theme_.chrome_text_secondary, theme_.chrome_background, root_label);
+      }
     }
 
     const auto& entries = project_state.directory_tree.entries();

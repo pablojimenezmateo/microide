@@ -40,7 +40,29 @@ std::vector<HelpAboutRow> BuildHelpRows() {
   return rows;
 }
 
-std::string NextSettingValue(const SettingSpec& spec, std::string_view current) {
+enum class SettingStepDirection {
+  Forward,
+  Backward,
+};
+
+int WrapSteppedInt(int value, int min_value, int max_value, int step, SettingStepDirection direction) {
+  if (min_value > max_value) {
+    std::swap(min_value, max_value);
+  }
+  const int delta = direction == SettingStepDirection::Forward ? step : -step;
+  value += delta;
+  if (value > max_value) {
+    return min_value;
+  }
+  if (value < min_value) {
+    return max_value;
+  }
+  return value;
+}
+
+std::string NextSettingValue(const SettingSpec& spec,
+                             std::string_view current,
+                             SettingStepDirection direction) {
   switch (spec.type) {
     case SettingType::Bool:
       return (current == "true" || current == "1" || current == "on") ? "false" : "true";
@@ -50,37 +72,41 @@ std::string NextSettingValue(const SettingSpec& spec, std::string_view current) 
       }
       for (std::size_t i = 0; i < spec.enum_values.size(); ++i) {
         if (spec.enum_values[i].value == current) {
-          return std::string(spec.enum_values[(i + 1) % spec.enum_values.size()].value);
+          if (direction == SettingStepDirection::Forward) {
+            return std::string(spec.enum_values[(i + 1) % spec.enum_values.size()].value);
+          }
+          return std::string(
+              spec.enum_values[(i + spec.enum_values.size() - 1) % spec.enum_values.size()].value);
         }
       }
-      return std::string(spec.enum_values.front().value);
+      return direction == SettingStepDirection::Forward
+                 ? std::string(spec.enum_values.front().value)
+                 : std::string(spec.enum_values.back().value);
     }
     case SettingType::Int: {
       const auto parsed = util::ParseInt(current);
       int value = parsed.value_or(spec.default_int);
       if (spec.id == "ui.layout_compact_breakpoint_px") {
-        value += 20;
-        if (value > 2000) {
-          value = 600;
-        }
+        value = WrapSteppedInt(value, 600, 2000, 20, direction);
       } else if (spec.id == "editor.hover_delay_ms") {
-        value += 50;
-        if (value > 2000) {
-          value = 0;
-        }
+        value = WrapSteppedInt(value, 0, 2000, 50, direction);
+      } else if (spec.id == "editor.tab_size" || spec.id == "editor.indent_width") {
+        value = WrapSteppedInt(value, 1, 16, 1, direction);
+      } else if (spec.id == "editor.font_size" || spec.id == "terminal.font_size") {
+        value = WrapSteppedInt(value, 8, 32, 1, direction);
       } else {
-        value += 1;
-        if (value > 32) {
-          value = 8;
-        }
+        value = WrapSteppedInt(value, spec.default_int - 20, spec.default_int + 20, 1, direction);
       }
       return std::to_string(value);
     }
     case SettingType::Float: {
       const auto parsed = util::ParseFloat(current);
-      float value = parsed.value_or(spec.default_float) + 0.1f;
+      float value =
+          parsed.value_or(spec.default_float) + (direction == SettingStepDirection::Forward ? 0.1f : -0.1f);
       if (value > 2.0f) {
         value = 0.75f;
+      } else if (value < 0.75f) {
+        value = 2.0f;
       }
       return SerializeSettingValue(value);
     }
@@ -98,13 +124,69 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
     return false;
   }
   const SettingSpec* builtin = FindBuiltinSettingSpec(id);
-  if (builtin != nullptr && !ParseSettingValue(*builtin, value).has_value()) {
+  std::optional<SettingValue> parsed_builtin_value;
+  if (builtin != nullptr) {
+    parsed_builtin_value = ParseSettingValue(*builtin, value);
+    if (!parsed_builtin_value.has_value()) {
+      return false;
+    }
+  }
+
+  const auto apply_project_canonical_setting = [&]() {
+    if (!parsed_builtin_value.has_value()) {
+      return;
+    }
+    auto& prefs = context_.current_project_state.editor_preferences;
+    if (id == "editor.tab_size") {
+      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
+        prefs.tab_size = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
+        ApplyEditorPreferencesToAllTabs();
+      }
+      return;
+    }
+    if (id == "editor.indent_width") {
+      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
+        prefs.indent_width = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
+        ApplyEditorPreferencesToAllTabs();
+      }
+      return;
+    }
+    if (id == "editor.soft_tabs") {
+      if (const bool* parsed = std::get_if<bool>(&*parsed_builtin_value); parsed != nullptr) {
+        prefs.soft_tabs = *parsed;
+        ApplyEditorPreferencesToAllTabs();
+      }
+      return;
+    }
+    if (id == "editor.wrap") {
+      if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
+          parsed != nullptr) {
+        prefs.soft_wrap = *parsed == "word";
+        ApplyEditorPreferencesToAllTabs();
+      }
+      return;
+    }
+    if (id == "editor.colorscheme") {
+      if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
+          parsed != nullptr) {
+        MakePersistenceCoordinator().ApplyColorscheme(*parsed, false, false);
+      }
+    }
+  };
+
+  if (builtin != nullptr && !parsed_builtin_value.has_value()) {
     return false;
   }
   if (info->scope == SettingScope::User) {
     UpsertSetting(context_.user_settings, std::string(id), std::move(value));
+    if (id == "ui.scale") {
+      if (const float* parsed = std::get_if<float>(&*parsed_builtin_value); parsed != nullptr) {
+        MakePersistenceCoordinator().ApplyUiScale(*parsed, false, false);
+      }
+    }
     MakePersistenceCoordinator().SaveUserConfig();
   } else {
+    apply_project_canonical_setting();
     UpsertSetting(context_.current_project_state.settings, std::string(id), std::move(value));
     MakePersistenceCoordinator().SaveConfigState();
   }
@@ -172,19 +254,28 @@ void WorkspaceShell::CloseSettingsOverlay() {
 
 bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
                                                      const WorkspaceLayout& layout) {
-  if (!settings_overlay_service_.Visible() || event.button.button != SDL_BUTTON_LEFT) {
+  if (!settings_overlay_service_.Visible()) {
     return false;
   }
 
   const SettingsOverlayViewModel vm =
       RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+  if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_RIGHT) {
+    if (!Contains(vm.rect, event.button.x, event.button.y)) {
+      CloseSettingsOverlay();
+    }
+    return true;
+  }
   if (!Contains(vm.rect, event.button.x, event.button.y)) {
     CloseSettingsOverlay();
     return true;
   }
 
   const float row_height = 24.0f;
-  const float list_top = vm.rect.y + 42.0f;
+  float list_top = vm.rect.y + 42.0f;
+  if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
+    list_top += 16.0f;
+  }
   const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
   if (event.button.y < list_top || event.button.y > list_bottom) {
     return true;
@@ -209,7 +300,10 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
       row < settings_overlay_service_.SettingsRows().size()) {
     const auto& picked = settings_overlay_service_.SettingsRows()[row];
     if (const SettingSpec* spec = FindBuiltinSettingSpec(picked.id); spec != nullptr) {
-      SetSettingValue(picked.id, NextSettingValue(*spec, picked.value));
+      const SettingStepDirection direction =
+          event.button.button == SDL_BUTTON_RIGHT ? SettingStepDirection::Backward
+                                                  : SettingStepDirection::Forward;
+      SetSettingValue(picked.id, NextSettingValue(*spec, picked.value, direction));
       RefreshSettingsOverlayCatalog();
       return true;
     }

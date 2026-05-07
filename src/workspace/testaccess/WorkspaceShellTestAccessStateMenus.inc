@@ -168,6 +168,10 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.TreeSidebarCollapseButtonRect(layout.sidebar);
   }
+  static SDL_FRect TreeSidebarRefreshButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.TreeSidebarRefreshButtonRect(layout.sidebar);
+  }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.directory_tree.entries();
@@ -261,8 +265,35 @@
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;
   }
+  static std::size_t EditorTabSize(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_preferences.tab_size;
+  }
+  static std::size_t EditorIndentWidth(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_preferences.indent_width;
+  }
   static bool SoftWrapEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_wrap;
+  }
+  static bool SettingsOverlayVisible(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.Visible();
+  }
+  static bool SetSettingValue(WorkspaceShell& shell, std::string_view id, std::string value) {
+    return shell.SetSettingValue(id, std::move(value));
+  }
+  static std::optional<std::string> ProjectStoredSettingValue(const WorkspaceShell& shell,
+                                                              std::string_view id) {
+    const auto& settings = shell.context_.current_project_state.settings;
+    const auto it = std::find_if(settings.begin(), settings.end(),
+                                 [id](const auto& entry) { return entry.first == id; });
+    if (it == settings.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+  static void OpenSettingsOverlay(WorkspaceShell& shell) { shell.OpenSettingsOverlay(); }
+  static SDL_FRect SettingsOverlayRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return ComputeOverlaySurfaceRect(layout.editor_area);
   }
   static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
     shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::SidebarDivider;

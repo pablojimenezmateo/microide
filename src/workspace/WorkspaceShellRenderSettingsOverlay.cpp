@@ -36,7 +36,15 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                               theme_.editor_background, query_label);
 
   const float row_height = 24.0f;
-  const float list_top = vm.rect.y + header.h + 8.0f;
+  float list_top = vm.rect.y + header.h + 8.0f;
+  if (vm.mode == SettingsOverlayMode::Settings) {
+    const SDL_FRect hint_rect =
+        MakeRect(vm.rect.x + 12.0f, vm.rect.y + header.h + 4.0f, vm.rect.w - 24.0f, 16.0f);
+    DrawVCenteredTextOn(text_renderer_, renderer, hint_rect, 0.0f, theme_.text_muted,
+                        theme_.surface_background,
+                        "Tip: left-click increases/cycles, right-click decreases/reverses");
+    list_top += 16.0f;
+  }
   const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
   int row_index = 0;
   const auto draw_row = [&](std::string_view label, std::string_view value, std::string_view detail,

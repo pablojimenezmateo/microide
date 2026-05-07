@@ -983,6 +983,134 @@ void TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories() {
          "collapsing all should keep selection on the nearest still-visible ancestor");
 }
 
+void TestWorkspaceShellTreeHeaderCompactsBeforeButtonsOverlap() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path nested_dir = root / "src" / "nested";
+  const std::filesystem::path source = nested_dir / "main.cpp";
+  std::filesystem::create_directories(nested_dir);
+  WriteFile(source, "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 520, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const SDL_FRect mode_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
+  const SDL_FRect collapse_rect = WorkspaceShellTestAccess::TreeSidebarCollapseButtonRect(shell);
+  const SDL_FRect refresh_rect = WorkspaceShellTestAccess::TreeSidebarRefreshButtonRect(shell);
+
+  Expect(mode_rect.w > 0.0f && collapse_rect.w > 0.0f && refresh_rect.w > 0.0f,
+         "compact tree-header fixture should still expose all header controls");
+  Expect(mode_rect.x + mode_rect.w <= collapse_rect.x,
+         "sidebar mode control should compact before overlapping the collapse button");
+  Expect(collapse_rect.x + collapse_rect.w <= refresh_rect.x,
+         "collapse and refresh controls should remain non-overlapping in compact header mode");
+  Expect(SendMouseDown(
+             shell, collapse_rect.x + collapse_rect.w * 0.5f, collapse_rect.y + collapse_rect.h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "compact collapse button should remain clickable after header compaction");
+}
+
+void TestWorkspaceShellTabSizeSettingAppliesImmediately() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(WorkspaceShellTestAccess::EditorTabSize(shell) == 4,
+         "tab-size settings fixture should start from the default tab size");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).tab_size() == 4,
+         "active editor should start with the default tab size");
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", "2"),
+         "setting editor.tab_size should succeed through the settings path");
+  Expect(WorkspaceShellTestAccess::EditorTabSize(shell) == 2,
+         "editor tab-size preference should update immediately after setting change");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).tab_size() == 2,
+         "active editor viewport should apply the new tab-size preference immediately");
+
+}
+
+void TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", "2"),
+         "setting editor.tab_size should succeed before restart");
+
+  WorkspaceShell reloaded_shell;
+  WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root);
+  Expect(WorkspaceShellTestAccess::RestoreConfigState(reloaded_shell),
+         "restarted shell should restore project config state");
+  const auto stored_tab_size =
+      WorkspaceShellTestAccess::ProjectStoredSettingValue(reloaded_shell, "editor.tab_size");
+  Expect(stored_tab_size.has_value() && *stored_tab_size == "2",
+         "restored project settings should retain editor.tab_size for settings overlay display");
+}
+
+void TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(ExecuteCommand(shell, "tab-size 5"),
+         "tab-size command should update editor preferences and persist project config");
+
+  WorkspaceShell reloaded_shell;
+  WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root);
+  Expect(WorkspaceShellTestAccess::RestoreConfigState(reloaded_shell),
+         "restarted shell should restore project config state after tab-size command");
+  const auto stored_tab_size =
+      WorkspaceShellTestAccess::ProjectStoredSettingValue(reloaded_shell, "editor.tab_size");
+  Expect(stored_tab_size.has_value() && *stored_tab_size == "5",
+         "restored settings list should mirror canonical tab size after command-driven updates");
+}
+
+void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+
+  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+         "settings overlay fixture should open the overlay");
+  const SDL_FRect overlay_rect = WorkspaceShellTestAccess::SettingsOverlayRect(shell);
+  Expect(SendMouseDown(shell, overlay_rect.x + overlay_rect.w * 0.5f,
+                       overlay_rect.y + overlay_rect.h * 0.5f, SDL_BUTTON_RIGHT),
+         "right click inside settings overlay should be handled");
+  Expect(!WorkspaceShellTestAccess::EditorContextMenuOpen(shell),
+         "right click inside settings overlay should not leak into editor context menu");
+}
+
 void TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1913,6 +2041,16 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender);
   AddTest(tests, "WorkspaceShell/TreeCollapseButtonCollapsesAllOpenDirectories",
           TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories);
+  AddTest(tests, "WorkspaceShell/TreeHeaderCompactsBeforeButtonsOverlap",
+          TestWorkspaceShellTreeHeaderCompactsBeforeButtonsOverlap);
+  AddTest(tests, "WorkspaceShell/TabSizeSettingAppliesImmediately",
+          TestWorkspaceShellTabSizeSettingAppliesImmediately);
+  AddTest(tests, "WorkspaceShell/TabSizeSettingStaysVisibleAfterRestart",
+          TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart);
+  AddTest(tests, "WorkspaceShell/CommandTabSizeStaysVisibleAfterRestart",
+          TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart);
+  AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
+          TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
   AddTest(tests, "WorkspaceShell/IgnoredTreeFileActivatesDirectOpenPath",
           TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath);
   AddTest(tests, "WorkspaceShell/IgnoredDirectoryExpansionMaterializesOneLevel",

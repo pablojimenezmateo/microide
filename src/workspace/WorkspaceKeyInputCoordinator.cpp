@@ -285,6 +285,10 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
       }
       break;
     case SDLK_ESCAPE:
+      if (operations_.settings_overlay_visible()) {
+        operations_.close_settings_overlay();
+        return true;
+      }
       if (state_.overlay.visible) {
         operations_.dismiss_overlay(false);
         return true;
@@ -381,6 +385,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
+          .settings_overlay_visible = [this]() { return settings_overlay_service_.Visible(); },
+          .close_settings_overlay = [this]() { CloseSettingsOverlay(); },
           .close_sidebar = [this]() { CloseSidebar(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .activate_overlay_selection =

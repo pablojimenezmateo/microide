@@ -54,6 +54,8 @@ class KeyInputCoordinator {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<void(bool)> dismiss_overlay;
+    std::function<bool()> settings_overlay_visible;
+    std::function<void()> close_settings_overlay;
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;

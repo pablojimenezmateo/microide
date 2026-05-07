@@ -39,6 +39,7 @@ constexpr float kGitSidebarSummaryLineHeight = 14.0f;
 constexpr float kGitSidebarEntryButtonGap = 4.0f;
 constexpr float kGitSidebarEntryButtonHoverPadding = 4.0f;
 constexpr float kGitSidebarHeaderMenuButtonSize = 16.0f;
+constexpr float kSidebarHeaderCompactButtonSize = 18.0f;
 
 SDL_FRect ExpandRect(const SDL_FRect& rect, float padding) {
   if (rect.w <= 0.0f || rect.h <= 0.0f) {
@@ -46,6 +47,15 @@ SDL_FRect ExpandRect(const SDL_FRect& rect, float padding) {
   }
   return MakeRect(rect.x - padding, rect.y - padding, rect.w + padding * 2.0f,
                   rect.h + padding * 2.0f);
+}
+
+bool UseCompactTreeHeader(float sidebar_width,
+                          float mode_min_width,
+                          float collapse_width,
+                          float refresh_width) {
+  const float minimum_required_width = 10.0f + mode_min_width + 6.0f + collapse_width + 6.0f +
+                                       refresh_width + 10.0f;
+  return sidebar_width < minimum_required_width;
 }
 
 }  // namespace
@@ -393,9 +403,18 @@ SDL_FRect WorkspaceShell::TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
 
+  const float refresh_width = std::max(72.0f, text_renderer_.MeasureWidth("Refresh") + 18.0f);
+  const float collapse_width = std::max(76.0f, text_renderer_.MeasureWidth("Collapse") + 18.0f);
+  const bool compact_header =
+      UseCompactTreeHeader(sidebar_rect.w, 92.0f, collapse_width, refresh_width);
+  if (compact_header) {
+    const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(sidebar_rect);
+    return MakeRect(refresh_rect.x - 6.0f - kSidebarHeaderCompactButtonSize, sidebar_rect.y + 4.0f,
+                    kSidebarHeaderCompactButtonSize, kSidebarHeaderCompactButtonSize);
+  }
+
   const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(sidebar_rect);
-  const float button_width = std::max(76.0f, text_renderer_.MeasureWidth("Collapse") + 18.0f);
-  return MakeRect(refresh_rect.x - 6.0f - button_width, sidebar_rect.y + 4.0f, button_width,
+  return MakeRect(refresh_rect.x - 6.0f - collapse_width, sidebar_rect.y + 4.0f, collapse_width,
                   18.0f);
 }
 
@@ -405,6 +424,15 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
   }
 
   const float button_width = std::max(72.0f, text_renderer_.MeasureWidth("Refresh") + 18.0f);
+  const float collapse_width = std::max(76.0f, text_renderer_.MeasureWidth("Collapse") + 18.0f);
+  const bool compact_header =
+      UseCompactTreeHeader(sidebar_rect.w, 92.0f, collapse_width, button_width);
+  if (compact_header) {
+    return MakeRect(sidebar_rect.x + sidebar_rect.w - 10.0f - kSidebarHeaderCompactButtonSize,
+                    sidebar_rect.y + 4.0f, kSidebarHeaderCompactButtonSize,
+                    kSidebarHeaderCompactButtonSize);
+  }
+
   return MakeRect(sidebar_rect.x + sidebar_rect.w - 10.0f - button_width, sidebar_rect.y + 4.0f,
                   button_width, 18.0f);
 }
@@ -428,9 +456,29 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
   }
 
   const std::string label = SidebarModeControlLabel();
-  const float width = std::clamp(text_renderer_.MeasureWidth(label) + 30.0f, 92.0f,
-                                 std::max(92.0f, sidebar_rect.w - 20.0f));
-  return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + 4.0f, width, 18.0f);
+  const float left = sidebar_rect.x + 10.0f;
+  const bool tree_mode = ActiveSidebarMode() == SidebarMode::Tree;
+  const float refresh_width = std::max(72.0f, text_renderer_.MeasureWidth("Refresh") + 18.0f);
+  const float collapse_width = std::max(76.0f, text_renderer_.MeasureWidth("Collapse") + 18.0f);
+  const bool compact_header =
+      tree_mode && UseCompactTreeHeader(sidebar_rect.w, 92.0f, collapse_width, refresh_width);
+
+  const float reserved_right = tree_mode
+                                   ? (compact_header ? (10.0f + kSidebarHeaderCompactButtonSize +
+                                                        6.0f + kSidebarHeaderCompactButtonSize)
+                                                     : (10.0f + refresh_width + 6.0f +
+                                                        collapse_width))
+                                   : 10.0f;
+  const float max_width =
+      std::max(0.0f, sidebar_rect.w - (left - sidebar_rect.x) - reserved_right - 6.0f);
+  const float desired_width =
+      std::clamp(text_renderer_.MeasureWidth(label) + (compact_header ? 24.0f : 30.0f),
+                 compact_header ? 64.0f : 92.0f, std::max(compact_header ? 64.0f : 92.0f, max_width));
+  const float width = std::min(desired_width, max_width);
+  if (width <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  return MakeRect(left, sidebar_rect.y + 4.0f, width, 18.0f);
 }
 
 std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {

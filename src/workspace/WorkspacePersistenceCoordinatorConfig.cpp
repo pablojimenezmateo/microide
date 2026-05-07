@@ -100,6 +100,20 @@ std::vector<SidebarViewPolicy> RuntimeSidebarPolicies(
   return runtime;
 }
 
+void SyncCanonicalProjectSettings(std::vector<std::pair<std::string, std::string>>& settings,
+                                  const ProjectWorkspaceState& state) {
+  SetStoredSetting(settings, "editor.tab_size",
+                   SerializeSettingValue(static_cast<int>(state.editor_preferences.tab_size)));
+  SetStoredSetting(settings, "editor.indent_width",
+                   SerializeSettingValue(static_cast<int>(state.editor_preferences.indent_width)));
+  SetStoredSetting(settings, "editor.soft_tabs",
+                   SerializeSettingValue(state.editor_preferences.soft_tabs));
+  SetStoredSetting(settings, "editor.wrap",
+                   state.editor_preferences.soft_wrap ? "word" : "off");
+  SetStoredSetting(settings, "editor.colorscheme",
+                   SerializeSettingValue(state.active_colorscheme_name));
+}
+
 }  // namespace
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
@@ -173,13 +187,15 @@ bool PersistenceCoordinator::RestoreUserConfig() {
   context_.user_settings.clear();
   context_.disabled_keybinding_ids = state.disabled_keybinding_ids;
   for (const auto& [id, value] : state.settings) {
-    if (id == "ui.scale") {
-      continue;
-    }
     SetStoredSetting(context_.user_settings, id, value);
   }
 
-  return ApplyUiScale(state.ui_scale, false, false);
+  const bool applied_scale = ApplyUiScale(state.ui_scale, false, false);
+  if (applied_scale) {
+    // Keep overlay rows in sync with the canonical ui_scale field.
+    SetStoredSetting(context_.user_settings, "ui.scale", SerializeSettingValue(ui_scale_));
+  }
+  return applied_scale;
 }
 
 void PersistenceCoordinator::SaveUserConfig() const {
@@ -226,12 +242,14 @@ bool PersistenceCoordinator::RestoreConfigState() {
   mutable_current.sidebar_policies = RuntimeSidebarPolicies(persisted_state.sidebar_policies);
   for (const auto& [id, value] : persisted_state.settings) {
     if (ApplyCanonicalProjectSetting(mutable_current, id, value)) {
+      SetStoredSetting(mutable_current.settings, id, value);
       continue;
     }
     SetStoredSetting(mutable_current.settings, id, value);
   }
   operations_.apply_editor_preferences_to_all_tabs();
   ApplyColorscheme(persisted_state.colorscheme_name, false, false);
+  SyncCanonicalProjectSettings(mutable_current.settings, mutable_current);
   return true;
 }
 
@@ -254,8 +272,7 @@ void PersistenceCoordinator::SaveConfigState() const {
       .settings = state.settings,
       .sidebar_policies = PersistedSidebarPolicies(state.sidebar_policies),
   };
-  SetStoredSetting(persisted.settings, "editor.wrap",
-                   state.editor_preferences.soft_wrap ? "word" : "off");
+  SyncCanonicalProjectSettings(persisted.settings, state);
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }
 
