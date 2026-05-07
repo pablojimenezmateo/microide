@@ -37,6 +37,15 @@ namespace {
 
 class CountingTextBackend final : public microide::render::TextRendererBackend {
  public:
+  struct DrawCall {
+    float x = 0.0f;
+    float y = 0.0f;
+    SDL_Color color{};
+    SDL_Color background{};
+    std::string text;
+    bool with_background = false;
+  };
+
   const char* Name() const override { return "counting"; }
 
   void SetPresentationScale(float scale_x, float scale_y) override {
@@ -58,18 +67,42 @@ class CountingTextBackend final : public microide::render::TextRendererBackend {
                   SDL_Color color,
                   std::string_view text) override {
     (void) renderer;
-    (void) x;
-    (void) y;
-    (void) color;
-    (void) text;
+    draw_calls_.push_back(DrawCall{
+        .x = x,
+        .y = y,
+        .color = color,
+        .background = SDL_Color{},
+        .text = std::string(text),
+        .with_background = false,
+    });
+  }
+
+  void DrawStringOn(SDL_Renderer* renderer,
+                    float x,
+                    float y,
+                    SDL_Color color,
+                    SDL_Color background,
+                    std::string_view text) override {
+    (void) renderer;
+    draw_calls_.push_back(DrawCall{
+        .x = x,
+        .y = y,
+        .color = color,
+        .background = background,
+        .text = std::string(text),
+        .with_background = true,
+    });
   }
 
   int measure_width_calls() const { return measure_width_calls_; }
+  const std::vector<DrawCall>& draw_calls() const { return draw_calls_; }
+  void ResetDrawCalls() { draw_calls_.clear(); }
 
  private:
   mutable int measure_width_calls_ = 0;
   float scale_x_ = 1.0f;
   float scale_y_ = 1.0f;
+  std::vector<DrawCall> draw_calls_;
 };
 
 void EnsureDummySdlVideo() {
@@ -102,6 +135,37 @@ class SoftwareCanvas final {
   SDL_Surface* surface_ = nullptr;
   SDL_Renderer* renderer_ = nullptr;
 };
+
+const CountingTextBackend::DrawCall* FindDrawCall(const std::vector<CountingTextBackend::DrawCall>& calls,
+                                                  std::string_view text,
+                                                  bool with_background) {
+  const auto it = std::find_if(calls.begin(), calls.end(),
+                               [&](const CountingTextBackend::DrawCall& call) {
+                                 return call.text == text && call.with_background == with_background;
+                               });
+  return it == calls.end() ? nullptr : &*it;
+}
+
+std::size_t CountDrawCalls(const std::vector<CountingTextBackend::DrawCall>& calls,
+                           std::string_view text,
+                           bool with_background) {
+  return static_cast<std::size_t>(std::count_if(
+      calls.begin(), calls.end(), [&](const CountingTextBackend::DrawCall& call) {
+        return call.text == text && call.with_background == with_background;
+      }));
+}
+
+std::string SummarizeDrawCalls(const std::vector<CountingTextBackend::DrawCall>& calls) {
+  std::string summary;
+  for (const auto& call : calls) {
+    if (!summary.empty()) {
+      summary += " | ";
+    }
+    summary += call.with_background ? "bg:" : "fg:";
+    summary += call.text;
+  }
+  return summary;
+}
 
 #if MICROIDE_HAS_SDL3_TTF
 
@@ -547,6 +611,173 @@ void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecorated
   SDL_DestroySurface(pixels);
 }
 
+void TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(84, 90);
+
+  microide::render::TextRenderer text_renderer;
+  auto backend = std::make_unique<CountingTextBackend>();
+  auto* backend_ptr = backend.get();
+  TextRendererTestAccess::SetBackend(text_renderer, std::move(backend));
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nxy", "/tmp/editor-wrap-render.cpp");
+  viewport.SetSoftWrap(true);
+
+  const SDL_FRect rect{0.0f, 0.0f, 84.0f, 90.0f};
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false);
+
+  const auto& calls = backend_ptr->draw_calls();
+  const std::string draw_summary = SummarizeDrawCalls(calls);
+  Expect(FindDrawCall(calls, "abcdefgh", false) != nullptr, draw_summary);
+  Expect(FindDrawCall(calls, "ijklmnop", false) != nullptr, draw_summary);
+  Expect(FindDrawCall(calls, "qrst", false) != nullptr, draw_summary);
+  Expect(FindDrawCall(calls, "xy", false) != nullptr, draw_summary);
+
+  Expect(CountDrawCalls(calls, "1", true) == 1,
+         "the gutter should draw the logical line number only on the first wrapped row");
+  Expect(CountDrawCalls(calls, "2", true) == 1,
+         "the gutter should still draw later logical line numbers once each");
+}
+
+#ifndef NDEBUG
+void TestEditorViewRendererReusesWrapCacheAcrossFrames() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(84, 90);
+
+  microide::render::TextRenderer text_renderer;
+  auto backend = std::make_unique<CountingTextBackend>();
+  auto* backend_ptr = backend.get();
+  TextRendererTestAccess::SetBackend(text_renderer, std::move(backend));
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nxy", "/tmp/editor-wrap-cache.cpp");
+  viewport.SetSoftWrap(true);
+
+  const SDL_FRect rect{0.0f, 0.0f, 84.0f, 90.0f};
+  microide::editor::EditorViewRenderer renderer;
+  const std::size_t before_frames = viewport.WrappedRowLayoutBuildCountForDebug();
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false);
+  const std::size_t after_first_frame = viewport.WrappedRowLayoutBuildCountForDebug();
+  backend_ptr->ResetDrawCalls();
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false);
+  const std::size_t after_second_frame = viewport.WrappedRowLayoutBuildCountForDebug();
+
+  Expect(after_second_frame - before_frames <= 1,
+         "two consecutive wrapped renders without edits or resize should rebuild the wrap cache at most once");
+  Expect(after_second_frame == after_first_frame,
+         "a second wrapped render without edits or resize should reuse the cached wrap layout");
+}
+#endif
+
+void TestEditorViewRendererAdvancesPastWrappedEmptyLines() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(84, 90);
+
+  microide::render::TextRenderer text_renderer;
+  auto backend = std::make_unique<CountingTextBackend>();
+  auto* backend_ptr = backend.get();
+  TextRendererTestAccess::SetBackend(text_renderer, std::move(backend));
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("\nabcdefghijk", "/tmp/editor-wrap-empty-line.cpp");
+  viewport.SetSoftWrap(true);
+
+  const SDL_FRect rect{0.0f, 0.0f, 84.0f, 90.0f};
+  const auto metrics = microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false);
+
+  const auto& calls = backend_ptr->draw_calls();
+  const auto* line_two_gutter = FindDrawCall(calls, "2", true);
+  const auto* wrapped_text = FindDrawCall(calls, "abcdefgh", false);
+  const auto* wrapped_tail = FindDrawCall(calls, "ijk", false);
+  Expect(line_two_gutter != nullptr,
+         "rendering an empty wrapped line should still advance the gutter to the next logical line");
+  Expect(wrapped_text != nullptr && std::fabs(wrapped_text->y - (metrics.first_line_y + metrics.line_height)) < 0.01f,
+         "text after an empty wrapped line should render on the next visual row");
+  Expect(wrapped_tail != nullptr && std::fabs(wrapped_tail->y - (metrics.first_line_y + 2.0f * metrics.line_height)) < 0.01f,
+         "wrapped text after an empty line should continue onto subsequent wrapped rows");
+}
+
+void TestEditorViewRendererClipsWrappedSelectionsPerRow() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(84, 90);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "wrapped selection renderer test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "wrapped selection renderer test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = SDL_Color{0x08, 0x08, 0x08, 0xff};
+  theme.row_highlight = theme.editor_background;
+  theme.selection_fill = SDL_Color{0x74, 0x24, 0x24, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst", "/tmp/editor-wrap-selection.cpp");
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 6);
+  viewport.MoveCursorTo(0, 18, true);
+
+  const SDL_FRect rect{0.0f, 0.0f, 84.0f, 90.0f};
+  const auto metrics = microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false);
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "wrapped selection renderer test should read software pixels");
+
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  const int row0_y = static_cast<int>(metrics.first_line_y + 2.0f);
+  const int row1_y = static_cast<int>(metrics.first_line_y + metrics.line_height + 2.0f);
+  const int row2_y = static_cast<int>(metrics.first_line_y + 2.0f * metrics.line_height + 2.0f);
+  const int text_x = static_cast<int>(metrics.text_x);
+
+  Expect(SDL_ReadSurfacePixel(pixels, text_x + 5, row0_y, &r, &g, &b, &a),
+         "wrapped selection renderer test should read a pixel before the row-0 selection");
+  Expect(r == theme.editor_background.r && g == theme.editor_background.g &&
+             b == theme.editor_background.b && a == theme.editor_background.a,
+         "wrapped selections should not backfill pixels before the row's clipped start");
+
+  Expect(SDL_ReadSurfacePixel(pixels, text_x + 7, row0_y, &r, &g, &b, &a),
+         "wrapped selection renderer test should read a row-0 selected pixel");
+  Expect(r == theme.selection_fill.r && g == theme.selection_fill.g &&
+             b == theme.selection_fill.b && a == theme.selection_fill.a,
+         "wrapped selections should paint the visible tail of the first wrapped row");
+
+  Expect(SDL_ReadSurfacePixel(pixels, text_x + 7, row1_y, &r, &g, &b, &a),
+         "wrapped selection renderer test should read a continuation-row selected pixel");
+  Expect(r == theme.selection_fill.r && g == theme.selection_fill.g &&
+             b == theme.selection_fill.b && a == theme.selection_fill.a,
+         "wrapped selections should fill the fully covered continuation row");
+
+  Expect(SDL_ReadSurfacePixel(pixels, text_x + 1, row2_y, &r, &g, &b, &a),
+         "wrapped selection renderer test should read a tail-row selected pixel");
+  Expect(r == theme.selection_fill.r && g == theme.selection_fill.g &&
+             b == theme.selection_fill.b && a == theme.selection_fill.a,
+         "wrapped selections should paint the visible head of the final wrapped row");
+
+  Expect(SDL_ReadSurfacePixel(pixels, text_x + 3, row2_y, &r, &g, &b, &a),
+         "wrapped selection renderer test should read a pixel after the tail-row selection");
+  Expect(r == theme.editor_background.r && g == theme.editor_background.g &&
+             b == theme.editor_background.b && a == theme.editor_background.a,
+         "wrapped selections should clip at the wrapped row end instead of spilling into the row tail");
+
+  SDL_DestroySurface(pixels);
+}
+
 void TestEditorViewRendererPaintsDiagnosticUnderlines() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(220, 72);
@@ -806,6 +1037,20 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view composes selected rows and inline highlights through decorated rows",
           TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecoratedGrid);
+  AddTest(tests,
+          "TextRenderer editor view uses wrapped rows and suppresses continuation gutter numbers",
+          TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers);
+#ifndef NDEBUG
+  AddTest(tests,
+          "TextRenderer editor view reuses wrap cache across frames",
+          TestEditorViewRendererReusesWrapCacheAcrossFrames);
+#endif
+  AddTest(tests,
+          "TextRenderer editor view advances past wrapped empty lines",
+          TestEditorViewRendererAdvancesPastWrappedEmptyLines);
+  AddTest(tests,
+          "TextRenderer editor view clips wrapped selections per row",
+          TestEditorViewRendererClipsWrappedSelectionsPerRow);
   AddTest(tests,
           "TextRenderer editor view paints diagnostic underlines",
           TestEditorViewRendererPaintsDiagnosticUnderlines);

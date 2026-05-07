@@ -12,6 +12,7 @@ namespace microide::tests {
 namespace {
 
 using microide::editor::SyntaxTokenKind;
+using microide::editor::TextPosition;
 using microide::editor::TextViewport;
 
 struct ScopedRuntimeSyntaxRegistryReset {
@@ -471,6 +472,8 @@ void TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret() {
   viewport.SetSoftWrap(true);
   viewport.MoveCursorTo(0, 10);
 
+  Expect(viewport.VisualRowCount() == 4,
+         "soft wrap should expose wrapped rows through the dedicated visual row API");
   Expect(viewport.visual_line_count() == 4,
          "soft wrap should expose three content rows plus the trailing empty-line row");
 
@@ -489,18 +492,144 @@ void TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret() {
 
 void TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows() {
   TextViewport viewport;
-  viewport.LoadContent("abcdefghijklmnopqrst\nxyz\n", "/tmp/soft-wrap-vertical.txt");
+  viewport.LoadContent("1234567\nabcdefghijklmnopqrst\nABCDEFGH12345678\n",
+                       "/tmp/soft-wrap-vertical.txt");
+  viewport.SetViewportSize(3, 8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 7);
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 7,
+         "moving down into a wrapped logical line should land on its first visual row");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 15,
+         "moving down within a wrapped logical line should follow visual rows, not logical lines");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 20,
+         "moving onto a short continuation row should clamp at that row's visual end");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 7,
+         "preferred column should reapply after leaving a short wrapped continuation row");
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 20,
+         "moving back onto the short continuation row should clamp again while preserving the target column");
+}
+
+void TestTextViewportSoftWrapPageMovesByVisibleRows() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nABCDEFGH12345678\nxyz\n", "/tmp/soft-wrap-page.txt");
+  viewport.SetViewportSize(3, 8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 0);
+
+  viewport.Page(1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 16,
+         "page down should advance by visible wrapped rows within the same logical line");
+
+  viewport.Page(1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 8,
+         "page down should continue counting wrapped rows across logical line boundaries");
+
+  viewport.Page(-1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 16,
+         "page up should move back by visible wrapped rows under soft wrap");
+}
+
+void TestTextViewportSoftWrapMovesSecondaryCaretsByVisibleRows() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijk\nqrstuvwxyzabcdefgh\n",
+                       "/tmp/soft-wrap-secondary-carets.txt");
   viewport.SetViewportSize(10, 8);
   viewport.SetSoftWrap(true);
-  viewport.MoveCursorTo(0, 10);
+  viewport.MoveCursorTo(0, 7);
+  viewport.SetSecondaryCarets({{1, 3}, {2, 5}});
 
   viewport.MoveCursorVertical(1);
-  Expect(viewport.cursor_line() == 0,
-         "moving down within a wrapped logical line should keep the same logical line");
 
-  viewport.MoveCursorVertical(1);
-  Expect(viewport.cursor_line() == 1,
-         "moving down from the last wrapped row should continue to the next logical line");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 15,
+         "the primary caret should move down by one wrapped row");
+  const auto carets = viewport.secondary_carets();
+  Expect(carets.size() == 2, "moving wrapped multi-carets should preserve every secondary caret");
+  Expect(carets[0] == TextPosition{1, 11},
+         "a secondary caret on a short wrapped line should clamp at that row's end");
+  Expect(carets[1] == TextPosition{2, 13},
+         "each secondary caret should preserve its own preferred column when moving by wrapped rows");
+}
+
+void TestTextViewportSoftWrapVisualHitRoundTripsContinuationRows() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-hit-roundtrip.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  const TextPosition hit = viewport.LogicalPositionForVisualHit(1, 3);
+  Expect(hit == TextPosition{0, 11},
+         "wrapped hit-testing should offset continuation rows by their visual start");
+
+  viewport.MoveCursorTo(hit.line, hit.column);
+  const auto row1 = viewport.VisibleWrappedRowLayout(1);
+  Expect(row1.caret_visible && row1.caret_column == 3,
+         "placing the caret from a wrapped hit-test should round-trip back onto the same continuation row");
+}
+
+void TestTextViewportSoftWrapContinuationHitsUseVisualOffset() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-hit-offset.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  const TextPosition hit = viewport.LogicalPositionForVisualHit(1, 2);
+  Expect(hit == TextPosition{0, 10},
+         "continuation-row hit-testing should resolve relative to the wrapped row start, not column zero");
+
+  const TextPosition end_hit = viewport.LogicalPositionForVisualHit(2, 8);
+  Expect(end_hit == TextPosition{0, 20},
+         "wrapped hit-testing should allow landing on the end of a short continuation row");
+}
+
+#ifndef NDEBUG
+void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheLazily() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-cache.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  (void)viewport.VisibleWrappedRowLayout(0);
+  const std::size_t first_build_count = viewport.WrappedRowLayoutBuildCountForDebug();
+
+  viewport.SetViewportSize(10, 12);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count,
+         "resizing the viewport should not eagerly rebuild wrapped rows");
+
+  (void)viewport.VisibleWrappedRowLayout(0);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
+         "the first wrapped-row query after resize should rebuild the cache once");
+
+  (void)viewport.VisibleWrappedRowLayout(0);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
+         "repeated wrapped-row queries without edits or resize should reuse the cached layout");
+}
+#endif
+
+void TestTextViewportSoftWrapForcesHorizontalScrollToZero() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-scroll.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetHorizontalScroll(5);
+  Expect(viewport.horizontal_scroll() == 5,
+         "horizontal scrolling should remain available before soft wrap is enabled");
+
+  viewport.SetSoftWrap(true);
+  Expect(viewport.horizontal_scroll() == 0,
+         "enabling soft wrap should clear any existing horizontal scroll offset");
+
+  viewport.SetHorizontalScroll(3);
+  Expect(viewport.horizontal_scroll() == 0,
+         "soft wrap should reject new horizontal scrolling while wrap is enabled");
 }
 
 void TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock() {
@@ -715,6 +844,20 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapExposesVisualRowsAndWrappedCaret);
   AddTest(tests, "TextViewport/SoftWrapMoveCursorVerticalUsesWrappedRows",
           TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows);
+  AddTest(tests, "TextViewport/SoftWrapPageMovesByVisibleRows",
+          TestTextViewportSoftWrapPageMovesByVisibleRows);
+  AddTest(tests, "TextViewport/SoftWrapMovesSecondaryCaretsByVisibleRows",
+          TestTextViewportSoftWrapMovesSecondaryCaretsByVisibleRows);
+  AddTest(tests, "TextViewport/SoftWrapVisualHitRoundTripsContinuationRows",
+          TestTextViewportSoftWrapVisualHitRoundTripsContinuationRows);
+  AddTest(tests, "TextViewport/SoftWrapContinuationHitsUseVisualOffset",
+          TestTextViewportSoftWrapContinuationHitsUseVisualOffset);
+#ifndef NDEBUG
+  AddTest(tests, "TextViewport/SoftWrapViewportResizeRebuildsWrapCacheLazily",
+          TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheLazily);
+#endif
+  AddTest(tests, "TextViewport/SoftWrapForcesHorizontalScrollToZero",
+          TestTextViewportSoftWrapForcesHorizontalScrollToZero);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
   AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",

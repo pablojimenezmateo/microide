@@ -360,7 +360,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
             lines[line_index], match_end, viewport.tab_size());
         const std::size_t row_start_visual = row_meta.visual_start;
-        const std::size_t row_end_visual = row_start_visual + viewport.visible_columns();
+        const std::size_t row_end_visual = row_meta.visual_end;
         const std::size_t visible_start = std::max(start_visual, row_start_visual);
         const std::size_t visible_end = std::min(end_visual, row_end_visual);
         if (visible_end > visible_start) {
@@ -396,7 +396,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const std::size_t end_visual =
           TextLayout::VisualColumnForTextColumn(lines[line_index], line_end, viewport.tab_size());
       const std::size_t row_start_visual = row_meta.visual_start;
-      const std::size_t row_end_visual = row_start_visual + viewport.visible_columns();
+      const std::size_t row_end_visual = row_meta.visual_end;
       const std::size_t visible_start = std::max(start_visual, row_start_visual);
       const std::size_t visible_end = std::min(end_visual, row_end_visual);
       if (visible_end > visible_start) {
@@ -426,7 +426,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                *token_kinds);
     AppendDiagnosticUnderlines(row_desc, text_renderer, theme, metrics.text_x, y,
                                metrics.line_height, lines[line_index], line_index,
-                               row_meta.visual_start, viewport.visible_columns(),
+                               row_meta.visual_start, row_meta.visual_end - row_meta.visual_start,
                                viewport.tab_size(), diagnostics);
     {
       util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
@@ -465,8 +465,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t visual_column = TextLayout::VisualColumnForTextColumn(
             lines[line_index], secondary_carets[idx].column, viewport.tab_size());
         const std::size_t row_start_visual = row_meta.visual_start;
+        const bool caret_hits_last_column =
+            visual_column == row_meta.visual_end && row_meta.visual_end == row_layout.visual_columns;
         if (visual_column < row_start_visual ||
-            visual_column > row_start_visual + viewport.visible_columns()) {
+            (visual_column >= row_meta.visual_end && !caret_hits_last_column)) {
           continue;
         }
         const float caret_x =

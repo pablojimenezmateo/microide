@@ -36,7 +36,7 @@ These are implemented and should not be treated as open migration work:
   primitives instead of staying fully surface-local
 - project-local workspace state plus app-level restore of open project tabs
 - normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
-- editor open/save/reopen, selection, clipboard, undo/redo, line numbers, horizontal scrolling, dirty tracking, IME hooks, and project-local preferences
+- editor open/save/reopen, selection, clipboard, undo/redo, line numbers, soft-wrap rendering with wrap-aware caret motion and hit-testing, horizontal scrolling when wrap is off, dirty tracking, IME hooks, and project-local preferences
 - syntax-highlight state now uses coarse document checkpoints plus per-line memoized replay, so
   far jumps in large files do not have to rebuild highlight state from file start
 - UTF-8 boundary logic, line-ending decode or serialize, and text splitting now route through one

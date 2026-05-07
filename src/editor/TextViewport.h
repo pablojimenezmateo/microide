@@ -130,6 +130,7 @@ class TextViewport {
   LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index) const;
   WrappedVisualRow WrappedVisualRowLayout(std::size_t visual_row_index) const;
   LogicalPosition LogicalPositionForVisualHit(int visual_row, int visual_col) const;
+  int VisualRowCount() const;
   std::size_t visual_line_count() const;
   std::size_t visual_scroll_line() const { return scroll_line_; }
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;

@@ -120,8 +120,15 @@ void TextViewport::SetUntitledBuffer() {
 }
 
 void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visible_columns) {
-  visible_lines_ = std::max<std::size_t>(1, visible_lines);
-  visible_columns_ = std::max<std::size_t>(8, visible_columns);
+  const std::size_t next_visible_lines = std::max<std::size_t>(1, visible_lines);
+  const std::size_t next_visible_columns = std::max<std::size_t>(8, visible_columns);
+  const bool wrap_width_changed = soft_wrap_ && visible_columns_ != next_visible_columns;
+  visible_lines_ = next_visible_lines;
+  visible_columns_ = next_visible_columns;
+  if (wrap_width_changed) {
+    horizontal_scroll_ = 0;
+    return;
+  }
   ClampScrollState();
 }
 
@@ -268,8 +275,8 @@ void TextViewport::ScrollVertical(int delta) {
   }
 
   const int current = static_cast<int>(scroll_line_);
-  const int max_index = static_cast<int>(
-      document_->lines.size() > visible_lines_ ? document_->lines.size() - visible_lines_ : 0);
+  const int visual_rows = VisualRowCount();
+  const int max_index = std::max(0, visual_rows - static_cast<int>(visible_lines_));
   scroll_line_ = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
 }
 
@@ -672,7 +679,7 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
       std::max(0, visual_row), wrapped_row_layouts_.size() - 1);
   const WrappedRowLayout& layout = wrapped_row_layouts_[clamped_row];
   const std::size_t width = layout.visual_end - layout.visual_start;
-  const std::size_t local_max = width == 0 ? 0 : width - 1;
+  const std::size_t local_max = width;
   const std::size_t clamped_local = std::min<std::size_t>(std::max(0, visual_col), local_max);
   const std::size_t target_visual = layout.visual_start + clamped_local;
   return LogicalPosition{
@@ -682,12 +689,16 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
   };
 }
 
-std::size_t TextViewport::visual_line_count() const {
+int TextViewport::VisualRowCount() const {
   if (!soft_wrap_) {
-    return document_->lines.size();
+    return static_cast<int>(document_->lines.size());
   }
   EnsureWrappedRowLayouts();
-  return wrapped_row_layouts_.size();
+  return static_cast<int>(wrapped_row_layouts_.size());
+}
+
+std::size_t TextViewport::visual_line_count() const {
+  return static_cast<std::size_t>(std::max(0, VisualRowCount()));
 }
 
 const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
@@ -2062,7 +2073,7 @@ std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
     return target.visual_start;
   }
   const std::size_t desired_absolute = target.visual_start + preferred_column;
-  return std::min(desired_absolute, target.visual_end - 1);
+  return std::min(desired_absolute, target.visual_end);
 }
 
 void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const {
