@@ -83,12 +83,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
     layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
                            panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
-                           project_state.sidebar.width, project_state.panel.height);
+                           project_state.sidebar.width, project_state.panel.height,
+                           layout_mode_service_.SnapshotInputs(),
+                           layout_mode_service_.StatusBarVisible());
+    layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
     layout_dirty_ = false;
   } else {
     layout = *prepared_frame_layout_;
   }
+  RefreshStatusBar();
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {

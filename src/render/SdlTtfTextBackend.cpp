@@ -43,10 +43,12 @@ SdlTtfTextBackend::~SdlTtfTextBackend() {
 bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   util::StartupTrace::Scope trace_scope("SdlTtfTextBackend::Initialize");
   if (renderer == nullptr) {
+    SDL_Log("microide text: SDL_ttf initialization failed: renderer is null");
     return false;
   }
 
   if (!TTF_Init()) {
+    SDL_Log("microide text: TTF_Init failed: %s", SDL_GetError());
     return false;
   }
   ttf_initialized_ = true;
@@ -54,11 +56,14 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
 
   const auto font_path = LocateFontFile();
   if (font_path.empty()) {
+    SDL_Log("microide text: no usable font found for SDL_ttf backend");
     return false;
   }
 
   font_ = TTF_OpenFont(font_path.string().c_str(), kFontPointSize);
   if (font_ == nullptr) {
+    SDL_Log("microide text: TTF_OpenFont failed for %s: %s", font_path.string().c_str(),
+            SDL_GetError());
     return false;
   }
   font_path_ = font_path;

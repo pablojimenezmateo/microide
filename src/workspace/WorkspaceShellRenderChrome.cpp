@@ -60,6 +60,21 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                         menu->label);
   }
 
+  if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value()) {
+    const bool hovered = last_mouse_position_valid_ &&
+                         Contains(*chevron, last_mouse_x_, last_mouse_y_);
+    const SDL_Color background = hovered ? theme_.row_highlight : theme_.chrome_background;
+    const SDL_Color glyph = hovered ? theme_.text_primary : theme_.chrome_text_secondary;
+    DrawFilledRect(renderer, *chevron, background);
+    const float cx = std::floor(chevron->x + chevron->w * 0.5f);
+    const float cy = std::floor(chevron->y + chevron->h * 0.5f);
+    for (int i = -1; i <= 1; ++i) {
+      DrawFilledRect(renderer,
+                     MakeRect(cx - 1.0f, cy + static_cast<float>(i) * 5.0f - 1.0f, 2.0f, 2.0f),
+                     glyph);
+    }
+  }
+
   if (CurrentWindowChromeState().custom_enabled) {
     const std::string title = "microide";
     const float title_width = text_renderer_.MeasureWidth(title);

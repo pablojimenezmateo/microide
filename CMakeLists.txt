@@ -280,6 +280,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRenderMenus.cpp
   src/workspace/WorkspaceShellRenderPrompts.cpp
   src/workspace/WorkspaceShellRenderChrome.cpp
+  src/workspace/WorkspaceShellRenderStatusBar.cpp
   src/workspace/WorkspaceShellRenderTextInput.cpp
   src/workspace/RenderViewModelBuilder.cpp
   src/workspace/WorkspaceShellHoverPopup.cpp

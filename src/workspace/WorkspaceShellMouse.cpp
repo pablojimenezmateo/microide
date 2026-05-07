@@ -110,7 +110,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.sidebar.visible &&
-      Contains(SidebarResizeHandleRect(layout), event.button.x, event.button.y)) {
+      Contains(SidebarResizeHitRect(layout), event.button.x, event.button.y)) {
     context_.interaction_state.drag_target = DragTarget::SidebarDivider;
     return true;
   }

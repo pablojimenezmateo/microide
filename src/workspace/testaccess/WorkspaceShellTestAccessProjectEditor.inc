@@ -225,6 +225,9 @@
         .fullscreen = fullscreen,
     };
   }
+  static void SetLayoutMode(WorkspaceShell& shell, microide::workspace::LayoutMode mode) {
+    shell.layout_mode_service_.SetCurrentMode(mode);
+  }
   static void RenderFrame(WorkspaceShell& shell) {
     shell.Render(nullptr, shell.window_presentation_.logical_width,
                  shell.window_presentation_.logical_height);

@@ -6,6 +6,7 @@
 
 #include "plugin/PluginHost.h"
 #include "util/Parse.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 
@@ -20,6 +21,37 @@ const SettingEnumValue kColorschemeValues[] = {
 const SettingEnumValue kEditorWrapValues[] = {
     {"off", "Off"},
     {"word", "Word"},
+};
+
+const SettingEnumValue kEditorLineEndingsValues[] = {
+    {"lf", "LF"},
+    {"crlf", "CRLF"},
+    {"auto", "Auto"},
+};
+
+const SettingEnumValue kEditorAutosaveValues[] = {
+    {"off", "Off"},
+    {"on_focus_change", "On focus change"},
+    {"after_delay", "After delay"},
+};
+
+const SettingEnumValue kLayoutModeValues[] = {
+    {"auto", "Auto"},
+    {"regular", "Regular"},
+    {"compact", "Compact"},
+};
+
+const SettingEnumValue kHandleSizeValues[] = {
+    {"compact", "Compact"},
+    {"regular", "Regular"},
+    {"large", "Large"},
+};
+
+const SettingEnumValue kSeverityValues[] = {
+    {"hint", "Hint"},
+    {"info", "Info"},
+    {"warning", "Warning"},
+    {"error", "Error"},
 };
 
 }  // namespace
@@ -97,6 +129,140 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 1.0f,
           .default_string = {},
           .enum_values = {},
+      },
+      SettingSpec{
+          .id = "editor.font_family",
+          .label = "Font Family",
+          .description = "Editor font family (empty uses the platform default).",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_string = {},
+      },
+      SettingSpec{
+          .id = "editor.font_size",
+          .label = "Font Size",
+          .description = "Editor font size in points (8..32).",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 13,
+      },
+      SettingSpec{
+          .id = "editor.line_endings",
+          .label = "Line Endings",
+          .description = "Line ending style used when saving files.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::Project,
+          .default_string = "auto",
+          .enum_values = kEditorLineEndingsValues,
+      },
+      SettingSpec{
+          .id = "editor.trim_trailing_whitespace",
+          .label = "Trim Trailing Whitespace",
+          .description = "Remove trailing whitespace on save.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::Project,
+          .default_bool = false,
+      },
+      SettingSpec{
+          .id = "editor.insert_final_newline",
+          .label = "Insert Final Newline",
+          .description = "Ensure files end with a newline on save.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::Project,
+          .default_bool = false,
+      },
+      SettingSpec{
+          .id = "editor.format_on_save",
+          .label = "Format On Save",
+          .description = "Run the configured formatter when saving.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::Project,
+          .default_bool = false,
+      },
+      SettingSpec{
+          .id = "editor.autosave",
+          .label = "Autosave",
+          .description = "When to save dirty buffers automatically.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::Project,
+          .default_string = "off",
+          .enum_values = kEditorAutosaveValues,
+      },
+      SettingSpec{
+          .id = "editor.hover_delay_ms",
+          .label = "Hover Delay (ms)",
+          .description = "Milliseconds before hover popups open.",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 350,
+      },
+      SettingSpec{
+          .id = "ui.layout_mode",
+          .label = "Layout Mode",
+          .description = "Compact / Regular / Auto layout selection.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::User,
+          .default_string = "auto",
+          .enum_values = kLayoutModeValues,
+      },
+      SettingSpec{
+          .id = "ui.layout_compact_breakpoint_px",
+          .label = "Compact Breakpoint (px)",
+          .description = "Window width below which auto layout switches to Compact (600..2000).",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = static_cast<int>(kWorkspaceLayoutCompactBreakpointDefault),
+      },
+      SettingSpec{
+          .id = "ui.scrollbar_size",
+          .label = "Scrollbar Size",
+          .description = "Compact / Regular / Large scrollbar visual size.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::User,
+          .default_string = "regular",
+          .enum_values = kHandleSizeValues,
+      },
+      SettingSpec{
+          .id = "ui.resize_handle_size",
+          .label = "Resize Handle Size",
+          .description = "Compact / Regular / Large resize-handle visual size.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::User,
+          .default_string = "regular",
+          .enum_values = kHandleSizeValues,
+      },
+      SettingSpec{
+          .id = "ui.show_status_bar",
+          .label = "Show Status Bar",
+          .description = "Display the bottom status bar.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+      },
+      SettingSpec{
+          .id = "terminal.shell",
+          .label = "Terminal Shell",
+          .description = "Shell command used by new terminals (empty for platform default).",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_string = {},
+      },
+      SettingSpec{
+          .id = "terminal.font_size",
+          .label = "Terminal Font Size",
+          .description = "Terminal font size in points (8..32).",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 13,
+      },
+      SettingSpec{
+          .id = "diagnostics.min_severity",
+          .label = "Minimum Diagnostic Severity",
+          .description = "Suppress diagnostics below this severity.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::Project,
+          .default_string = "hint",
+          .enum_values = kSeverityValues,
       },
   });
   return kSpecs;

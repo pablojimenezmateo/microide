@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace microide::workspace {
 
@@ -77,6 +78,19 @@ struct HoverTargetsViewModel {
   const editor::DiagnosticsStore* diagnostics_store = nullptr;
 };
 
+struct StatusBarSegmentViewModel {
+  std::string text;
+  bool clickable = false;
+};
+
+struct StatusBarViewModel {
+  bool visible = false;
+  SDL_FRect rect{};
+  LayoutMode layout_mode = LayoutMode::Regular;
+  std::vector<StatusBarSegmentViewModel> left_segments;
+  std::vector<StatusBarSegmentViewModel> right_segments;
+};
+
 class RenderViewModelBuilder {
  public:
   explicit RenderViewModelBuilder(const WorkspaceContext& context);
@@ -88,6 +102,8 @@ class RenderViewModelBuilder {
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
   HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
   HoverTargetsViewModel BuildHoverTargets() const;
+  StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
+                                    const class StatusBarService& service) const;
 
  private:
   const WorkspaceContext& context_;

@@ -38,6 +38,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
       ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : std::size_t{0});
   RenderChromeTooltips(renderer, layout);
   RenderMenuPopups(renderer, layout);
+  RenderStatusBar(renderer, layout);
 
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   const auto active_text_input_visual =

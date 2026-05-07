@@ -44,6 +44,26 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
     }
   }
 
+  if (context_.menu_state.overflow_popup_open &&
+      context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+    const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
+    if (!overflow.empty()) {
+      const SDL_FRect popup = ComputeMenuOverflowPopupRect(
+          *context_.menu_state.overflow_popup_anchor_rect, overflow.size());
+      DrawCardFrame(renderer, theme_, popup, CardStyle::Overlay);
+      for (std::size_t i = 0; i < overflow.size(); ++i) {
+        const MenuSpec* spec = FindMenuSpec(overflow[i]);
+        const SDL_FRect row =
+            MakeRect(popup.x + 4.0f, popup.y + 4.0f + static_cast<float>(i) * kWorkspaceMenuPopupItemHeight,
+                     popup.w - 8.0f, kWorkspaceMenuPopupItemHeight);
+        const bool hovered = last_mouse_position_valid_ &&
+                             Contains(row, last_mouse_x_, last_mouse_y_);
+        DrawMenuRow(text_renderer_, renderer, theme_, row, spec ? std::string(spec->label) : std::string{},
+                    {}, /*enabled=*/true, hovered, /*checked=*/false);
+      }
+    }
+  }
+
   if (!context_.menu_state.tree_context_menu.open) {
     return;
   }

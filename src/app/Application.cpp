@@ -484,6 +484,18 @@ bool Application::EnsureSceneTexture(int logical_width, int logical_height) {
     return false;
   }
 
+  int output_width = 0;
+  int output_height = 0;
+  if (!SDL_GetRenderOutputSize(renderer_, &output_width, &output_height) ||
+      output_width <= 0 || output_height <= 0) {
+    DestroySceneTexture();
+    return false;
+  }
+  if (output_width != logical_width || output_height != logical_height) {
+    DestroySceneTexture();
+    return false;
+  }
+
   if (scene_texture_ != nullptr && scene_texture_width_ == logical_width &&
       scene_texture_height_ == logical_height) {
     return true;

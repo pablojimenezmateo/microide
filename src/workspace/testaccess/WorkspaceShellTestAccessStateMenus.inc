@@ -82,6 +82,31 @@
     }
     return labels;
   }
+  static std::vector<std::string> OverflowMenuBarLabels(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    std::vector<std::string> labels;
+    for (const MenuId id : shell.ComputeOverflowMenuBarItems(layout.menu_bar)) {
+      if (const auto* menu = shell.FindMenuSpec(id); menu != nullptr) {
+        labels.emplace_back(menu->label);
+      }
+    }
+    return labels;
+  }
+  static std::optional<SDL_FRect> MenuOverflowChevronRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.MenuOverflowChevronRect(layout.menu_bar);
+  }
+  static bool MenuOverflowPopupOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.overflow_popup_open;
+  }
+  static std::optional<SDL_FRect> MenuOverflowPopupRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    if (!shell.context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+      return std::nullopt;
+    }
+    return ComputeMenuOverflowPopupRect(*shell.context_.menu_state.overflow_popup_anchor_rect,
+                                        shell.ComputeOverflowMenuBarItems(layout.menu_bar).size());
+  }
   static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell, std::string_view label) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {

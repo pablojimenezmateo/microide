@@ -94,7 +94,9 @@ std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
 
   return ComputeLayout(window_rect->w, window_rect->h, context_.current_project_state.sidebar.visible,
                        BottomPanelVisible(), context_.current_project_state.sidebar.width,
-                       context_.current_project_state.panel.height);
+                       context_.current_project_state.panel.height,
+                       layout_mode_service_.SnapshotInputs(),
+                       layout_mode_service_.StatusBarVisible());
 }
 
 const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeState() const {
@@ -489,6 +491,12 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
         submenu_rect.has_value()) {
       rect = UnionRects(rect, *submenu_rect);
     }
+  }
+  if (context_.menu_state.overflow_popup_open &&
+      context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+    const auto overflow = ComputeOverflowMenuBarItems(layout->menu_bar);
+    rect = UnionRects(rect, ComputeMenuOverflowPopupRect(
+                                *context_.menu_state.overflow_popup_anchor_rect, overflow.size()));
   }
   if (context_.menu_state.tree_context_menu.open) {
     if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {

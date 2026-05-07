@@ -25,6 +25,9 @@ struct MenuSurfaceState {
   int active_submenu_item_index = -1;
   std::optional<SDL_FRect> active_menu_anchor_rect;
   std::optional<SDL_FRect> active_submenu_anchor_rect;
+  bool overflow_popup_open = false;
+  std::optional<SDL_FRect> overflow_popup_anchor_rect;
+  int overflow_popup_active_index = -1;
   TreeContextMenuState tree_context_menu;
 };
 

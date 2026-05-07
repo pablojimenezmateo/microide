@@ -22,6 +22,8 @@ class ChromeMouseCoordinator {
     std::function<void()> request_chrome_redraw;
     std::function<std::vector<WorkspaceShell::VisibleMenuBarItem>(const SDL_FRect&)>
         compute_visible_menu_bar_items;
+    std::function<std::vector<MenuId>(const SDL_FRect&)> compute_overflow_menu_bar_items;
+    std::function<std::optional<SDL_FRect>(const SDL_FRect&)> menu_overflow_chevron_rect;
     std::function<std::vector<WorkspaceShell::VisibleWindowControlButton>(const SDL_FRect&)>
         compute_visible_window_control_buttons;
     std::function<void(WorkspaceShell::WindowAction)> set_pending_window_action;

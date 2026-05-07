@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -12,6 +13,18 @@
 #include "compare/MergeModel.h"
 
 namespace microide::workspace {
+
+enum class LayoutMode : std::uint8_t {
+  Regular = 0,
+  Compact = 1,
+};
+
+struct LayoutModeInputs {
+  enum class Override : std::uint8_t { Auto = 0, Regular = 1, Compact = 2 };
+  Override user_override = Override::Auto;
+  float compact_breakpoint_px = 720.0f;
+  LayoutMode previous_mode = LayoutMode::Regular;
+};
 
 struct WorkspaceLayout {
   SDL_FRect full{};
@@ -24,6 +37,8 @@ struct WorkspaceLayout {
   SDL_FRect editor_area{};
   SDL_FRect breadcrumb{};
   SDL_FRect editor_surface{};
+  SDL_FRect status_bar{};
+  LayoutMode layout_mode = LayoutMode::Regular;
 };
 
 struct ScrollbarGeometry {
@@ -213,6 +228,13 @@ inline constexpr float kWorkspaceMenuPopupItemHeight = 22.0f;
 inline constexpr float kWorkspaceDiffScrollbarReserve = 12.0f;
 inline constexpr float kWorkspaceDiffMarkerLaneWidth = 6.0f;
 inline constexpr float kWorkspaceDiffMarkerLaneGap = 3.0f;
+inline constexpr float kWorkspaceStatusBarHeight = 22.0f;
+inline constexpr float kWorkspaceMenuOverflowChevronWidth = 28.0f;
+inline constexpr float kWorkspaceTabCloseHitInflate = 3.0f;
+inline constexpr float kWorkspaceResizeHandleHitInflate = 3.0f;
+inline constexpr float kWorkspaceScrollbarHitInflate = 4.0f;
+inline constexpr float kWorkspaceLayoutCompactBreakpointDefault = 720.0f;
+inline constexpr float kWorkspaceLayoutCompactHysteresis = 12.0f;
 
 SDL_FRect MakeRect(float x, float y, float w, float h);
 WorkspaceLayout ComputeLayout(float window_width,
@@ -220,7 +242,9 @@ WorkspaceLayout ComputeLayout(float window_width,
                               bool sidebar_visible,
                               bool bottom_panel_visible,
                               float sidebar_width,
-                              float bottom_panel_height);
+                              float bottom_panel_height,
+                              LayoutModeInputs layout_mode_inputs = {},
+                              bool reserve_status_bar = false);
 std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
     const SDL_FRect& rect,
     bool vertical,
@@ -233,6 +257,13 @@ int TailScrollRowForContent(std::size_t line_count, int visible_rows);
 int ClampScrollRowToContent(int scroll_row, std::size_t line_count, int visible_rows);
 SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout);
+SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout);
+SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout);
+SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry);
+SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry);
+SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect);
+LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs);
+SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count);
 float BottomPanelCommandReservedHeight(bool command_mode);
 SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout, bool command_mode);
 SDL_FRect BottomPanelCommandAreaRect(const WorkspaceLayout& layout);

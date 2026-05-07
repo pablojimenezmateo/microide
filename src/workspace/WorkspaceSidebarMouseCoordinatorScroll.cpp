@@ -62,7 +62,8 @@ bool SidebarMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
 
   const auto list_layout = CurrentListLayout(layout);
   if (!list_layout.scrollbar.has_value() ||
-      !Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
+      !Contains(VerticalScrollbarHitRect(*list_layout.scrollbar), event.button.x,
+                event.button.y)) {
     return false;
   }
 

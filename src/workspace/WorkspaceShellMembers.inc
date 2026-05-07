@@ -545,6 +545,8 @@
   std::span<const MenuItemSpec> MenuItems(MenuId id) const;
   static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
   std::vector<VisibleMenuBarItem> ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
+  std::vector<MenuId> ComputeOverflowMenuBarItems(const SDL_FRect& menu_bar) const;
+  std::optional<SDL_FRect> MenuOverflowChevronRect(const SDL_FRect& menu_bar) const;
   std::vector<VisibleWindowControlButton> ComputeVisibleWindowControlButtons(
       const SDL_FRect& menu_bar) const;
   std::optional<SDL_FRect> ComputePopupMenuRect(const SDL_FRect& anchor_rect,
@@ -1274,6 +1276,8 @@
                                 const WorkspaceLayout& layout,
                                 std::size_t terminal_line_count);
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RefreshStatusBar();
   void RenderPromptSurface(
       SDL_Renderer* renderer,
       const WorkspaceLayout& layout,
@@ -1498,6 +1502,8 @@
   McpToolRegistry mcp_tool_registry_;
   AiContextManager ai_context_manager_;
   PersistenceService persistence_service_;
+  LayoutModeService layout_mode_service_;
+  StatusBarService status_bar_service_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

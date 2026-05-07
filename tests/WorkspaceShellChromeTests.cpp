@@ -159,15 +159,96 @@ void RenderRetainedInvalidation(WorkspaceShell& shell,
 
 void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
   WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1920, 720);
 
-  const std::vector<std::string> labels = WorkspaceShellTestAccess::VisibleMenuBarLabels(shell);
+  // Sample full menu bar including overflow so the assertions work at any width.
+  std::vector<std::string> labels = WorkspaceShellTestAccess::VisibleMenuBarLabels(shell);
+  for (const std::string& overflow : WorkspaceShellTestAccess::OverflowMenuBarLabels(shell)) {
+    labels.push_back(overflow);
+  }
   Expect(std::find(labels.begin(), labels.end(), "Project") == labels.end(),
          "menu bar should omit the removed Project menu");
-  Expect(std::find(labels.begin(), labels.end(), "Terminal") == labels.end(),
-         "menu bar should omit the removed Terminal menu");
-  Expect(std::find(labels.begin(), labels.end(), "Help") == labels.end(),
-         "menu bar should omit the removed Help menu");
+  Expect(std::find(labels.begin(), labels.end(), "Terminal") != labels.end(),
+         "menu bar should expose the Terminal top-level menu");
+  Expect(std::find(labels.begin(), labels.end(), "Help") != labels.end(),
+         "menu bar should expose the Help top-level menu");
+}
+
+void TestWorkspaceShellMenuBarShowsChevronWhenTruncated() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(!WorkspaceShellTestAccess::MenuOverflowChevronRect(shell).has_value(),
+         "wide window should not produce a menu overflow chevron");
+
+  WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(),
+         "narrow window should produce a menu overflow chevron rather than silently truncating");
+  const auto overflow_labels = WorkspaceShellTestAccess::OverflowMenuBarLabels(shell);
+  Expect(!overflow_labels.empty(),
+         "overflow label list must contain the menus that did not fit");
+  const auto visible_labels = WorkspaceShellTestAccess::VisibleMenuBarLabels(shell);
+  for (const auto& v : visible_labels) {
+    Expect(std::find(overflow_labels.begin(), overflow_labels.end(), v) == overflow_labels.end(),
+           "visible and overflow menu lists must be disjoint");
+  }
+}
+
+void TestWorkspaceShellCompactMenuOverflowButtonIsInteractive() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(),
+         "compact chrome should expose a hamburger/overflow menu button");
+  const float x = chevron->x + chevron->w * 0.5f;
+  const float y = chevron->y + chevron->h * 0.5f;
+  Expect(shell.WindowHitTest(x, y) == SDL_HITTEST_NORMAL,
+         "compact menu button must not be classified as draggable title-bar space");
+
+  SDL_Event click_event{};
+  click_event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  click_event.button.button = SDL_BUTTON_LEFT;
+  click_event.button.x = x;
+  click_event.button.y = y;
+  const auto result = shell.HandleEvent(click_event);
+  Expect(result.handled, "clicking the compact menu button should be handled");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell),
+         "clicking the compact menu button should open the overflow popup");
+
+  const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
+  Expect(popup.has_value(), "open overflow menu should expose a popup rect");
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+         "opening the compact menu should stay on the partial redraw path");
+  Expect(AnyRectIntersects(result.redraw.rects, *popup),
+         "compact menu redraw must include the popup area, not just the title bar");
+}
+
+void TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "compact menu row fixture should expose the overflow button");
+  Expect(SendMouseDown(shell, chevron->x + chevron->w * 0.5f, chevron->y + chevron->h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "compact menu row fixture should open the top-level menu list");
+  const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
+  Expect(popup.has_value(), "compact menu row fixture should expose the top-level menu popup");
+
+  Expect(SendMouseDown(shell, popup->x + 12.0f,
+                       popup->y + 4.0f +
+                           microide::workspace::kWorkspaceMenuPopupItemHeight * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "clicking a compact top-level menu row should be handled");
+  Expect(WorkspaceShellTestAccess::FileMenuOpen(shell),
+         "clicking the File row in compact mode should open the File menu");
+  Expect(WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::File).size() > 0,
+         "compact File menu should render from its row anchor even though no File bar label is visible");
 }
 
 void TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs() {
@@ -194,14 +275,16 @@ void TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs() {
 
 void TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle() {
   WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1920, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
 
-  Expect(shell.WindowHitTest(640.0f, 10.0f) == SDL_HITTEST_DRAGGABLE,
+  // Test point chosen to land past the expanded menu bar but before window-control buttons.
+  const float empty_x = 1500.0f;
+  Expect(shell.WindowHitTest(empty_x, 10.0f) == SDL_HITTEST_DRAGGABLE,
          "empty title-bar hit testing should hand borderless dragging back to the window manager");
-  Expect(shell.WindowDragRegionContains(640.0f, 10.0f),
+  Expect(shell.WindowDragRegionContains(empty_x, 10.0f),
          "empty title-bar space should still be eligible for window dragging");
-  Expect(SendMouseDown(shell, 640.0f, 10.0f, SDL_BUTTON_LEFT, 2),
+  Expect(SendMouseDown(shell, empty_x, 10.0f, SDL_BUTTON_LEFT, 2),
          "double-clicking an empty title-bar region should be handled");
   Expect(shell.ConsumeWindowAction() ==
              WorkspaceShell::WindowAction::ToggleMaximize,
@@ -220,7 +303,7 @@ void TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest() {
 void TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize() {
   WorkspaceShell shell;
   shell.SetWindowPresentationState(WorkspaceShell::WindowPresentationState{
-      .logical_width = 1280,
+      .logical_width = 1920,
       .logical_height = 720,
       .scale_x = 1.5f,
       .scale_y = 1.25f,
@@ -234,8 +317,8 @@ void TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize() {
 
   Expect(shell.WindowHitTest(1.0f, 1.0f) == SDL_HITTEST_DRAGGABLE,
          "maximized presentation state should keep the title bar draggable without exposing resize hit targets");
-  Expect(shell.WindowDragRegionContains(640.0f, 10.0f),
-         "presentation state should keep the title bar draggable");
+  Expect(shell.WindowDragRegionContains(1500.0f, 10.0f),
+         "presentation state should keep the title bar draggable past the expanded menu bar");
 }
 
 void TestWorkspaceShellMenuBarHoverSwitchesActiveMenu() {
@@ -1790,6 +1873,12 @@ void TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize() {
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/MenuBarOmitsRemovedMenus",
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
+  AddTest(tests, "WorkspaceShell/MenuBarShowsChevronWhenTruncated",
+          TestWorkspaceShellMenuBarShowsChevronWhenTruncated);
+  AddTest(tests, "WorkspaceShell/CompactMenuOverflowButtonIsInteractive",
+          TestWorkspaceShellCompactMenuOverflowButtonIsInteractive);
+  AddTest(tests, "WorkspaceShell/CompactMenuOverflowRowsOpenAnchoredMenus",
+          TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
   AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",

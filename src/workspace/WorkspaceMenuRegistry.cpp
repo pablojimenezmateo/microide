@@ -72,9 +72,10 @@ std::string LspDrivenMenuActionLabel(ActionId id,
 
 std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kFileItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::ProjectOpen, "New Project Tab..."),
+      MenuItem(ActionId::Tab, "New File", "Ctrl+N"),
+      MenuItem(ActionId::Open, "Open File…", "Ctrl+O"),
+      MenuItem(ActionId::ProjectOpen, "Open Folder / Project Tab…", "Ctrl+K Ctrl+O"),
       MenuSeparator(),
-      MenuItem(ActionId::Tab),
       MenuItem(ActionId::Save),
       MenuItem(ActionId::CloseActiveTab),
       MenuItem(ActionId::CloseAllTabs),
@@ -135,6 +136,55 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
                std::array<std::string_view, 2>{"reset", {}}, 1),
   });
+  static const auto kSelectionItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::SelectAll),
+      MenuItem(ActionId::CutSelection),
+      MenuItem(ActionId::CopySelection),
+      MenuItem(ActionId::CopySelectionWithContext),
+      MenuItem(ActionId::PasteClipboard),
+  });
+  static const auto kGoItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::Files, "Go to File…"),
+      MenuItem(ActionId::ProjectSearch, "Search in Project…"),
+      MenuSeparator(),
+      MenuItem(ActionId::Goto, "Go to Line…"),
+      MenuItem(ActionId::Jump, "Jump Relative…"),
+      MenuSeparator(),
+      MenuItem(ActionId::GoToDefinition),
+      MenuItem(ActionId::FindReferences),
+  });
+  static const auto kRunItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::TestsRun, "Run Tests"),
+      MenuItem(ActionId::TestsDiscover, "Discover Tests"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugStart, "Start Debugger"),
+      MenuItem(ActionId::DebugStop, "Stop Debugger"),
+      MenuSeparator(),
+      MenuItem(ActionId::Tasks, "Run Task…"),
+  });
+  static const auto kGitItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::SidebarShow, "Source Control Sidebar", {},
+               std::array<std::string_view, 2>{"git", {}}, 1, false),
+      MenuItem(ActionId::GitRefresh, "Refresh"),
+      MenuSeparator(),
+      MenuItem(ActionId::CompareHead, "Compare with HEAD"),
+  });
+  static const auto kTerminalItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::Term, "New Terminal"),
+      MenuItem(ActionId::ShowOutput, "Show Output"),
+      MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
+  });
+  static const auto kPreferencesItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
+      MenuItem(ActionId::UiScale, "Zoom Out", "Ctrl+-", std::array<std::string_view, 2>{"down", {}}, 1),
+      MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
+               std::array<std::string_view, 2>{"reset", {}}, 1),
+      MenuSeparator(),
+      MenuItem(ActionId::PluginsReload, "Reload Plugins"),
+  });
+  static const auto kHelpItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::ShowOutput, "Show Output Channel"),
+  });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Search),
       MenuItem(ActionId::ReplaceInBuffer),
@@ -160,10 +210,17 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
+      MenuSpec{MenuId::Selection, "Selection", kSelectionItems},
       MenuSpec{MenuId::View, "View", kViewItems},
+      MenuSpec{MenuId::Go, "Go", kGoItems},
+      MenuSpec{MenuId::Run, "Run", kRunItems},
+      MenuSpec{MenuId::Git, "Git", kGitItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},
       MenuSpec{MenuId::Search, "Search", kSearchItems},
+      MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
+      MenuSpec{MenuId::Preferences, "Preferences", kPreferencesItems},
+      MenuSpec{MenuId::Help, "Help", kHelpItems},
       MenuSpec{MenuId::EditorContext, "Editor", kEditorContextItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
       MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},

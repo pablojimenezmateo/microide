@@ -131,7 +131,7 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
         project != nullptr && project->project_base_color.has_value()
             ? *project->project_base_color
             : DefaultProjectBaseColor(root);
-    tab.show_badge = true;
+    tab.show_badge = layout_mode_service_.CurrentMode() != LayoutMode::Compact;
     tab.chat_status =
         summary.state == ProjectChatSummary::State::Running ? VisibleStripTab::ChatStatus::Running
         : summary.state == ProjectChatSummary::State::Failed ? VisibleStripTab::ChatStatus::Failed
@@ -449,8 +449,10 @@ void WorkspaceShell::ClearTabDrag() {
 }
 
 SDL_FRect WorkspaceShell::BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const {
+  const float compact_max =
+      layout_mode_service_.CurrentMode() == LayoutMode::Compact ? 14.0f : kBottomPanelHeaderButtonSize;
   const float button_size =
-      std::min(kBottomPanelHeaderButtonSize, std::max(14.0f, panel_header.h - 8.0f));
+      std::min(compact_max, std::max(14.0f, panel_header.h - 8.0f));
   return MakeRect(panel_header.x + panel_header.w - button_size - 8.0f,
                   panel_header.y + (panel_header.h - button_size) * 0.5f, button_size,
                   button_size);
@@ -458,6 +460,48 @@ SDL_FRect WorkspaceShell::BottomPanelTerminalNewTabRect(const SDL_FRect& panel_h
 
 SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const {
   return ComputeOverlaySurfaceRect(editor_area);
+}
+
+void WorkspaceShell::RefreshStatusBar() {
+  StatusBarSegmentValue project_segment;
+  if (!context_.current_project_state.root.empty()) {
+    project_segment.text = context_.current_project_state.root.filename().string();
+    if (project_segment.text.empty()) {
+      project_segment.text = context_.current_project_state.root.string();
+    }
+    project_segment.tooltip = context_.current_project_state.root.string();
+    project_segment.visible = true;
+    project_segment.clickable = false;
+  }
+  status_bar_service_.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
+
+  StatusBarSegmentValue layout_mode_segment;
+  layout_mode_segment.text =
+      layout_mode_service_.CurrentMode() == LayoutMode::Compact ? "compact" : "regular";
+  layout_mode_segment.tooltip = "Toggle layout mode";
+  layout_mode_segment.visible = true;
+  layout_mode_segment.clickable = true;
+  status_bar_service_.SetSegment(StatusBarSegmentId::LayoutMode,
+                                  std::move(layout_mode_segment));
+
+  if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+    StatusBarSegmentValue line_col;
+    line_col.text = "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
+                    std::to_string(viewport->cursor_column() + 1);
+    line_col.visible = true;
+    line_col.clickable = true;
+    status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, std::move(line_col));
+
+    StatusBarSegmentValue indent;
+    indent.text = (viewport->soft_tabs() ? "Spaces: " : "Tabs: ") +
+                  std::to_string(viewport->tab_size());
+    indent.visible = true;
+    indent.clickable = true;
+    status_bar_service_.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
+  } else {
+    status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, StatusBarSegmentValue{});
+    status_bar_service_.SetSegment(StatusBarSegmentId::Indent, StatusBarSegmentValue{});
+  }
 }
 
 }  // namespace microide::workspace

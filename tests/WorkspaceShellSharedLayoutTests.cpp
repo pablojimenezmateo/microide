@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "compare/CompareModel.h"
+#include "workspace/LayoutModeService.h"
 #include "workspace/WorkspaceLayout.h"
 
 #include <cmath>
@@ -38,9 +39,21 @@ using microide::workspace::ComputeVisibleLineRangeRect;
 using microide::workspace::ComputeVisibleStripLayouts;
 using microide::workspace::EnsureVisibleStripIndex;
 using microide::workspace::HoveredChromeTabTooltipLabel;
+using microide::workspace::HorizontalScrollbarHitRect;
+using microide::workspace::LayoutMode;
+using microide::workspace::LayoutModeInputs;
 using microide::workspace::MakeHorizontalScrollbarGeometry;
 using microide::workspace::MakeRect;
 using microide::workspace::MakeVerticalScrollbarGeometry;
+using microide::workspace::ResolveLayoutMode;
+using microide::workspace::kWorkspaceLayoutCompactBreakpointDefault;
+using microide::workspace::kWorkspaceLayoutCompactHysteresis;
+using microide::workspace::SidebarResizeHandleRect;
+using microide::workspace::SidebarResizeHitRect;
+using microide::workspace::TabCloseHitRect;
+using microide::workspace::VerticalScrollbarHitRect;
+using microide::workspace::BottomPanelResizeHandleRect;
+using microide::workspace::BottomPanelResizeHitRect;
 using microide::workspace::MergeHoverInteractionLayout;
 using microide::workspace::MergeHoverResultLayout;
 using microide::workspace::MergeHoverState;
@@ -594,6 +607,140 @@ void TestWorkspaceSharedOverlayRectHelpers() {
          "overlay rect should preserve the vertical bias after compact-height clamping");
 }
 
+void TestWorkspaceSharedHitTargets() {
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
+
+  const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
+  const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
+  Expect(sidebar_hit.w >= 12.0f,
+         "sidebar resize hit rect should meet the WCAG 2.2 minimum width");
+  Expect(sidebar_hit.h >= 24.0f,
+         "sidebar resize hit rect should meet the WCAG 2.2 minimum length");
+  Expect(sidebar_hit.x <= sidebar_visual.x && sidebar_hit.y == sidebar_visual.y,
+         "sidebar hit rect should inflate horizontally only");
+
+  const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
+  const SDL_FRect panel_hit = BottomPanelResizeHitRect(layout);
+  Expect(panel_hit.h >= 12.0f,
+         "bottom panel resize hit rect should meet the WCAG 2.2 minimum thickness");
+  Expect(panel_hit.w >= 24.0f,
+         "bottom panel resize hit rect should meet the WCAG 2.2 minimum length");
+  Expect(panel_hit.y <= panel_visual.y && panel_hit.x == panel_visual.x,
+         "panel hit rect should inflate vertically only");
+
+  const auto vertical = MakeVerticalScrollbarGeometry(MakeRect(0.0f, 0.0f, 100.0f, 200.0f),
+                                                     100.0f, 20.0f, 30.0f, false);
+  Expect(vertical.has_value(), "vertical scrollbar geometry should exist for hit-rect test");
+  const SDL_FRect vert_hit = VerticalScrollbarHitRect(*vertical);
+  Expect(vert_hit.w >= 18.0f,
+         "vertical scrollbar hit rect should meet the documented 18px cross-axis size");
+
+  const auto horizontal = MakeHorizontalScrollbarGeometry(MakeRect(0.0f, 0.0f, 200.0f, 100.0f),
+                                                          80.0f, 20.0f, 10.0f, false);
+  Expect(horizontal.has_value(), "horizontal scrollbar geometry should exist for hit-rect test");
+  const SDL_FRect horiz_hit = HorizontalScrollbarHitRect(*horizontal);
+  Expect(horiz_hit.h >= 18.0f,
+         "horizontal scrollbar hit rect should meet the documented 18px cross-axis size");
+
+  const SDL_FRect tab_rect = MakeRect(100.0f, 30.0f, 160.0f, 24.0f);
+  const SDL_FRect close_visual = MakeRect(240.0f, 35.0f, 14.0f, 14.0f);
+  const SDL_FRect close_hit = TabCloseHitRect(close_visual, tab_rect);
+  Expect(close_hit.w >= 16.0f && close_hit.h >= 18.0f,
+         "tab close hit rect should expand toward 20x20 within the tab bounds");
+  Expect(close_hit.x >= tab_rect.x &&
+             close_hit.x + close_hit.w <= tab_rect.x + tab_rect.w + 0.01f,
+         "tab close hit rect must stay inside the tab rectangle");
+}
+
+void TestWorkspaceHitTargetClickRouting() {
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
+
+  const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
+  const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
+
+  const float just_outside_left = sidebar_visual.x - 2.0f;
+  const float just_outside_right = sidebar_visual.x + sidebar_visual.w + 2.0f;
+  const float mid_y = sidebar_visual.y + sidebar_visual.h * 0.5f;
+  Expect(microide::workspace::Contains(sidebar_hit, just_outside_left, mid_y),
+         "click 2px left of the visual divider must land inside the inflated hit rect");
+  Expect(microide::workspace::Contains(sidebar_hit, just_outside_right, mid_y),
+         "click 2px right of the visual divider must land inside the inflated hit rect");
+
+  const float editor_text_x = layout.editor_surface.x + 80.0f;
+  Expect(!microide::workspace::Contains(sidebar_hit, editor_text_x, mid_y),
+         "click well inside the editor must NOT land on the sidebar resize hit pad");
+
+  const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
+  const SDL_FRect panel_hit = BottomPanelResizeHitRect(layout);
+  const float just_above = panel_visual.y - 2.0f;
+  const float just_below = panel_visual.y + panel_visual.h + 2.0f;
+  const float mid_x = panel_visual.x + panel_visual.w * 0.5f;
+  Expect(microide::workspace::Contains(panel_hit, mid_x, just_above),
+         "click 2px above the bottom-panel divider must land inside the inflated hit rect");
+  Expect(microide::workspace::Contains(panel_hit, mid_x, just_below),
+         "click 2px below the bottom-panel divider must land inside the inflated hit rect");
+}
+
+void TestWorkspaceLayoutModeResolution() {
+  LayoutModeInputs inputs;
+  inputs.compact_breakpoint_px = kWorkspaceLayoutCompactBreakpointDefault;
+  inputs.previous_mode = LayoutMode::Regular;
+
+  Expect(ResolveLayoutMode(900.0f, inputs) == LayoutMode::Regular,
+         "wide windows resolve to Regular");
+  Expect(ResolveLayoutMode(600.0f, inputs) == LayoutMode::Compact,
+         "narrow windows resolve to Compact");
+
+  inputs.previous_mode = LayoutMode::Compact;
+  Expect(ResolveLayoutMode(kWorkspaceLayoutCompactBreakpointDefault, inputs) == LayoutMode::Compact,
+         "hysteresis keeps Compact at the breakpoint when starting Compact");
+  Expect(ResolveLayoutMode(kWorkspaceLayoutCompactBreakpointDefault +
+                               kWorkspaceLayoutCompactHysteresis + 3.0f,
+                           inputs) == LayoutMode::Regular,
+         "hysteresis flips to Regular only past breakpoint + 12");
+
+  inputs.user_override = LayoutModeInputs::Override::Regular;
+  Expect(ResolveLayoutMode(640.0f, inputs) == LayoutMode::Regular,
+         "Regular override defeats narrow auto");
+  inputs.user_override = LayoutModeInputs::Override::Compact;
+  Expect(ResolveLayoutMode(1920.0f, inputs) == LayoutMode::Compact,
+         "Compact override defeats wide auto");
+}
+
+void TestLayoutModeServiceFlipFlop() {
+  microide::workspace::LayoutModeService service;
+  service.SetCompactBreakpointPx(kWorkspaceLayoutCompactBreakpointDefault);
+
+  // Wide window: should resolve Regular.
+  service.SetCurrentMode(ResolveLayoutMode(900.0f, service.SnapshotInputs()));
+  Expect(service.CurrentMode() == LayoutMode::Regular,
+         "service should hold Regular for a wide window");
+
+  // Narrow window: flip to Compact.
+  service.SetCurrentMode(ResolveLayoutMode(600.0f, service.SnapshotInputs()));
+  Expect(service.CurrentMode() == LayoutMode::Compact,
+         "service should flip to Compact below the breakpoint");
+
+  // Hover at breakpoint: hysteresis keeps Compact.
+  service.SetCurrentMode(ResolveLayoutMode(kWorkspaceLayoutCompactBreakpointDefault,
+                                           service.SnapshotInputs()));
+  Expect(service.CurrentMode() == LayoutMode::Compact,
+         "service hysteresis should hold Compact at the breakpoint");
+
+  // Cross hysteresis upward: flip to Regular.
+  service.SetCurrentMode(ResolveLayoutMode(kWorkspaceLayoutCompactBreakpointDefault +
+                                               kWorkspaceLayoutCompactHysteresis + 3.0f,
+                                           service.SnapshotInputs()));
+  Expect(service.CurrentMode() == LayoutMode::Regular,
+         "service should flip to Regular only past breakpoint + hysteresis");
+
+  // Override defeats auto.
+  service.SetUserOverride(LayoutModeInputs::Override::Compact);
+  service.SetCurrentMode(ResolveLayoutMode(1920.0f, service.SnapshotInputs()));
+  Expect(service.CurrentMode() == LayoutMode::Compact,
+         "user override should defeat the wide-window auto resolution");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
@@ -622,6 +769,10 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",
           TestWorkspaceSharedMergeInteractionGeometry);
   AddTest(tests, "WorkspaceShared/OverlayRectHelpers", TestWorkspaceSharedOverlayRectHelpers);
+  AddTest(tests, "WorkspaceShared/HitTargets", TestWorkspaceSharedHitTargets);
+  AddTest(tests, "WorkspaceShared/HitTargetClickRouting", TestWorkspaceHitTargetClickRouting);
+  AddTest(tests, "WorkspaceShared/LayoutModeResolution", TestWorkspaceLayoutModeResolution);
+  AddTest(tests, "WorkspaceShared/LayoutModeServiceFlipFlop", TestLayoutModeServiceFlipFlop);
 }
 
 }  // namespace microide::tests

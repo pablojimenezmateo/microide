@@ -72,7 +72,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       }
       if (event.button.button == SDL_BUTTON_MIDDLE ||
           (event.button.button == SDL_BUTTON_LEFT &&
-           Contains(tab.close_rect, event.button.x, event.button.y))) {
+           Contains(TabCloseHitRect(tab.close_rect, tab.rect), event.button.x, event.button.y))) {
         operations_.request_close_project(tab.index);
       } else if (event.button.button == SDL_BUTTON_LEFT) {
         operations_.switch_project(tab.index, true);
@@ -109,7 +109,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       }
       if (event.button.button == SDL_BUTTON_MIDDLE ||
           (event.button.button == SDL_BUTTON_LEFT &&
-           Contains(tab.close_rect, event.button.x, event.button.y))) {
+           Contains(TabCloseHitRect(tab.close_rect, tab.rect), event.button.x, event.button.y))) {
         operations_.request_close_tab(tab.index);
       } else if (event.button.button == SDL_BUTTON_LEFT) {
         {
@@ -162,7 +162,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
     if (event.button.button == SDL_BUTTON_MIDDLE ||
         (event.button.button == SDL_BUTTON_LEFT &&
-         Contains(tab.close_rect, event.button.x, event.button.y))) {
+         Contains(TabCloseHitRect(tab.close_rect, tab.rect), event.button.x, event.button.y))) {
       operations_.close_bottom_panel_tab(tab.index);
     } else if (event.button.button == SDL_BUTTON_LEFT) {
       if (operations_.activate_bottom_panel_tab(tab.index) &&

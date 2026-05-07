@@ -11,36 +11,94 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuIte
   return WorkspaceTreeContextMenuItems(target);
 }
 
+namespace {
+
+bool IsMenuBarTopLevelMenu(MenuId id) {
+  return id != MenuId::SidebarMode && id != MenuId::GitOutgoingBase &&
+         id != MenuId::EditorContext && id != MenuId::EditorTabContext &&
+         id != MenuId::TerminalContext && id != MenuId::TerminalTabContext;
+}
+
+}  // namespace
+
 std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
     const SDL_FRect& menu_bar) const {
   std::vector<VisibleMenuBarItem> items;
+  if (layout_mode_service_.CurrentMode() == LayoutMode::Compact) {
+    return items;  // hamburger only — every top-level menu reaches the popup
+  }
   float x = menu_bar.x + 8.0f;
   const float y = menu_bar.y + 3.0f;
   const float height = std::max(18.0f, menu_bar.h - 6.0f);
   const auto window_buttons = ComputeVisibleWindowControlButtons(menu_bar);
-  const float max_x = window_buttons.empty()
-                          ? menu_bar.x + menu_bar.w - 8.0f
-                          : window_buttons.front().rect.x - 8.0f;
+  const float chevron_reserve = kWorkspaceMenuOverflowChevronWidth + 4.0f;
+  const float available_right = window_buttons.empty()
+                                    ? menu_bar.x + menu_bar.w - 8.0f
+                                    : window_buttons.front().rect.x - 8.0f;
+
+  // First pass: measure widths and determine whether all items fit.
+  std::vector<std::pair<MenuId, float>> measured;
+  measured.reserve(8);
+  float total_x = x;
+  bool any_overflow = false;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (spec.id == MenuId::SidebarMode || spec.id == MenuId::GitOutgoingBase ||
-        spec.id == MenuId::EditorContext ||
-        spec.id == MenuId::EditorTabContext || spec.id == MenuId::TerminalContext ||
-        spec.id == MenuId::TerminalTabContext) {
+    if (!IsMenuBarTopLevelMenu(spec.id)) {
       continue;
     }
     const float width =
         std::clamp(text_renderer_.MeasureWidth(spec.label) + 28.0f, 56.0f, 116.0f);
+    measured.emplace_back(spec.id, width);
+    total_x += width + 4.0f;
+  }
+  any_overflow = total_x > available_right;
+  const float max_x = any_overflow ? available_right - chevron_reserve : available_right;
+
+  for (const auto& [id, width] : measured) {
     if (x + width > max_x) {
       break;
     }
     items.push_back(VisibleMenuBarItem{
-        .id = spec.id,
+        .id = id,
         .rect = MakeRect(x, y, width, height),
-        .active = context_.menu_state.menu_bar_open && spec.id == context_.menu_state.active_menu_id,
+        .active = context_.menu_state.menu_bar_open && id == context_.menu_state.active_menu_id,
     });
     x += width + 4.0f;
   }
   return items;
+}
+
+std::vector<MenuId> WorkspaceShell::ComputeOverflowMenuBarItems(
+    const SDL_FRect& menu_bar) const {
+  const auto visible = ComputeVisibleMenuBarItems(menu_bar);
+  std::vector<MenuId> overflow;
+  std::size_t consumed = 0;
+  for (const MenuSpec& spec : MenuSpecs()) {
+    if (!IsMenuBarTopLevelMenu(spec.id)) {
+      continue;
+    }
+    if (consumed < visible.size() && visible[consumed].id == spec.id) {
+      ++consumed;
+      continue;
+    }
+    overflow.push_back(spec.id);
+  }
+  return overflow;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::MenuOverflowChevronRect(
+    const SDL_FRect& menu_bar) const {
+  const auto overflow = ComputeOverflowMenuBarItems(menu_bar);
+  if (overflow.empty()) {
+    return std::nullopt;
+  }
+  const auto window_buttons = ComputeVisibleWindowControlButtons(menu_bar);
+  const float available_right = window_buttons.empty()
+                                    ? menu_bar.x + menu_bar.w - 8.0f
+                                    : window_buttons.front().rect.x - 8.0f;
+  const float y = menu_bar.y + 3.0f;
+  const float height = std::max(18.0f, menu_bar.h - 6.0f);
+  const float x = available_right - kWorkspaceMenuOverflowChevronWidth;
+  return MakeRect(x, y, kWorkspaceMenuOverflowChevronWidth, height);
 }
 
 std::vector<WorkspaceShell::VisibleWindowControlButton>

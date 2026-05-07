@@ -157,7 +157,9 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                                      shell->context_.current_project_state.sidebar.visible,
                                      shell->BottomPanelVisible(),
                                      shell->context_.current_project_state.sidebar.width,
-                                     shell->context_.current_project_state.panel.height);
+                                     shell->context_.current_project_state.panel.height,
+                                     shell->layout_mode_service_.SnapshotInputs(),
+                                     shell->layout_mode_service_.StatusBarVisible());
               },
           .reset_visible_editor_blame_overlay =
               [shell]() { shell->visible_editor_blame_overlay_.reset(); },

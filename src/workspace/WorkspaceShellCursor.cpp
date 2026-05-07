@@ -115,7 +115,9 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
 
   const WorkspaceLayout layout =
       ComputeLayout(window_width, window_height, context_.current_project_state.sidebar.visible, BottomPanelVisible(),
-                    context_.current_project_state.sidebar.width, context_.current_project_state.panel.height);
+                    context_.current_project_state.sidebar.width, context_.current_project_state.panel.height,
+                    layout_mode_service_.SnapshotInputs(),
+                    layout_mode_service_.StatusBarVisible());
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }
@@ -124,6 +126,10 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
     if (Contains(item.rect, x, y)) {
       return false;
     }
+  }
+  if (const auto chevron_rect = MenuOverflowChevronRect(layout.menu_bar);
+      chevron_rect.has_value() && Contains(*chevron_rect, x, y)) {
+    return false;
   }
   for (const VisibleWindowControlButton& button :
        ComputeVisibleWindowControlButtons(layout.menu_bar)) {
@@ -236,11 +242,25 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
+  if (context_.menu_state.overflow_popup_open &&
+      context_.menu_state.overflow_popup_anchor_rect.has_value()) {
+    const auto overflow = ComputeOverflowMenuBarItems(layout.menu_bar);
+    const SDL_FRect popup = ComputeMenuOverflowPopupRect(
+        *context_.menu_state.overflow_popup_anchor_rect, overflow.size());
+    if (Contains(popup, x, y)) {
+      return CursorKind::Pointer;
+    }
+  }
+
   if (Contains(layout.menu_bar, x, y)) {
     for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
       if (Contains(item.rect, x, y)) {
         return CursorKind::Pointer;
       }
+    }
+    if (const auto chevron_rect = MenuOverflowChevronRect(layout.menu_bar);
+        chevron_rect.has_value() && Contains(*chevron_rect, x, y)) {
+      return CursorKind::Pointer;
     }
     for (const VisibleWindowControlButton& button :
          ComputeVisibleWindowControlButtons(layout.menu_bar)) {
@@ -285,10 +305,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                                                             : CursorKind::Default;
   }
 
-  if (context_.current_project_state.sidebar.visible && Contains(SidebarResizeHandleRect(layout), x, y)) {
+  if (context_.current_project_state.sidebar.visible && Contains(SidebarResizeHitRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
-  if (BottomPanelVisible() && Contains(BottomPanelResizeHandleRect(layout), x, y)) {
+  if (BottomPanelVisible() && Contains(BottomPanelResizeHitRect(layout), x, y)) {
     return CursorKind::NsResize;
   }
 

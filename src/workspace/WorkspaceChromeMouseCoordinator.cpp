@@ -142,6 +142,47 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     return true;
   }
 
+  if (const auto chevron_rect = operations_.menu_overflow_chevron_rect(layout.menu_bar);
+      chevron_rect.has_value() &&
+      Contains(*chevron_rect, event.button.x, event.button.y)) {
+    if (menu_state_.overflow_popup_open) {
+      menu_state_.overflow_popup_open = false;
+      menu_state_.overflow_popup_anchor_rect.reset();
+    } else {
+      operations_.close_menu_bar();
+      menu_state_.overflow_popup_open = true;
+      menu_state_.overflow_popup_anchor_rect = *chevron_rect;
+      menu_state_.overflow_popup_active_index = -1;
+    }
+    operations_.request_chrome_redraw();
+    return true;
+  }
+
+  if (menu_state_.overflow_popup_open && menu_state_.overflow_popup_anchor_rect.has_value()) {
+    const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
+    const SDL_FRect popup = ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect,
+                                                          overflow_specs.size());
+    if (Contains(popup, event.button.x, event.button.y)) {
+      const std::size_t row = static_cast<std::size_t>(
+          std::floor((event.button.y - popup.y - 4.0f) / kWorkspaceMenuPopupItemHeight));
+      if (row < overflow_specs.size()) {
+        const MenuId picked = overflow_specs[row];
+        const SDL_FRect row_rect =
+            MakeRect(popup.x + 4.0f,
+                     popup.y + 4.0f + static_cast<float>(row) * kWorkspaceMenuPopupItemHeight,
+                     popup.w - 8.0f, kWorkspaceMenuPopupItemHeight);
+        menu_state_.overflow_popup_open = false;
+        menu_state_.overflow_popup_anchor_rect.reset();
+        operations_.open_anchored_menu(picked, row_rect);
+        operations_.request_chrome_redraw();
+      }
+      return true;
+    }
+    menu_state_.overflow_popup_open = false;
+    menu_state_.overflow_popup_anchor_rect.reset();
+    operations_.request_chrome_redraw();
+  }
+
   if (menu_state_.menu_bar_open) {
     for (const auto& item : menu_bar_items) {
       if (!Contains(item.rect, event.button.x, event.button.y)) {
@@ -409,6 +450,10 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .compute_visible_menu_bar_items =
               [this](const SDL_FRect& rect) { return ComputeVisibleMenuBarItems(rect); },
+          .compute_overflow_menu_bar_items =
+              [this](const SDL_FRect& rect) { return ComputeOverflowMenuBarItems(rect); },
+          .menu_overflow_chevron_rect =
+              [this](const SDL_FRect& rect) { return MenuOverflowChevronRect(rect); },
           .compute_visible_window_control_buttons =
               [this](const SDL_FRect& rect) { return ComputeVisibleWindowControlButtons(rect); },
           .set_pending_window_action =

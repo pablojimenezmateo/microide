@@ -55,7 +55,11 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
         text_renderer_, interaction.text_x, line_y, interaction.line_height, line, *line_index,
         interaction.horizontal_scroll, interaction.visible_columns, viewport.tab_size(),
         diagnostic);
-    if (rect.has_value() && Contains(*rect, x, y)) {
+    if (!rect.has_value()) {
+      continue;
+    }
+    const SDL_FRect hit_rect = MakeRect(rect->x, line_y, rect->w, interaction.line_height);
+    if (Contains(hit_rect, x, y)) {
       return EditorHoverTarget{
           .kind = EditorHoverTarget::Kind::Diagnostic,
           .anchor_rect = *rect,
@@ -211,7 +215,11 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
           text_renderer_, interaction.text_x, line_y, surface.line_height, row.right_text,
           line_index, compare_tab->horizontal_scroll, surface.right_visible_columns,
           compare_tab->right_viewport.tab_size(), diagnostic);
-      if (rect.has_value() && Contains(*rect, x, y)) {
+      if (!rect.has_value()) {
+        continue;
+      }
+      const SDL_FRect hit_rect = MakeRect(rect->x, line_y, rect->w, surface.line_height);
+      if (Contains(hit_rect, x, y)) {
         return EditorHoverTarget{
             .kind = EditorHoverTarget::Kind::Diagnostic,
             .anchor_rect = *rect,

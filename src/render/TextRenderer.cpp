@@ -1,5 +1,7 @@
 #include "render/TextRenderer.h"
 
+#include <SDL3/SDL_log.h>
+
 #include <algorithm>
 #include <vector>
 
@@ -34,9 +36,12 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
 #if MICROIDE_HAS_SDL3_TTF
     if (auto backend = SdlTtfTextBackend::Create(renderer); backend != nullptr) {
       backend_ = std::move(backend);
+    } else {
+      SDL_Log("microide text: SDL_ttf backend unavailable; falling back to SDL debug text");
     }
 #else
     (void) renderer;
+    SDL_Log("microide text: built without SDL_ttf; falling back to SDL debug text");
 #endif
   }
 

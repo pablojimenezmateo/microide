@@ -53,24 +53,34 @@ WorkspaceLayout ComputeLayout(float window_width,
                               bool sidebar_visible,
                               bool bottom_panel_visible,
                               float sidebar_width,
-                              float bottom_panel_height) {
+                              float bottom_panel_height,
+                              LayoutModeInputs layout_mode_inputs,
+                              bool reserve_status_bar) {
   const float resolved_bottom_panel_height = bottom_panel_visible ? bottom_panel_height : 0.0f;
   const float resolved_sidebar_width = sidebar_visible ? sidebar_width : 0.0f;
+  const float status_bar_height =
+      reserve_status_bar ? kWorkspaceStatusBarHeight : 0.0f;
 
   WorkspaceLayout layout;
+  layout.layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
   layout.full = MakeRect(0.0f, 0.0f, window_width, window_height);
   layout.menu_bar = MakeRect(0.0f, 0.0f, window_width, kMenuBarHeight);
   layout.project_tab_strip =
       MakeRect(0.0f, kMenuBarHeight, window_width, kProjectTabStripHeight);
   layout.tab_strip =
       MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight, window_width, kTabStripHeight);
+  const float content_top = kMenuBarHeight + kProjectTabStripHeight + kTabStripHeight;
+  const float content_bottom_reserved = resolved_bottom_panel_height + status_bar_height;
   layout.bottom_panel =
-      MakeRect(0.0f, window_height - resolved_bottom_panel_height, window_width,
+      MakeRect(0.0f, window_height - content_bottom_reserved, window_width,
                resolved_bottom_panel_height);
+  layout.status_bar =
+      reserve_status_bar
+          ? MakeRect(0.0f, window_height - status_bar_height, window_width, status_bar_height)
+          : MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   layout.content =
-      MakeRect(0.0f, kMenuBarHeight + kProjectTabStripHeight + kTabStripHeight, window_width,
-               window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight -
-                   resolved_bottom_panel_height);
+      MakeRect(0.0f, content_top, window_width,
+               std::max(0.0f, window_height - content_top - content_bottom_reserved));
   layout.sidebar = MakeRect(0.0f, layout.content.y, resolved_sidebar_width, layout.content.h);
   layout.editor_area =
       MakeRect(resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f), layout.content.y,
@@ -207,6 +217,75 @@ SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout) {
   return MakeRect(layout.bottom_panel.x,
                   layout.bottom_panel.y - kResizeHandleThickness * 0.5f, layout.bottom_panel.w,
                   kResizeHandleThickness + kDivider);
+}
+
+SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout) {
+  const SDL_FRect visual = SidebarResizeHandleRect(layout);
+  if (visual.w <= 0.0f || visual.h <= 0.0f) {
+    return visual;
+  }
+  return MakeRect(visual.x - kWorkspaceResizeHandleHitInflate, visual.y,
+                  visual.w + kWorkspaceResizeHandleHitInflate * 2.0f, visual.h);
+}
+
+SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout) {
+  const SDL_FRect visual = BottomPanelResizeHandleRect(layout);
+  if (visual.w <= 0.0f || visual.h <= 0.0f) {
+    return visual;
+  }
+  return MakeRect(visual.x, visual.y - kWorkspaceResizeHandleHitInflate, visual.w,
+                  visual.h + kWorkspaceResizeHandleHitInflate * 2.0f);
+}
+
+SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry) {
+  if (geometry.track.w <= 0.0f || geometry.track.h <= 0.0f) {
+    return geometry.track;
+  }
+  return MakeRect(geometry.track.x - kWorkspaceScrollbarHitInflate, geometry.track.y,
+                  geometry.track.w + kWorkspaceScrollbarHitInflate * 2.0f, geometry.track.h);
+}
+
+SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry) {
+  if (geometry.track.w <= 0.0f || geometry.track.h <= 0.0f) {
+    return geometry.track;
+  }
+  return MakeRect(geometry.track.x, geometry.track.y - kWorkspaceScrollbarHitInflate,
+                  geometry.track.w, geometry.track.h + kWorkspaceScrollbarHitInflate * 2.0f);
+}
+
+SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect) {
+  if (close_visual_rect.w <= 0.0f || close_visual_rect.h <= 0.0f) {
+    return close_visual_rect;
+  }
+  const float inflate = kWorkspaceTabCloseHitInflate;
+  const float left = std::max(tab_rect.x, close_visual_rect.x - inflate);
+  const float top = std::max(tab_rect.y, close_visual_rect.y - inflate);
+  const float right = std::min(tab_rect.x + tab_rect.w, close_visual_rect.x + close_visual_rect.w + inflate);
+  const float bottom = std::min(tab_rect.y + tab_rect.h, close_visual_rect.y + close_visual_rect.h + inflate);
+  return MakeRect(left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top));
+}
+
+SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count) {
+  const float resolved_count = std::max<std::size_t>(1, item_count);
+  const float height = 8.0f + kWorkspaceMenuPopupItemHeight * static_cast<float>(resolved_count);
+  const float width = std::max(160.0f, chevron_rect.w + 132.0f);
+  return MakeRect(chevron_rect.x + chevron_rect.w - width, chevron_rect.y + chevron_rect.h, width,
+                  height);
+}
+
+LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs) {
+  if (inputs.user_override == LayoutModeInputs::Override::Regular) {
+    return LayoutMode::Regular;
+  }
+  if (inputs.user_override == LayoutModeInputs::Override::Compact) {
+    return LayoutMode::Compact;
+  }
+  const float upper = inputs.compact_breakpoint_px + kWorkspaceLayoutCompactHysteresis;
+  const float lower = inputs.compact_breakpoint_px - kWorkspaceLayoutCompactHysteresis;
+  if (inputs.previous_mode == LayoutMode::Compact) {
+    return window_width >= upper ? LayoutMode::Regular : LayoutMode::Compact;
+  }
+  return window_width <= lower ? LayoutMode::Compact : LayoutMode::Regular;
 }
 
 float BottomPanelCommandReservedHeight(bool command_mode) {

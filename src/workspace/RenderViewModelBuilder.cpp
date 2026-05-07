@@ -1,5 +1,7 @@
 #include "workspace/RenderViewModelBuilder.h"
 
+#include "workspace/StatusBarService.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -146,6 +148,46 @@ HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets() const {
       .hover_enabled = true,
       .diagnostics_store = &context_.current_project_state.diagnostics_store,
   };
+}
+
+StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout& layout,
+                                                          const StatusBarService& service) const {
+  StatusBarViewModel vm;
+  vm.visible = layout.status_bar.w > 0.0f && layout.status_bar.h > 0.0f;
+  vm.rect = layout.status_bar;
+  vm.layout_mode = layout.layout_mode;
+  if (!vm.visible) {
+    return vm;
+  }
+  const auto snapshot = service.Snapshot();
+  const auto add_segment = [&](StatusBarSegmentId id,
+                                std::vector<StatusBarSegmentViewModel>& target) {
+    const auto& seg = snapshot[static_cast<std::size_t>(id)];
+    if (!seg.visible || seg.text.empty()) {
+      return;
+    }
+    target.push_back(StatusBarSegmentViewModel{seg.text, seg.clickable});
+  };
+  add_segment(StatusBarSegmentId::Project, vm.left_segments);
+  add_segment(StatusBarSegmentId::Branch, vm.left_segments);
+  add_segment(StatusBarSegmentId::Language, vm.left_segments);
+  add_segment(StatusBarSegmentId::Indent, vm.left_segments);
+  add_segment(StatusBarSegmentId::Encoding, vm.left_segments);
+  add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
+  add_segment(StatusBarSegmentId::Problems, vm.right_segments);
+  add_segment(StatusBarSegmentId::Lsp, vm.right_segments);
+  add_segment(StatusBarSegmentId::AiProvider, vm.right_segments);
+  add_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
+
+  if (vm.layout_mode == LayoutMode::Compact) {
+    if (!vm.right_segments.empty() && vm.right_segments.back().text.find("compact") != std::string::npos) {
+      vm.right_segments.pop_back();  // drop layout-mode badge
+    }
+    while (vm.left_segments.size() > 2) {  // keep project + branch
+      vm.left_segments.pop_back();
+    }
+  }
+  return vm;
 }
 
 }  // namespace microide::workspace

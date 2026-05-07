@@ -414,7 +414,7 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
       PanelMouseCoordinator::Operations{
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_resize_handle_rect =
-              [this](const WorkspaceLayout& layout) { return BottomPanelResizeHandleRect(layout); },
+              [this](const WorkspaceLayout& layout) { return BottomPanelResizeHitRect(layout); },
           .compute_bottom_panel_log_layout =
               [this](const WorkspaceLayout& layout, std::size_t line_count) {
                 return ComputeBottomPanelLogLayout(layout, line_count);

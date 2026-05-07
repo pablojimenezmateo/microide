@@ -193,8 +193,12 @@ WorkspaceShell::ChatSidebarLayout WorkspaceShell::ComputeChatSidebarLayout(
     return layout;
   }
 
-  const float rail_width =
-      std::clamp(sidebar_rect.w * 0.26f, kChatSidebarRailMinWidth, kChatSidebarRailMaxWidth);
+  const float compact = layout_mode_service_.CurrentMode() == LayoutMode::Compact;
+  const float rail_min = compact ? std::max(64.0f, kChatSidebarRailMinWidth - 32.0f)
+                                 : kChatSidebarRailMinWidth;
+  const float rail_max = compact ? std::max(rail_min, kChatSidebarRailMaxWidth - 56.0f)
+                                 : kChatSidebarRailMaxWidth;
+  const float rail_width = std::clamp(sidebar_rect.w * 0.26f, rail_min, rail_max);
   layout.rail_rect = MakeRect(sidebar_rect.x + kSidebarInset, sidebar_rect.y + kChatSidebarStatusTop,
                               rail_width, std::max(0.0f, sidebar_rect.h - kChatSidebarStatusTop -
                                                              kChatSidebarComposerBottomInset));
