@@ -91,12 +91,12 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
-  const std::size_t line = std::min(viewport->scroll_line() + row,
-                                    viewport->line_count() == 0 ? 0 : viewport->line_count() - 1);
   const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
-  const std::size_t visual_column = viewport->horizontal_scroll() +
+  const int visual_column = static_cast<int>(viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(
-          0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
+          0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth())))));
+  const int visual_row = static_cast<int>(viewport->scroll_line() + row);
+  const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, visual_column);
 
   const SDL_Keymod modifiers = SDL_GetModState();
   const bool alt_left_click =
@@ -111,8 +111,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   {
     util::PerformanceTrace::Scope move_scope(
         "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
-    viewport->MoveCursorToVisualColumn(line, visual_column,
-                                       !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
+    viewport->MoveCursorTo(hit.line, hit.column,
+                           !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
   }
   if (alt_left_click) {
     viewport->AddSecondaryCaret(previous_primary.line, previous_primary.column);
@@ -282,14 +282,14 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
   const float local_y = std::max(0.0f, event.motion.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
-  const std::size_t line = std::min(viewport->scroll_line() + row,
-                                    viewport->line_count() == 0 ? 0 : viewport->line_count() - 1);
   const float text_offset_x = std::max(0.0f, event.motion.x - metrics.text_x);
-  const std::size_t visual_column = viewport->horizontal_scroll() +
+  const int visual_column = static_cast<int>(viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(
-          0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
+          0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth())))));
+  const int visual_row = static_cast<int>(viewport->scroll_line() + row);
+  const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, visual_column);
 
-  viewport->MoveCursorToVisualColumn(line, visual_column, true);
+  viewport->MoveCursorTo(hit.line, hit.column, true);
   operations_.reset_caret_blink();
   operations_.request_focused_editor_redraw();
   state_.surface.focus = FocusTarget::Editor;

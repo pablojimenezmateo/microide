@@ -283,6 +283,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const auto& lines = viewport.lines();
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t cursor_line = viewport.cursor_line();
+  const bool soft_wrap = viewport.soft_wrap();
   const auto& secondary_carets = viewport.secondary_carets();
   const auto selection = viewport.selection_range();
   char line_number_buf[20];
@@ -293,7 +294,19 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
-    const std::size_t line_index = scroll_line + row;
+    const std::size_t visual_row_index = scroll_line + row;
+    if (visual_row_index >= viewport.visual_line_count()) {
+      break;
+    }
+    const auto row_meta = soft_wrap ? viewport.WrappedVisualRowLayout(visual_row_index)
+                                    : TextViewport::WrappedVisualRow{
+                                          .line_index = visual_row_index,
+                                          .visual_start = viewport.horizontal_scroll(),
+                                          .visual_end = viewport.horizontal_scroll() + viewport.visible_columns(),
+                                      };
+    const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(visual_row_index)
+                                      : viewport.VisibleLineLayout(visual_row_index);
+    const std::size_t line_index = row_meta.line_index;
     if (line_index >= lines.size()) {
       break;
     }
@@ -346,9 +359,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             TextLayout::VisualColumnForTextColumn(lines[line_index], match_start, viewport.tab_size());
         const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
             lines[line_index], match_end, viewport.tab_size());
-        const std::size_t visible_start = std::max(start_visual, viewport.horizontal_scroll());
-        const std::size_t visible_end = std::min(end_visual,
-                                                 viewport.horizontal_scroll() + viewport.visible_columns());
+        const std::size_t row_start_visual = row_meta.visual_start;
+        const std::size_t row_end_visual = row_start_visual + viewport.visible_columns();
+        const std::size_t visible_start = std::max(start_visual, row_start_visual);
+        const std::size_t visible_end = std::min(end_visual, row_end_visual);
         if (visible_end > visible_start) {
           const bool is_active_match =
               active_search_line &&
@@ -358,7 +372,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               .rect =
                   SDL_FRect{
                       metrics.text_x +
-                          static_cast<float>(visible_start - viewport.horizontal_scroll()) *
+                          static_cast<float>(visible_start - row_start_visual) *
                               text_renderer.CharWidth(),
                       y - 1.0f,
                       static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
@@ -381,15 +395,16 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           TextLayout::VisualColumnForTextColumn(lines[line_index], line_start, viewport.tab_size());
       const std::size_t end_visual =
           TextLayout::VisualColumnForTextColumn(lines[line_index], line_end, viewport.tab_size());
-      const std::size_t visible_start = std::max(start_visual, viewport.horizontal_scroll());
-      const std::size_t visible_end = std::min(end_visual,
-                                               viewport.horizontal_scroll() + viewport.visible_columns());
+      const std::size_t row_start_visual = row_meta.visual_start;
+      const std::size_t row_end_visual = row_start_visual + viewport.visible_columns();
+      const std::size_t visible_start = std::max(start_visual, row_start_visual);
+      const std::size_t visible_end = std::min(end_visual, row_end_visual);
       if (visible_end > visible_start) {
         row_desc.fills.push_back(DecoratedTextFill{
             .rect =
                 SDL_FRect{
                     metrics.text_x +
-                        static_cast<float>(visible_start - viewport.horizontal_scroll()) *
+                        static_cast<float>(visible_start - row_start_visual) *
                             text_renderer.CharWidth(),
                     y - 1.0f,
                     static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
@@ -400,7 +415,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
     }
 
-    const auto layout = viewport.VisibleLineLayout(line_index);
+    const auto layout = row_layout;
     const std::vector<SyntaxTokenKind>* token_kinds = nullptr;
     {
       util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::HighlightedLineTokens");
@@ -411,7 +426,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                *token_kinds);
     AppendDiagnosticUnderlines(row_desc, text_renderer, theme, metrics.text_x, y,
                                metrics.line_height, lines[line_index], line_index,
-                               viewport.horizontal_scroll(), viewport.visible_columns(),
+                               row_meta.visual_start, viewport.visible_columns(),
                                viewport.tab_size(), diagnostics);
     {
       util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
@@ -422,7 +437,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                  *severity);
     }
-    {
+    if (!soft_wrap || row_meta.visual_start == 0) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
       text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
@@ -449,13 +464,14 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
            idx < secondary_carets.size() && secondary_carets[idx].line == line_index; ++idx) {
         const std::size_t visual_column = TextLayout::VisualColumnForTextColumn(
             lines[line_index], secondary_carets[idx].column, viewport.tab_size());
-        if (visual_column < viewport.horizontal_scroll() ||
-            visual_column > viewport.horizontal_scroll() + viewport.visible_columns()) {
+        const std::size_t row_start_visual = row_meta.visual_start;
+        if (visual_column < row_start_visual ||
+            visual_column > row_start_visual + viewport.visible_columns()) {
           continue;
         }
         const float caret_x =
             metrics.text_x +
-            static_cast<float>(visual_column - viewport.horizontal_scroll()) *
+            static_cast<float>(visual_column - row_start_visual) *
                 text_renderer.CharWidth();
         const SDL_FRect caret =
             SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};

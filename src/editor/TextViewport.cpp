@@ -160,6 +160,10 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
     return;
   }
   soft_wrap_ = soft_wrap;
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
+  }
   ClampScrollState();
   EnsureCursorVisible();
 }
@@ -170,29 +174,15 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   }
 
   BeginSelectionIfNeeded(extend_selection);
-  if (soft_wrap_) {
-    EnsureWrappedRowLayouts();
-    if (wrapped_row_layouts_.empty()) {
-      return;
-    }
-    const std::size_t current_row = CursorVisualRow();
-    const int max_row = static_cast<int>(wrapped_row_layouts_.size()) - 1;
-    const std::size_t target_row =
-        static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
-    const WrappedRowLayout& target = wrapped_row_layouts_[target_row];
-    const std::size_t target_visual_column =
-        ResolveSoftWrapCursorColumnForTargetRow(target_row);
-    cursor_line_ = target.line_index;
-    cursor_column_ = TextLayout::TextColumnForVisualColumn(
-        document_->lines[target.line_index], target_visual_column, tab_size_);
-    preferred_column_ = target_visual_column;
-    EnsureCursorVisible();
-    return;
+  TextPosition primary{cursor_line_, cursor_column_};
+  AdvanceCaretVertical(primary, preferred_column_, delta);
+  cursor_line_ = primary.line;
+  cursor_column_ = primary.column;
+
+  for (SecondaryCaret& caret : secondary_carets_) {
+    AdvanceCaretVertical(caret.position, caret.preferred_column, delta);
   }
-  const int current = static_cast<int>(cursor_line_);
-  const int max_index = static_cast<int>(document_->lines.size()) - 1;
-  cursor_line_ = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  ClampCursorColumn();
+  DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
 }
 
@@ -202,38 +192,43 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
   }
 
   BeginSelectionIfNeeded(extend_selection);
-  const std::string& line = document_->lines[cursor_line_];
-  if (delta < 0) {
-    for (int i = delta; i < 0; ++i) {
-      cursor_column_ = TextLayout::PreviousTextColumn(line, cursor_column_);
-      if (cursor_column_ == 0) {
-        break;
-      }
-    }
-  } else {
-    for (int i = 0; i < delta; ++i) {
-      const std::size_t next_column = TextLayout::NextTextColumn(line, cursor_column_);
-      cursor_column_ = next_column;
-      if (cursor_column_ >= line.size()) {
-        break;
-      }
-    }
+  TextPosition primary{cursor_line_, cursor_column_};
+  AdvanceCaretHorizontal(primary, delta);
+  cursor_line_ = primary.line;
+  cursor_column_ = primary.column;
+  preferred_column_ = PreferredColumnForCaret(primary);
+
+  for (SecondaryCaret& caret : secondary_carets_) {
+    AdvanceCaretHorizontal(caret.position, delta);
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
-  preferred_column_ = cursor_visual_column();
+  DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
 }
 
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   cursor_column_ = 0;
-  preferred_column_ = 0;
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.position.column = 0;
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
+  }
+  DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
 }
 
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   cursor_column_ = CurrentLineLength();
-  preferred_column_ = cursor_visual_column();
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  for (SecondaryCaret& caret : secondary_carets_) {
+    if (caret.position.line < document_->lines.size()) {
+      caret.position.column = document_->lines[caret.position.line].size();
+    }
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
+  }
+  DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
 }
 
@@ -246,7 +241,10 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   cursor_line_ = std::min(line, document_->lines.size() - 1);
   cursor_column_ =
       TextLayout::ClampTextColumn(document_->lines[cursor_line_], std::min(column, CurrentLineLength()));
-  preferred_column_ = cursor_visual_column();
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
+  }
   EnsureCursorVisible();
 }
 
@@ -622,20 +620,66 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) c
   const WrappedRowLayout& row = wrapped_row_layouts_[visual_row_index];
   LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[row.line_index], row.visual_start,
                                                    visible_columns_, tab_size_);
-  if (row.line_index == cursor_line_) {
+  if (row.line_index == cursor_line_ && visual_row_index == CursorVisualRow()) {
     const std::size_t caret_visual = cursor_visual_column();
-    if (caret_visual >= row.visual_start && caret_visual <= row.visual_end) {
-      layout.caret_visible = true;
-      layout.caret_column = caret_visual - row.visual_start;
-    } else {
-      layout.caret_visible = false;
-      layout.caret_column = 0;
-    }
+    layout.caret_visible = true;
+    layout.caret_column = caret_visual >= row.visual_start ? caret_visual - row.visual_start : 0;
   } else {
     layout.caret_visible = false;
     layout.caret_column = 0;
   }
   return layout;
+}
+
+TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t visual_row_index) const {
+  if (!soft_wrap_) {
+    return WrappedVisualRow{
+        .line_index = visual_row_index,
+        .visual_start = horizontal_scroll_,
+        .visual_end = horizontal_scroll_ + visible_columns_,
+    };
+  }
+  EnsureWrappedRowLayouts();
+  if (visual_row_index >= wrapped_row_layouts_.size()) {
+    return {};
+  }
+  const WrappedRowLayout& row = wrapped_row_layouts_[visual_row_index];
+  return WrappedVisualRow{
+      .line_index = row.line_index,
+      .visual_start = row.visual_start,
+      .visual_end = row.visual_end,
+  };
+}
+
+LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int visual_col) const {
+  if (document_->lines.empty()) {
+    return {};
+  }
+  if (!soft_wrap_) {
+    const std::size_t line = std::min<std::size_t>(static_cast<std::size_t>(std::max(0, visual_row)),
+                                                    document_->lines.size() - 1);
+    const std::size_t column_visual = static_cast<std::size_t>(std::max(0, visual_col));
+    return LogicalPosition{
+        .line = line,
+        .column = TextLayout::TextColumnForVisualColumn(document_->lines[line], column_visual, tab_size_),
+    };
+  }
+  EnsureWrappedRowLayouts();
+  if (wrapped_row_layouts_.empty()) {
+    return {};
+  }
+  const std::size_t clamped_row = std::min<std::size_t>(
+      std::max(0, visual_row), wrapped_row_layouts_.size() - 1);
+  const WrappedRowLayout& layout = wrapped_row_layouts_[clamped_row];
+  const std::size_t width = layout.visual_end - layout.visual_start;
+  const std::size_t local_max = width == 0 ? 0 : width - 1;
+  const std::size_t clamped_local = std::min<std::size_t>(std::max(0, visual_col), local_max);
+  const std::size_t target_visual = layout.visual_start + clamped_local;
+  return LogicalPosition{
+      .line = layout.line_index,
+      .column = TextLayout::TextColumnForVisualColumn(document_->lines[layout.line_index],
+                                                       target_visual, tab_size_),
+  };
 }
 
 std::size_t TextViewport::visual_line_count() const {
@@ -706,6 +750,15 @@ void TextViewport::ResetCacheStats() const {
   highlight_checkpoint_advances_ = 0;
 }
 
+std::vector<TextPosition> TextViewport::secondary_carets() const {
+  std::vector<TextPosition> carets;
+  carets.reserve(secondary_carets_.size());
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    carets.push_back(caret.position);
+  }
+  return carets;
+}
+
 void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   if (document_->lines.empty()) {
     return;
@@ -717,12 +770,19 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   if (position == TextPosition{cursor_line_, cursor_column_}) {
     return;
   }
-  if (std::find(secondary_carets_.begin(), secondary_carets_.end(), position) !=
+  if (std::find_if(secondary_carets_.begin(), secondary_carets_.end(),
+                   [&](const SecondaryCaret& caret) { return caret.position == position; }) !=
       secondary_carets_.end()) {
     return;
   }
-  secondary_carets_.push_back(position);
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(), TextPositionLess);
+  secondary_carets_.push_back(SecondaryCaret{
+      .position = position,
+      .preferred_column = PreferredColumnForCaret(position),
+  });
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
+            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
+              return TextPositionLess(lhs.position, rhs.position);
+            });
 }
 
 void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
@@ -810,8 +870,8 @@ bool TextViewport::DeleteCurrentLine() {
     std::vector<std::size_t> lines_to_delete;
     lines_to_delete.reserve(secondary_carets_.size() + 1);
     lines_to_delete.push_back(cursor_line_);
-    for (const TextPosition& caret : secondary_carets_) {
-      lines_to_delete.push_back(std::min(caret.line, document_->lines.size() - 1));
+    for (const SecondaryCaret& caret : secondary_carets_) {
+      lines_to_delete.push_back(std::min(caret.position.line, document_->lines.size() - 1));
     }
     std::sort(lines_to_delete.begin(), lines_to_delete.end());
     lines_to_delete.erase(std::unique(lines_to_delete.begin(), lines_to_delete.end()),
@@ -883,7 +943,7 @@ void TextViewport::SelectAll() {
   selection_anchor_ = TextPosition{0, 0};
   cursor_line_ = document_->lines.size() - 1;
   cursor_column_ = document_->lines.back().size();
-  preferred_column_ = cursor_visual_column();
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
 
@@ -911,7 +971,7 @@ void TextViewport::SelectWordAtCursor() {
   }
   selection_anchor_ = TextPosition{cursor_line_, start};
   cursor_column_ = end;
-  preferred_column_ = cursor_visual_column();
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
 
@@ -921,7 +981,7 @@ void TextViewport::SelectLineAtCursor() {
   }
   selection_anchor_ = TextPosition{cursor_line_, 0};
   cursor_column_ = document_->lines[cursor_line_].size();
-  preferred_column_ = cursor_visual_column();
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
 
@@ -1421,7 +1481,7 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
     document_->lines.push_back("");
   }
 
-  std::vector<TextPosition> carets = secondary_carets_;
+  std::vector<TextPosition> carets = secondary_carets();
   carets.push_back(TextPosition{cursor_line_, cursor_column_});
   std::sort(carets.begin(), carets.end(), TextPositionLess);
   carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
@@ -1470,8 +1530,11 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   updated_secondary_carets.erase(
       std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
       updated_secondary_carets.end());
-  secondary_carets_ = std::move(updated_secondary_carets);
-  preferred_column_ = cursor_visual_column();
+  secondary_carets_.clear();
+  for (const TextPosition& caret : updated_secondary_carets) {
+    AddSecondaryCaret(caret.line, caret.column);
+  }
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   document_->placeholder = false;
   document_->dirty = true;
@@ -1515,7 +1578,7 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
     document_->lines.push_back("");
   }
 
-  std::vector<TextPosition> carets = secondary_carets_;
+  std::vector<TextPosition> carets = secondary_carets();
   carets.push_back(TextPosition{cursor_line_, cursor_column_});
   std::sort(carets.begin(), carets.end(), TextPositionLess);
   carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
@@ -1579,8 +1642,11 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   updated_secondary_carets.erase(
       std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
       updated_secondary_carets.end());
-  secondary_carets_ = std::move(updated_secondary_carets);
-  preferred_column_ = cursor_visual_column();
+  secondary_carets_.clear();
+  for (const TextPosition& caret : updated_secondary_carets) {
+    AddSecondaryCaret(caret.line, caret.column);
+  }
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   document_->placeholder = false;
   document_->dirty = true;
@@ -1604,7 +1670,7 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
     document_->lines.push_back("");
   }
 
-  std::vector<TextPosition> carets = secondary_carets_;
+  std::vector<TextPosition> carets = secondary_carets();
   carets.push_back(TextPosition{cursor_line_, cursor_column_});
   std::sort(carets.begin(), carets.end(), TextPositionLess);
   carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
@@ -1665,8 +1731,11 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   updated_secondary_carets.erase(
       std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
       updated_secondary_carets.end());
-  secondary_carets_ = std::move(updated_secondary_carets);
-  preferred_column_ = cursor_visual_column();
+  secondary_carets_.clear();
+  for (const TextPosition& caret : updated_secondary_carets) {
+    AddSecondaryCaret(caret.line, caret.column);
+  }
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   document_->placeholder = false;
   document_->dirty = true;
@@ -1924,24 +1993,49 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   wrapped_row_layouts_tab_size_ = tab_size_;
   wrapped_row_layouts_visible_columns_ = visible_columns_;
   wrapped_row_layouts_revision_ = document_->layout_revision;
+#ifndef NDEBUG
+  ++wrapped_row_layout_build_count_;
+#endif
 }
 
 std::size_t TextViewport::CursorVisualRow() const {
+  return CursorVisualRowForCaret(TextPosition{cursor_line_, cursor_column_});
+}
+
+std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) const {
+  if (caret.line >= document_->lines.size()) {
+    return 0;
+  }
+  const std::size_t visual =
+      TextLayout::VisualColumnForTextColumn(document_->lines[caret.line], caret.column, tab_size_);
   if (!soft_wrap_) {
-    return cursor_line_;
+    return visual;
   }
   EnsureWrappedRowLayouts();
-  if (document_->lines.empty() || cursor_line_ >= document_->lines.size() ||
+  if (wrapped_row_layouts_.empty()) {
+    return 0;
+  }
+  const WrappedRowLayout& row = wrapped_row_layouts_[CursorVisualRowForCaret(caret)];
+  return visual >= row.visual_start ? visual - row.visual_start : 0;
+}
+
+std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) const {
+  if (!soft_wrap_) {
+    return caret.line;
+  }
+  EnsureWrappedRowLayouts();
+  if (document_->lines.empty() || caret.line >= document_->lines.size() ||
       wrapped_line_row_offsets_.size() != document_->lines.size()) {
     return 0;
   }
-  const std::size_t base_row = wrapped_line_row_offsets_[cursor_line_];
+  const std::size_t base_row = wrapped_line_row_offsets_[caret.line];
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
-  const std::size_t caret_visual = cursor_visual_column();
+  const std::size_t caret_visual =
+      TextLayout::VisualColumnForTextColumn(document_->lines[caret.line], caret.column, tab_size_);
   const std::size_t row_in_line = caret_visual / wrap_columns;
   const std::size_t line_visual_width =
-      TextLayout::VisualColumnForTextColumn(document_->lines[cursor_line_],
-                                            document_->lines[cursor_line_].size(), tab_size_);
+      TextLayout::VisualColumnForTextColumn(document_->lines[caret.line],
+                                            document_->lines[caret.line].size(), tab_size_);
   const std::size_t rows_for_line = std::max<std::size_t>(1, (line_visual_width + wrap_columns - 1) /
                                                                  wrap_columns);
   const std::size_t clamped_in_line = std::min(row_in_line, rows_for_line - 1);
@@ -1950,19 +2044,96 @@ std::size_t TextViewport::CursorVisualRow() const {
 }
 
 std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const {
+  return ResolveSoftWrapCursorColumnForTargetRow(
+      TextPosition{cursor_line_, cursor_column_}, preferred_column_, target_row);
+}
+
+std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
+    const TextPosition& /*caret*/,
+    std::size_t preferred_column,
+    std::size_t target_row) const {
   EnsureWrappedRowLayouts();
   if (wrapped_row_layouts_.empty()) {
     return 0;
   }
   const std::size_t clamped_row = std::min(target_row, wrapped_row_layouts_.size() - 1);
-  const WrappedRowLayout& current = wrapped_row_layouts_[CursorVisualRow()];
   const WrappedRowLayout& target = wrapped_row_layouts_[clamped_row];
-  const std::size_t caret_visual = cursor_visual_column();
-  const std::size_t local_offset =
-      caret_visual > current.visual_start ? caret_visual - current.visual_start : 0;
-  const std::size_t desired =
-      std::max(preferred_column_, target.visual_start + local_offset);
-  return std::min(desired, target.visual_end);
+  if (target.visual_end <= target.visual_start) {
+    return target.visual_start;
+  }
+  const std::size_t desired_absolute = target.visual_start + preferred_column;
+  return std::min(desired_absolute, target.visual_end - 1);
+}
+
+void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const {
+  if (document_->lines.empty()) {
+    return;
+  }
+  if (caret.line >= document_->lines.size()) {
+    caret.line = document_->lines.size() - 1;
+  }
+  const std::string& line = document_->lines[caret.line];
+  caret.column = std::min(caret.column, line.size());
+  if (delta < 0) {
+    for (int i = delta; i < 0; ++i) {
+      caret.column = TextLayout::PreviousTextColumn(line, caret.column);
+      if (caret.column == 0) {
+        break;
+      }
+    }
+  } else {
+    for (int i = 0; i < delta; ++i) {
+      caret.column = TextLayout::NextTextColumn(line, caret.column);
+      if (caret.column >= line.size()) {
+        break;
+      }
+    }
+  }
+}
+
+void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
+            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
+              return TextPositionLess(lhs.position, rhs.position);
+            });
+  secondary_carets_.erase(
+      std::unique(secondary_carets_.begin(), secondary_carets_.end(),
+                  [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
+                    return lhs.position == rhs.position;
+                  }),
+      secondary_carets_.end());
+  const TextPosition primary{cursor_line_, cursor_column_};
+  secondary_carets_.erase(
+      std::remove_if(secondary_carets_.begin(), secondary_carets_.end(),
+                     [&](const SecondaryCaret& caret) { return caret.position == primary; }),
+      secondary_carets_.end());
+}
+
+void TextViewport::AdvanceCaretVertical(TextPosition& caret,
+                                        std::size_t& preferred_column,
+                                        int delta) const {
+  if (soft_wrap_) {
+    EnsureWrappedRowLayouts();
+    if (wrapped_row_layouts_.empty()) {
+      return;
+    }
+    const std::size_t current_row = CursorVisualRowForCaret(caret);
+    const int max_row = static_cast<int>(wrapped_row_layouts_.size()) - 1;
+    const std::size_t target_row =
+        static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
+    const WrappedRowLayout& target = wrapped_row_layouts_[target_row];
+    const std::size_t target_visual_column =
+        ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
+    caret.line = target.line_index;
+    caret.column = TextLayout::TextColumnForVisualColumn(document_->lines[target.line_index],
+                                                         target_visual_column, tab_size_);
+    return;
+  }
+  const int current = static_cast<int>(caret.line);
+  const int max_index = static_cast<int>(document_->lines.size()) - 1;
+  caret.line = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  caret.column = TextLayout::TextColumnForVisualColumn(document_->lines[caret.line], preferred_column,
+                                                       tab_size_);
 }
 
 void TextViewport::EnsureDocument() {
