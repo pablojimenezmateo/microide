@@ -59,6 +59,11 @@ class WorkspaceActionContext {
     std::function<void(std::string)> open_terminal;
     std::function<void(OverlayMode)> show_overlay;
     std::function<void()> dismiss_overlay;
+    std::function<void()> open_settings_overlay;
+    std::function<void()> open_ai_provider_picker;
+    std::function<void()> open_help_about_overlay;
+    std::function<void()> toggle_status_bar;
+    std::function<void()> toggle_layout_mode;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> open_buffer_search;
     std::function<void()> refresh_buffer_search;
@@ -205,6 +210,11 @@ class WorkspaceActionContext {
   void ShowFileFinder();
   bool OverlayVisible() const;
   void DismissOverlay();
+  void OpenSettingsOverlay();
+  void OpenAiProviderPicker();
+  void OpenHelpAboutOverlay();
+  void ToggleStatusBar();
+  void ToggleLayoutMode();
   void ShowProjectSearchSidebar(std::string query);
   bool ShowCompletionOverlay(std::string* error_message);
   bool ShowCodeActionsOverlay(std::string* error_message);

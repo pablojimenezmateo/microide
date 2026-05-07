@@ -257,12 +257,15 @@ void WorkspaceShell::RebuildPhase5Registries() {
     AiProviderSpec spec;
     spec.id = provider.id;
     spec.label = provider.label;
+    spec.display_name = provider.label;
     spec.type = provider.type;
     spec.api_key_name = provider.id + ".api_key";
     spec.models = provider.models;
     spec.runtime = provider.runtime;
     spec.base_url = provider.base_url;
     spec.default_model = provider.default_model;
+    spec.requires_api_key = !spec.api_key_name.empty();
+    spec.auth_method = "api_key";
     spec.plugin_id = provider.plugin_id;
     ai_provider_registry_.Register(spec);
     ai_provider_runtime_service_.RegisterDirectRuntime(spec);
@@ -280,7 +283,9 @@ void WorkspaceShell::RebuildPhase5Registries() {
       AiProviderSpec synthetic_provider;
       synthetic_provider.id = agent.id;
       synthetic_provider.label = agent.label;
+      synthetic_provider.display_name = agent.label;
       synthetic_provider.type = "external";
+      synthetic_provider.auth_method = "sidecar";
       synthetic_provider.plugin_id = agent.plugin_id;
       ai_provider_registry_.Register(synthetic_provider);
     }

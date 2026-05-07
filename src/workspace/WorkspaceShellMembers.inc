@@ -1278,6 +1278,16 @@
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
+  void ApplyLiveSettings();
+  bool SetSettingValue(std::string_view id, std::string value);
+  void RefreshSettingsOverlayCatalog();
+  void OpenSettingsOverlay();
+  void OpenAiProviderPicker();
+  void OpenHelpAboutOverlay();
+  void CloseSettingsOverlay();
+  void RenderSettingsOverlay(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void RenderPromptSurface(
       SDL_Renderer* renderer,
       const WorkspaceLayout& layout,
@@ -1504,6 +1514,7 @@
   PersistenceService persistence_service_;
   LayoutModeService layout_mode_service_;
   StatusBarService status_bar_service_;
+  SettingsOverlayService settings_overlay_service_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

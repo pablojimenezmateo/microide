@@ -32,7 +32,7 @@ class LayoutModeService {
   LayoutMode current_mode_ = LayoutMode::Regular;
   LayoutModeInputs::Override user_override_ = LayoutModeInputs::Override::Auto;
   float compact_breakpoint_px_ = kWorkspaceLayoutCompactBreakpointDefault;
-  bool status_bar_visible_ = false;
+  bool status_bar_visible_ = true;
 };
 
 }  // namespace microide::workspace

@@ -141,6 +141,22 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.OpenCommandPrompt();
       return DispatchResult::Handled;
     }
+    case ActionId::OpenSettings:
+      context_.OpenSettingsOverlay();
+      return DispatchResult::Handled;
+    case ActionId::OpenAiProviderPicker:
+      context_.OpenAiProviderPicker();
+      return DispatchResult::Handled;
+    case ActionId::OpenHelpAbout:
+    case ActionId::OpenKeyboardShortcuts:
+      context_.OpenHelpAboutOverlay();
+      return DispatchResult::Handled;
+    case ActionId::ToggleStatusBar:
+      context_.ToggleStatusBar();
+      return DispatchResult::Handled;
+    case ActionId::ToggleLayoutMode:
+      context_.ToggleLayoutMode();
+      return DispatchResult::Handled;
     case ActionId::DebugStart: {
       if (args.empty()) {
         return reject("debug-start requires a debugger type");

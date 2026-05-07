@@ -2,6 +2,8 @@
 
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/SettingsOverlayService.h"
+#include "workspace/StatusBarService.h"
 #include "workspace/WorkspaceTabState.h"
 
 #include <filesystem>
@@ -79,6 +81,7 @@ struct HoverTargetsViewModel {
 };
 
 struct StatusBarSegmentViewModel {
+  StatusBarSegmentId id = StatusBarSegmentId::Project;
   std::string text;
   bool clickable = false;
 };
@@ -89,6 +92,18 @@ struct StatusBarViewModel {
   LayoutMode layout_mode = LayoutMode::Regular;
   std::vector<StatusBarSegmentViewModel> left_segments;
   std::vector<StatusBarSegmentViewModel> right_segments;
+};
+
+struct SettingsOverlayViewModel {
+  bool visible = false;
+  SettingsOverlayMode mode = SettingsOverlayMode::Settings;
+  SDL_FRect rect{};
+  int scroll_row = 0;
+  std::string title;
+  std::string query;
+  std::vector<SettingsOverlayRow> settings_rows;
+  std::vector<AiProviderPickerRow> provider_rows;
+  std::vector<HelpAboutRow> help_rows;
 };
 
 class RenderViewModelBuilder {
@@ -104,6 +119,9 @@ class RenderViewModelBuilder {
   HoverTargetsViewModel BuildHoverTargets() const;
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
+  SettingsOverlayViewModel BuildSettingsOverlay(
+      const WorkspaceLayout& layout,
+      const class SettingsOverlayService& service) const;
 
  private:
   const WorkspaceContext& context_;

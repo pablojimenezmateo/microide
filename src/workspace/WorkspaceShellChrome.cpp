@@ -471,9 +471,21 @@ void WorkspaceShell::RefreshStatusBar() {
     }
     project_segment.tooltip = context_.current_project_state.root.string();
     project_segment.visible = true;
-    project_segment.clickable = false;
+    project_segment.clickable = true;
   }
   status_bar_service_.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
+
+  const Conversation* conversation = ActiveConversation();
+  StatusBarSegmentValue ai_provider;
+  if (conversation != nullptr && !conversation->provider_id.empty()) {
+    const AiProviderSpec* provider = ai_provider_registry_.FindProvider(conversation->provider_id);
+    ai_provider.text = provider != nullptr && !provider->display_name.empty() ? provider->display_name
+                                                                               : conversation->provider_id;
+    ai_provider.tooltip = "AI provider";
+    ai_provider.visible = true;
+    ai_provider.clickable = true;
+  }
+  status_bar_service_.SetSegment(StatusBarSegmentId::AiProvider, std::move(ai_provider));
 
   StatusBarSegmentValue layout_mode_segment;
   layout_mode_segment.text =

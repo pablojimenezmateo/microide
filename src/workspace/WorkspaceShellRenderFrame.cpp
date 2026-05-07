@@ -68,6 +68,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const BottomPanelSurfaceViewModel panel_vm =
       RenderViewModelBuilder(context_).BuildBottomPanelSurface();
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+  ApplyLiveSettings();
   const float clamped_sidebar_width =
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
   const float clamped_panel_height =
@@ -93,6 +94,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     layout = *prepared_frame_layout_;
   }
   RefreshStatusBar();
+  RefreshSettingsOverlayCatalog();
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   if (ActiveTabIsEditor()) {

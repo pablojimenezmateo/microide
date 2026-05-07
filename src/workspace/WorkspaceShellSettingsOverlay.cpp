@@ -1,0 +1,282 @@
+#include "workspace/WorkspaceShell.h"
+
+#include <algorithm>
+
+#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
+#include "workspace/WorkspaceSettingsRegistry.h"
+#include "util/Parse.h"
+
+namespace microide::workspace {
+
+namespace {
+
+void UpsertSetting(std::vector<std::pair<std::string, std::string>>& settings,
+                   std::string id,
+                   std::string value) {
+  auto it = std::find_if(settings.begin(), settings.end(),
+                         [&](const auto& entry) { return entry.first == id; });
+  if (it != settings.end()) {
+    it->second = std::move(value);
+    return;
+  }
+  settings.emplace_back(std::move(id), std::move(value));
+}
+
+std::vector<HelpAboutRow> BuildHelpRows() {
+  std::vector<HelpAboutRow> rows;
+  rows.push_back(HelpAboutRow{.label = "microide", .detail = "AI-focused desktop IDE"});
+  for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+    if (spec.command_name.empty()) {
+      continue;
+    }
+    rows.push_back(HelpAboutRow{
+        .label = std::string(spec.label),
+        .detail = std::string(spec.command_usage.empty() ? spec.command_name : spec.command_usage),
+    });
+  }
+  return rows;
+}
+
+std::string NextSettingValue(const SettingSpec& spec, std::string_view current) {
+  switch (spec.type) {
+    case SettingType::Bool:
+      return (current == "true" || current == "1" || current == "on") ? "false" : "true";
+    case SettingType::Enum: {
+      if (spec.enum_values.empty()) {
+        return std::string(current);
+      }
+      for (std::size_t i = 0; i < spec.enum_values.size(); ++i) {
+        if (spec.enum_values[i].value == current) {
+          return std::string(spec.enum_values[(i + 1) % spec.enum_values.size()].value);
+        }
+      }
+      return std::string(spec.enum_values.front().value);
+    }
+    case SettingType::Int: {
+      const auto parsed = util::ParseInt(current);
+      int value = parsed.value_or(spec.default_int);
+      if (spec.id == "ui.layout_compact_breakpoint_px") {
+        value += 20;
+        if (value > 2000) {
+          value = 600;
+        }
+      } else if (spec.id == "editor.hover_delay_ms") {
+        value += 50;
+        if (value > 2000) {
+          value = 0;
+        }
+      } else {
+        value += 1;
+        if (value > 32) {
+          value = 8;
+        }
+      }
+      return std::to_string(value);
+    }
+    case SettingType::Float: {
+      const auto parsed = util::ParseFloat(current);
+      float value = parsed.value_or(spec.default_float) + 0.1f;
+      if (value > 2.0f) {
+        value = 0.75f;
+      }
+      return SerializeSettingValue(value);
+    }
+    case SettingType::String:
+      return std::string(current);
+  }
+  return std::string(current);
+}
+
+}  // namespace
+
+bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
+  const auto info = FindSettingInfo(id, plugin_runtime_.Host());
+  if (!info.has_value()) {
+    return false;
+  }
+  const SettingSpec* builtin = FindBuiltinSettingSpec(id);
+  if (builtin != nullptr && !ParseSettingValue(*builtin, value).has_value()) {
+    return false;
+  }
+  if (info->scope == SettingScope::User) {
+    UpsertSetting(context_.user_settings, std::string(id), std::move(value));
+    MakePersistenceCoordinator().SaveUserConfig();
+  } else {
+    UpsertSetting(context_.current_project_state.settings, std::string(id), std::move(value));
+    MakePersistenceCoordinator().SaveConfigState();
+  }
+  ApplyLiveSettings();
+  MarkLayoutDirty();
+  RequestWindowRedraw();
+  return true;
+}
+
+void WorkspaceShell::RefreshSettingsOverlayCatalog() {
+  if (!settings_overlay_service_.Visible()) {
+    return;
+  }
+  settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host()),
+                                                context_.user_settings,
+                                                context_.current_project_state.settings);
+  const Conversation* conversation = ActiveConversation();
+  settings_overlay_service_.RebuildProviderRows(
+      ai_provider_registry_.Specs(), conversation != nullptr ? conversation->provider_id : "");
+  settings_overlay_service_.RebuildHelpRows(BuildHelpRows());
+}
+
+void WorkspaceShell::ApplyLiveSettings() {
+  if (const auto value = GetSettingValue("ui.show_status_bar"); value.has_value()) {
+    layout_mode_service_.SetStatusBarVisible(*value != "false" && *value != "0" && *value != "off");
+  }
+  if (const auto value = GetSettingValue("ui.layout_compact_breakpoint_px"); value.has_value()) {
+    if (const auto parsed = util::ParseFloat(*value); parsed.has_value()) {
+      layout_mode_service_.SetCompactBreakpointPx(std::clamp(*parsed, 600.0f, 2000.0f));
+    }
+  }
+  if (const auto value = GetSettingValue("ui.layout_mode"); value.has_value()) {
+    if (*value == "compact") {
+      layout_mode_service_.SetUserOverride(LayoutModeInputs::Override::Compact);
+    } else if (*value == "regular") {
+      layout_mode_service_.SetUserOverride(LayoutModeInputs::Override::Regular);
+    } else {
+      layout_mode_service_.SetUserOverride(LayoutModeInputs::Override::Auto);
+    }
+  }
+}
+
+void WorkspaceShell::OpenSettingsOverlay() {
+  settings_overlay_service_.OpenSettings();
+  RefreshSettingsOverlayCatalog();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::OpenAiProviderPicker() {
+  settings_overlay_service_.OpenAiProviderPicker();
+  RefreshSettingsOverlayCatalog();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::OpenHelpAboutOverlay() {
+  settings_overlay_service_.OpenHelpAbout();
+  RefreshSettingsOverlayCatalog();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::CloseSettingsOverlay() {
+  settings_overlay_service_.Close();
+  RequestOverlayRedraw();
+}
+
+bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
+                                                     const WorkspaceLayout& layout) {
+  if (!settings_overlay_service_.Visible() || event.button.button != SDL_BUTTON_LEFT) {
+    return false;
+  }
+
+  const SettingsOverlayViewModel vm =
+      RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+  if (!Contains(vm.rect, event.button.x, event.button.y)) {
+    CloseSettingsOverlay();
+    return true;
+  }
+
+  const float row_height = 24.0f;
+  const float list_top = vm.rect.y + 42.0f;
+  const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
+  if (event.button.y < list_top || event.button.y > list_bottom) {
+    return true;
+  }
+  const std::size_t row =
+      static_cast<std::size_t>(std::max(0.0f, event.button.y - list_top) / row_height) +
+      static_cast<std::size_t>(settings_overlay_service_.ScrollRow());
+
+  if (settings_overlay_service_.Mode() == SettingsOverlayMode::AiProvider &&
+      row < settings_overlay_service_.ProviderRows().size()) {
+    const auto& picked = settings_overlay_service_.ProviderRows()[row];
+    if (Conversation* conversation = ActiveConversation(); conversation != nullptr) {
+      conversation->provider_id = picked.id;
+      if (!picked.model.empty()) {
+        conversation->model_id = picked.model;
+      }
+    }
+    CloseSettingsOverlay();
+    return true;
+  }
+  if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings &&
+      row < settings_overlay_service_.SettingsRows().size()) {
+    const auto& picked = settings_overlay_service_.SettingsRows()[row];
+    if (const SettingSpec* spec = FindBuiltinSettingSpec(picked.id); spec != nullptr) {
+      SetSettingValue(picked.id, NextSettingValue(*spec, picked.value));
+      RefreshSettingsOverlayCatalog();
+      return true;
+    }
+  }
+  return true;
+}
+
+bool WorkspaceShell::HandleStatusBarButtonDown(const SDL_Event& event,
+                                               const WorkspaceLayout& layout) {
+  if (event.button.button != SDL_BUTTON_LEFT || layout.status_bar.w <= 0.0f ||
+      !Contains(layout.status_bar, event.button.x, event.button.y)) {
+    return false;
+  }
+
+  const StatusBarViewModel vm =
+      RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
+  const float padding = 12.0f;
+  const float gap = 14.0f;
+  float left_x = vm.rect.x + padding;
+  for (const StatusBarSegmentViewModel& seg : vm.left_segments) {
+    const float width = text_renderer_.MeasureWidth(seg.text);
+    const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
+    if (seg.clickable && Contains(row, event.button.x, event.button.y)) {
+      if (seg.id == StatusBarSegmentId::Project || seg.id == StatusBarSegmentId::Branch) {
+        ActionCoordinator(MakeActionContext())
+            .Execute(ActionId::SidebarShow, {"git"}, ActionSource::Menu);
+      } else if (seg.id == StatusBarSegmentId::Indent || seg.id == StatusBarSegmentId::Encoding) {
+        OpenSettingsOverlay();
+      }
+      return true;
+    }
+    left_x += width + gap;
+  }
+
+  float right_x = vm.rect.x + vm.rect.w - padding;
+  for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
+    const float width = text_renderer_.MeasureWidth(it->text);
+    right_x -= width;
+    const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
+    if (it->clickable && Contains(row, event.button.x, event.button.y)) {
+      switch (it->id) {
+        case StatusBarSegmentId::LineColumn:
+          ActionCoordinator(MakeActionContext()).Execute(ActionId::Goto, {}, ActionSource::Menu);
+          break;
+        case StatusBarSegmentId::Problems:
+          ActionCoordinator(MakeActionContext())
+              .Execute(ActionId::SidebarShow, {"problems"}, ActionSource::Menu);
+          break;
+        case StatusBarSegmentId::Lsp:
+          ShowOutputChannel("lsp");
+          break;
+        case StatusBarSegmentId::AiProvider:
+          OpenAiProviderPicker();
+          break;
+        case StatusBarSegmentId::LayoutMode: {
+          const bool compact = layout_mode_service_.CurrentMode() != LayoutMode::Compact;
+          SetSettingValue("ui.layout_mode", compact ? "compact" : "regular");
+          break;
+        }
+        default:
+          break;
+      }
+      return true;
+    }
+    right_x -= gap;
+  }
+  return true;
+}
+
+}  // namespace microide::workspace

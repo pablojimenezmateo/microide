@@ -166,7 +166,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
     if (!seg.visible || seg.text.empty()) {
       return;
     }
-    target.push_back(StatusBarSegmentViewModel{seg.text, seg.clickable});
+    target.push_back(StatusBarSegmentViewModel{id, seg.text, seg.clickable});
   };
   add_segment(StatusBarSegmentId::Project, vm.left_segments);
   add_segment(StatusBarSegmentId::Branch, vm.left_segments);
@@ -186,6 +186,35 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
     while (vm.left_segments.size() > 2) {  // keep project + branch
       vm.left_segments.pop_back();
     }
+  }
+  return vm;
+}
+
+SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
+    const WorkspaceLayout& layout,
+    const SettingsOverlayService& service) const {
+  SettingsOverlayViewModel vm;
+  vm.visible = service.Visible();
+  vm.mode = service.Mode();
+  vm.rect = ComputeOverlaySurfaceRect(layout.editor_area);
+  vm.scroll_row = service.ScrollRow();
+  vm.query = service.Query();
+  if (!vm.visible) {
+    return vm;
+  }
+  switch (vm.mode) {
+    case SettingsOverlayMode::Settings:
+      vm.title = "Settings";
+      vm.settings_rows = service.SettingsRows();
+      break;
+    case SettingsOverlayMode::AiProvider:
+      vm.title = "AI Provider";
+      vm.provider_rows = service.ProviderRows();
+      break;
+    case SettingsOverlayMode::HelpAbout:
+      vm.title = "Help / About";
+      vm.help_rows = service.HelpRows();
+      break;
   }
   return vm;
 }

@@ -128,6 +128,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::ShowOutput),
       MenuItem(ActionId::ShowChat),
       MenuItem(ActionId::Wrap, "Word Wrap", {}, {}, 0, true),
+      MenuItem(ActionId::ToggleStatusBar, "Status Bar", {}, {}, 0, true),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}},
                1),
@@ -175,6 +176,10 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
   });
   static const auto kPreferencesItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
+      MenuItem(ActionId::OpenAiProviderPicker, "AI Provider…"),
+      MenuItem(ActionId::ToggleLayoutMode, "Toggle Compact Layout"),
+      MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
       MenuItem(ActionId::UiScale, "Zoom Out", "Ctrl+-", std::array<std::string_view, 2>{"down", {}}, 1),
       MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
@@ -183,6 +188,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::PluginsReload, "Reload Plugins"),
   });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::OpenKeyboardShortcuts, "Keyboard Shortcuts"),
+      MenuItem(ActionId::OpenHelpAbout, "About microide"),
+      MenuSeparator(),
       MenuItem(ActionId::ShowOutput, "Show Output Channel"),
   });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({

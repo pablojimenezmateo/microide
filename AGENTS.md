@@ -129,6 +129,10 @@ Policy invariants (no automated lint, but reviewers will reject):
   `PluginHost.cpp`. Each `src/plugin/*.cpp` translation unit stays at or below 800 lines.
 - View models do not hold pointers or references to `WorkspaceShell`, coordinators, or services.
   They are POD-like structs populated by the builder.
+- Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay
+  host-owned and service-backed. Menu overflow, status-bar actions, Settings, AI Provider, and
+  Help/About must route through action/service state and `RenderViewModelBuilder`, not plugin-owned
+  rendering or render-TU product logic.
 - Project reactivation paths do not reload plugins. Reactivation refresh uses
   `refresh_plugin_surfaces_for_reactivation` and must not call
   `ReloadPluginsForCurrentProject`.

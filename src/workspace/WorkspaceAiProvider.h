@@ -29,12 +29,15 @@ enum class ProviderAuthStatus {
 struct AiProviderSpec {
   std::string id;
   std::string label;
+  std::string display_name;
   std::string type;  // "cloud", "local", "external"
   std::string api_key_name;  // secret storage key for API key
   std::vector<std::string> models;  // static model list from plugin
   std::string runtime;  // "sidecar", "openai_compat", "anthropic_messages"
   std::string base_url;
   std::string default_model;
+  bool requires_api_key = false;
+  std::string auth_method;
   ProviderCapabilities capabilities;
   std::string plugin_id;
 };

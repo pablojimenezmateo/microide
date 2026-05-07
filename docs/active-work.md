@@ -63,6 +63,13 @@ editor, subprocess, and persistence paths: sidebar query/replace fallback text n
 formatter and tool SHA verification dispatch now run through background execution seams, and the
 legacy persistence importer was removed in favor of structured-record-only persistence.
 
+Update (2026-05-07): `responsive-layout-and-options-polish` shipped the responsive shell pass:
+window scaling now avoids retained-text blur on HiDPI/fractional-scale displays, the menu bar keeps
+all top-level menus reachable through compact/overflow chrome, hit pads cover small resize, close,
+scrollbar, and terminal-tab controls, the bottom status bar is host-owned and clickable, and
+Settings, AI Provider, and Help/About overlays now share one settings-overlay service and
+view-model-rendered surface.
+
 ### 1. Plugin Platform Expansion
 
 This is the dominant current phase and will be large.

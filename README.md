@@ -160,7 +160,8 @@ Run commands with `Ctrl+e` (command prompt) or the `chat` sidebar:
 
 ```
 auth-login <provider> [scope...]    auth-logout <provider> <session>
-auth-refresh <provider> <session>   chat [message]
+auth-refresh <provider> <session>   about
+ai-provider                         chat [message]
 code-actions                        colorscheme [name|list]
 compare [path] [commit-prefix]      completion
 debug-start <type>                  debug-stop
@@ -169,6 +170,7 @@ find-references                     focus <editor|sidebar|panel>
 git-refresh                         goto <line[:col]>
 goto-definition                     indent-width [n]
 inline-complete                     jump <line[:col]>
+keyboard-shortcuts                  layout-mode-toggle
 mcp <tool> [json]                   merge <base> <incoming> <current> [output]
 open <path>                         output [channel]
 plugins-reload                      project-close
@@ -176,6 +178,7 @@ project-next                        project-open [path]
 project-prev                        project-search [query]
 quit                                reopen
 save                                search <query>
+settings                            status-bar-toggle
 sidebar-close                       sidebar-hide
 sidebar-show [tool]                 sidebar-toggle [tool]
 sidebar-width <n>                   soft-tabs [on|off]
@@ -213,6 +216,10 @@ Current commands:
 - `jump <line[:col]>`
 - `mcp <tool> [json]`
 - `open <path>`
+- `ai-provider`
+- `about`
+- `keyboard-shortcuts`
+- `settings`
 - `project-close`
 - `project-next`
 - `project-open [path]`
@@ -247,6 +254,8 @@ Current commands:
 - `tree [root]`
 - `tree-refresh`
 - `ui-scale [n|up|down|reset]`
+- `layout-mode-toggle`
+- `status-bar-toggle`
 - `unsplit`
 - `vsplit [path]`
 

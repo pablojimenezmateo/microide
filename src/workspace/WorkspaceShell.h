@@ -66,6 +66,7 @@
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/LayoutModeService.h"
 #include "workspace/PersistenceService.h"
+#include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceOutputChannels.h"

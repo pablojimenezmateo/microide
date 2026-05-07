@@ -41,7 +41,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr;
     case ActionId::Colorscheme:
     case ActionId::Files:
+    case ActionId::OpenAiProviderPicker:
     case ActionId::OpenCommandPrompt:
+    case ActionId::OpenHelpAbout:
+    case ActionId::OpenKeyboardShortcuts:
+    case ActionId::OpenSettings:
     case ActionId::PluginsReload:
     case ActionId::ProjectOpen:
     case ActionId::Quit:
@@ -180,6 +184,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TabSize:
     case ActionId::TestsDiscover:
     case ActionId::UiScale:
+    case ActionId::ToggleLayoutMode:
+    case ActionId::ToggleStatusBar:
       return true;
     case ActionId::DebugStop:
       return context_.current_project_state.debug_session.running;

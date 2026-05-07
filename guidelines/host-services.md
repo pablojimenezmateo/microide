@@ -27,6 +27,10 @@ Rules:
 Workspace-specific rules:
 
 - `WorkspaceShell` owns service instances and routes events. It does not own broad subsystem behavior, and the lint test caps its source size (`WorkspaceShell.h` ≤ 400 lines, `WorkspaceShell.cpp` ≤ 600 lines).
+- `LayoutModeService`, `StatusBarService`, and `SettingsOverlayService` are host-owned shell
+  services. They expose narrow state snapshots and row models; render code consumes
+  `RenderViewModelBuilder` output, and actions or mouse routing mutate the service rather than
+  materializing product decisions in render TUs.
 - Coordinators consume narrow service interfaces (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`) by reference. The lint test rejects any `WorkspaceShell&` or `WorkspaceShell*` in a `Workspace*Coordinator*.h` constructor.
 - Coordinators never reach around a service. If a coordinator needs a method the service does not expose, add it to the service contract — do not friend, do not pass a shell pointer, do not introduce a back-door accessor.
 - Workspace persistence file I/O routes through `PersistenceService`. Ad-hoc direct reads or writes for workspace, session, config, or conversation state are forbidden, and there is exactly one reader/writer pair (`PersistedRecordReader`/`PersistedRecordWriter`) for these artifacts.

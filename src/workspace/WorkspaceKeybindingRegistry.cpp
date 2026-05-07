@@ -72,6 +72,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          .id = "settings",
+          .action = ActionId::OpenSettings,
+          .key = SDLK_COMMA,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "zoom-reset",
           .action = ActionId::UiScale,
           .key = SDLK_0,

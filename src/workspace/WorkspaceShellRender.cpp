@@ -39,6 +39,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   RenderChromeTooltips(renderer, layout);
   RenderMenuPopups(renderer, layout);
   RenderStatusBar(renderer, layout);
+  RenderSettingsOverlay(renderer, layout);
 
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   const auto active_text_input_visual =

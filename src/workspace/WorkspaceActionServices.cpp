@@ -246,6 +246,26 @@ void WorkspaceActionContext::DismissOverlay() {
   operations_.dismiss_overlay();
 }
 
+void WorkspaceActionContext::OpenSettingsOverlay() {
+  operations_.open_settings_overlay();
+}
+
+void WorkspaceActionContext::OpenAiProviderPicker() {
+  operations_.open_ai_provider_picker();
+}
+
+void WorkspaceActionContext::OpenHelpAboutOverlay() {
+  operations_.open_help_about_overlay();
+}
+
+void WorkspaceActionContext::ToggleStatusBar() {
+  operations_.toggle_status_bar();
+}
+
+void WorkspaceActionContext::ToggleLayoutMode() {
+  operations_.toggle_layout_mode();
+}
+
 void WorkspaceActionContext::ShowProjectSearchSidebar(std::string query) {
   operations_.show_search_sidebar(std::move(query), true);
 }

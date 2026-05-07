@@ -95,7 +95,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   context_.interaction_state.mouse_selecting = false;
 
+  if (HandleSettingsOverlayButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestOverlayRedraw(); });
+    return true;
+  }
+
   if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
+    return true;
+  }
+
+  if (HandleStatusBarButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }

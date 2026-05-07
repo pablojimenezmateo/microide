@@ -281,6 +281,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRenderPrompts.cpp
   src/workspace/WorkspaceShellRenderChrome.cpp
   src/workspace/WorkspaceShellRenderStatusBar.cpp
+  src/workspace/WorkspaceShellRenderSettingsOverlay.cpp
   src/workspace/WorkspaceShellRenderTextInput.cpp
   src/workspace/RenderViewModelBuilder.cpp
   src/workspace/WorkspaceShellHoverPopup.cpp
@@ -298,6 +299,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
   src/workspace/WorkspaceShellProviderAuth.cpp
+  src/workspace/WorkspaceShellSettingsOverlay.cpp
   src/workspace/WorkspaceShellTasks.cpp
   src/workspace/WorkspaceShellMcp.cpp
   src/workspace/WorkspaceShellProjects.cpp
@@ -356,6 +358,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
+  src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
   src/workspace/WorkspaceLspClient.cpp
@@ -494,6 +497,8 @@ add_executable(microide_tests
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
   tests/WindowPresentationTests.cpp
+  tests/WorkspaceMenuRegistryTests.cpp
+  tests/WorkspaceSettingsRegistryTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp
   tests/WorkspaceShellPluginTests.cpp
@@ -503,6 +508,7 @@ add_executable(microide_tests
   tests/WorkspaceShellSearchTests.cpp
   tests/WorkspaceShellSessionTests.cpp
   tests/WorkspaceShellSourceControlTests.cpp
+  tests/WorkspaceStatusBarTests.cpp
   tests/WorkspaceShellSharedCoreTests.cpp
   tests/WorkspaceShellSharedLayoutTests.cpp
   tests/WorkspaceShellSharedSearchTests.cpp

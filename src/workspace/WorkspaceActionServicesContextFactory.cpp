@@ -116,6 +116,19 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this]() { DismissOverlay(); },
+          .open_settings_overlay = [this]() { OpenSettingsOverlay(); },
+          .open_ai_provider_picker = [this]() { OpenAiProviderPicker(); },
+          .open_help_about_overlay = [this]() { OpenHelpAboutOverlay(); },
+          .toggle_status_bar =
+              [this]() {
+                SetSettingValue("ui.show_status_bar",
+                                layout_mode_service_.StatusBarVisible() ? "false" : "true");
+              },
+          .toggle_layout_mode =
+              [this]() {
+                const bool compact = layout_mode_service_.CurrentMode() != LayoutMode::Compact;
+                SetSettingValue("ui.layout_mode", compact ? "compact" : "regular");
+              },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .open_buffer_search = [this]() { OpenBufferSearch(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
