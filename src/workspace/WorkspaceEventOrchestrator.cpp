@@ -210,13 +210,8 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
     };
   }
 
-  return EventResult{
-      .handled = true,
-      .redraw = RenderInvalidation{
-          .full = true,
-          .rects = {},
-      },
-  };
+  // No visible caret region means there is nothing to repaint for caret blink.
+  return {};
 }
 
 }  // namespace microide::workspace

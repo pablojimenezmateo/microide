@@ -144,6 +144,20 @@ std::uint64_t ScenarioContext::Wait(std::chrono::milliseconds duration) {
   std::uint64_t wake_count = 0;
   constexpr auto kIdlePollInterval = std::chrono::milliseconds(4);
   while (std::chrono::steady_clock::now() < end) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(end - now);
+    const auto idle_state = shell_.CurrentIdleWaitState();
+    if (idle_state.hint == workspace::WorkspaceShell::IdleHint::Idle) {
+      std::this_thread::sleep_for(std::min(remaining, std::chrono::milliseconds(20)));
+      continue;
+    }
+    if (idle_state.hint == workspace::WorkspaceShell::IdleHint::CaretOnly &&
+        idle_state.caret_remaining_ms > 1) {
+      const auto caret_delay = std::chrono::milliseconds(idle_state.caret_remaining_ms);
+      std::this_thread::sleep_for(std::min(remaining, caret_delay));
+      continue;
+    }
+
     const auto wake = shell_.HandleScheduledWake();
     if (wake.handled) {
       ++wake_count;

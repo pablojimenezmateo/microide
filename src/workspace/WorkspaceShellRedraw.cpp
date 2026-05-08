@@ -725,6 +725,7 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
 
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadProjectIfFilesChanged");
+  project_file_event_pending_.store(false, std::memory_order_release);
   const bool index_changed = [&]() {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::ReloadProjectIfFilesChanged::ConsumeIndexFlag");

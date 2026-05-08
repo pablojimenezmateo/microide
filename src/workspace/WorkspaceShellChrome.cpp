@@ -157,15 +157,12 @@ void WorkspaceShell::EnsureActiveTabVisible() {
   const float tab_strip_width =
       CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1440.0f;
   const std::size_t tab_count = context_.current_project_state.open_tabs.size();
-  const std::size_t active_tab_index = context_.current_project_state.active_tab_index;
   const bool cache_hit = tab_strip_geometry_cache_.valid &&
                          tab_strip_geometry_cache_.tab_count == tab_count &&
-                         tab_strip_geometry_cache_.window_width == tab_strip_width &&
-                         tab_strip_geometry_cache_.active_tab_index == active_tab_index;
+                         tab_strip_geometry_cache_.window_width == tab_strip_width;
   if (!cache_hit) {
     tab_strip_geometry_cache_.tab_count = tab_count;
     tab_strip_geometry_cache_.window_width = tab_strip_width;
-    tab_strip_geometry_cache_.active_tab_index = active_tab_index;
     tab_strip_geometry_cache_.widths.clear();
     tab_strip_geometry_cache_.display_titles.clear();
     tab_strip_geometry_cache_.tooltip_labels.clear();
@@ -201,15 +198,12 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
 
   const std::size_t tab_count = context_.current_project_state.open_tabs.size();
   const float tab_strip_width = tab_strip.w;
-  const std::size_t active_tab_index = context_.current_project_state.active_tab_index;
   const bool cache_hit = tab_strip_geometry_cache_.valid &&
                          tab_strip_geometry_cache_.tab_count == tab_count &&
-                         tab_strip_geometry_cache_.window_width == tab_strip_width &&
-                         tab_strip_geometry_cache_.active_tab_index == active_tab_index;
+                         tab_strip_geometry_cache_.window_width == tab_strip_width;
   if (!cache_hit) {
     tab_strip_geometry_cache_.tab_count = tab_count;
     tab_strip_geometry_cache_.window_width = tab_strip_width;
-    tab_strip_geometry_cache_.active_tab_index = active_tab_index;
     tab_strip_geometry_cache_.widths.clear();
     tab_strip_geometry_cache_.display_titles.clear();
     tab_strip_geometry_cache_.tooltip_labels.clear();

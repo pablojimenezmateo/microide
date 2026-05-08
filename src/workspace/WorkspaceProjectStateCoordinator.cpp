@@ -75,7 +75,8 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
         file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
       app::DecrementBackgroundTaskCountAndWake();
     }
-    if (project_file_event_type_ != 0 && (batch.is_initial || applied_to_index)) {
+    if (project_file_event_type_ != 0 && (batch.is_initial || applied_to_index) &&
+        !project_file_event_pending_.exchange(true, std::memory_order_acq_rel)) {
       SDL_Event event{};
       event.type = project_file_event_type_;
       {
@@ -106,6 +107,7 @@ void WorkspaceShell::StopFileIndexWatcher() {
     file_index_watcher_.reset();
   }
   file_index_has_pending_changes_.store(false, std::memory_order_relaxed);
+  project_file_event_pending_.store(false, std::memory_order_relaxed);
   const bool had_initial_build = file_index_initial_build_in_flight_.exchange(
       false, std::memory_order_acq_rel);
   if (had_initial_build) {

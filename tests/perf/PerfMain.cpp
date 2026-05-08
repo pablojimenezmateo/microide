@@ -252,19 +252,25 @@ void RegisterBuiltInScenarios() {
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
-            for (int i = 1; i <= 20; ++i) {
-              const auto file = std::filesystem::path("tests/perf/fixtures/large_project") /
-                                ("pkg0/file_" + std::to_string(i) + ".txt");
-              context.OpenTab(file);
-              context.PumpFrames(1);
-            }
-            for (int cycle = 0; cycle < 10; ++cycle) {
-              for (SDL_Keycode digit : {SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5,
-                                        SDLK_6, SDLK_7, SDLK_8, SDLK_9, SDLK_0}) {
-                context.KeyDown(digit, SDL_KMOD_ALT);
+            (void)context.Open("tests/perf/fixtures/large_project");
+            context.PumpFrames(2);
+            context.Measure("multi_tab.open_tabs", [&]() {
+              for (int i = 1; i <= 20; ++i) {
+                const auto file = std::filesystem::path("tests/perf/fixtures/large_project") /
+                                  ("pkg0/file_" + std::to_string(i) + ".txt");
+                context.OpenTab(file);
                 context.PumpFrames(1);
               }
-            }
+            });
+            context.Measure("multi_tab.cycle_tabs", [&]() {
+              for (int cycle = 0; cycle < 10; ++cycle) {
+                for (SDL_Keycode digit : {SDLK_1, SDLK_2, SDLK_3, SDLK_4, SDLK_5,
+                                          SDLK_6, SDLK_7, SDLK_8, SDLK_9, SDLK_0}) {
+                  context.KeyDown(digit, SDL_KMOD_ALT);
+                  context.PumpFrames(1);
+                }
+              }
+            });
           },
   });
   PerfHarness::RegisterScenario(Scenario{

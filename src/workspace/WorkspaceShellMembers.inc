@@ -1479,6 +1479,7 @@
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<bool> file_index_has_pending_changes_{false};
   std::atomic<bool> file_index_initial_build_in_flight_{false};
+  std::atomic<bool> project_file_event_pending_{false};
   WorkspacePluginRuntime plugin_runtime_;
   std::size_t reload_plugins_invocation_count_ = 0;
   std::size_t reload_clean_open_buffers_from_disk_invocation_count_ = 0;

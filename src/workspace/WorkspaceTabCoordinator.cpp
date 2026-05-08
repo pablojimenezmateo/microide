@@ -508,7 +508,9 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   {
     util::PerformanceTrace::Scope select_path_scope(
         "TabCoordinator::OpenFileInNewTab::SelectDirectoryPath");
-    state_.directory_tree.SelectPath(normalized_path);
+    if (!state_.directory_tree.SelectPathIfVisible(normalized_path)) {
+      state_.directory_tree.SelectPath(normalized_path);
+    }
   }
 
   if (existing != state_.open_tabs.end()) {
