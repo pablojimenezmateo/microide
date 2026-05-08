@@ -224,6 +224,14 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     std::cerr << "[perf] scenario=" << scenario.name << " iteration=" << (i + 1) << "/"
               << options.iterations << '\n';
     ScenarioContext context(driver.shell, driver.window, driver.renderer);
+    if (options.layout_mode_override.has_value()) {
+      if (!workspace::WorkspaceShell::TestAccess::SetSettingValue(
+              driver.shell, "ui.layout_mode", *options.layout_mode_override)) {
+        HarnessError() = "failed to apply layout mode override";
+        ShutdownDriver(&driver);
+        return std::nullopt;
+      }
+    }
     const AllocationSnapshot before = Allocations::Snapshot();
     const auto start = std::chrono::steady_clock::now();
     try {

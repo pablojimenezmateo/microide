@@ -87,6 +87,7 @@ class PerfHarness {
     bool smoke_only = false;
     std::size_t iterations = 10;
     std::optional<std::uint64_t> random_seed;
+    std::optional<std::string> layout_mode_override;
   };
 
   static void RegisterScenario(const Scenario& scenario);

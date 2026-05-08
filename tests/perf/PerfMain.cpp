@@ -33,6 +33,7 @@ struct CliOptions {
   std::optional<std::filesystem::path> report_json;
   std::optional<std::filesystem::path> report_text;
   std::optional<std::string> reference_runner;
+  std::optional<std::string> layout_mode;
 };
 
 struct ProcessSample {
@@ -160,6 +161,14 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     }
     if (arg.rfind("--reference-runner=", 0) == 0) {
       options.reference_runner = arg.substr(std::string("--reference-runner=").size());
+      continue;
+    }
+    if (arg.rfind("--layout-mode=", 0) == 0) {
+      const std::string value = arg.substr(std::string("--layout-mode=").size());
+      if (value != "auto" && value != "regular" && value != "compact") {
+        return std::nullopt;
+      }
+      options.layout_mode = value;
       continue;
     }
     return std::nullopt;
@@ -554,7 +563,7 @@ int main(int argc, char** argv) {
   if (!options.has_value()) {
     std::cerr << "usage: microide_perf [--scenarios=a,b] [--update-baseline] [--smoke] "
                  "[--iterations=N] [--report-json=path] [--report-text=path] "
-                 "[--reference-runner=name]\n";
+                 "[--reference-runner=name] [--layout-mode=auto|regular|compact]\n";
     return 1;
   }
 
@@ -562,6 +571,7 @@ int main(int argc, char** argv) {
   run_options.scenario_names = options->scenarios;
   run_options.smoke_only = options->smoke;
   run_options.iterations = options->iterations;
+  run_options.layout_mode_override = options->layout_mode;
   std::vector<Aggregate> aggregates;
   bool all_passed = true;
   std::size_t selected_count = 0;
