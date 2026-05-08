@@ -114,7 +114,13 @@ bool ScenarioContext::Open(const std::filesystem::path& project_root) {
 }
 
 void ScenarioContext::OpenTab(const std::filesystem::path& path) {
-  workspace::WorkspaceShell::TestAccess::OpenFile(shell_, path);
+  std::error_code error;
+  const std::filesystem::path resolved = std::filesystem::absolute(path, error).lexically_normal();
+  if (error || resolved.empty()) {
+    workspace::WorkspaceShell::TestAccess::OpenFile(shell_, path);
+    return;
+  }
+  workspace::WorkspaceShell::TestAccess::OpenFile(shell_, resolved);
 }
 
 void ScenarioContext::Type(std::string_view text) {

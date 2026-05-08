@@ -143,7 +143,11 @@ void TextViewport::SetHorizontalScroll(std::size_t horizontal_scroll) {
 }
 
 void TextViewport::SetTabSize(std::size_t tab_size) {
-  tab_size_ = std::clamp<std::size_t>(tab_size, 1, 16);
+  const std::size_t next_tab_size = std::clamp<std::size_t>(tab_size, 1, 16);
+  if (tab_size_ == next_tab_size) {
+    return;
+  }
+  tab_size_ = next_tab_size;
   cached_max_visual_columns_.reset();
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_revision_ = 0;
@@ -155,10 +159,17 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
 }
 
 void TextViewport::SetIndentWidth(std::size_t indent_width) {
-  indent_width_ = std::clamp<std::size_t>(indent_width, 1, 16);
+  const std::size_t next_indent_width = std::clamp<std::size_t>(indent_width, 1, 16);
+  if (indent_width_ == next_indent_width) {
+    return;
+  }
+  indent_width_ = next_indent_width;
 }
 
 void TextViewport::SetSoftTabs(bool soft_tabs) {
+  if (soft_tabs_ == soft_tabs) {
+    return;
+  }
   soft_tabs_ = soft_tabs;
 }
 
