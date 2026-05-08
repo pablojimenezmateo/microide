@@ -1,16 +1,17 @@
 name: fuzz
 
 on:
+  # CI trigger policy: event-driven only (no periodic schedules).
   pull_request:
-  schedule:
-    - cron: "0 3 * * *"
+  push:
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  fuzz-pr:
-    if: github.event_name == 'pull_request'
+  fuzz-merge-candidate:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -47,8 +48,8 @@ jobs:
       - name: Run GitBlameParserFuzz (60s)
         run: ./build/fuzz/microide/GitBlameParserFuzz tests/fuzz/corpora/GitBlameParserFuzz -max_total_time=60
 
-  fuzz-nightly:
-    if: github.event_name == 'schedule'
+  fuzz-extended-manual:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -73,14 +74,14 @@ jobs:
       - name: Build Fuzzers
         run: cmake --build build/fuzz --target PersistedRecordReaderFuzz LegacyImporterFuzz SearchRegexFuzz GitBlameParserFuzz -j8
 
-      - name: Run PersistedRecordReaderFuzz (nightly)
+      - name: Run PersistedRecordReaderFuzz (extended manual)
         run: ./build/fuzz/microide/PersistedRecordReaderFuzz tests/fuzz/corpora/PersistedRecordReaderFuzz -max_total_time=900
 
-      - name: Run LegacyImporterFuzz (nightly)
+      - name: Run LegacyImporterFuzz (extended manual)
         run: ./build/fuzz/microide/LegacyImporterFuzz tests/fuzz/corpora/LegacyImporterFuzz -max_total_time=900
 
-      - name: Run SearchRegexFuzz (nightly)
+      - name: Run SearchRegexFuzz (extended manual)
         run: ./build/fuzz/microide/SearchRegexFuzz tests/fuzz/corpora/SearchRegexFuzz -max_total_time=900
 
-      - name: Run GitBlameParserFuzz (nightly)
+      - name: Run GitBlameParserFuzz (extended manual)
         run: ./build/fuzz/microide/GitBlameParserFuzz tests/fuzz/corpora/GitBlameParserFuzz -max_total_time=900

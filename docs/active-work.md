@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-04-26.
+Reviewed on 2026-05-08.
 
 This is the single source of truth for:
 
@@ -69,6 +69,12 @@ all top-level menus reachable through compact/overflow chrome, hit pads cover sm
 scrollbar, and terminal-tab controls, the bottom status bar is host-owned and clickable, and
 Settings and Help/About overlays now share one settings-overlay service and
 view-model-rendered surface.
+
+Update (2026-05-08): `stabilize-ci-and-remove-periodic-workflows` is in progress. Active CI policy
+now requires event-driven triggers only (`push`, `pull_request`, `workflow_dispatch`) and removes
+periodic schedules. `perf-harness` and `fuzz` route extended coverage to manual dispatch instead of
+nightly cron runs. Current remaining blocker is repository billing for GitHub-hosted runners,
+which prevents workflow jobs from starting until account payments/spending limits are restored.
 
 ### 1. Plugin Platform Expansion
 
