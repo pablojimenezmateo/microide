@@ -35,9 +35,3 @@ The workspace SHALL expose a closed set of service interfaces that own their sta
 #### Scenario: Lua VM lifecycle is isolated
 - **WHEN** plugin runtime work creates, suspends, or destroys a Lua VM
 - **THEN** that work SHALL go through one `LuaRuntime` seam owned by the runtime core; no extension-surface module SHALL hold a raw `lua_State*`
-
-## REMOVED Requirements
-
-### Requirement: AI provider runtime extension surface is isolated
-**Reason**: Plugin AI-provider runtime extension surface is retired with AI/LLM feature removal.
-**Migration**: Remove AI-provider runtime extension modules and workspace-side execution paths tied to those modules.

@@ -19,9 +19,3 @@ Editor, compare, merge, search, git, terminal, and diagnostics flows SHALL remai
 #### Scenario: Plugin attempts to replace diff rendering
 - **WHEN** a plugin is installed that declares itself as a replacement compare or merge renderer
 - **THEN** the host SHALL ignore that replacement and continue to render compare and merge through the built-in pipeline, surfacing plugin contributions only through the existing contribution registries
-
-## REMOVED Requirements
-
-### Requirement: AI Is In Scope
-**Reason**: Product scope removes built-in AI/LLM workflows from the host.
-**Migration**: Remove AI scope statements from durable documentation and enforce non-AI workflow boundaries in product contracts and implementation.

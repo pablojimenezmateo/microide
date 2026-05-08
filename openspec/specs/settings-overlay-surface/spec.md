@@ -55,7 +55,6 @@ The overlay SHALL include a single-line search input that filters the visible se
 - **WHEN** `editor.hover_delay_ms` changes
 - **THEN** the editor hover popup SHALL apply the new delay on the next hover, and SHALL NOT require a restart
 
-
 ### Requirement: Overlay Render Path Is Allocation-Bounded
 
 The overlay's render path SHALL build its view model on open and on user input, and SHALL NOT allocate during steady-state idle frames. Re-renders triggered solely by mouse-move within the overlay SHALL reuse the existing view model.

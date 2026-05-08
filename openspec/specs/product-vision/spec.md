@@ -42,4 +42,3 @@ MicroIDE SHALL treat the following as out of scope unless deliberately promoted 
 - **WHEN** a proposal requests a feature whose primary capability falls inside the non-goal list
 - **THEN** the proposal SHALL be rejected or SHALL explicitly declare itself as promoting a non-goal into its own phase, with an updated product-vision delta in the same change
 
-

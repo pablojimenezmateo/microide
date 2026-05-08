@@ -141,3 +141,4 @@ Changes produced by a hotspot pass SHALL include measured-before-merge evidence 
 #### Scenario: Optimization improves one path but risks another
 - **WHEN** a hotspot optimization modifies shared infrastructure used by multiple interactive workflows
 - **THEN** the author SHALL run and cite harness scenarios for the targeted workflow and at least one adjacent workflow that shares the modified path
+

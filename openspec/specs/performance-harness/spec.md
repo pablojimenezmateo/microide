@@ -108,3 +108,4 @@ Scenarios introduced for hotspot coverage SHALL capture frame-time percentiles, 
 #### Scenario: New hotspot scenario reports full metric set
 - **WHEN** a hotspot-protection scenario is executed
 - **THEN** its baseline and output SHALL include all standard harness metrics required by the structured metric capture contract and SHALL be reviewable in pull request diffs
+

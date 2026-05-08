@@ -11,9 +11,3 @@ MicroIDE SHALL expose a host-owned modal settings overlay reachable from the men
 #### Scenario: Overlay is host-owned
 - **WHEN** the source tree is searched for settings-overlay rendering
 - **THEN** the overlay rendering SHALL live in `src/workspace/WorkspaceShellRenderSettings*.cpp`, owned by `SettingsOverlayService`, and SHALL NOT be replaceable by a plugin
-
-## REMOVED Requirements
-
-### Requirement: AI Provider Picker Replaces Click-To-Cycle
-**Reason**: AI provider workflows and provider selection UX are removed from product scope.
-**Migration**: Remove provider-picker affordances from settings/status/sidebar surfaces and delete related provider selection commands/state.

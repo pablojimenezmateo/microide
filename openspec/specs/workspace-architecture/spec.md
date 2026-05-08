@@ -87,7 +87,6 @@ The active editor viewport SHALL be owned exclusively by the active editor tab. 
 - **WHEN** plugin runtime work creates, suspends, or destroys a Lua VM
 - **THEN** that work SHALL go through one `LuaRuntime` seam owned by the runtime core; no extension-surface module SHALL hold a raw `lua_State*`
 
-
 ### Requirement: Architectural Invariants Are Enforced By CI
 
 The build SHALL include an architectural-lint test that runs as part of `ctest` and rejects regressions of these invariants without requiring human review.
@@ -205,3 +204,4 @@ Performance-motivated workspace refactors SHALL preserve service ownership and c
 #### Scenario: Optimization proposes shell reach-through shortcut
 - **WHEN** an optimization change attempts to bypass a service boundary by mutating state directly through shell internals
 - **THEN** the change SHALL be rejected in favor of a service-level API that keeps the path measurable and testable
+
