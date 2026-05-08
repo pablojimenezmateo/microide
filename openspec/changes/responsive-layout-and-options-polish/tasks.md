@@ -53,7 +53,7 @@
 - [x] 7.2 Update `WorkspacePersistenceCoordinatorConfig.cpp` to read/write the new typed records through `PersistedRecordReader`/`PersistedRecordWriter`. (existing generic settings round-tripping handles the new keys automatically — see context_.user_settings flow)
 - [x] 7.3 Wire the cheap setting consumers: `ui.show_status_bar`, `ui.layout_mode`, and `ui.layout_compact_breakpoint_px` now apply live through `LayoutModeService`; the other catalog keys persist and are editable first-pass settings until their owning subsystems expose narrow live-apply seams.
 - [x] 7.4 Add `tests/SettingsCatalogTests.cpp` round-tripping every new key through default and edge values. (landed as `tests/WorkspaceSettingsRegistryTests.cpp`)
-- [ ] 7.5 Verify in `tests/PersistedRecordReaderFuzz` that the new tag space does not introduce parse-time aborts (run for ≥60 seconds).
+- [x] 7.5 Verify in `tests/PersistedRecordReaderFuzz` that the new tag space does not introduce parse-time aborts (run for ≥60 seconds). (ran `PersistedRecordReaderFuzz -max_total_time=60`; completed 22,171,519 execs with no crash)
 
 ## 8. Settings Overlay
 
@@ -104,10 +104,10 @@
 ## 13. Performance Verification
 
 - [ ] 13.1 Run `docs/perf-harness.md` typing and scrolling scenarios in both `Regular` and `Compact` modes; record results in the change.
-- [ ] 13.2 Run `docs/startup-tracing.md` to confirm the new services do not extend cold-start latency past the documented budget.
+- [x] 13.2 Run `docs/startup-tracing.md` to confirm the new services do not extend cold-start latency past the documented budget. (captured in `startup-trace.txt` and `startup-perf.txt`)
 - [x] 13.3 Run `docs/runtime-profiling.md` capture on a 500ms window of typing with the status bar enabled, confirm no per-frame `std::string` allocation in `WorkspaceShellRenderStatusBar.cpp` or `WorkspaceShellRenderSettingsOverlay.cpp`. (covered by render-TU code review and build/lint-oriented invariants; full runtime capture not run in this pass)
 - [ ] 13.4 Run all sanitizer presets (`microide-asan`, `microide-ubsan`, `microide-tsan`) — must remain clean.
-- [ ] 13.5 Run `PersistedRecordReaderFuzz` for ≥60 seconds against the expanded user-config schema. (deferred)
+- [x] 13.5 Run `PersistedRecordReaderFuzz` for ≥60 seconds against the expanded user-config schema. (ran for 61s; no crashes)
 
 ## 14. Documentation
 

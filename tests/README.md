@@ -46,7 +46,7 @@ Run the first automated checks with:
 
 ```bash
 cmake -S . -B build
-cmake --build build
+cmake --build build -j8
 ctest --test-dir build --output-on-failure
 ```
 

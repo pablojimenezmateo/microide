@@ -30,7 +30,7 @@ Then run TSAN tests (for example `build/microide-tsan/microide/microide_tests`).
 Build and run:
 
 ```bash
-cmake --build build --target microide_diff_bench
+cmake --build build --target microide_diff_bench -j8
 ./build/microide/microide_diff_bench /path/to/repo path/to/file --runs=5
 ```
 

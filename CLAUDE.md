@@ -52,7 +52,7 @@ Configure and build with the repo's CMake flow:
 
 ```bash
 cmake -S . -B build
-cmake --build build
+cmake --build build -j8
 ```
 
 Run the full automated test suite with:
@@ -73,12 +73,12 @@ When a change affects performance-sensitive code, run relevant `docs/perf-harnes
 Sanitizer and fuzz workflows expected for risky changes:
 
 ```bash
-cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure
-cmake --preset microide-ubsan && cmake --build build/microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure
+cmake --preset microide-asan && cmake --build build/microide-asan -j8 && ctest --test-dir build/microide-asan --output-on-failure
+cmake --preset microide-ubsan && cmake --build build/microide-ubsan -j8 && ctest --test-dir build/microide-ubsan --output-on-failure
 sudo sysctl vm.mmap_rnd_bits=28
-cmake --preset microide-tsan && cmake --build build/microide-tsan && ctest --test-dir build/microide-tsan --output-on-failure
+cmake --preset microide-tsan && cmake --build build/microide-tsan -j8 && ctest --test-dir build/microide-tsan --output-on-failure
 cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-cmake --build build/microide-fuzz
+cmake --build build/microide-fuzz -j8
 ./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=60 tests/fuzz/corpora/PersistedRecordReaderFuzz
 ```
 

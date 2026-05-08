@@ -259,7 +259,7 @@ Reproduction:
 - Command sequence:
   - `sudo sysctl vm.mmap_rnd_bits=28`
   - `cmake --preset microide-tsan`
-  - `cmake --build build/microide-tsan`
+  - `cmake --build build/microide-tsan -j8`
   - `ctest --test-dir build/microide-tsan --output-on-failure`
 
 Notes:
@@ -288,7 +288,7 @@ Impact:
 
 Reproduction:
 - `cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`
-- `cmake --build build/microide-fuzz`
+- `cmake --build build/microide-fuzz -j8`
 - `./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=10 tests/fuzz/corpora/PersistedRecordReaderFuzz`
 - `./build/microide-fuzz/microide/LegacyImporterFuzz -max_total_time=10 tests/fuzz/corpora/LegacyImporterFuzz`
 - `./build/microide-fuzz/microide/SearchRegexFuzz -max_total_time=10 tests/fuzz/corpora/SearchRegexFuzz`

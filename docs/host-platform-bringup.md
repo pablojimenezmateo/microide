@@ -12,7 +12,7 @@ Linux:
 sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev \
   libpcre2-dev libcurl4-openssl-dev
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
-cmake --build build --target microide microide_tests microide_provider_bridge
+cmake --build build --target microide microide_tests microide_provider_bridge -j8
 ```
 
 macOS:
@@ -20,7 +20,7 @@ macOS:
 ```bash
 brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
-cmake --build build --target microide microide_tests microide_provider_bridge
+cmake --build build --target microide microide_tests microide_provider_bridge -j8
 ```
 
 Windows (MSYS2 UCRT64):
@@ -32,7 +32,7 @@ pacman -S --needed --noconfirm \
   mingw-w64-ucrt-x86_64-SDL3_ttf mingw-w64-ucrt-x86_64-pcre2 \
   mingw-w64-ucrt-x86_64-curl pkgconf
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
-cmake --build build --target microide microide_tests microide_provider_bridge
+cmake --build build --target microide microide_tests microide_provider_bridge -j8
 ```
 
 ## Launch Layout

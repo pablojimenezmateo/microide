@@ -78,7 +78,7 @@ Requirements:
 
 ```bash
 cmake -S . -B build
-cmake --build build
+cmake --build build -j8
 ./build/microide/microide
 ```
 
@@ -97,12 +97,12 @@ sudo apt-get install build-essential git make pkg-config cmake ninja-build gnome
   libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
   libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev \
   libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-cmake -S . -B build && cmake --build build && sudo cmake --install build && cd ..
+cmake -S . -B build && cmake --build build -j8 && sudo cmake --install build && cd ..
 
 # SDL3_ttf
 git clone https://github.com/libsdl-org/SDL_ttf.git && cd SDL_ttf
 sudo apt install libfreetype-dev
-cmake -S . -B build && cmake --build build && sudo cmake --install build && cd ..
+cmake -S . -B build && cmake --build build -j8 && sudo cmake --install build && cd ..
 ```
 
 Font: if `SDL3_ttf` is available at configure time, MicroIDE looks for

@@ -496,6 +496,10 @@ void TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "README.md", "project\n");
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
